@@ -450,8 +450,7 @@ impl Tunn {
                 self.timers.rekey_timeout = Duration::from_secs(
                     self.timers.pick_range(1, REKEY_TIMEOUT.as_secs() as u32) as u64,
                 );
-                self.timers.handshake_retry_jitter =
-                    Timers::random_jitter();
+                self.timers.handshake_retry_jitter = Timers::random_jitter();
             }
             TimeLastDataPacketSent => {
                 self.timers.rekey_after_time = Duration::from_secs(
@@ -466,8 +465,7 @@ impl Tunn {
                     let rekey_timeout = self.timers.pick_range(1, REKEY_TIMEOUT.as_secs() as u32);
                     self.timers.new_handshake_timeout = self.timers.keepalive_timeout_max
                         + Duration::from_secs(rekey_timeout as u64);
-                    self.timers.new_handshake_jitter =
-                        Timers::random_jitter();
+                    self.timers.new_handshake_jitter = Timers::random_jitter();
                     self.timers.new_handshake_deadline = Some(
                         now + self.timers.new_handshake_timeout + self.timers.new_handshake_jitter,
                     );
@@ -642,8 +640,7 @@ impl Tunn {
                     self.timers.rekey_timeout = Duration::from_secs(
                         self.timers.pick_range(1, REKEY_TIMEOUT.as_secs() as u32) as u64,
                     );
-                    self.timers.handshake_retry_jitter =
-                        Timers::random_jitter();
+                    self.timers.handshake_retry_jitter = Timers::random_jitter();
                     handshake_initiation_required = true;
                 }
             } else {
