@@ -187,6 +187,15 @@ impl Timers {
         Some(min + (value % width) as u32)
     }
 
+    /// Sample the upstream 0..=333 ms jitter range without modulo bias.
+    fn random_jitter() -> Duration {
+        loop {
+            if let Some(milliseconds) = Self::map_range_sample(0, 333, OsRng.next_u32()) {
+                return Duration::from_millis(milliseconds as u64);
+            }
+        }
+    }
+
     /// Select a fresh retry budget when starting a new handshake (not a retry).
     /// Upstream reselects maxHandshakeAttempts on every non-retry initiation.
     fn select_new_handshake_budget(&mut self) {
@@ -433,7 +442,7 @@ impl Tunn {
                 );
                 self.timers.select_new_handshake_budget();
                 self.timers.handshake_retry_jitter =
-                    Duration::from_millis((OsRng.next_u32() % 334) as u64);
+                    Timers::random_jitter();
             }
             TimeLastDataPacketSent => {
                 self.timers.rekey_after_time = Duration::from_secs(
@@ -449,7 +458,7 @@ impl Tunn {
                     self.timers.new_handshake_timeout = self.timers.keepalive_timeout_max
                         + Duration::from_secs(rekey_timeout as u64);
                     self.timers.new_handshake_jitter =
-                        Duration::from_millis((OsRng.next_u32() % 334) as u64);
+                        Timers::random_jitter();
                     self.timers.new_handshake_deadline = Some(
                         now + self.timers.new_handshake_timeout + self.timers.new_handshake_jitter,
                     );
