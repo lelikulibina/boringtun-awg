@@ -309,3 +309,12 @@ Upstream точки сверки:
 - Векторы вычислены независимой реализацией Python `hashlib.blake2s` с фиксированными ключами/входами и соответствуют upstream Go `blake2s.New256/New128` semantics; тест ловит изменения labels, key derivation, truncation и coverage MAC2.
 - На кодовом HEAD `172446911971da2106d267c920b6fa90fd039997`: tests (264 passed, 9 ignored), `rustfmt`, `clippy`, `check_features`, integration-tests, Windows core check, interop (16/16), `all-systems-go` и Semgrep — success. Дополнительная macOS job ещё выполнялась и не блокирует merge gate.
 - Следующая проверка — deterministic XChaCha20-Poly1305 cookie-reply fixture и внешние wire datagrams с trailer bytes; текущие MAC vectors проверяют ключи/теги, но не AEAD cookie envelope.
+
+
+### Этап 9: композиция DisableCookies с преобразованиями AWG 3.1 (2026-11-02)
+
+- Добавлен peer-level regression под принудительной нагрузкой (RateLimiter limit = 0): DisableCookies проходит полный handshake без Cookie Reply при одновременном включении HeaderProtectionKey, ContentPaddingAddition и RandomTrailers.
+- Тест использует минимально допустимый для HeaderProtection 12-байтовый S-prefix; это проверяет не только bypass cookie challenge, но и ограничение формата заголовка. MAC1 остаётся обязательным в отдельном peer-level тесте.
+- На кодовом HEAD 43dbbda4bbba05b005290a855c66bbc2b2336def: tests (266 passed, 9 ignored), rustfmt, clippy, check_features, integration-tests, Windows core build, awg31-interoperability (16/16), all-systems-go и Semgrep — success.
+- Дополнительная macOS job выполняется отдельно и не блокирует обязательный gate.
+- Первый вариант regression выявил некорректную тестовую конфигурацию: 8-байтовый S-prefix несовместим с HeaderProtection, которому требуется не менее 12 байт для nonce. Тест исправлен на валидные 12 байт; итоговый CI прошёл.
