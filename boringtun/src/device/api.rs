@@ -77,6 +77,7 @@ struct AwgParams {
     h2: Option<(u32, u32)>,
     h3: Option<(u32, u32)>,
     h4: Option<(u32, u32)>,
+    disable_cookies: Option<bool>,
     seen: bool,
 }
 
@@ -157,6 +158,7 @@ impl AwgParams {
         amnezia.response_packet_junk_size = self.s2.unwrap_or(amnezia.response_packet_junk_size);
         amnezia.cookie_packet_junk_size = self.s3.unwrap_or(amnezia.cookie_packet_junk_size);
         amnezia.transport_packet_junk_size = self.s4.unwrap_or(amnezia.transport_packet_junk_size);
+        amnezia.disable_cookies = self.disable_cookies.unwrap_or(amnezia.disable_cookies);
         let amnezia = amnezia.with_pre_handshake_junk(
             self.jc.unwrap_or(cur_junk.packet_count),
             self.jmin.unwrap_or(cur_junk.packet_size_min),
@@ -373,6 +375,10 @@ fn api_get(writer: &mut BufWriter<&UnixStream>, d: &Device) -> i32 {
     // a bare value when the range is degenerate, `start-end` otherwise.
     {
         let a = &d.config.amnezia;
+        if a.disable_cookies {
+            writeln!(writer, "disable_cookies=true");
+        }
+
         for (key, val) in [
             ("jc", a.pre_handshake_junk.packet_count),
             ("jmin", a.pre_handshake_junk.packet_size_min),
@@ -563,6 +569,13 @@ fn api_set(reader: &mut BufReader<&UnixStream>, d: &mut LockReadGuard<Device>) -
                             Some(range) => awg.set_header(key, range),
                             None => return EINVAL,
                         },
+                        "disable_cookies" => match val.parse::<bool>() {
+                            Ok(value) => {
+                                awg.disable_cookies = Some(value);
+                                awg.seen = true;
+                            }
+                            Err(_) => return EINVAL,
+                        },
                         // AWG 2.0 signature packets. A responder only has to
                         // tolerate these; accept and ignore rather than failing
                         // the whole transaction on a config that carries them.
@@ -731,6 +744,32 @@ mod tests {
         // And the keys the transaction did not mention keep their old values.
         assert_eq!(merged.cookie_packet_junk_size, 1, "s3 untouched");
         assert_eq!(merged.transport_packet_junk_size, 1, "s4 untouched");
+    }
+
+    #[test]
+    fn disable_cookies_is_merged_without_changing_the_default() {
+        let current = AmneziaConfig::new(0, 0, 0, 0);
+        let params = AwgParams::default();
+        let (_, unchanged) = params
+            .merged(ObfuscationRanges::default(), &current)
+            .expect("default config remains valid");
+        assert!(!unchanged.disable_cookies);
+
+        let mut params = AwgParams::default();
+        params.disable_cookies = Some(true);
+        params.seen = true;
+        let (_, enabled) = params
+            .merged(ObfuscationRanges::default(), &current)
+            .expect("valid DisableCookies setting");
+        assert!(enabled.disable_cookies);
+
+        let mut params = AwgParams::default();
+        params.disable_cookies = Some(false);
+        params.seen = true;
+        let (_, disabled) = params
+            .merged(ObfuscationRanges::default(), &enabled)
+            .expect("DisableCookies can be switched off");
+        assert!(!disabled.disable_cookies);
     }
 
     #[test]
