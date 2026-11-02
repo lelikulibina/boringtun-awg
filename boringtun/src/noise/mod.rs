@@ -1497,6 +1497,91 @@ mod tests {
 
     #[test]
     #[cfg(feature = "mock-instant")]
+    fn rekeyed_session_survives_old_key_reject_after_time_expiry() {
+        let config = AmneziaConfig::new(0, 0, 0, 0)
+            .with_rekey_after_time(120, 120)
+            .with_rekey_timeout(2, 2)
+            .with_reject_after_time(180, 180)
+            .with_keepalive_timeout(120, 120);
+        let (mut initiator, mut responder) = create_two_tuns_with_amnezia(config);
+
+        // Establish the original session and carry authenticated traffic.
+        let init = create_handshake_init(&mut initiator);
+        let response = create_handshake_response(&mut responder, &init);
+        let keepalive = parse_handshake_resp(&mut initiator, &response);
+        parse_keepalive(&mut responder, &keepalive);
+
+        let packet = create_ipv4_udp_packet();
+        let mut network = [0u8; 2048];
+        let mut tunnel = [0u8; 2048];
+        let outbound = unwrap_network_packet(initiator.encapsulate(&packet, &mut network));
+        assert!(matches!(
+            responder.decapsulate(None, &outbound, &mut tunnel),
+            TunnResult::WriteToTunnelV4(restored, _) if restored == packet
+        ));
+
+        // Rekey at 120 seconds. Both peers temporarily retain the old and new
+        // receive keys, as WireGuard does while packets may still be in flight.
+        mock_instant::MockClock::advance(Duration::from_secs(119));
+        let rekey_init = unwrap_network_packet(initiator.update_timers(&mut network));
+        assert!(matches!(
+            Tunn::parse_incoming_packet(initiator.handshake.obf, &rekey_init),
+            Ok(Packet::HandshakeInit(_))
+        ));
+        let rekey_response = create_handshake_response(&mut responder, &rekey_init);
+        let rekey_keepalive = parse_handshake_resp(&mut initiator, &rekey_response);
+        parse_keepalive(&mut responder, &rekey_keepalive);
+
+        let outbound = unwrap_network_packet(initiator.encapsulate(&packet, &mut network));
+        assert!(matches!(
+            responder.decapsulate(None, &outbound, &mut tunnel),
+            TunnResult::WriteToTunnelV4(restored, _) if restored == packet
+        ));
+        let reply = unwrap_network_packet(responder.encapsulate(&packet, &mut network));
+        assert!(matches!(
+            initiator.decapsulate(None, &reply, &mut tunnel),
+            TunnResult::WriteToTunnelV4(restored, _) if restored == packet
+        ));
+
+        let initiator_sessions = initiator.sessions.iter().filter(|s| s.is_some()).count();
+        let responder_sessions = responder.sessions.iter().filter(|s| s.is_some()).count();
+        assert!(
+            initiator_sessions >= 2 && responder_sessions >= 2,
+            "old and rekeyed sessions should coexist before RejectAfterTime: initiator={initiator_sessions}, responder={responder_sessions}"
+        );
+
+        // At t=181s the original key is 181s old and must be retired, while
+        // the replacement key is only 61s old and must remain usable.
+        mock_instant::MockClock::advance(Duration::from_secs(61));
+        assert!(matches!(initiator.update_timers(&mut network), TunnResult::Done));
+        assert!(matches!(responder.update_timers(&mut network), TunnResult::Done));
+
+        assert_eq!(
+            initiator.sessions.iter().filter(|s| s.is_some()).count(),
+            1,
+            "initiator must retire only the expired old session"
+        );
+        assert_eq!(
+            responder.sessions.iter().filter(|s| s.is_some()).count(),
+            1,
+            "responder must retire only the expired old session"
+        );
+
+        // Traffic must continue in both directions using the surviving keys.
+        let outbound = unwrap_network_packet(initiator.encapsulate(&packet, &mut network));
+        assert!(matches!(
+            responder.decapsulate(None, &outbound, &mut tunnel),
+            TunnResult::WriteToTunnelV4(restored, _) if restored == packet
+        ));
+        let reply = unwrap_network_packet(responder.encapsulate(&packet, &mut network));
+        assert!(matches!(
+            initiator.decapsulate(None, &reply, &mut tunnel),
+            TunnResult::WriteToTunnelV4(restored, _) if restored == packet
+        ));
+    }
+
+    #[test]
+    #[cfg(feature = "mock-instant")]
     fn responder_does_not_initiate_send_side_rekey_after_rekey_after_time() {
         let config = AmneziaConfig::new(0, 0, 0, 0)
             .with_rekey_after_time(2, 2)
