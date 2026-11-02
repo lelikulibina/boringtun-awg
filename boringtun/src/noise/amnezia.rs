@@ -2590,4 +2590,60 @@ mod tests {
             }
         }
     }
+    #[test]
+    fn header_protection_round_trips_all_packet_kinds() {
+        use rand_core::OsRng;
+
+        let obf = ObfuscationRanges::default();
+        let cfg = AmneziaConfig::new(12, 12, 12, 12)
+            .with_header_protection_key([0x42; 32]);
+        cfg.validate().expect("12-byte prefixes satisfy HP requirements");
+
+        for (tag, size) in [
+            (1u32, HANDSHAKE_INIT_SZ),
+            (2u32, HANDSHAKE_RESP_SZ),
+            (3u32, COOKIE_REPLY_SZ),
+            (4u32, DATA_OVERHEAD_SZ),
+        ] {
+            let mut original = vec![0u8; size];
+            original[..4].copy_from_slice(&tag.to_le_bytes());
+            // Receiver index and counter are part of the protected transport
+            // header; give them non-zero values so the test covers those bytes.
+            if tag == 4 {
+                original[4..8].copy_from_slice(&0x1234_5678u32.to_le_bytes());
+                original[8..16].copy_from_slice(&0x0102_0304_0506_0708u64.to_le_bytes());
+            }
+
+            let mut buffer = vec![0u8; size + 12];
+            buffer[..size].copy_from_slice(&original);
+            let protected = cfg
+                .prepend_outbound(obf, &mut buffer, size, &mut OsRng)
+                .expect("outbound protection succeeds")
+                .to_vec();
+
+            assert_eq!(protected.len(), size + 12);
+            assert_ne!(&protected[12..16], &original[..4]);
+
+            let decoded = cfg
+                .decrypt_inbound(obf, &protected)
+                .expect("inbound protection recognizes the packet");
+            assert_eq!(decoded, original, "packet type {} round-trips", tag);
+        }
+    }
+
+    #[test]
+    fn header_protection_requires_all_s_prefixes_to_be_at_least_12() {
+        let cfg = AmneziaConfig::new(12, 12, 12, 11)
+            .with_header_protection_key([0x24; 32]);
+        let error = cfg.validate().expect_err("S4 is too short for the nonce");
+        assert!(error.contains("S4"));
+        assert!(error.contains("12"));
+    }
+
+    #[test]
+    fn header_protection_is_disabled_by_an_all_zero_key() {
+        let cfg = AmneziaConfig::new(0, 0, 0, 0);
+        assert!(!cfg.header_protection_enabled());
+    }
+
 }
