@@ -275,3 +275,11 @@ Upstream точки сверки:
 - Добавлен boundary test для совокупной inclusive ширины H1-H3: конфигурация ровно на лимите collision guard принимается, превышение на одно значение отклоняется. В расчёте учитываются singleton H2/H3, а не только диапазон H1.
 - На HEAD `3660a39e974c74efd70c6efb9ba9a8c5b6b06bc9` прошли `tests`, `integration-tests`, `clippy`, `check_features`, `rustfmt`, `awg31-interoperability` (16/16) и Semgrep. Windows core build прошёл на предыдущем HEAD `981ee08becc6b0fda5349812a49297623525445a`; macOS job ожидал runner. Для нового runner закреплён `macos-15-intel`; CI HEAD `e85c16400fc554ee8a6cf333eb3ed19823df7cfe` выполняется.
 - Эти тесты подтверждают арифметику размеров и защиту от H1-H3 false-positive роста, но не заменяют полное дифференциальное сравнение pcap/wire datagrams с Go для всех вариантов RandomTrailers.
+
+
+### Этап 6: атомарное применение UAPI и платформенный gate (2026-11-02)
+
+- Добавлен combined UAPI regression: одна транзакция применяет H1-H4, DisableCookies, RandomTrailers, HeaderProtectionKey, ContentPaddingAddition и все пять timer ranges; затем partial update меняет только keepalive_timeout и сохраняет все остальные параметры.
+- Обязательная Windows-сборка protocol core (`cargo check -p boringtun --no-default-features`) прошла.
+- Linux rustfmt, clippy, check_features, tests, integration-tests, 16/16 upstream interop и all-systems-go прошли на кодовом HEAD `396c5f9dd696c6ebc1d2ae03b2fce8d811573c21`; Semgrep прошёл на HEAD `ee6722106002ed4b649cba3a958843c1eecda18d`.
+- Дополнительная macOS device/CLI job сохранена, но runner assignment остаётся в очереди и не блокирует обязательный gate. macOS build пока не считается проверенным.
