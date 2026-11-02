@@ -1845,7 +1845,8 @@ mod tests {
             TunnResult::WriteToNetwork(_)
         ));
         assert_eq!(
-            initiator.timers.new_handshake_deadline, first_deadline,
+            initiator.timers.new_handshake_deadline,
+            Some(first_deadline),
             "subsequent data sends must not postpone the active inactivity timer"
         );
 
