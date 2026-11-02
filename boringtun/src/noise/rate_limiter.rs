@@ -275,6 +275,30 @@ mod tests {
     }
 
     #[test]
+    fn disable_cookies_still_rejects_invalid_response_mac1() {
+        let public_key = crate::x25519::PublicKey::from([7u8; 32]);
+        let limiter = RateLimiter::new(&public_key, 0);
+        let mut packet = response_with_valid_mac1(&limiter);
+        let mac_offset = HANDSHAKE_RESPONSE_SZ - 32;
+        packet[mac_offset] ^= 0x80;
+        let mut dst = [0u8; 128];
+
+        let result = limiter.verify_packet_with_cookie_policy(
+            ObfuscationRanges::default(),
+            &mut OsRng,
+            None,
+            &packet,
+            &mut dst,
+            true,
+        );
+
+        assert!(matches!(
+            result,
+            Err(TunnResult::Err(WireGuardError::InvalidMac))
+        ));
+    }
+
+    #[test]
     fn disable_cookies_bypasses_under_load_cookie_challenge() {
         let public_key = crate::x25519::PublicKey::from([7u8; 32]);
         let limiter = RateLimiter::new(&public_key, 0);
