@@ -3108,6 +3108,48 @@ mod tests {
             "a datagram encrypted by the reference AWG construction must decode"
         );
 
+        for (tag, size, expected_prefix) in [
+            (
+                HANDSHAKE_RESP,
+                HANDSHAKE_RESP_SZ,
+                [
+                    0x34, 0x3e, 0xe1, 0x64, 0x3b, 0x55, 0x38, 0xdf, 0xc8, 0xed, 0x8e, 0xe4,
+                    0xc6, 0x72, 0xbd, 0x58,
+                ],
+            ),
+            (
+                COOKIE_REPLY,
+                COOKIE_REPLY_SZ,
+                [
+                    0x35, 0x3e, 0xe1, 0x64, 0x3b, 0x55, 0x38, 0xdf, 0xc8, 0xed, 0x8e, 0xe4,
+                    0xc6, 0x72, 0xbd, 0x58,
+                ],
+            ),
+        ] {
+            let mut message = vec![0u8; size];
+            message[..4].copy_from_slice(&tag.to_le_bytes());
+            for (i, byte) in message[4..].iter_mut().enumerate() {
+                *byte = (i as u8).wrapping_mul(7).wrapping_add(3);
+            }
+
+            let mut ciphertext = message.clone();
+            let mut cipher = chacha20::ChaCha20::new_from_slices(&key, &nonce).unwrap();
+            cipher.apply_keystream(&mut ciphertext);
+            assert_eq!(
+                &ciphertext[..16],
+                &expected_prefix,
+                "upstream ChaCha20 header-protection vector for message type {tag}"
+            );
+
+            let mut datagram = nonce.to_vec();
+            datagram.extend_from_slice(&ciphertext);
+            assert_eq!(
+                cfg.decrypt_inbound(obf, &datagram).as_deref(),
+                Some(message.as_slice()),
+                "upstream-protected message type {tag} must decode"
+            );
+        }
+
         let mut transport = vec![0u8; DATA_OVERHEAD_SZ + 32];
         transport[..4].copy_from_slice(&DATA.to_le_bytes());
         transport[4..8].copy_from_slice(&0x1234_5678u32.to_le_bytes());
