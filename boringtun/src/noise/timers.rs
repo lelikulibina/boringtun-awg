@@ -231,6 +231,24 @@ mod tests {
     }
 
     #[test]
+    fn timer_range_validation_rejects_reversed_bounds_for_every_timer() {
+        let invalid = [
+            AmneziaConfig::new(0, 0, 0, 0).with_rekey_after_time(2, 1),
+            AmneziaConfig::new(0, 0, 0, 0).with_rekey_timeout(2, 1),
+            AmneziaConfig::new(0, 0, 0, 0).with_reject_after_time(2, 1),
+            AmneziaConfig::new(0, 0, 0, 0).with_keepalive_timeout(2, 1),
+            AmneziaConfig::new(0, 0, 0, 0).with_max_handshake_attempts(2, 1),
+        ];
+
+        for config in invalid {
+            assert!(
+                config.validate_timer_ranges().is_err(),
+                "reversed timer bounds must be rejected"
+            );
+        }
+    }
+
+    #[test]
     fn timer_range_selection_handles_the_full_u32_domain_without_overflow() {
         let config = AmneziaConfig::new(0, 0, 0, 0)
             .with_rekey_timeout(1, u32::MAX);
