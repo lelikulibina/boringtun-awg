@@ -1426,6 +1426,68 @@ mod tests {
     }
 
     #[test]
+    fn disable_cookies_accepts_authenticated_peer_handshake_under_forced_load() {
+        let initiator_secret = x25519::StaticSecret::random_from_rng(OsRng);
+        let initiator_public = x25519::PublicKey::from(&initiator_secret);
+        let responder_secret = x25519::StaticSecret::random_from_rng(OsRng);
+        let responder_public = x25519::PublicKey::from(&responder_secret);
+        let rate_limiter = Arc::new(RateLimiter::new(&responder_public, 0));
+        let config = AmneziaConfig::new(0, 0, 0, 0).with_disable_cookies(true);
+
+        let mut initiator = Tunn::new_with_amnezia(
+            initiator_secret,
+            responder_public,
+            None,
+            None,
+            1,
+            None,
+            0, 0, 0, 0, 0, 0, 0, 0,
+            config.clone(),
+        )
+        .unwrap();
+        let mut responder = Tunn::new_with_amnezia(
+            responder_secret,
+            initiator_public,
+            None,
+            None,
+            2,
+            Some(rate_limiter.clone()),
+            0, 0, 0, 0, 0, 0, 0, 0,
+            config,
+        )
+        .unwrap();
+
+        let init = create_handshake_init(&mut initiator);
+        let mut invalid_mac1 = init.clone();
+        let mac1_offset = invalid_mac1.len() - 32;
+        invalid_mac1[mac1_offset] ^= 0x80;
+        let mut network = [0u8; 2048];
+
+        assert!(matches!(
+            responder.decapsulate(None, &invalid_mac1, &mut network),
+            TunnResult::Err(WireGuardError::InvalidMac)
+        ));
+
+        let response = match responder.decapsulate(None, &init, &mut network) {
+            TunnResult::WriteToNetwork(packet) => packet.to_vec(),
+            other => panic!("DisableCookies should allow a valid MAC1 under load, got {:?}", other),
+        };
+        assert_eq!(
+            rate_limiter.count.load(portable_atomic::Ordering::SeqCst),
+            0,
+            "DisableCookies must bypass under-load accounting"
+        );
+
+        let keepalive = parse_handshake_resp(&mut initiator, &response);
+        parse_keepalive(&mut responder, &keepalive);
+        assert!(
+            initiator.sessions.iter().any(Option::is_some)
+                && responder.sessions.iter().any(Option::is_some),
+            "both peers should establish a session without a cookie exchange"
+        );
+    }
+
+    #[test]
     fn completed_handshake_resets_attempt_count_and_reselects_configured_budget() {
         let config = AmneziaConfig::new(0, 0, 0, 0).with_max_handshake_attempts(7, 7);
         let (mut initiator, mut responder) = create_two_tuns_with_amnezia(config);
