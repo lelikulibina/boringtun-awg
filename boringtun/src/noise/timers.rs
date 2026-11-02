@@ -155,13 +155,15 @@ impl Timers {
         if min >= max {
             return min;
         }
-        let width = max - min + 1;
-        let zone = u32::MAX - (u32::MAX % width);
+        // Use u64 for the inclusive width so the full 0..=u32::MAX
+        // range is representable without overflow.
+        let width = max as u64 - min as u64 + 1;
+        let zone = (1u64 << 32) / width * width;
         let mut rng = OsRng;
         loop {
-            let value = rng.next_u32();
+            let value = rng.next_u32() as u64;
             if value < zone {
-                return min + value % width;
+                return min + (value % width) as u32;
             }
         }
     }
