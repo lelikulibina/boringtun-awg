@@ -196,8 +196,8 @@ impl Timers {
         }
     }
 
-    /// Select a fresh retry budget when starting a new handshake (not a retry).
-    /// Upstream reselects maxHandshakeAttempts on every non-retry initiation.
+    /// Select a fresh retry budget at peer start and after a successful handshake.
+    /// Upstream keeps the selected budget unchanged throughout a handshake attempt cycle.
     fn select_new_handshake_budget(&mut self) {
         self.handshake_attempts = 0;
         self.max_handshake_attempts = self.pick_range(4, 18);
@@ -286,7 +286,7 @@ mod tests {
     }
 
     #[test]
-    fn fresh_handshake_reselects_retry_budget_from_current_timer_range() {
+    fn retry_budget_selection_uses_the_current_timer_range() {
         let initial = AmneziaConfig::new(0, 0, 0, 0).with_max_handshake_attempts(2, 2);
         let replacement = AmneziaConfig::new(0, 0, 0, 0).with_max_handshake_attempts(7, 7);
         let mut timers = Timers::new(None, false, &initial);
@@ -450,7 +450,6 @@ impl Tunn {
                 self.timers.rekey_timeout = Duration::from_secs(
                     self.timers.pick_range(1, REKEY_TIMEOUT.as_secs() as u32) as u64,
                 );
-                self.timers.select_new_handshake_budget();
                 self.timers.handshake_retry_jitter =
                     Timers::random_jitter();
             }
