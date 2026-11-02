@@ -504,6 +504,11 @@ def run_profile(
         initial_handshake_time = wait_handshake(server_iface, ns_client, SERVER_TUN)
         if name == "lost rekey initiation":
             initial_client_time = last_handshake_time(client_iface)
+            deadline = time.monotonic() + 6
+            while initial_client_time == 0 and time.monotonic() < deadline:
+                ns(ns_client, "ping", "-c1", "-W1", SERVER_TUN, check=False)
+                initial_client_time = last_handshake_time(client_iface)
+                time.sleep(0.1)
             if initial_client_time == 0:
                 raise RuntimeError("client did not record the initial handshake")
             wait_rekey_after_initiation_loss(
