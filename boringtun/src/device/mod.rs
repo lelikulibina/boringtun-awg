@@ -615,7 +615,6 @@ impl Device {
             self.config.amnezia.clone(),
         )
         .map_err(Error::PeerSetup)?;
-        tunn.set_mtu(self.mtu.load(Ordering::Relaxed));
 
         let peer = Peer::new(tunn, next_index, endpoint, preshared_key);
 

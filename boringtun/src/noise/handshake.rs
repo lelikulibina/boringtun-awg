@@ -475,8 +475,8 @@ impl ObfuscationRanges {
     pub(crate) fn random_trailer_collision_width(&self) -> u64 {
         [self.h1_init, self.h2_resp, self.h3_cookie]
             .iter()
-        .map(|range| u64::from(range.end) - u64::from(range.start) + 1)
-        .sum()
+            .map(|range| u64::from(range.end) - u64::from(range.start) + 1)
+            .sum()
     }
 
     pub fn matches_h1(&self, v: u32) -> bool {

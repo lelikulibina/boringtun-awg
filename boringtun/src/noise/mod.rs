@@ -88,8 +88,6 @@ pub struct Tunn {
     tx_bytes: usize,
     rx_bytes: usize,
     amnezia: AmneziaConfig,
-    /// Tunnel MTU used to cap ContentPaddingAddition.
-    mtu: usize,
     /// Largest authenticated transport datagram observed for this peer.
     udp_window: usize,
     pending_amnezia_junk: Option<PendingAmneziaJunk>,
@@ -389,7 +387,6 @@ impl Tunn {
             tx_bytes: Default::default(),
             rx_bytes: Default::default(),
             amnezia,
-            mtu: 0,
             udp_window: amnezia::DEFAULT_UDP_WINDOW,
             pending_amnezia_junk: None,
 
@@ -446,12 +443,6 @@ impl Tunn {
     /// unaffected and re-handshaking would be gratuitous.
     pub fn set_persistent_keepalive(&mut self, keepalive: Option<u16>) {
         self.timers.set_persistent_keepalive(keepalive);
-    }
-
-    /// Set the tunnel MTU used to cap AmneziaWG ContentPaddingAddition.
-    /// A value of zero disables the MTU-bounded addition for standalone tunnels.
-    pub fn set_mtu(&mut self, mtu: usize) {
-        self.mtu = mtu;
     }
 
     /// Reset the peer's learned UDP datagram window after endpoint roaming.
@@ -520,14 +511,12 @@ impl Tunn {
             // ContentPaddingAddition is applied to the plaintext IP packet before
             // AEAD encryption. Its size is capped by the interface MTU; empty
             // keepalives remain empty and retain their ordinary wire size.
-            let mtu = if self.mtu == 0 { usize::MAX } else { self.mtu };
             let wire_packet_size =
                 src.len() + DATA_OVERHEAD_SZ + self.amnezia.transport_packet_junk_size as usize;
             self.udp_window = self.udp_window.max(wire_packet_size);
             let content_padding = self.amnezia.transport_padding_size(
                 src.len(),
                 wire_packet_size,
-                mtu,
                 self.udp_window,
                 &mut self.handshake.rng,
             );
@@ -2219,6 +2208,32 @@ mod tests {
     }
 
     #[test]
+    fn header_protection_and_random_trailers_interoperate_end_to_end() {
+        let config = AmneziaConfig::new(12, 12, 12, 12)
+            .with_header_protection_key([0x6b; 32])
+            .with_random_trailers(true);
+        let (mut initiator, mut responder) = create_two_tuns_with_amnezia(config);
+
+        let initiation = create_handshake_init(&mut initiator);
+        let response = create_handshake_response(&mut responder, &initiation);
+        let keepalive = parse_handshake_resp(&mut initiator, &response);
+        parse_keepalive(&mut responder, &keepalive);
+
+        let packet = create_ipv4_udp_packet();
+        let mut network_buffer = vec![0u8; 4096];
+        let outbound = match initiator.encapsulate(&packet, &mut network_buffer) {
+            TunnResult::WriteToNetwork(datagram) => datagram.to_vec(),
+            other => panic!("expected protected transport datagram, got {:?}", other),
+        };
+
+        let mut tunnel_buffer = vec![0u8; 4096];
+        match responder.decapsulate(None, &outbound, &mut tunnel_buffer) {
+            TunnResult::WriteToTunnelV4(restored, _) => assert_eq!(restored, packet),
+            other => panic!("expected restored IPv4 packet, got {:?}", other),
+        }
+    }
+
+    #[test]
     fn obf_ranges_near_u32_max_random_within_bounds() {
         let h1_min = u32::MAX - 10;
         let h1_max = u32::MAX;
@@ -2261,13 +2276,15 @@ mod tests {
         assert!(res.is_err());
     }
     #[test]
-    fn content_padding_addition_is_mtu_bounded_and_removed_after_decryption_ipv6() {
+    fn content_padding_addition_is_udp_window_bounded_and_removed_after_decryption_ipv6() {
         let cfg = AmneziaConfig::new(0, 0, 0, 0).with_content_padding_addition(12, 12);
         let (mut sender, mut receiver) = create_two_tuns_with_amnezia(cfg);
-        let packet = create_ipv6_udp_packet();
-        let mtu = packet.len() + 3;
-        sender.set_mtu(mtu);
-        receiver.set_mtu(mtu);
+        let mut packet = create_ipv6_udp_packet();
+        let target_size = 500 - DATA_OVERHEAD_SZ - 5;
+        packet.resize(target_size, 0);
+        let payload_len = (target_size - 40) as u16;
+        packet[4..6].copy_from_slice(&payload_len.to_be_bytes());
+        packet[44..46].copy_from_slice(&payload_len.to_be_bytes());
 
         let init = create_handshake_init(&mut sender);
         let response = create_handshake_response(&mut receiver, &init);
@@ -2282,7 +2299,7 @@ mod tests {
         assert_eq!(
             outbound.len(),
             DATA_OVERHEAD_SZ + packet.len() + 3,
-            "IPv6 content addition must be clamped to the three bytes left before MTU"
+            "IPv6 content addition must be clamped to the five bytes left in the UDP window"
         );
 
         let mut tunnel_buffer = vec![0u8; 4096];
@@ -2298,8 +2315,6 @@ mod tests {
     fn random_trailers_learn_udp_window_from_authenticated_inbound_data() {
         let cfg = AmneziaConfig::new(0, 0, 0, 600).with_random_trailers(true);
         let (mut sender, mut receiver) = create_two_tuns_with_amnezia(cfg);
-        sender.set_mtu(1500);
-        receiver.set_mtu(1500);
 
         let init = create_handshake_init(&mut sender);
         let response = create_handshake_response(&mut receiver, &init);
@@ -2354,8 +2369,6 @@ mod tests {
         let cfg = AmneziaConfig::new(0, 0, 0, 0).with_random_trailers(true);
         let (mut sender, mut receiver) = create_two_tuns_with_amnezia(cfg);
         let packet = create_ipv4_udp_packet();
-        sender.set_mtu(1500);
-        receiver.set_mtu(1500);
 
         let init = create_handshake_init(&mut sender);
         let response = create_handshake_response(&mut receiver, &init);
@@ -2389,13 +2402,15 @@ mod tests {
     }
 
     #[test]
-    fn content_padding_addition_is_mtu_bounded_and_removed_after_decryption() {
+    fn content_padding_addition_is_udp_window_bounded_and_removed_after_decryption() {
         let cfg = AmneziaConfig::new(0, 0, 0, 0).with_content_padding_addition(8, 32);
         let (mut sender, mut receiver) = create_two_tuns_with_amnezia(cfg);
-        let packet = create_ipv4_udp_packet();
-        let mtu = packet.len() + 5;
-        sender.set_mtu(mtu);
-        receiver.set_mtu(mtu);
+        let mut packet = create_ipv4_udp_packet();
+        let target_size = 500 - DATA_OVERHEAD_SZ - 5;
+        packet.resize(target_size, 0);
+        packet[2..4].copy_from_slice(&(target_size as u16).to_be_bytes());
+        let udp_len = (target_size - 20) as u16;
+        packet[24..26].copy_from_slice(&udp_len.to_be_bytes());
 
         let init = create_handshake_init(&mut sender);
         let response = create_handshake_response(&mut receiver, &init);
@@ -2415,7 +2430,7 @@ mod tests {
         assert_eq!(
             outbound.len(),
             DATA_OVERHEAD_SZ + packet.len() + 5,
-            "random addition must be clamped to the five bytes left before MTU"
+            "random addition must be clamped to the five bytes left in the UDP window"
         );
 
         let mut tunnel_buffer = vec![0u8; 4096];

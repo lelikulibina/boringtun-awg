@@ -48,13 +48,13 @@
 ### Этап 3. ContentPaddingAddition
 - [x] Добавить inclusive range (одно значение или min-max) в `AmneziaConfig` и UAPI set/get.
 - [x] Добавлять случайное число нулевых байтов к transport plaintext до AEAD encryption.
-- [x] Ограничивать добавление свободным местом до tunnel MTU; пустые keepalive не дополнять.
+- [x] Ограничивать ContentPaddingAddition остатком peer UDP window (по умолчанию 500 байт); пустые keepalive не дополнять.
 - [x] Приёмная сторона обрезает расшифрованный пакет по IPv4 Total Length / IPv6 Payload Length через существующий validator.
 - [ ] Добавить отдельные boundary и межоперационные тесты. IPv4 и IPv6 MTU-clamp/receive-trimming тесты добавлены; ожидают CI на новом коммите.
 
 **Готово, когда:** пакеты не превышают MTU/буферные лимиты, payload восстанавливается без изменений, значения диапазона соблюдаются.
 
-**Реализация в работе:** range/config/UAPI, MTU clamp и обработка до AEAD добавлены в рабочую ветку. При отсутствии параметра прежнее поведение BoringTun сохраняется. Тесты проверяют MTU clamp и восстановление исходных IPv4/IPv6 пакетов; IPv4 также проверяет, что keepalive не дополняется. CI на коммите `c991679f90ec489ff46465971a84e8b429e2c7e3` полностью зелёный. IPv6 тест ожидает CI на следующем коммите.
+**Реализация в работе:** range/config/UAPI и обработка до AEAD добавлены в рабочую ветку. После повторной сверки `device/send.go` upstream граница ContentPaddingAddition исправлена: добавление ограничивается остатком peer UDP window, а не локальным TUN MTU. IPv4/IPv6 тесты формируют датаграммы, оставляющие ровно пять байт в стандартном окне 500 байт, и проверяют восстановление исходного IP-пакета. При отсутствии параметра прежнее поведение BoringTun сохраняется.
 
 ### Этап 4. Рандомизация протокольных таймеров
 - [x] Сопоставить RekeyAfterTime, RekeyTimeout, RejectAfterTime, KeepaliveTimeout и MaxHandshakeAttempts с polling state machine BoringTun; документировать архитектурные отличия.
@@ -69,11 +69,11 @@
 
 ### Этап 5. RandomTrailers
 - [x] Сверить upstream алгоритм: handshake/cookie получают случайный незашифрованный хвост; transport получает нулевое дополнение внутри AEAD; предел — peer UDP window (по умолчанию 500 байт).
-- [x] Реализовать опциональный флаг random_trailers (по умолчанию выключен), handshake/cookie trailer и transport padding с ограничением по MTU/UDP window.
+- [x] Реализовать опциональный флаг random_trailers (по умолчанию выключен), handshake/cookie trailer и transport padding с ограничением по peer UDP window и максимальному размеру UDP-датаграммы.
 - [x] Реализовать inbound распознавание переменной длины с удалением handshake/cookie trailer до MAC/Noise parsing; для transport лишние нули удаляются по IPv4 Total Length / IPv6 Payload Length после AEAD.
 - [x] Сохранить upstream precedence: ContentPaddingAddition заменяет RandomTrailers только для transport; handshake/cookie trailers остаются независимыми.
 - [x] Ограничить cookie trailer остатком размера исходного запроса, чтобы RandomTrailers не создавал amplification.
-- [x] Добавить unit/tunnel тесты на handshake/cookie framing, HP + trailer, transport AEAD padding, MTU bounds и CPA precedence.
+- [x] Добавить unit/tunnel тесты на handshake/cookie framing, совместную работу HP + trailer, transport AEAD padding, UDP-window bounds и CPA precedence.
 - [ ] Differentially verify wire lengths, random range boundaries, H1-H4 classification and cookie reply behaviour against upstream Go peer; отдельно закрыть regressions из upstream issues #185/#186.
 
 **Готово, когда:** обе стороны принимают пакеты с trailer, корректно выделяют исходное сообщение и не возникает потерь на допустимых комбинациях диапазонов. Этап не считается завершённым до differential interop.
@@ -108,7 +108,7 @@
 | DNS/SIP/STUN/QUIC imitation | Реализовано как существующее расширение | Сохранить |
 | DisableCookies | Реализуется в PR #8 | Этап 1 |
 | HeaderProtectionKey | Не реализовано | Этап 2 |
-| ContentPaddingAddition | Реализовано в текущем PR: config/UAPI, MTU-bounded transport padding и receive trimming; IPv4/IPv6 MTU-clamp/receive-trimming tests added; IPv4 keepalive test; Linux CI passed on prior commit | Этап 3 |
+| ContentPaddingAddition | Реализовано в текущем PR: config/UAPI, peer-UDP-window-bounded transport padding и receive trimming; IPv4/IPv6 boundary/receive-trimming tests; IPv4 keepalive test | Этап 3 |
 | Randomized timers | Реализованы диапазоны UAPI/config, случайный выбор порогов, jitter и retry budget; differential interop ещё не выполнен | Этап 4 |
 | RandomTrailers | Реализованы handshake/cookie trailers и transport AEAD padding, UAPI flag off by default; differential interop ещё не выполнен | Этап 5 |
 | RandomTrailers | Не реализовано | Этап 5 |

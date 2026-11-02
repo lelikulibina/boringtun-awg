@@ -480,16 +480,19 @@ impl AmneziaConfig {
         self
     }
 
-    /// Select a random content-padding size, bounded by the remaining tunnel MTU.
-    /// Empty keepalives and packets larger than the configured MTU are never padded.
+    /// Select a random ContentPaddingAddition value and clamp it to the
+    /// remaining peer UDP window, matching upstream's randomPaddingAddition.
+    /// Empty keepalives and packets that already fill the window are not padded.
     pub(crate) fn content_padding_size(
         &self,
         packet_size: usize,
-        mtu: usize,
+        wire_packet_size: usize,
+        udp_window: usize,
         rng: &mut impl RngCore,
     ) -> usize {
         let (min, max) = self.content_padding_addition;
-        if (min == 0 && max == 0) || min > max || packet_size == 0 || mtu <= packet_size {
+        let available = udp_window.saturating_sub(wire_packet_size);
+        if (min == 0 && max == 0) || min > max || packet_size == 0 || available == 0 {
             return 0;
         }
         let width = max as u32 - min as u32 + 1;
@@ -501,7 +504,7 @@ impl AmneziaConfig {
             }
         };
         let selected = min as usize + (sample % width) as usize;
-        selected.min(mtu - packet_size)
+        selected.min(available)
     }
 
     pub fn with_pre_handshake_junk(
@@ -1151,7 +1154,7 @@ impl AmneziaConfig {
         Ok(&mut buffer[..new_size])
     }
 
-    /// Random trailer length follows upstream's exclusive upper bound:
+    /// Random trailer length follows upstream's exclusive UDP-window upper bound:
     /// fastrandn(udp_window - packet_size).
     pub(crate) fn random_trailer_len(
         &self,
@@ -1178,20 +1181,21 @@ impl AmneziaConfig {
         &self,
         ip_packet_size: usize,
         wire_packet_size: usize,
-        mtu: usize,
         udp_window: usize,
         rng: &mut impl RngCore,
     ) -> usize {
         if self.content_padding_addition != (0, 0) {
-            return self.content_padding_size(ip_packet_size, mtu, rng);
+            return self.content_padding_size(
+                ip_packet_size,
+                wire_packet_size,
+                udp_window,
+                rng,
+            );
         }
-        let max_packet_size = mtu
-            .saturating_add(DATA_OVERHEAD_SZ)
-            .min(MAX_SENDABLE_DATAGRAM);
         self.random_trailer_len(
             wire_packet_size,
-            udp_window.min(max_packet_size),
-            max_packet_size,
+            udp_window,
+            MAX_SENDABLE_DATAGRAM,
             rng,
         )
     }
@@ -1949,12 +1953,11 @@ mod tests {
         let padding = random.transport_padding_size(
             packet_size - DATA_OVERHEAD_SZ,
             packet_size,
-            1500,
             500,
             &mut rng,
         );
         assert!(padding < 500 - packet_size);
-        assert!(packet_size + padding <= 1500 + DATA_OVERHEAD_SZ);
+        assert!(packet_size + padding <= 500);
 
         let explicit = AmneziaConfig::new(0, 0, 0, 0)
             .with_random_trailers(true)
@@ -1963,7 +1966,6 @@ mod tests {
             explicit.transport_padding_size(
                 packet_size - DATA_OVERHEAD_SZ,
                 packet_size,
-                1500,
                 500,
                 &mut rng,
             ),
