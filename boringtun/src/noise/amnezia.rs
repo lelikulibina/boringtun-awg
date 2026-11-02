@@ -21,6 +21,8 @@ const DEFAULT_JUNK_PACKET_SIZE_MIN: u16 = 50;
 const DEFAULT_JUNK_PACKET_SIZE_MAX: u16 = 1000;
 const MAX_JUNK_PACKET_COUNT: u16 = 128;
 pub(crate) const DEFAULT_UDP_WINDOW: usize = 500;
+/// Keep RandomTrailers-induced H1-H3 false positives below 0.01% per direction.
+const MAX_RANDOM_TRAILER_COLLISION_WIDTH: u64 = (u32::MAX as u64 + 1) / 10_000;
 const MAX_JUNK_PACKET_SIZE: u16 = 1280;
 const MAX_JUNK_PACKET_DELAY_MS: u16 = 200;
 /// Largest datagram that can actually be sent: the IPv4 UDP payload limit,
@@ -541,6 +543,26 @@ impl AmneziaConfig {
         ] {
             if min > max {
                 return Err(format!("{} minimum {} exceeds maximum {}", name, min, max));
+            }
+        }
+        Ok(())
+    }
+
+    /// RandomTrailers makes handshake lengths variable, so a transport
+    /// datagram can also satisfy a handshake length check. Bound the chance
+    /// that random bytes at S1-S3 fall into H1-H3 to 0.01% per direction.
+    /// H4 is deliberately excluded: it is checked only after handshake types.
+    pub(crate) fn validate_random_trailers(
+        &self,
+        obf: ObfuscationRanges,
+    ) -> Result<(), String> {
+        if self.random_trailers {
+            let width = obf.random_trailer_collision_width();
+            if width > MAX_RANDOM_TRAILER_COLLISION_WIDTH {
+                return Err(format!(
+                    "RandomTrailers requires the combined inclusive H1-H3 range width to be at most {} (current: {}); wider ranges can silently misclassify transport packets",
+                    MAX_RANDOM_TRAILER_COLLISION_WIDTH, width
+                ));
             }
         }
         Ok(())
@@ -1789,6 +1811,33 @@ mod tests {
         cfg.prepend_outbound(obf, &mut buffer, packet_size, &mut rng)
             .unwrap()
             .to_vec()
+    }
+
+    #[test]
+    fn random_trailers_rejects_wide_h1_h3_ranges() {
+        let cfg = AmneziaConfig::new(0, 0, 0, 0).with_random_trailers(true);
+        let wide = ObfuscationRanges::new(
+            100_000, 300_000,
+            500_000, 800_000,
+            1_000_000, 1_300_000,
+            1_500_000, 1_500_001,
+        )
+        .unwrap();
+        let error = cfg
+            .validate_random_trailers(wide)
+            .expect_err("wide handshake ranges would silently eat transport packets");
+        assert!(error.contains("H1-H3"));
+        assert!(error.contains("RandomTrailers"));
+
+        let narrow = ObfuscationRanges::new(
+            100_000, 100_100,
+            500_000, 500_100,
+            1_000_000, 1_000_100,
+            1_500_000, 1_500_100,
+        )
+        .unwrap();
+        cfg.validate_random_trailers(narrow)
+            .expect("narrow H1-H3 ranges keep false positives below the bound");
     }
 
     #[test]
