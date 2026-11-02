@@ -1550,7 +1550,10 @@ mod tests {
         let first_init = create_handshake_init(&mut initiator);
         let cookie = match responder.decapsulate(None, &first_init, &mut network) {
             TunnResult::WriteToNetwork(packet) => packet.to_vec(),
-            other => panic!("expected protected cookie reply under load, got {:?}", other),
+            other => panic!(
+                "expected protected cookie reply under load, got {:?}",
+                other
+            ),
         };
         assert!(cookie.len() > 12 + COOKIE_REPLY_SZ - 1);
         assert!(matches!(
