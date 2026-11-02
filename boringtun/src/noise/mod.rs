@@ -514,9 +514,8 @@ impl Tunn {
             // AEAD encryption. Its size is capped by the interface MTU; empty
             // keepalives remain empty and retain their ordinary wire size.
             let mtu = if self.mtu == 0 { usize::MAX } else { self.mtu };
-            let wire_packet_size = src.len()
-                + DATA_OVERHEAD_SZ
-                + self.amnezia.transport_packet_junk_size as usize;
+            let wire_packet_size =
+                src.len() + DATA_OVERHEAD_SZ + self.amnezia.transport_packet_junk_size as usize;
             self.udp_window = self.udp_window.max(wire_packet_size);
             let content_padding = self.amnezia.transport_padding_size(
                 src.len(),
@@ -2231,7 +2230,10 @@ mod tests {
                 TunnResult::WriteToNetwork(datagram) => datagram.to_vec(),
                 other => panic!("expected transport datagram, got {:?}", other),
             };
-            assert!(outbound.len() <= 500, "random padding must respect the learned UDP window");
+            assert!(
+                outbound.len() <= 500,
+                "random padding must respect the learned UDP window"
+            );
             assert!(outbound.len() >= DATA_OVERHEAD_SZ + packet.len());
             saw_padding |= outbound.len() > DATA_OVERHEAD_SZ + packet.len();
 
@@ -2241,7 +2243,10 @@ mod tests {
                 other => panic!("expected restored IPv4 packet, got {:?}", other),
             }
         }
-        assert!(saw_padding, "RandomTrailers should add padding to at least one packet");
+        assert!(
+            saw_padding,
+            "RandomTrailers should add padding to at least one packet"
+        );
     }
 
     #[test]

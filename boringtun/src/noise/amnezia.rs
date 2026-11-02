@@ -552,10 +552,7 @@ impl AmneziaConfig {
     /// datagram can also satisfy a handshake length check. Bound the chance
     /// that random bytes at S1-S3 fall into H1-H3 to 0.01% per direction.
     /// H4 is deliberately excluded: it is checked only after handshake types.
-    pub(crate) fn validate_random_trailers(
-        &self,
-        obf: ObfuscationRanges,
-    ) -> Result<(), String> {
+    pub(crate) fn validate_random_trailers(&self, obf: ObfuscationRanges) -> Result<(), String> {
         if self.random_trailers {
             let width = obf.random_trailer_collision_width();
             if width > MAX_RANDOM_TRAILER_COLLISION_WIDTH {
@@ -777,9 +774,7 @@ impl AmneziaConfig {
     ) -> bool {
         let junk_size = self.inbound_junk_size(kind);
         let minimum_size = junk_size.saturating_add(base_size);
-        if packet.len() < minimum_size
-            || (!self.random_trailers && packet.len() != minimum_size)
-        {
+        if packet.len() < minimum_size || (!self.random_trailers && packet.len() != minimum_size) {
             return false;
         }
         Self::read_tag(packet, junk_size)
@@ -1817,10 +1812,14 @@ mod tests {
     fn random_trailers_rejects_wide_h1_h3_ranges() {
         let cfg = AmneziaConfig::new(0, 0, 0, 0).with_random_trailers(true);
         let wide = ObfuscationRanges::new(
-            100_000, 300_000,
-            500_000, 800_000,
-            1_000_000, 1_300_000,
-            1_500_000, 1_500_001,
+            100_000,
+            300_000,
+            500_000,
+            800_000,
+            1_000_000,
+            1_300_000,
+            1_500_000,
+            1_500_001,
         )
         .unwrap();
         let error = cfg
@@ -1830,10 +1829,14 @@ mod tests {
         assert!(error.contains("RandomTrailers"));
 
         let narrow = ObfuscationRanges::new(
-            100_000, 100_100,
-            500_000, 500_100,
-            1_000_000, 1_000_100,
-            1_500_000, 1_500_100,
+            100_000,
+            100_100,
+            500_000,
+            500_100,
+            1_000_000,
+            1_000_100,
+            1_500_000,
+            1_500_100,
         )
         .unwrap();
         cfg.validate_random_trailers(narrow)
@@ -1898,7 +1901,13 @@ mod tests {
         let mut rng = ChaCha8Rng::seed_from_u64(0xBEEF);
         let random = AmneziaConfig::new(0, 0, 0, 0).with_random_trailers(true);
         let packet_size = 80;
-        let padding = random.transport_padding_size(packet_size - DATA_OVERHEAD_SZ, packet_size, 1500, 500, &mut rng);
+        let padding = random.transport_padding_size(
+            packet_size - DATA_OVERHEAD_SZ,
+            packet_size,
+            1500,
+            500,
+            &mut rng,
+        );
         assert!(padding < 500 - packet_size);
         assert!(packet_size + padding <= 1500 + DATA_OVERHEAD_SZ);
 
