@@ -1426,6 +1426,26 @@ mod tests {
     }
 
     #[test]
+    fn completed_handshake_resets_attempt_count_and_reselects_configured_budget() {
+        let config = AmneziaConfig::new(0, 0, 0, 0).with_max_handshake_attempts(7, 7);
+        let (mut initiator, mut responder) = create_two_tuns_with_amnezia(config);
+        assert_eq!(initiator.timers.max_handshake_attempts, 7);
+        assert_eq!(responder.timers.max_handshake_attempts, 7);
+
+        initiator.timers.handshake_attempts = 5;
+        responder.timers.handshake_attempts = 3;
+        let init = create_handshake_init(&mut initiator);
+        let response = create_handshake_response(&mut responder, &init);
+        let keepalive = parse_handshake_resp(&mut initiator, &response);
+        parse_keepalive(&mut responder, &keepalive);
+
+        assert_eq!(initiator.timers.handshake_attempts, 0);
+        assert_eq!(responder.timers.handshake_attempts, 0);
+        assert_eq!(initiator.timers.max_handshake_attempts, 7);
+        assert_eq!(responder.timers.max_handshake_attempts, 7);
+    }
+
+    #[test]
     #[cfg(feature = "mock-instant")]
     fn new_handshake_after_two_mins() {
         let (mut my_tun, mut their_tun) = create_two_tuns_and_handshake();
