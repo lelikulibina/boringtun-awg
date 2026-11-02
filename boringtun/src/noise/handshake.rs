@@ -1222,7 +1222,6 @@ mod constant_time_tests {
     }
 }
 
-
 #[cfg(test)]
 mod wire_vector_tests {
     use super::{b2s_hash, b2s_keyed_mac_16, b2s_keyed_mac_16_2, LABEL_COOKIE, LABEL_MAC1};
