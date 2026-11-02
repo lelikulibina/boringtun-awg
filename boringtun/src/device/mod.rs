@@ -1511,8 +1511,7 @@ mod ingress_tests {
             342871004, 442871003, 542871004, 642871003, 742871004, 842871003, 942871004, 1042871003,
         )
         .unwrap();
-        let amnezia = AmneziaConfig::new(37, 121, 88, 64)
-            .with_header_protection_key([0x37; 32]);
+        let amnezia = AmneziaConfig::new(37, 121, 88, 64).with_header_protection_key([0x37; 32]);
 
         let mut client = Tunn::new_with_amnezia(
             client_secret,
