@@ -3,7 +3,6 @@
 
 use super::errors::WireGuardError;
 use crate::noise::{Tunn, TunnResult};
-use std::mem;
 use std::ops::{Index, IndexMut};
 
 use super::amnezia::AmneziaConfig;
@@ -385,8 +384,6 @@ impl Tunn {
         // Load timers only once:
         let session_established = self.timers[TimeSessionEstablished];
         let handshake_started = self.timers[TimeLastHandshakeStarted];
-        let aut_packet_received = self.timers[TimeLastPacketReceived];
-        let aut_packet_sent = self.timers[TimeLastPacketSent];
         let data_packet_received = self.timers[TimeLastDataPacketReceived];
         let data_packet_sent = self.timers[TimeLastDataPacketSent];
         let persistent_keepalive = self.timers.persistent_keepalive;
