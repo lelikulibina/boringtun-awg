@@ -384,3 +384,10 @@ Upstream точки сверки:
 - Interop harness расширен: каждый из 8 профилей в обеих серверных ролях теперь проверяет не только handshake и двусторонний ICMP, но и реальный UDP request/reply через зашифрованный туннель.
 - UDP server/client запускаются внутри изолированных network namespaces; проверяется точное содержимое ответа, а не только наличие маршрута или handshake timestamp.
 - Требуется подтверждение полного CI и 16/16 interop прогонов на новом HEAD.
+
+
+### Этап 18: XChaCha20-Poly1305 Cookie Reply known-answer vector (2026-11-03)
+
+- Добавлен фиксированный 64-байтовый Cookie Reply fixture с детерминированными nonce key/counter, AEAD key, cookie, MAC1 и H3 tag.
+- Эталон независимо рассчитан через keyed BLAKE2s-192 и XChaCha20-Poly1305 (HChaCha20 + ChaCha20-Poly1305); сравнивается весь wire envelope: type, receiver index, nonce, ciphertext и Poly1305 tag.
+- Это закрывает ранее отмеченный пробел между MAC1/MAC2 known-answer vectors и end-to-end проверкой Cookie Reply authentication. Требуется CI на новом HEAD.
