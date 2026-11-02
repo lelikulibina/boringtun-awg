@@ -61,11 +61,13 @@
 - [x] Добавить диапазоны и UAPI set/get parsing с merge semantics и проверкой обратных диапазонов.
 - [x] Добавить случайный inclusive range picker, выбор порогов по событиям data sent/received и handshake lifecycle, jitter 0..333 ms и счётчик handshake retries.
 - [x] Добавить тесты parsing/merge, fixed-range selection и WireGuard defaults.
+- [x] Согласовать inactivity timers с upstream lifecycle: первый data-send запускает new-handshake timer, первый data-receive запускает keepalive timer; последующие пакеты не сдвигают активный deadline, повторные receive запрашивают дополнительный keepalive.
+- [x] Добавить mock-instant регрессии для idle-before-first-send, повторных receive, сохранения первого deadline и дополнительного keepalive.
 - [ ] Differentially verify точные точки выбора диапазонов и retry/expiry semantics против upstream peer; покрыть сценарии rekey/inactivity/handshake exhaustion.
 
 **Готово, когда:** интервалы и поведение соответствуют upstream и не меняют дефолты WireGuard.
 
-**Текущий статус:** базовая реализация диапазонов, UAPI и событийной рандомизации добавлена. Этап не считается завершённым до дифференциальных тестов с upstream: BoringTun использует polling `update_timers`, поэтому точность таймерных переходов и количество попыток handshake требуют отдельной проверки.
+**Текущий статус:** диапазоны, UAPI, случайный выбор порогов, retry budget и jitter реализованы. Inactivity deadlines теперь моделируют upstream timer lifecycle: повторная отправка данных не перезапускает уже активный new-handshake timer; повторное получение данных не сдвигает активный keepalive timer и запрашивает ещё один keepalive после первого. Добавлены mock-instant regressions. Этап остаётся незавершённым до differential-проверки выбора значений и retry/expiry против upstream.
 
 ### Этап 5. RandomTrailers
 - [x] Сверить upstream алгоритм: handshake/cookie получают случайный незашифрованный хвост; transport получает нулевое дополнение внутри AEAD; предел — peer UDP window (по умолчанию 500 байт).
@@ -110,8 +112,8 @@
 | H1-H4 ranges | Реализовано | Проверить режим HPK и RandomTrailers |
 | I1-I5 CPS | UAPI принимает, но фактическая отправка не подтверждена; аудит обязателен | Отдельная проверка в этапе 0/6 |
 | DNS/SIP/STUN/QUIC imitation | Реализовано как существующее расширение | Сохранить |
-| DisableCookies | Реализуется в PR #8 | Этап 1 |
-| HeaderProtectionKey | Не реализовано | Этап 2 |
+| DisableCookies | Реализовано в PR #8, Linux CI зелёный | Этап 1 |
+| HeaderProtectionKey | Реализовано в Rust/UAPI; Go differential и полноценный двусторонний interop не выполнены | Этап 2 |
 | ContentPaddingAddition | Реализовано в текущем PR: config/UAPI, peer-UDP-window-bounded transport padding и receive trimming; IPv4/IPv6 boundary/receive-trimming tests; IPv4 keepalive test | Этап 3 |
 | Randomized timers | Реализованы диапазоны UAPI/config, случайный выбор порогов, jitter и retry budget; differential interop ещё не выполнен | Этап 4 |
 | RandomTrailers | Реализованы handshake/cookie trailers и transport AEAD padding, UAPI flag off by default; differential interop ещё не выполнен | Этап 5 |
@@ -131,7 +133,7 @@
 - Upstream `device/send.go` выбирает случайное добавление по inclusive range для непустого transport payload, ограничивает его свободным местом до tunnel MTU, добавляет нулевые байты к plaintext IP-пакету и затем шифрует расширенный payload через AEAD. Это отличается от S4 — незашифрованного префикса перед WireGuard message.
 - Upstream `device/receive.go` сначала расшифровывает, затем проверяет внутреннюю длину IPv4 Total Length или IPv6 Payload Length и обрезает plaintext перед записью в TUN. BoringTun уже выполняет это в `Tunn::validate_decapsulated_packet`, поэтому дополнительное поле framing не требуется.
 - Пустые keepalive не дополняются. Если параметр не задан, эта реализация сохраняет существующие размеры пакетов BoringTun, не меняя legacy wire lengths побочным эффектом.
-- Текущая реализация добавляет inclusive `u16` range в `AmneziaConfig` и UAPI `content_padding_addition`, добавляет нулевые байты до AEAD и ограничивает их доступным peer UDP window. Пустой payload не получает CPA. В сочетании с RandomTrailers ContentPaddingAddition имеет приоритет для transport, как в upstream.
+- Текущая реализация добавляет inclusive `u16` range в `AmneziaConfig` и UAPI `content_padding_addition`, добавляет нулевые байты до AEAD и ограничивает их доступным peer UDP window. Пустой payload не получает CPA. В сочетании с RandomTrailers ContentPaddingAddition имеет приоритет для transport, как в upstream; handshake/cookie trailers остаются независимыми.
 - Upstream sources: `device/send.go` (`randomPaddingAddition`, `RoutineEncryption`) и `device/receive.go` (`RoutineDecryption` и IPv4/IPv6 length validation). В upstream есть отдельные edge-case reports по сочетанию ContentPaddingAddition/RandomTrailers; RandomTrailers остаётся выключенным до отдельного аудита.
 
 ## Последний handoff (2026-11-02)
@@ -140,7 +142,7 @@
 - Актуальный полностью зелёный HEAD: `34343e78f1cd5250d636cdf322c2b7026c9bbf1a`. Linux jobs `tests`, `integration-tests`, `clippy`, `check_features`, `rustfmt`, `all-systems-go` и Semgrep завершились успешно. macOS/Windows не запускались по требованию.
 - Header Protection: raw ChaCha20, nonce из первых 12 байт S-prefix; handshake/cookie защищаются целиком, transport — только первые 16 байт. Plaintext fallback при включённом ключе запрещён. Rust reference-vector и negative tests проходят, но Go differential и реальный двусторонний peer handshake ещё не выполнены.
 - ContentPaddingAddition: transport plaintext padding ограничен peer UDP window; IPv4/IPv6 receive trimming и boundary tests проходят. Пустой keepalive не получает CPA.
-- RandomTrailers: UAPI и framing реализованы. Handshake/cookie получают внешний случайный trailer, transport — нулевое дополнение внутри AEAD. Для transport CPA имеет приоритет; cookie reply ограничен размером вызвавшей датаграммы.
+- RandomTrailers: UAPI и framing реализованы, флаг выключен по умолчанию. Handshake/cookie получают внешний случайный trailer, transport — нулевое дополнение внутри AEAD. Для transport CPA имеет приоритет; cookie reply ограничен размером вызвавшей датаграммы.
 - Исправлен важный UDP-window дефект: окно растёт только по аутентифицированной входящей transport-датаграмме, а не от исходящего пакета. Есть regression test для пакета больше начального окна 500 байт.
 - Добавлен fallible `Tunn::try_set_obfuscation`, который валидирует настройки до изменения живого туннеля; старый setter сохранён для API-совместимости.
 - UAPI get сериализует оба состояния `disable_cookies` и `random_trailers`; интеграционные ожидания обновлены. Добавлена пользовательская документация `docs/AMNEZIAWG_3_1_CONFIGURATION.md` и ссылка из README.
@@ -210,4 +212,4 @@ Upstream точки сверки:
 
 Архитектурное отличие BoringTun: Tunn::update_timers — polling state machine, тогда как upstream использует независимые peer timers и хранит отдельные счётчики попыток. Простая замена четырёх констант диапазонами даст неправильную точку повторного выбора и неверную семантику max attempts. До реализации необходимо добавить в Timers явное состояние выбранных порогов/счётчика handshake attempts и привязать выбор к событиям (session established, authenticated data sent/received, handshake initiation/retry), сохранив mock-instant поведение. Не менять криптографический state machine и не считать 90s deadline заменой max_handshake_attempts.
 
-Текущий статус этапа 4: аудит upstream завершён; код не менялся. Следующий шаг — спроектировать и реализовать range state в AmneziaConfig/UAPI и Timers, затем добавить детерминированные тесты для выбора значений и переходов состояния. Реализация должна оставаться opt-in и сохранять vanilla WG defaults.
+Текущий статус этапа 4: range state в AmneziaConfig/UAPI и Timers реализован; polling-модель BoringTun использует явные deadlines, чтобы сохранить семантику запуска и отмены upstream timers. Повторные события не должны случайно продлевать активные deadlines. Следующий шаг — differential peer tests для rekey, inactivity, retry exhaustion и expiry. Реализация должна оставаться opt-in и сохранять vanilla WG defaults.
