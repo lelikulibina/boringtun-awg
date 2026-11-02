@@ -416,3 +416,11 @@ Upstream точки сверки:
 - Pcap verifier требует не менее четырёх Handshake Initiation и четырёх Handshake Response на accelerated-rekey сценарий: исходный handshake плюс три rekey; transport traffic проверяется между переходами.
 - Это короткий multi-rekey soak, а не длительный многочасовой тест и не симуляция packet loss. Проверка истечения старых ключей и потерь handshake-пакетов остаётся отдельным критерием до объявления полной поддержки.
 - Требуется CI на новом HEAD.
+
+
+### Финальный этап C: потеря Handshake Response и retry recovery (2026-11-03)
+
+- В отдельном Go interop профиле netem на egress сервера кратковременно блокирует 100% исходящих пакетов непосредственно перед первым ускоренным rekey.
+- Harness подтверждает, что responder увидел новое Initiation, qdisc действительно отбросил пакет, а initiator ещё не зафиксировал новый handshake, пока ответ потерян.
+- После снятия потерь инициатор должен повторить handshake, обновить UAPI timestamp и восстановить двусторонний UDP payload.
+- Профиль выполняется в обеих серверных ролях; pcap сохраняет Initiation/Response до сетевого drop и последующий retry. Требуется CI на новом HEAD.
