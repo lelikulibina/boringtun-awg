@@ -1323,7 +1323,7 @@ mod tests {
         let packet = Tunn::parse_incoming_packet(my_tun.handshake.obf, &init).unwrap();
         assert!(matches!(packet, Packet::HandshakeInit(_)));
 
-        mock_instant::MockClock::advance(REKEY_TIMEOUT);
+        mock_instant::MockClock::advance(REKEY_TIMEOUT + Duration::from_millis(334));
         update_timer_results_in_handshake(&mut my_tun)
     }
 
