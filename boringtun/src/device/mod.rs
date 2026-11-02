@@ -1661,22 +1661,28 @@ mod ingress_tests {
             None,
             1,
             None,
-            amnezia.init_packet_junk_size,
-            amnezia.init_packet_junk_size,
-            amnezia.response_packet_junk_size,
-            amnezia.response_packet_junk_size,
-            amnezia.cookie_packet_junk_size,
-            amnezia.cookie_packet_junk_size,
-            amnezia.transport_packet_junk_size,
-            amnezia.transport_packet_junk_size,
+            1,
+            1,
+            2,
+            2,
+            3,
+            3,
+            4,
+            4,
         )
         .unwrap();
 
         let mut buf = vec![0u8; MAX_UDP_SIZE];
-        let datagram = match client.format_handshake_initiation(&mut buf, false) {
+        let raw_datagram = match client.format_handshake_initiation(&mut buf, false) {
             TunnResult::WriteToNetwork(d) => d.to_vec(),
             other => panic!("expected an initiation, got {:?}", other),
         };
+        // Tunn::new creates the vanilla H-tagged handshake. The device-level
+        // ingress path strips the configured S1 prefix before MAC validation,
+        // so model that prefix explicitly here; using S1-S4 as H-tag values
+        // would produce a different (and invalid) wire format.
+        let mut datagram = vec![0u8; amnezia.init_packet_junk_size as usize];
+        datagram.extend_from_slice(&raw_datagram);
 
         let limiter = RateLimiter::new(&server_public, HANDSHAKE_RATE_LIMIT);
         let stripped = amnezia
