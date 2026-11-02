@@ -514,8 +514,7 @@ impl Tunn {
         self.timers.new_handshake_deadline = None;
         self.timers.send_keepalive_deadline = None;
         self.timers.need_another_keepalive = false;
-        self.timers.max_handshake_attempts = self.timers.pick_range(4, 18);
-        self.timers.handshake_attempts = 0;
+        self.timers.select_new_handshake_budget();
         self.timers.handshake_retry_jitter = Timers::random_jitter();
         self.pending_amnezia_junk = None;
     }
