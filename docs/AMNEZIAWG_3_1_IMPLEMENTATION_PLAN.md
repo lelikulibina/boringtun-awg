@@ -190,13 +190,15 @@ Upstream точки сверки:
 
 ### Текущая проверка CI для PR #8
 
-Последний документальный commit на момент заметки: `02c269f57579cb951785032d5e8a9f9b0e553c00`.
+Последний проверенный кодовый HEAD: `5251e54ec4d588deeba951a2d4a6c5bc4a0ac33a`.
 
-- Semgrep OSS scan: success.
-- Linux: rustfmt, clippy, check_features, tests и integration-tests завершились success на предыдущем SHA `0a00757110660a40fe0a9684cb7fbafafb7f4dfa`.
-- Для SHA документа `02c269f57579cb951785032d5e8a9f9b0e553c00` Semgrep прошёл, но PR workflow ещё выполнялся. После последующих исправлений запущен новый CI; не считать CI полностью зелёным, пока все jobs последнего SHA не завершатся.
-- Важное исправление после аудита: прежнее поведение `DisableCookies` (отклонять MAC2-invalid handshake без Cookie Reply) не совпадало с upstream. Исправлено на bypass under-load challenge целиком; тест обновлён.
+- Linux `rustfmt`, `clippy`, `check_features`, `tests`, `integration-tests` и `all-systems-go`: **success**.
+- Semgrep OSS scan: **success**.
+- macOS/Windows не запускались по требованию пользователя.
+- В последнем цикле CI были устранены два замечания: форматирование новых timer regressions и доступ тестов к deadline state; повторный Linux CI прошёл полностью.
+- Следующие проверки должны быть направлены на upstream differential/interoperability, а не на повторение уже зелёных локальных unit/integration suites.
 
+Важное исправление после аудита: прежнее поведение `DisableCookies` (отклонять MAC2-invalid handshake без Cookie Reply) не совпадало с upstream. Исправлено на bypass under-load challenge целиком; MAC1 остаётся обязательным, входящие Cookie Reply поддерживаются.
 
 ### Этап 4: уточнённая upstream-семантика таймеров (аудит 2026-11-02)
 
