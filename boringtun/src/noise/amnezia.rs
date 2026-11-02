@@ -1864,10 +1864,14 @@ mod tests {
         // This profile reproduces the structural ambiguity in upstream issue
         // #186: the transport type at S4 can be re-read as a control tag at S2.
         let obf = ObfuscationRanges::new(
-            405_138_553, 456_138_212,
-            680_931_238, 1_038_459_501,
-            1_114_423_399, 1_432_068_193,
-            1_500_000_000, 1_500_000_000,
+            405_138_553,
+            456_138_212,
+            680_931_238,
+            1_038_459_501,
+            1_114_423_399,
+            1_432_068_193,
+            1_500_000_000,
+            1_500_000_000,
         )
         .expect("all H ranges are disjoint");
 
@@ -1887,10 +1891,14 @@ mod tests {
     #[test]
     fn equal_s_prefixes_keep_transport_tags_out_of_handshake_classifiers() {
         let obf = ObfuscationRanges::new(
-            405_138_553, 456_138_212,
-            680_931_238, 1_038_459_501,
-            1_114_423_399, 1_432_068_193,
-            1_500_000_000, 1_500_000_000,
+            405_138_553,
+            456_138_212,
+            680_931_238,
+            1_038_459_501,
+            1_114_423_399,
+            1_432_068_193,
+            1_500_000_000,
+            1_500_000_000,
         )
         .expect("all H ranges are disjoint");
         let cfg = AmneziaConfig::new(24, 24, 24, 24).with_random_trailers(true);
