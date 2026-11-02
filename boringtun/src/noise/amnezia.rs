@@ -2645,6 +2645,68 @@ mod tests {
         }
     }
 
+    /// Fixed vector matching the upstream AWG construction:
+    /// ChaCha20(key, S-prefix[0..12]) XORs the full handshake message,
+    /// while transport protects only its 16-byte header.
+    #[test]
+    fn header_protection_matches_awg_chacha20_wire_vector() {
+        let obf = ObfuscationRanges::default();
+        let key = [0x42; 32];
+        let cfg = AmneziaConfig::new(12, 12, 12, 12).with_header_protection_key(key);
+        let nonce: [u8; 12] = core::array::from_fn(|i| i as u8);
+
+        let mut initiation = vec![0u8; HANDSHAKE_INIT_SZ];
+        initiation[..4].copy_from_slice(&HANDSHAKE_INIT.to_le_bytes());
+        for (i, byte) in initiation[4..].iter_mut().enumerate() {
+            *byte = (i as u8).wrapping_mul(7).wrapping_add(3);
+        }
+
+        let mut reference_ciphertext = initiation.clone();
+        let mut cipher = chacha20::ChaCha20::new_from_slices(&key, &nonce).unwrap();
+        cipher.apply_keystream(&mut reference_ciphertext);
+        assert_eq!(
+            &reference_ciphertext[..16],
+            &[
+                0x37, 0x3e, 0xe1, 0x64, 0x3b, 0x55, 0x38, 0xdf,
+                0xc8, 0xed, 0x8e, 0xe4, 0xc6, 0x72, 0xbd, 0x58,
+            ],
+            "ChaCha20 stream must match the IETF/upstream AWG vector"
+        );
+
+        let mut datagram = nonce.to_vec();
+        datagram.extend_from_slice(&reference_ciphertext);
+        assert_eq!(
+            cfg.decrypt_inbound(obf, &datagram).as_deref(),
+            Some(initiation.as_slice()),
+            "a datagram encrypted by the reference AWG construction must decode"
+        );
+
+        let mut transport = vec![0u8; DATA_OVERHEAD_SZ + 32];
+        transport[..4].copy_from_slice(&DATA.to_le_bytes());
+        transport[4..8].copy_from_slice(&0x1234_5678u32.to_le_bytes());
+        transport[8..16].copy_from_slice(&0x0102_0304_0506_0708u64.to_le_bytes());
+        for (i, byte) in transport[16..].iter_mut().enumerate() {
+            *byte = (i as u8).wrapping_mul(11).wrapping_add(9);
+        }
+        let payload = transport[16..].to_vec();
+        let mut transport_ciphertext = transport.clone();
+        let mut cipher = chacha20::ChaCha20::new_from_slices(&key, &nonce).unwrap();
+        cipher.apply_keystream(&mut transport_ciphertext[..16]);
+        assert_eq!(
+            &transport_ciphertext[16..],
+            payload.as_slice(),
+            "transport AEAD ciphertext must remain byte-for-byte untouched"
+        );
+
+        let mut datagram = nonce.to_vec();
+        datagram.extend_from_slice(&transport_ciphertext);
+        assert_eq!(
+            cfg.decrypt_inbound(obf, &datagram).as_deref(),
+            Some(transport.as_slice()),
+            "transport decoding must recover its 16-byte header and preserve payload"
+        );
+    }
+
     #[test]
     fn header_protection_requires_all_s_prefixes_to_be_at_least_12() {
         let cfg = AmneziaConfig::new(12, 12, 12, 11).with_header_protection_key([0x24; 32]);
