@@ -231,6 +231,20 @@ mod tests {
     }
 
     #[test]
+    fn timer_ranges_include_zero_as_a_valid_configured_minimum() {
+        let config = AmneziaConfig::new(0, 0, 0, 0).with_rekey_timeout(0, 1);
+        let timers = Timers::new(None, false, &config);
+
+        for _ in 0..512 {
+            let selected = timers.pick_range(1, 5);
+            assert!(
+                (0..=1).contains(&selected),
+                "selected {selected} outside inclusive range 0..=1"
+            );
+        }
+    }
+
+    #[test]
     fn fixed_timer_ranges_are_deterministic_for_every_timer() {
         let config = AmneziaConfig::new(0, 0, 0, 0)
             .with_rekey_after_time(111, 111)
