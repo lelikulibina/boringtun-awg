@@ -23,7 +23,7 @@ jobs:
       - tests
       - integration-tests
       - awg31-interoperability
-      - cross-platform-checks
+      - cross-platform-windows
     steps:
       - run: exit 0
 
@@ -78,28 +78,30 @@ jobs:
       - uses: taiki-e/install-action@cargo-hack
       - run: cargo hack test --each-feature
 
-  # The protocol core is portable even where this repository's TUN device
-  # backend is not. Check the full device/CLI stack on macOS and the core
-  # protocol crate on Windows so AWG crypto/config changes cannot silently
-  # become Unix-only.
-  cross-platform-checks:
-    strategy:
-      matrix:
-        os: [ macos-15-intel, windows-latest ]
-    runs-on: ${{ matrix.os }}
+  # Windows validates the portable protocol core. The macOS device/CLI
+  # build runs as an additional platform check, but is not on the critical
+  # path for all-systems-go because hosted macOS runner assignment can queue
+  # independently of the Linux/Windows pool.
+  cross-platform-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+      - run: cargo check -p boringtun --no-default-features
+
+  cross-platform-macos:
+    runs-on: macos-15-intel
     steps:
       - uses: actions/checkout@v6
       - uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
       - name: Check device and CLI on macOS
-        if: runner.os == 'macOS'
         run: |
           cargo check -p boringtun --all-features
           cargo check -p boringtun-cli
-      - name: Check portable protocol core on Windows
-        if: runner.os == 'Windows'
-        run: cargo check -p boringtun --no-default-features
 
   # Real bidirectional wire test against the upstream Go implementation.
   # This is deliberately separate from the unit/integration test matrix above:
