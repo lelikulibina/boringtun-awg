@@ -67,7 +67,7 @@ pub struct Timers {
 
 impl Timers {
     pub(super) fn new(persistent_keepalive: Option<u16>, reset_rr: bool) -> Timers {
-        Timers {
+        let mut timers = Timers {
             is_initiator: false,
             time_started: Instant::now(),
             timers: Default::default(),
