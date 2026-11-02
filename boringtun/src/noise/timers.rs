@@ -175,6 +175,13 @@ mod tests {
         assert_eq!(timers.pick_range(2, 180), 170);
         assert_eq!(timers.pick_range(3, 10), 8);
         assert_eq!(timers.max_handshake_attempts, 12);
+
+        let ranged = AmneziaConfig::new(0, 0, 0, 0).with_rekey_timeout(2, 5);
+        let ranged_timers = Timers::new(None, false, &ranged);
+        for _ in 0..256 {
+            let selected = ranged_timers.pick_range(1, 5);
+            assert!((2..=5).contains(&selected), "selected {selected} outside inclusive range");
+        }
     }
 
     #[test]
