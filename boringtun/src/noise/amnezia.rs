@@ -1871,7 +1871,10 @@ mod tests {
 
         let at_limit = ObfuscationRanges::new(100_000, 100_000 + max_width - 3, 2, 0, 3, 0, 4, 0)
             .expect("non-overlapping ranges");
-        assert_eq!(at_limit.random_trailer_collision_width(), u64::from(max_width));
+        assert_eq!(
+            at_limit.random_trailer_collision_width(),
+            u64::from(max_width)
+        );
         assert!(
             cfg.validate_random_trailers(at_limit).is_ok(),
             "the documented collision-probability limit is inclusive"
