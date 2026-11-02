@@ -1735,7 +1735,10 @@ mod tests {
         let init = create_handshake_init(&mut initiator);
         let cookie = match responder.decapsulate(Some(source), &init, &mut network) {
             TunnResult::WriteToNetwork(packet) => packet.to_vec(),
-            other => panic!("the cookie-enabled responder must challenge under forced load, got {:?}", other),
+            other => panic!(
+                "the cookie-enabled responder must challenge under forced load, got {:?}",
+                other
+            ),
         };
 
         assert!(matches!(
@@ -1750,7 +1753,11 @@ mod tests {
                 other
             ),
         };
-        let response = match responder.decapsulate(Some(source), &authenticated_init, &mut network) {
+        let response = match responder.decapsulate(
+            Some(source),
+            &authenticated_init,
+            &mut network,
+        ) {
             TunnResult::WriteToNetwork(packet) => packet.to_vec(),
             other => panic!("expected MAC2-authenticated handshake response, got {:?}", other),
         };
