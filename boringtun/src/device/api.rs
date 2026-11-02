@@ -218,6 +218,11 @@ impl AwgParams {
             return Err(EINVAL);
         }
 
+        if let Err(e) = amnezia.validate_random_trailers(obf) {
+            tracing::error!(message = "rejecting AmneziaWG RandomTrailers parameters", error = %e);
+            return Err(EINVAL);
+        }
+
         Ok((obf, amnezia))
     }
 }
