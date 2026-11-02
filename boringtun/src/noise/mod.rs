@@ -2211,6 +2211,39 @@ mod tests {
     }
 
     #[test]
+    fn random_trailers_pad_transport_inside_aead_and_restore_ip_packet() {
+        let cfg = AmneziaConfig::new(0, 0, 0, 0).with_random_trailers(true);
+        let (mut sender, mut receiver) = create_two_tuns_with_amnezia(cfg);
+        let packet = create_ipv4_udp_packet();
+        sender.set_mtu(1500);
+        receiver.set_mtu(1500);
+
+        let init = create_handshake_init(&mut sender);
+        let response = create_handshake_response(&mut receiver, &init);
+        let keepalive = parse_handshake_resp(&mut sender, &response);
+        parse_keepalive(&mut receiver, &keepalive);
+
+        let mut saw_padding = false;
+        for _ in 0..64 {
+            let mut network_buffer = vec![0u8; 4096];
+            let outbound = match sender.encapsulate(&packet, &mut network_buffer) {
+                TunnResult::WriteToNetwork(datagram) => datagram.to_vec(),
+                other => panic!("expected transport datagram, got {:?}", other),
+            };
+            assert!(outbound.len() <= 500, "random padding must respect the learned UDP window");
+            assert!(outbound.len() >= DATA_OVERHEAD_SZ + packet.len());
+            saw_padding |= outbound.len() > DATA_OVERHEAD_SZ + packet.len();
+
+            let mut tunnel_buffer = vec![0u8; 4096];
+            match receiver.decapsulate(None, &outbound, &mut tunnel_buffer) {
+                TunnResult::WriteToTunnelV4(restored, _) => assert_eq!(restored, packet),
+                other => panic!("expected restored IPv4 packet, got {:?}", other),
+            }
+        }
+        assert!(saw_padding, "RandomTrailers should add padding to at least one packet");
+    }
+
+    #[test]
     fn content_padding_addition_is_mtu_bounded_and_removed_after_decryption() {
         let cfg = AmneziaConfig::new(0, 0, 0, 0).with_content_padding_addition(8, 32);
         let (mut sender, mut receiver) = create_two_tuns_with_amnezia(cfg);
