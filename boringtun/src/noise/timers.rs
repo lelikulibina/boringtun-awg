@@ -7,6 +7,8 @@ use std::mem;
 use std::ops::{Index, IndexMut};
 
 use std::time::Duration;
+use rand_core::{OsRng, RngCore};
+use super::amnezia::AmneziaConfig;
 
 #[cfg(feature = "mock-instant")]
 use mock_instant::Instant;
@@ -63,10 +65,19 @@ pub struct Timers {
     persistent_keepalive: usize,
     /// Should this timer call reset rr function (if not a shared rr instance)
     pub(super) should_reset_rr: bool,
+    timer_ranges: [(u32, u32); 5],
+    rekey_after_time: Duration,
+    rekey_timeout: Duration,
+    reject_after_time: Duration,
+    keepalive_timeout: Duration,
+    keepalive_timeout_max: Duration,
+    max_handshake_attempts: u32,
+    handshake_attempts: u32,
+    handshake_retry_jitter: Duration,
 }
 
 impl Timers {
-    pub(super) fn new(persistent_keepalive: Option<u16>, reset_rr: bool) -> Timers {
+    pub(super) fn new(persistent_keepalive: Option<u16>, reset_rr: bool, amnezia: &AmneziaConfig) -> Timers {
         let mut timers = Timers {
             is_initiator: false,
             time_started: Instant::now(),
@@ -76,7 +87,18 @@ impl Timers {
             want_handshake: Default::default(),
             persistent_keepalive: usize::from(persistent_keepalive.unwrap_or(0)),
             should_reset_rr: reset_rr,
-        }
+            timer_ranges: [amnezia.rekey_after_time, amnezia.rekey_timeout, amnezia.reject_after_time, amnezia.keepalive_timeout, amnezia.max_handshake_attempts],
+            rekey_after_time: REKEY_AFTER_TIME,
+            rekey_timeout: REKEY_TIMEOUT,
+            reject_after_time: REJECT_AFTER_TIME,
+            keepalive_timeout: KEEPALIVE_TIMEOUT,
+            keepalive_timeout_max: KEEPALIVE_TIMEOUT,
+            max_handshake_attempts: 18,
+            handshake_attempts: 0,
+            handshake_retry_jitter: Duration::ZERO,
+        };
+        timers.max_handshake_attempts = timers.pick_range(4, 18);
+        timers
     }
 
     fn is_initiator(&self) -> bool {
@@ -92,6 +114,30 @@ impl Timers {
         }
         self.want_handshake = false;
         self.want_keepalive = false;
+        self.handshake_attempts = 0;
+    }
+
+    fn range_min(&self, idx: usize, fallback: u32) -> u32 {
+        let (min, max) = self.timer_ranges[idx];
+        if min == 0 && max == 0 { fallback } else { min }
+    }
+
+    fn range_max(&self, idx: usize, fallback: u32) -> u32 {
+        let (min, max) = self.timer_ranges[idx];
+        if min == 0 && max == 0 { fallback } else { max }
+    }
+
+    fn pick_range(&self, idx: usize, fallback: u32) -> u32 {
+        let (min, max) = self.timer_ranges[idx];
+        if min == 0 && max == 0 { return fallback; }
+        if min >= max { return min; }
+        let width = max - min + 1;
+        let zone = u32::MAX - (u32::MAX % width);
+        let mut rng = OsRng;
+        loop {
+            let value = rng.next_u32();
+            if value < zone { return min + value % width; }
+        }
     }
 }
 
