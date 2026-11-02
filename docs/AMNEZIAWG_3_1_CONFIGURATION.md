@@ -34,6 +34,7 @@
 
 - ContentPaddingAddition добавляет нулевые байты к IP plaintext до AEAD. Получатель обрезает их по IPv4 Total Length или IPv6 Payload Length.
 - RandomTrailers добавляет случайный хвост после фиксированных handshake/cookie сообщений; для transport добавляет нули внутрь AEAD plaintext.
+- Длина внешнего RandomTrailers выбирается по upstream-правилу `fastrandn(udpWindow - packetSize)`: диапазон верхней границы не включает свободное место целиком (`0..available`), в отличие от inclusive ContentPaddingAddition. Дополнительно учитывается размер исходного cookie-triggering запроса.
 - Для transport ContentPaddingAddition имеет приоритет над RandomTrailers; handshake/cookie trailers остаются независимыми от ContentPaddingAddition, как в upstream.
 - Пустой keepalive не получает ContentPaddingAddition. При включённом RandomTrailers transport padding обрабатывается отдельно по upstream-семантике.
 - Peer UDP window начинается с 500 байт, увеличивается только после аутентифицированной входящей transport-датаграммы и сбрасывается при смене endpoint. Исходящий пакет сам по себе не расширяет окно.
