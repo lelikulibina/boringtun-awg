@@ -218,7 +218,6 @@ impl RateLimiter {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
