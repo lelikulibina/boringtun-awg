@@ -2125,7 +2125,7 @@ mod tests {
     }
     #[test]
     fn content_padding_addition_is_mtu_bounded_and_removed_after_decryption_ipv6() {
-        let cfg = AmneziaConfig::new(0, 0, 0, 0).with_content_padding_addition(0, 12);
+        let cfg = AmneziaConfig::new(0, 0, 0, 0).with_content_padding_addition(12, 12);
         let (mut sender, mut receiver) = create_two_tuns_with_amnezia(cfg);
         let packet = create_ipv6_udp_packet();
         let mtu = packet.len() + 3;
