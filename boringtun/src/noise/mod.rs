@@ -1463,10 +1463,21 @@ mod tests {
             initiator.update_timers(&mut network),
             TunnResult::Done
         ));
+        let first_deadline = initiator.timers.new_handshake_deadline;
+
+        mock_instant::MockClock::advance(Duration::from_secs(1));
+        assert!(matches!(
+            initiator.encapsulate(&packet, &mut network),
+            TunnResult::WriteToNetwork(_)
+        ));
+        assert_eq!(
+            initiator.timers.new_handshake_deadline, first_deadline,
+            "subsequent data sends must not postpone the active inactivity timer"
+        );
 
         // The selected deadline is keepalive_timeout.Hi + rekey_timeout plus
-        // at most 333 ms of jitter. Five seconds clears every possible draw.
-        mock_instant::MockClock::advance(Duration::from_secs(5));
+        // at most 333 ms of jitter. Four more seconds clears every possible draw.
+        mock_instant::MockClock::advance(Duration::from_secs(4));
         assert!(matches!(
             initiator.update_timers(&mut network),
             TunnResult::WriteToNetwork(_)
@@ -1498,6 +1509,7 @@ mod tests {
 
         // The first receive starts a three-second timer. A second receive while
         // it is pending requests one additional keepalive but does not reset it.
+        let first_deadline = receiver.timers.send_keepalive_deadline;
         mock_instant::MockClock::advance(Duration::from_secs(1));
         let outbound = match sender.encapsulate(&packet, &mut network) {
             TunnResult::WriteToNetwork(packet) => packet.to_vec(),
@@ -1507,6 +1519,10 @@ mod tests {
             receiver.decapsulate(None, &outbound, &mut tunnel),
             TunnResult::WriteToTunnelV4(_, _)
         ));
+        assert_eq!(
+            receiver.timers.send_keepalive_deadline, first_deadline,
+            "subsequent data receives must not postpone the active keepalive timer"
+        );
 
         mock_instant::MockClock::advance(Duration::from_secs(2));
         assert!(matches!(
