@@ -233,14 +233,14 @@ mod tests {
     #[test]
     fn timer_range_selection_handles_the_full_u32_domain_without_overflow() {
         let config = AmneziaConfig::new(0, 0, 0, 0)
-            .with_rekey_timeout(0, u32::MAX);
+            .with_rekey_timeout(1, u32::MAX);
         let timers = Timers::new(None, false, &config);
 
         for _ in 0..512 {
             let selected = timers.pick_range(1, 5);
             assert!(
-                selected <= u32::MAX,
-                "selected {selected} exceeds the configured u32 range"
+                (1..=u32::MAX).contains(&selected),
+                "selected {selected} outside inclusive range 1..=u32::MAX"
             );
         }
     }
