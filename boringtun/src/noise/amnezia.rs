@@ -288,7 +288,7 @@ pub struct AmneziaConfig {
     pub(crate) keepalive_timeout: (u32, u32),
     pub(crate) max_handshake_attempts: (u32, u32),
     /// Add random trailing bytes to handshake/cookie datagrams and encrypted transport payloads.
-    pub(crate) random_trailers: bool,
+    pub(crate) random_trailers: bool,\n    /// Optional I1-I5 standalone signature packet templates.\n    pub(crate) signature_packets: [Option<SignatureChain>; 5],
     /// Suppress the client-only pre-handshake burst (Jc junk packets and the
     /// protocol imitation sequence) while keeping every other AmneziaWG
     /// behaviour. See [`AmneziaConfig::as_responder`].
@@ -385,7 +385,7 @@ impl AmneziaConfig {
             reject_after_time: (0, 0),
             keepalive_timeout: (0, 0),
             max_handshake_attempts: (0, 0),
-            random_trailers: false,
+            random_trailers: false,\n            signature_packets: Default::default(),
             suppress_pre_handshake: false,
         }
     }
@@ -415,6 +415,36 @@ impl AmneziaConfig {
     pub fn with_content_padding_addition(mut self, min: u16, max: u16) -> Self {
         self.content_padding_addition = (min, max);
         self
+    }
+
+    /// Configure one AmneziaWG I1-I5 signature chain (index 0..=4).
+    /// An empty/no-tag specification clears that slot.
+    pub fn with_signature_packet(
+        mut self,
+        index: usize,
+        spec: &str,
+    ) -> Result<Self, String> {
+        let slot = self
+            .signature_packets
+            .get_mut(index)
+            .ok_or_else(|| "signature packet index must be in 0..=4".to_owned())?;
+        *slot = SignatureChain::parse(spec)?;
+        Ok(self)
+    }
+
+    /// Generate configured I1-I5 datagrams in slot order.
+    pub(crate) fn pre_handshake_signature_datagrams(
+        &self,
+        rng: &mut impl RngCore,
+    ) -> std::collections::VecDeque<Vec<u8>> {
+        self.signature_packets
+            .iter()
+            .filter_map(|chain| chain.as_ref().map(|chain| chain.emit(rng)))
+            .collect()
+    }
+
+    pub(crate) fn has_signature_packets(&self) -> bool {
+        self.signature_packets.iter().any(Option::is_some)
     }
 
     /// Enable AmneziaWG RandomTrailers. Transport padding is encrypted; handshake
@@ -684,7 +714,7 @@ impl AmneziaConfig {
     /// false for a responder, and for a client with neither Jc nor imitation.
     pub(crate) fn emits_pre_handshake(&self) -> bool {
         !self.suppress_pre_handshake
-            && (self.pre_handshake_junk.is_enabled() || self.has_imitation_sequence())
+            && (self.pre_handshake_junk.is_enabled()\n                || self.has_imitation_sequence()\n                || self.has_signature_packets())
     }
 
     /// The configured imitation host, or a generated random one (DNS query name

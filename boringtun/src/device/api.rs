@@ -100,7 +100,7 @@ struct AwgParams {
     h3: Option<(u32, u32)>,
     h4: Option<(u32, u32)>,
     disable_cookies: Option<bool>,
-    random_trailers: Option<bool>,
+    random_trailers: Option<bool>,\n    signature_packets: [Option<Option<SignatureChain>>; 5],
     header_protection_key: Option<[u8; 32]>,
     content_padding_addition: Option<(u16, u16)>,
     rekey_after_time: Option<(u32, u32)>,
@@ -123,6 +123,11 @@ impl AwgParams {
             "s4" => self.s4 = Some(val),
             _ => unreachable!("caller matched the key"),
         }
+        self.seen = true;
+    }
+
+    fn set_signature_packet(&mut self, index: usize, chain: Option<SignatureChain>) {
+        self.signature_packets[index] = Some(chain);
         self.seen = true;
     }
 
@@ -190,6 +195,11 @@ impl AwgParams {
         amnezia.transport_packet_junk_size = self.s4.unwrap_or(amnezia.transport_packet_junk_size);
         amnezia.disable_cookies = self.disable_cookies.unwrap_or(amnezia.disable_cookies);
         amnezia.random_trailers = self.random_trailers.unwrap_or(amnezia.random_trailers);
+        for (index, chain) in self.signature_packets.iter().enumerate() {
+            if let Some(chain) = chain {
+                amnezia.signature_packets[index] = chain.clone();
+            }
+        }
         amnezia.header_protection_key = self
             .header_protection_key
             .unwrap_or(amnezia.header_protection_key);
@@ -436,6 +446,11 @@ fn api_get(writer: &mut BufWriter<&UnixStream>, d: &Device) -> i32 {
         }
         if a.random_trailers {
             writeln!(writer, "random_trailers=true");
+        }
+        for (index, chain) in a.signature_packets.iter().enumerate() {
+            if let Some(chain) = chain {
+                writeln!(writer, "i{}={}", index + 1, chain.spec());
+            }
         }
         let (padding_min, padding_max) = a.content_padding_addition;
         if padding_min != 0 || padding_max != 0 {
@@ -706,6 +721,13 @@ fn api_set(reader: &mut BufReader<&UnixStream>, d: &mut LockReadGuard<Device>) -
                             }
                             None => return EINVAL,
                         },
+                        "i1" | "i2" | "i3" | "i4" | "i5" => {
+                            let index = (key.as_bytes()[1] - b'1') as usize;
+                            match SignatureChain::parse(val) {
+                                Ok(chain) => awg.set_signature_packet(index, chain),
+                                Err(_) => return EINVAL,
+                            }
+                        }
                         "random_trailers" => match val.parse::<bool>() {
                             Ok(value) => {
                                 awg.random_trailers = Some(value);
@@ -720,10 +742,6 @@ fn api_set(reader: &mut BufReader<&UnixStream>, d: &mut LockReadGuard<Device>) -
                             }
                             Err(_) => return EINVAL,
                         },
-                        // AWG 2.0 signature packets. A responder only has to
-                        // tolerate these; accept and ignore rather than failing
-                        // the whole transaction on a config that carries them.
-                        "i1" | "i2" | "i3" | "i4" | "i5" => {}
                         _ => return EINVAL,
                     }
                 }

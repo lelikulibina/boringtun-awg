@@ -10,6 +10,7 @@ pub mod handshake;
 // apart. Still crate-private, so none of it is public API.
 pub(crate) mod imitation;
 pub mod rate_limiter;
+pub(crate) mod signature;
 
 // QUIC Initial imitation generator (always compiled; pulls in `aes`).
 pub(crate) mod quic;
@@ -100,6 +101,7 @@ struct PendingAmneziaJunk {
     /// browser QUIC Initials), each with the delay to wait before emitting it.
     /// Emitted one per call before any random/protocol junk and the handshake
     /// initiation; these use protocol-natural timing, not the Jd delay.
+    signature_datagrams: VecDeque<Vec<u8>>,
     imitation_datagrams: VecDeque<(Duration, Vec<u8>)>,
     remaining: u16,
     last_packet_at: Option<Instant>,
@@ -778,6 +780,9 @@ impl Tunn {
         }
 
         if self.amnezia.emits_pre_handshake() {
+            let signature_datagrams = self
+                .amnezia
+                .pre_handshake_signature_datagrams(&mut self.handshake.rng);
             let imitation_datagrams = self
                 .amnezia
                 .pre_handshake_imitation_datagrams(&mut self.handshake.rng);
@@ -829,8 +834,13 @@ impl Tunn {
 
         // The next imitation datagram carries its own protocol-natural delay;
         // random/protocol junk uses the configured Jd delay.
+        let has_signature_datagram = !pending.signature_datagrams.is_empty();
         let next_datagram_delay = pending.imitation_datagrams.front().map(|(d, _)| *d);
-        let delay = next_datagram_delay.unwrap_or_else(|| self.amnezia.pre_handshake_junk.delay());
+        let delay = if has_signature_datagram {
+            Duration::ZERO
+        } else {
+            next_datagram_delay.unwrap_or_else(|| self.amnezia.pre_handshake_junk.delay())
+        };
         let delay_elapsed = pending
             .last_packet_at
             .map(|last| last.elapsed() >= delay)
@@ -841,6 +851,26 @@ impl Tunn {
 
         if !delay_elapsed {
             return TunnResult::Done;
+        }
+
+        // I1-I5 signature chains are sent first, in slot order, without
+        // pacing. Upstream batches them before imitation/Jc cover traffic.
+        if has_signature_datagram {
+            let pending = self
+                .pending_amnezia_junk
+                .as_mut()
+                .expect("pending checked above");
+            let size = pending
+                .signature_datagrams
+                .front()
+                .expect("queue checked non-empty above")
+                .len();
+            if dst.len() < size {
+                return TunnResult::Err(WireGuardError::DestinationBufferTooSmall);
+            }
+            let datagram = pending.signature_datagrams.pop_front().unwrap();
+            dst[..size].copy_from_slice(&datagram);
+            return TunnResult::WriteToNetwork(&mut dst[..size]);
         }
 
         // Emit any pre-generated standalone imitation datagrams (DNS/SIP/STUN or
