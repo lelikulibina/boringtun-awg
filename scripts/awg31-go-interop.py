@@ -54,9 +54,9 @@ PROFILES = [
     ),
     (
         "accelerated rekey",
-        "rekey_after_time=2-2\\nrekey_timeout=2-2\\n"
-        "reject_after_time=30-30\\nkeepalive_timeout=2-2\\n"
-        "max_handshake_attempts=3-3\\n",
+        "rekey_after_time=2-2\nrekey_timeout=2-2\n"
+        "reject_after_time=30-30\nkeepalive_timeout=2-2\n"
+        "max_handshake_attempts=3-3\n",
         True,
     ),
     (
@@ -136,7 +136,7 @@ def set_peer(iface: str, private: str, public: str, endpoint: str,
 
 
 def last_handshake_time(iface: str) -> int:
-    status = uapi(iface, "get=1\\n\\n")
+    status = uapi(iface, "get=1\n\n")
     for line in status.splitlines():
         if line.startswith("last_handshake_time_sec="):
             value = line.split("=", 1)[1]
