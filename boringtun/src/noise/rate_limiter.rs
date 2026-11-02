@@ -264,6 +264,30 @@ mod tests {
     }
 
     #[test]
+    fn disable_cookies_accepts_invalid_mac2_under_load_with_source_address() {
+        let public_key = crate::x25519::PublicKey::from([7u8; 32]);
+        let limiter = RateLimiter::new(&public_key, 0);
+        let packet = initiation_with_valid_mac1(&limiter);
+        let mut dst = [0u8; 128];
+
+        let result = limiter.verify_packet_with_cookie_policy(
+            ObfuscationRanges::default(),
+            &mut OsRng,
+            Some(IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)),
+            &packet,
+            &mut dst,
+            true,
+        );
+
+        assert!(matches!(result, Ok(Packet::HandshakeInit(_))));
+        assert_eq!(
+            limiter.count.load(Ordering::SeqCst),
+            0,
+            "DisableCookies must bypass MAC2 validation and under-load accounting"
+        );
+    }
+
+    #[test]
     fn disable_cookies_does_not_disable_mac1_authentication() {
         let public_key = crate::x25519::PublicKey::from([7u8; 32]);
         let limiter = RateLimiter::new(&public_key, 0);
