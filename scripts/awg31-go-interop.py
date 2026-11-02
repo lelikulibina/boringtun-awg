@@ -147,6 +147,47 @@ def wait_handshake(server_iface: str, client_ns: str, server_ip: str) -> None:
     raise RuntimeError("no handshake/traffic before timeout")
 
 
+def verify_udp_roundtrip(server_ns: str, client_ns: str) -> None:
+    """Verify an actual bidirectional UDP payload through the encrypted tunnel."""
+    server_code = (
+        "import socket; "
+        "s=socket.socket(socket.AF_INET, socket.SOCK_DGRAM); "
+        f"s.bind(('{SERVER_TUN}', 39001)); "
+        "s.settimeout(8); "
+        "data, addr=s.recvfrom(256); "
+        "s.sendto(b'awg31-udp-reply:' + data, addr); "
+        "print(data.decode(), flush=True)"
+    )
+    client_code = (
+        "import socket; "
+        "s=socket.socket(socket.AF_INET, socket.SOCK_DGRAM); "
+        "s.settimeout(8); "
+        f"s.sendto(b'probe', ('{SERVER_TUN}', 39001)); "
+        "data, _=s.recvfrom(256); "
+        "assert data == b'awg31-udp-reply:probe', data"
+    )
+    server = subprocess.Popen(
+        ["ip", "netns", "exec", server_ns, "python3", "-c", server_code],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        time.sleep(0.1)
+        run("ip", "netns", "exec", client_ns, "python3", "-c", client_code)
+        stdout, stderr = server.communicate(timeout=4)
+        if server.returncode != 0:
+            raise RuntimeError(f"UDP server failed: {stderr.strip() or stdout.strip()}")
+    finally:
+        if server.poll() is None:
+            server.terminate()
+            try:
+                server.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                server.kill()
+                server.wait()
+
+
 def run_profile(
     bt: str, go: str, name: str, extra: str,
     awg_enabled: bool, bt_is_server: bool,
@@ -239,7 +280,8 @@ def run_profile(
         ns(ns_client, "ip", "link", "set", client_iface, "up", "mtu", "1420")
         ns(ns_client, "ip", "route", "add", f"{SERVER_TUN}/32", "dev", client_iface)
         wait_handshake(server_iface, ns_client, SERVER_TUN)
-        print(f"PASS {name} ({role}): handshake + bidirectional traffic")
+        verify_udp_roundtrip(ns_server, ns_client)
+        print(f"PASS {name} ({role}): handshake + bidirectional ICMP/UDP traffic")
     except Exception:
         for log_path in logs.glob("*.log"):
             tail = log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-12:]
