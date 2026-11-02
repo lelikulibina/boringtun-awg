@@ -63,6 +63,13 @@ PROFILES = [
         True,
     ),
     (
+        "rekey packet-loss recovery",
+        "rekey_after_time=2-2\nrekey_timeout=2-2\n"
+        "reject_after_time=30-30\nkeepalive_timeout=2-2\n"
+        "max_handshake_attempts=3-3\n",
+        True,
+    ),
+    (
         "all AWG 3.1 extensions combined",
         f"header_protection_key={HPK}\n"
         "content_padding_addition=16-64\nrandom_trailers=true\n"
@@ -195,6 +202,28 @@ def wait_rekey(
         f"(initial={initial_handshake_time}, current={last_handshake_time(server_iface)})"
     )
 
+
+
+def drop_client_egress_during_rekey(client_ns: str, client_link: str) -> int:
+    """Drop all client egress briefly across the rekey deadline and verify qdisc drops."""
+    run("ip", "netns", "exec", client_ns, "tc", "qdisc", "add", "dev",
+        client_link, "root", "netem", "loss", "100%")
+    try:
+        # Initial session is already established. With rekey_after_time=2s,
+        # this window catches the first send-side rekey initiation while it is
+        # still in flight; removing netem allows the retry to complete.
+        time.sleep(3.0)
+        stats = run("ip", "netns", "exec", client_ns, "tc", "-s", "qdisc",
+                    "show", "dev", client_link, capture=True)
+        match = re.search(r"dropped (\\d+)", stats)
+        dropped = int(match.group(1)) if match else 0
+    finally:
+        run("ip", "netns", "exec", client_ns, "tc", "qdisc", "del",
+            "dev", client_link, "root", check=False)
+    if dropped < 1:
+        raise RuntimeError(f"netem did not drop any client packets; qdisc stats: {stats}")
+    print(f"PACKET-LOSS: netem dropped {dropped} client egress packet(s)")
+    return dropped
 
 
 def verify_udp_roundtrip(server_ns: str, client_ns: str) -> None:
@@ -508,6 +537,10 @@ def run_profile(
                 handshake_time = last_handshake_time(server_iface)
                 verify_udp_roundtrip(ns_server, ns_client)
                 print(f"REKEY soak cycle {cycle + 1}/3 completed ({role})")
+        elif name == "rekey packet-loss recovery":
+            drop_client_egress_during_rekey(ns_client, veth_client)
+            wait_rekey(server_iface, ns_client, SERVER_TUN, initial_handshake_time)
+            verify_udp_roundtrip(ns_server, ns_client)
         else:
             ns(ns_client, "ping", "-c3", "-W2", SERVER_TUN)
             verify_udp_roundtrip(ns_server, ns_client)
@@ -521,7 +554,7 @@ def run_profile(
             awg_enabled=awg_enabled,
             header_protection="header_protection_key=" in extra,
             random_trailers="random_trailers=true" in extra,
-            expected_handshakes=(4 if name == "accelerated rekey" else 1),
+            expected_handshakes=(4 if name == "accelerated rekey" else 2 if name == "rekey packet-loss recovery" else 1),
             expected_signatures=[
                 bytes.fromhex(value)
                 for value in re.findall(r"i[1-5]=<b 0x([0-9a-fA-F]+)>", extra)
