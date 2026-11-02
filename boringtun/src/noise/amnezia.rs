@@ -710,11 +710,7 @@ impl AmneziaConfig {
     /// The first four encrypted bytes are recovered first so the matching H
     /// range can identify the packet kind; the same cipher stream then
     /// continues at byte four, exactly as in amneziawg-go.
-    pub(crate) fn decrypt_inbound(
-        &self,
-        obf: ObfuscationRanges,
-        packet: &[u8],
-    ) -> Option<Vec<u8>> {
+    pub(crate) fn decrypt_inbound(&self, obf: ObfuscationRanges, packet: &[u8]) -> Option<Vec<u8>> {
         if !self.header_protection_enabled() {
             return None;
         }
@@ -739,11 +735,8 @@ impl AmneziaConfig {
             }
 
             let nonce: &[u8] = packet.get(..12)?;
-            let mut cipher = chacha20::ChaCha20::new_from_slices(
-                &self.header_protection_key,
-                nonce,
-            )
-            .ok()?;
+            let mut cipher =
+                chacha20::ChaCha20::new_from_slices(&self.header_protection_key, nonce).ok()?;
 
             let encrypted_type = packet.get(prefix_size..prefix_size + 4)?;
             let mut message_type = [0u8; 4];
@@ -922,11 +915,9 @@ impl AmneziaConfig {
             let nonce: [u8; 12] = buffer[..12]
                 .try_into()
                 .map_err(|_| WireGuardError::InvalidPacket)?;
-            let mut cipher = chacha20::ChaCha20::new_from_slices(
-                &self.header_protection_key,
-                &nonce,
-            )
-            .map_err(|_| WireGuardError::InvalidPacket)?;
+            let mut cipher =
+                chacha20::ChaCha20::new_from_slices(&self.header_protection_key, &nonce)
+                    .map_err(|_| WireGuardError::InvalidPacket)?;
             // Handshake messages protect the complete fixed-size message.
             // Transport packets protect only type + receiver index + counter;
             // the AEAD ciphertext and authentication tag must remain untouched.
@@ -2602,9 +2593,9 @@ mod tests {
         use rand_core::OsRng;
 
         let obf = ObfuscationRanges::default();
-        let cfg = AmneziaConfig::new(12, 12, 12, 12)
-            .with_header_protection_key([0x42; 32]);
-        cfg.validate().expect("12-byte prefixes satisfy HP requirements");
+        let cfg = AmneziaConfig::new(12, 12, 12, 12).with_header_protection_key([0x42; 32]);
+        cfg.validate()
+            .expect("12-byte prefixes satisfy HP requirements");
 
         for (tag, size) in [
             (1u32, HANDSHAKE_INIT_SZ),
@@ -2640,8 +2631,7 @@ mod tests {
 
     #[test]
     fn header_protection_requires_all_s_prefixes_to_be_at_least_12() {
-        let cfg = AmneziaConfig::new(12, 12, 12, 11)
-            .with_header_protection_key([0x24; 32]);
+        let cfg = AmneziaConfig::new(12, 12, 12, 11).with_header_protection_key([0x24; 32]);
         let error = cfg.validate().expect_err("S4 is too short for the nonce");
         assert!(error.contains("S4"));
         assert!(error.contains("12"));
@@ -2652,5 +2642,4 @@ mod tests {
         let cfg = AmneziaConfig::new(0, 0, 0, 0);
         assert!(!cfg.header_protection_enabled());
     }
-
 }

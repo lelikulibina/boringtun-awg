@@ -534,9 +534,7 @@ impl Tunn {
         // their type and receiver index before the regular WireGuard parser
         // and rate limiter can inspect them. Without a key, retain the
         // allocation-free legacy S/H parsing path byte-for-byte.
-        let decoded_datagram = self
-            .amnezia
-            .decrypt_inbound(self.handshake.obf, datagram);
+        let decoded_datagram = self.amnezia.decrypt_inbound(self.handshake.obf, datagram);
         let datagram = match decoded_datagram.as_deref() {
             Some(decoded) => decoded,
             None if !self.amnezia.header_protection_enabled() => {
@@ -2038,8 +2036,7 @@ mod tests {
 
     #[test]
     fn header_protection_completes_a_full_wireguard_handshake_and_keepalive() {
-        let config = AmneziaConfig::new(12, 12, 12, 12)
-            .with_header_protection_key([0x6b; 32]);
+        let config = AmneziaConfig::new(12, 12, 12, 12).with_header_protection_key([0x6b; 32]);
         let (mut initiator, mut responder) = create_two_tuns_with_amnezia(config);
 
         let initiation = create_handshake_init(&mut initiator);

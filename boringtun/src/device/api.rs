@@ -818,7 +818,9 @@ mod tests {
         let mut params = AwgParams::default();
         params.set_size("s4", 11);
         assert!(
-            params.merged(ObfuscationRanges::default(), &merged).is_err(),
+            params
+                .merged(ObfuscationRanges::default(), &merged)
+                .is_err(),
             "S4 shorter than 12 must be rejected while HP is enabled"
         );
     }
