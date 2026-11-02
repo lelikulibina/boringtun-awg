@@ -1487,19 +1487,14 @@ mod tests {
         let packet = create_ipv4_udp_packet();
         let mut network = [0u8; 2048];
         let mut tunnel = [0u8; 2048];
-        for _ in 0..2 {
-            let outbound = match sender.encapsulate(&packet, &mut network) {
-                TunnResult::WriteToNetwork(packet) => packet.to_vec(),
-                other => panic!("expected data packet, got {:?}", other),
-            };
-            assert!(matches!(
-                receiver.decapsulate(None, &outbound, &mut tunnel),
-                TunnResult::WriteToTunnelV4(_, _)
-            ));
-            if receiver.timers.send_keepalive_deadline.is_some() {
-                break;
-            }
-        }
+        let outbound = match sender.encapsulate(&packet, &mut network) {
+            TunnResult::WriteToNetwork(packet) => packet.to_vec(),
+            other => panic!("expected first data packet, got {:?}", other),
+        };
+        assert!(matches!(
+            receiver.decapsulate(None, &outbound, &mut tunnel),
+            TunnResult::WriteToTunnelV4(_, _)
+        ));
 
         // The first receive starts a three-second timer. A second receive while
         // it is pending requests one additional keepalive but does not reset it.
