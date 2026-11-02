@@ -268,8 +268,8 @@ pub struct AmneziaConfig {
     pub(crate) transport_packet_junk_size: u16,
     pub(crate) pre_handshake_junk: AmneziaPreHandshakeJunk,
     pub(crate) imitation: AmneziaImitation,
-    /// Do not send Cookie Reply packets when the handshake rate limiter is active.
-    /// Incoming Cookie Reply packets remain fully supported.
+    /// Disable the under-load MAC2/cookie challenge (upstream AWG semantics).
+    /// MAC1 validation and incoming Cookie Reply handling remain enabled.
     pub(crate) disable_cookies: bool,
     /// Suppress the client-only pre-handshake burst (Jc junk packets and the
     /// protocol imitation sequence) while keeping every other AmneziaWG
