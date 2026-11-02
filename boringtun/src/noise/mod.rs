@@ -1483,7 +1483,9 @@ mod tests {
             .saturating_sub(Duration::from_secs(6 + 2));
         assert!((Duration::from_secs(2)..=Duration::from_secs(4)).contains(&threshold));
 
-        mock_instant::MockClock::advance(threshold - Duration::from_millis(1));
+        // One millisecond elapsed before the authenticated receive above;
+        // stop one millisecond before the computed session-age threshold.
+        mock_instant::MockClock::advance(threshold - Duration::from_millis(2));
         assert!(matches!(
             initiator.update_timers(&mut network),
             TunnResult::Done
