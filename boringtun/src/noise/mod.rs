@@ -1376,6 +1376,31 @@ mod tests {
 
     #[test]
     #[cfg(feature = "mock-instant")]
+    fn session_and_handshake_key_material_expire_at_distinct_reject_deadlines() {
+        let (mut tun, _peer) = create_two_tuns_and_handshake();
+        assert!(tun.sessions.iter().any(Option::is_some));
+
+        // Receiving keys stop being usable after RejectAfterTime, while the
+        // handshake's key material is retained for the additional 2x window.
+        mock_instant::MockClock::advance(Duration::from_secs(181));
+        assert!(matches!(tun.update_timers(&mut []), TunnResult::Done));
+        assert!(
+            tun.sessions.iter().all(Option::is_none),
+            "session keys must be retired after RejectAfterTime"
+        );
+
+        mock_instant::MockClock::advance(Duration::from_secs(358));
+        assert!(matches!(tun.update_timers(&mut []), TunnResult::Done));
+
+        mock_instant::MockClock::advance(Duration::from_secs(1));
+        assert!(matches!(
+            tun.update_timers(&mut []),
+            TunnResult::Err(WireGuardError::ConnectionExpired)
+        ));
+    }
+
+    #[test]
+    #[cfg(feature = "mock-instant")]
     fn new_handshake_after_two_mins() {
         let (mut my_tun, mut their_tun) = create_two_tuns_and_handshake();
         let mut my_dst = [0u8; 1024];
