@@ -249,3 +249,12 @@ Upstream точки сверки:
 
 
 Проверка на HEAD `eb5eadbcb7d509eba5e60c97bd17e6d51eacb0fe` завершена: Linux `rustfmt`, `clippy`, `check_features`, `tests`, `integration-tests`, `awg31-interoperability` и `all-systems-go` — success; Semgrep OSS scan — success. Peer-level DisableCookies и timer cancellation regressions вошли в зелёный прогон. Interop harness подтвердил 16/16 профилей на том же upstream SHA; macOS/Windows в этом цикле не запускались.
+
+
+### Этап 5: дополнительные wire-level regressions (2026-11-02)
+
+- Расширены фиксированные HeaderProtection vectors для всех фиксированных сообщений: initiation, response и cookie reply. Добавлены независимые ожидаемые ciphertext-префиксы для response/cookie на одном ключе и nonce; декодирование сверяется с исходным сообщением.
+- Для transport закреплён отдельный 16-байтовый вектор заголовка: тип, receiver index и counter зашифрованы ChaCha20, AEAD payload остаётся неизменным.
+- Для ContentPaddingAddition добавлены границы inclusive `[min, max]`, проверка включённого верхнего endpoint, clamp к свободному месту UDP window, нулевого остатка окна и отсутствия padding для keepalive.
+- CI на кодовом HEAD `a6237d7638ef17a50489a55c6e311b8c133b6392`: rustfmt, clippy, check_features, tests, integration-tests, awg31-interoperability (16/16), all-systems-go и Semgrep — success.
+- Эти фиксированные векторы проверяют ChaCha20/защищённые поля и не заменяют полную дифференциальную запись всех wire datagrams с upstream; отдельные randomized trailer lengths и MAC поля всё ещё требуют точечных differential fixtures.
