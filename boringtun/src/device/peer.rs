@@ -87,7 +87,7 @@ impl Peer {
         }
     }
 
-    pub fn set_endpoint(&self, addr: SocketAddr) {
+    pub fn set_endpoint(&mut self, addr: SocketAddr) {
         let mut endpoint = self.endpoint.write();
         if endpoint.addr != Some(addr) {
             // A roaming peer gets a fresh UDP size estimate, as in upstream.
