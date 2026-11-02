@@ -1745,6 +1745,18 @@ mod tests {
             ),
         };
         assert!(cookie.len() > 12 + COOKIE_REPLY_SZ - 1);
+
+        // Corrupt the encrypted-cookie authentication tag inside the fixed
+        // 64-byte message (12-byte S3 prefix + 48-byte tag offset). The
+        // random outer trailer must not affect parsing, and a forged reply
+        // must never install cookie state.
+        let mut corrupted_cookie = cookie.clone();
+        corrupted_cookie[12 + 48] ^= 0x80;
+        assert!(matches!(
+            initiator.decapsulate(None, &corrupted_cookie, &mut network),
+            TunnResult::Err(WireGuardError::InvalidAeadTag)
+        ));
+
         assert!(matches!(
             initiator.decapsulate(None, &cookie, &mut network),
             TunnResult::Done
