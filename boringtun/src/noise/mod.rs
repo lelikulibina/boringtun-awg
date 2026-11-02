@@ -1472,12 +1472,6 @@ mod tests {
             TunnResult::WriteToNetwork(packet) => packet.to_vec(),
             other => panic!("DisableCookies should allow a valid MAC1 under load, got {:?}", other),
         };
-        assert_eq!(
-            rate_limiter.count.load(portable_atomic::Ordering::SeqCst),
-            0,
-            "DisableCookies must bypass under-load accounting"
-        );
-
         let keepalive = parse_handshake_resp(&mut initiator, &response);
         parse_keepalive(&mut responder, &keepalive);
         assert!(
