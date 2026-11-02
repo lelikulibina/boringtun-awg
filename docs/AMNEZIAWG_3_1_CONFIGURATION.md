@@ -44,6 +44,18 @@
 - [Issue #185](https://github.com/amnezia-vpn/amneziawg-go/issues/185): ContentPaddingAddition имеет приоритет над RandomTrailers только для transport; handshake/cookie по-прежнему получают RandomTrailers.
 - [Issue #186](https://github.com/amnezia-vpn/amneziawg-go/issues/186): широкие H1-H3 при RandomTrailers могут приводить к ложной классификации и потере transport-пакетов. В этой реализации широкая суммарная ширина отклоняется, а не принимается молча.
 
+## Проверка с официальным amneziawg-go
+
+Для воспроизводимой проверки AWG 3.1 добавлена отдельная матрица:
+
+```bash
+sudo python3 scripts/awg31-go-interop.py ./target/release/boringtun-cli ./amneziawg-go
+```
+
+Скрипт требует Linux, root, `iproute2`, `ping`, Python-пакет `cryptography`, BoringTun с feature `device` и официальный бинарник `amneziawg-go` из ветки модуля `/v3`. Для каждого профиля создаются отдельные сетевые namespace с уникальными именами; хостовые маршруты и интерфейсы не перенастраиваются. Успех профиля означает не только принятие UAPI-конфигурации, но и handshake с последующим двусторонним ICMP-трафиком.
+
+Матрица включает HeaderProtectionKey, ContentPaddingAddition, RandomTrailers, DisableCookies, диапазоны таймеров и их совместное включение. Это runnable interoperability harness, а не зафиксированный результат: пока скрипт не запущен с актуальными бинарниками обеих реализаций, считать проверки пройденными нельзя. Профиль DisableCookies проверяет принятие настройки и обычный handshake, но не создаёт искусственную under-load ситуацию для проверки обхода MAC2. Профиль таймеров проверяет UAPI и старт соединения, но не заменяет длительный differential-тест rekey/retry/expiry.
+
 ## Что ещё не подтверждено
 
 1. Differential wire-vector tests с официальным Go peer для Header Protection, RandomTrailers, cookie replies и H1-H4.
