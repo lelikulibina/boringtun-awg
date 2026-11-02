@@ -793,6 +793,37 @@ mod tests {
     }
 
     #[test]
+    fn header_protection_key_is_merged_and_validated_atomically() {
+        let current = AmneziaConfig::new(12, 12, 12, 12);
+        let key = [0x5a; 32];
+        let mut params = AwgParams::default();
+        params.header_protection_key = Some(key);
+        params.seen = true;
+
+        let (_, merged) = params
+            .merged(ObfuscationRanges::default(), &current)
+            .expect("valid 32-byte key and four 12-byte prefixes");
+        assert_eq!(merged.header_protection_key, key);
+        assert!(merged.header_protection_enabled());
+
+        // A partial update that does not mention the key preserves it.
+        let params = AwgParams::default();
+        let (_, unchanged) = params
+            .merged(ObfuscationRanges::default(), &merged)
+            .expect("existing valid HP configuration remains valid");
+        assert_eq!(unchanged.header_protection_key, key);
+
+        // An S update that makes any prefix shorter than the nonce is rejected
+        // before the merged configuration can be committed.
+        let mut params = AwgParams::default();
+        params.set_size("s4", 11);
+        assert!(
+            params.merged(ObfuscationRanges::default(), &merged).is_err(),
+            "S4 shorter than 12 must be rejected while HP is enabled"
+        );
+    }
+
+    #[test]
     fn parse_tag_range_accepts_bare_values_and_ranges() {
         // A bare value is a degenerate range, matching the kernel module's
         // mh_genspec, so single-value AmneziaWG configs map across unchanged.
