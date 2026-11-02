@@ -2913,6 +2913,34 @@ mod tests {
         }
     }
 
+    #[test]
+    fn header_protection_roundtrips_handshake_with_random_trailer() {
+        let obf = ObfuscationRanges::default();
+        let cfg = AmneziaConfig::new(12, 12, 12, 12)
+            .with_header_protection_key([0x42; 32])
+            .with_random_trailers(true);
+        let mut original = vec![0u8; HANDSHAKE_INIT_SZ];
+        original[..4].copy_from_slice(&HANDSHAKE_INIT.to_le_bytes());
+        for (i, byte) in original[4..].iter_mut().enumerate() {
+            *byte = (i as u8).wrapping_mul(3).wrapping_add(1);
+        }
+
+        let mut buffer = vec![0u8; DEFAULT_UDP_WINDOW];
+        buffer[..HANDSHAKE_INIT_SZ].copy_from_slice(&original);
+        let mut rng = ChaCha8Rng::seed_from_u64(0xA31);
+        let wire = cfg
+            .prepend_outbound(obf, &mut buffer, HANDSHAKE_INIT_SZ, &mut rng)
+            .expect("header protection and trailer fit")
+            .to_vec();
+        assert!(wire.len() > HANDSHAKE_INIT_SZ + 12);
+
+        assert_eq!(
+            cfg.decrypt_inbound(obf, &wire).as_deref(),
+            Some(original.as_slice()),
+            "header protection must ignore the random trailer after decoding"
+        );
+    }
+
     /// Fixed vector matching the upstream AWG construction:
     /// ChaCha20(key, S-prefix[0..12]) XORs the full handshake message,
     /// while transport protects only its 16-byte header.
