@@ -1617,6 +1617,90 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "mock-instant")]
+    fn authenticated_inbound_data_cancels_pending_inactivity_handshake_deadline() {
+        let config = AmneziaConfig::new(0, 0, 0, 0)
+            .with_rekey_after_time(120, 120)
+            .with_rekey_timeout(1, 1)
+            .with_keepalive_timeout(3, 3);
+        let (mut initiator, mut responder) = create_two_tuns_with_amnezia(config);
+        let init = create_handshake_init(&mut initiator);
+        let response = create_handshake_response(&mut responder, &init);
+        let keepalive = parse_handshake_resp(&mut initiator, &response);
+        parse_keepalive(&mut responder, &keepalive);
+
+        let packet = create_ipv4_udp_packet();
+        let mut network = [0u8; 2048];
+        let mut tunnel = [0u8; 2048];
+        let outbound = match initiator.encapsulate(&packet, &mut network) {
+            TunnResult::WriteToNetwork(packet) => packet.to_vec(),
+            other => panic!("expected outbound data packet, got {:?}", other),
+        };
+        let deadline = initiator.timers.new_handshake_deadline;
+        assert!(deadline.is_some());
+        assert!(matches!(
+            responder.decapsulate(None, &outbound, &mut tunnel),
+            TunnResult::WriteToTunnelV4(_, _)
+        ));
+
+        let reply = match responder.encapsulate(&packet, &mut network) {
+            TunnResult::WriteToNetwork(packet) => packet.to_vec(),
+            other => panic!("expected authenticated reply packet, got {:?}", other),
+        };
+        assert!(matches!(
+            initiator.decapsulate(None, &reply, &mut tunnel),
+            TunnResult::WriteToTunnelV4(_, _)
+        ));
+        assert_eq!(
+            initiator.timers.new_handshake_deadline, None,
+            "authenticated inbound traffic must cancel the pending inactivity handshake"
+        );
+
+        mock_instant::MockClock::advance(Duration::from_secs(10));
+        assert!(matches!(initiator.update_timers(&mut network), TunnResult::Done));
+    }
+
+    #[test]
+    #[cfg(feature = "mock-instant")]
+    fn authenticated_outbound_data_cancels_pending_keepalive_deadline() {
+        let config = AmneziaConfig::new(0, 0, 0, 0).with_keepalive_timeout(3, 3);
+        let (mut sender, mut receiver) = create_two_tuns_with_amnezia(config);
+        let init = create_handshake_init(&mut sender);
+        let response = create_handshake_response(&mut receiver, &init);
+        let keepalive = parse_handshake_resp(&mut sender, &response);
+        parse_keepalive(&mut receiver, &keepalive);
+
+        let packet = create_ipv4_udp_packet();
+        let mut network = [0u8; 2048];
+        let mut tunnel = [0u8; 2048];
+        let outbound = match sender.encapsulate(&packet, &mut network) {
+            TunnResult::WriteToNetwork(packet) => packet.to_vec(),
+            other => panic!("expected outbound data packet, got {:?}", other),
+        };
+        assert!(matches!(
+            receiver.decapsulate(None, &outbound, &mut tunnel),
+            TunnResult::WriteToTunnelV4(_, _)
+        ));
+        assert!(receiver.timers.send_keepalive_deadline.is_some());
+
+        let reply = match receiver.encapsulate(&packet, &mut network) {
+            TunnResult::WriteToNetwork(packet) => packet.to_vec(),
+            other => panic!("expected outbound reply packet, got {:?}", other),
+        };
+        assert!(matches!(
+            sender.decapsulate(None, &reply, &mut tunnel),
+            TunnResult::WriteToTunnelV4(_, _)
+        ));
+        assert_eq!(
+            receiver.timers.send_keepalive_deadline, None,
+            "authenticated outbound traffic must cancel the pending keepalive"
+        );
+
+        mock_instant::MockClock::advance(Duration::from_secs(10));
+        assert!(matches!(receiver.update_timers(&mut network), TunnResult::Done));
+    }
+
+    #[test]
     fn one_ip_packet() {
         let (mut my_tun, mut their_tun) = create_two_tuns_and_handshake();
         let mut my_dst = [0u8; 1024];
