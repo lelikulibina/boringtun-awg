@@ -524,6 +524,8 @@ mod tests {
             format!(
                 "own_public_key={}\n\
                  listen_port={}\n\
+                 disable_cookies=false\n\
+                 random_trailers=false\n\
                  public_key={}\n\
                  endpoint={}\n\
                  allowed_ip={}/{}\n\
