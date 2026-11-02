@@ -145,6 +145,7 @@ version = "0.7.1"
 dependencies = [
  "aead",
  "aes",
+ "chacha20",
  "base64",
  "blake2",
  "chacha20poly1305",
