@@ -10,6 +10,7 @@ use super::{
     HANDSHAKE_RESP_SZ,
 };
 use crate::noise::errors::WireGuardError;
+use chacha20::cipher::{KeyIvInit, StreamCipher};
 use rand_core::RngCore;
 use std::convert::{TryFrom, TryInto};
 use std::time::Duration;
@@ -271,6 +272,9 @@ pub struct AmneziaConfig {
     /// Disable the under-load MAC2/cookie challenge (upstream AWG semantics).
     /// MAC1 validation and incoming Cookie Reply handling remain enabled.
     pub(crate) disable_cookies: bool,
+    /// 32-byte raw ChaCha20 key for AmneziaWG 3.1 header protection.
+    /// An all-zero key disables header protection, matching upstream.
+    pub(crate) header_protection_key: [u8; 32],
     /// Suppress the client-only pre-handshake burst (Jc junk packets and the
     /// protocol imitation sequence) while keeping every other AmneziaWG
     /// behaviour. See [`AmneziaConfig::as_responder`].
@@ -360,6 +364,7 @@ impl AmneziaConfig {
             pre_handshake_junk: AmneziaPreHandshakeJunk::default(),
             imitation: AmneziaImitation::default(),
             disable_cookies: false,
+            header_protection_key: [0u8; 32],
             suppress_pre_handshake: false,
         }
     }
@@ -371,6 +376,17 @@ impl AmneziaConfig {
     pub fn with_disable_cookies(mut self, disabled: bool) -> Self {
         self.disable_cookies = disabled;
         self
+    }
+
+    /// Enable AmneziaWG 3.1 header protection with a 32-byte ChaCha20 key.
+    /// Passing an all-zero key disables protection, as in amneziawg-go.
+    pub fn with_header_protection_key(mut self, key: [u8; 32]) -> Self {
+        self.header_protection_key = key;
+        self
+    }
+
+    pub(crate) fn header_protection_enabled(&self) -> bool {
+        self.header_protection_key != [0u8; 32]
     }
 
     pub fn with_pre_handshake_junk(
@@ -444,6 +460,24 @@ impl AmneziaConfig {
                     "{} is too large: {} junk bytes + {} packet bytes exceed the {}-byte maximum datagram",
                     label, junk, base, MAX_SENDABLE_DATAGRAM
                 ));
+            }
+        }
+
+        // Header Protection uses the first 12 bytes of each S-prefix as its
+        // ChaCha20 nonce. Upstream requires every packet class to carry one.
+        if self.header_protection_enabled() {
+            for (label, junk) in [
+                ("S1", self.init_packet_junk_size),
+                ("S2", self.response_packet_junk_size),
+                ("S3", self.cookie_packet_junk_size),
+                ("S4", self.transport_packet_junk_size),
+            ] {
+                if junk < 12 {
+                    return Err(format!(
+                        "{} must be at least 12 bytes when Header Protection is enabled",
+                        label
+                    ));
+                }
             }
         }
 
@@ -671,6 +705,71 @@ impl AmneziaConfig {
         None
     }
 
+    /// Decode an inbound packet protected by the AWG 3.1 ChaCha20 header
+    /// cipher. The first 12 bytes of the packet are the nonce and remain clear.
+    /// The first four encrypted bytes are recovered first so the matching H
+    /// range can identify the packet kind; the same cipher stream then
+    /// continues at byte four, exactly as in amneziawg-go.
+    pub(crate) fn decrypt_inbound(
+        &self,
+        obf: ObfuscationRanges,
+        packet: &[u8],
+    ) -> Option<Vec<u8>> {
+        if !self.header_protection_enabled() {
+            return None;
+        }
+
+        for (kind, base_size) in [
+            (PacketKind::HandshakeInit, HANDSHAKE_INIT_SZ),
+            (PacketKind::HandshakeResponse, HANDSHAKE_RESP_SZ),
+            (PacketKind::CookieReply, COOKIE_REPLY_SZ),
+            (PacketKind::TransportData, DATA_OVERHEAD_SZ),
+        ] {
+            let prefix_size = self.inbound_junk_size(kind);
+            if prefix_size < 12 {
+                continue;
+            }
+
+            let minimum_size = prefix_size.checked_add(base_size)?;
+            let is_transport = kind == PacketKind::TransportData;
+            if (is_transport && packet.len() < minimum_size)
+                || (!is_transport && packet.len() != minimum_size)
+            {
+                continue;
+            }
+
+            let nonce: &[u8] = packet.get(..12)?;
+            let mut cipher = chacha20::ChaCha20::new_from_slices(
+                &self.header_protection_key,
+                nonce,
+            )
+            .ok()?;
+
+            let encrypted_type = packet.get(prefix_size..prefix_size + 4)?;
+            let mut message_type = [0u8; 4];
+            cipher.apply_keystream(&mut message_type);
+            for (byte, encrypted) in message_type.iter_mut().zip(encrypted_type) {
+                *byte ^= encrypted;
+            }
+
+            let tag = u32::from_le_bytes(message_type);
+            if !Self::tag_matches(obf, kind, tag) {
+                continue;
+            }
+
+            let mut decoded = packet[prefix_size..].to_vec();
+            decoded[..4].copy_from_slice(&message_type);
+            // Handshake and cookie messages are fixed-size and fully protected.
+            // For transport, only type + receiver index + counter (16 bytes)
+            // are header-protected; the payload remains AEAD ciphertext.
+            let protected_header_len = if is_transport { 16 } else { base_size };
+            cipher.apply_keystream(&mut decoded[4..protected_header_len]);
+            return Some(decoded);
+        }
+
+        None
+    }
+
     fn classify_outbound(&self, obf: ObfuscationRanges, packet: &[u8]) -> Option<PacketKind> {
         let tag = Self::read_tag(packet, 0)?;
         match packet.len() {
@@ -813,8 +912,25 @@ impl AmneziaConfig {
             return Err(WireGuardError::DestinationBufferTooSmall);
         }
 
+        if self.header_protection_enabled() && junk_size < 12 {
+            return Err(WireGuardError::InvalidPacket);
+        }
+
         buffer.copy_within(0..packet_size, junk_size);
         self.fill_outbound_junk(&mut buffer[..junk_size], packet_size, rng);
+
+        if self.header_protection_enabled() {
+            let nonce: [u8; 12] = buffer[..12]
+                .try_into()
+                .map_err(|_| WireGuardError::InvalidPacket)?;
+            let mut cipher = chacha20::ChaCha20::new_from_slices(
+                &self.header_protection_key,
+                &nonce,
+            )
+            .map_err(|_| WireGuardError::InvalidPacket)?;
+            cipher.apply_keystream(&mut buffer[junk_size..new_size]);
+        }
+
         Ok(&mut buffer[..new_size])
     }
 
