@@ -495,16 +495,26 @@ impl AmneziaConfig {
         if (min == 0 && max == 0) || min > max || packet_size == 0 || available == 0 {
             return 0;
         }
-        let width = max as u32 - min as u32 + 1;
-        let zone = u32::MAX - (u32::MAX % width);
-        let sample = loop {
-            let value = rng.next_u32();
-            if value < zone {
+        let selected = loop {
+            if let Some(value) = Self::map_content_padding_sample(min, max, rng.next_u32()) {
                 break value;
             }
         };
-        let selected = min as usize + (sample % width) as usize;
         selected.min(available)
+    }
+
+    /// Map one u32 draw to the inclusive CPA range without modulo bias.
+    /// None denotes a draw in the rejection tail.
+    fn map_content_padding_sample(min: u16, max: u16, sample: u32) -> Option<usize> {
+        if min > max {
+            return None;
+        }
+        let width = max as u32 - min as u32 + 1;
+        let zone = u32::MAX - (u32::MAX % width);
+        if sample >= zone {
+            return None;
+        }
+        Some(min as usize + (sample % width) as usize)
     }
 
     pub fn with_pre_handshake_junk(
@@ -2028,6 +2038,42 @@ mod tests {
             7,
             "ContentPaddingAddition takes precedence over RandomTrailers"
         );
+    }
+
+    #[test]
+    fn content_padding_range_mapper_is_inclusive_and_rejects_modulo_bias_tail() {
+        let min = 7u16;
+        let max = 16u16;
+        let width = u32::from(max) - u32::from(min) + 1;
+        let zone = u32::MAX - (u32::MAX % width);
+
+        assert_eq!(AmneziaConfig::map_content_padding_sample(min, max, 0), Some(7));
+        assert_eq!(
+            AmneziaConfig::map_content_padding_sample(min, max, zone - 1),
+            Some(16),
+            "the last accepted sample must map to the inclusive maximum"
+        );
+        assert_eq!(
+            AmneziaConfig::map_content_padding_sample(min, max, zone),
+            None,
+            "the first value in the modulo-bias tail must be rejected"
+        );
+        assert_eq!(
+            AmneziaConfig::map_content_padding_sample(0, u16::MAX, 0),
+            Some(0),
+            "the full u16 CPA range must not overflow"
+        );
+        assert_eq!(
+            AmneziaConfig::map_content_padding_sample(0, u16::MAX, u32::MAX - 1),
+            Some(u16::MAX as usize),
+            "the final accepted full-range sample must reach the maximum"
+        );
+        assert_eq!(
+            AmneziaConfig::map_content_padding_sample(9, 9, 0),
+            Some(9),
+            "singleton ranges must remain deterministic"
+        );
+        assert_eq!(AmneziaConfig::map_content_padding_sample(10, 9, 0), None);
     }
 
     #[test]
