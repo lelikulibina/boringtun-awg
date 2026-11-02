@@ -1607,6 +1607,77 @@ mod tests {
     }
 
     #[test]
+    fn disable_cookies_composes_with_header_protection_padding_and_random_trailers() {
+        let initiator_secret = x25519::StaticSecret::random_from_rng(OsRng);
+        let initiator_public = x25519::PublicKey::from(&initiator_secret);
+        let responder_secret = x25519::StaticSecret::random_from_rng(OsRng);
+        let responder_public = x25519::PublicKey::from(&responder_secret);
+        // A zero limit forces the responder into the under-load path from the
+        // first authenticated initiation.
+        let rate_limiter = Arc::new(RateLimiter::new(&responder_public, 0));
+        let config = AmneziaConfig::new(8, 8, 8, 8)
+            .with_disable_cookies(true)
+            .with_header_protection_key([0x31; 32])
+            .with_content_padding_addition(3, 3)
+            .with_random_trailers(true);
+
+        let mut initiator = Tunn::new_with_amnezia(
+            initiator_secret,
+            responder_public,
+            None,
+            None,
+            1,
+            None,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            config.clone(),
+        )
+        .unwrap();
+        let mut responder = Tunn::new_with_amnezia(
+            responder_secret,
+            initiator_public,
+            None,
+            None,
+            2,
+            Some(rate_limiter),
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            config,
+        )
+        .unwrap();
+
+        let mut network = [0u8; 4096];
+        let init = create_handshake_init(&mut initiator);
+        let response = match responder.decapsulate(None, &init, &mut network) {
+            TunnResult::WriteToNetwork(packet) => packet.to_vec(),
+            other => panic!(
+                "DisableCookies must bypass the forced-load cookie challenge with all AWG 3.1 transforms enabled, got {:?}",
+                other
+            ),
+        };
+        let keepalive = parse_handshake_resp(&mut initiator, &response);
+        parse_keepalive(&mut responder, &keepalive);
+
+        assert!(
+            initiator.sessions.iter().any(Option::is_some)
+                && responder.sessions.iter().any(Option::is_some),
+            "header protection, content padding, random trailers and DisableCookies must establish a session"
+        );
+    }
+
+    #[test]
     fn header_protection_and_random_trailers_preserve_cookie_challenge_mac_flow() {
         let initiator_secret = x25519::StaticSecret::random_from_rng(OsRng);
         let initiator_public = x25519::PublicKey::from(&initiator_secret);
