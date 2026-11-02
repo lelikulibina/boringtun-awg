@@ -507,7 +507,7 @@ impl Tunn {
         self.timers.need_another_keepalive = false;
         self.timers.max_handshake_attempts = self.timers.pick_range(4, 18);
         self.timers.handshake_attempts = 0;
-        self.timers.handshake_retry_jitter = Duration::from_millis((OsRng.next_u32() % 334) as u64);
+        self.timers.handshake_retry_jitter = Timers::random_jitter();
         self.pending_amnezia_junk = None;
     }
 
