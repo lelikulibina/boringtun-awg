@@ -22,8 +22,6 @@ const DEFAULT_JUNK_PACKET_SIZE_MIN: u16 = 50;
 const DEFAULT_JUNK_PACKET_SIZE_MAX: u16 = 1000;
 const MAX_JUNK_PACKET_COUNT: u16 = 128;
 pub(crate) const DEFAULT_UDP_WINDOW: usize = 500;
-/// Keep RandomTrailers-induced H1-H3 false positives below 0.01% per direction.
-const MAX_RANDOM_TRAILER_COLLISION_WIDTH: u64 = (u32::MAX as u64 + 1) / 10_000;
 const MAX_JUNK_PACKET_SIZE: u16 = 1280;
 const MAX_JUNK_PACKET_DELAY_MS: u16 = 200;
 /// Largest datagram that can actually be sent: the IPv4 UDP payload limit,
@@ -591,17 +589,26 @@ impl AmneziaConfig {
         Ok(())
     }
 
-    /// RandomTrailers makes handshake lengths variable, so a transport
-    /// datagram can also satisfy a handshake length check. Bound the chance
-    /// that random bytes at S1-S3 fall into H1-H3 to 0.01% per direction.
-    /// H4 is deliberately excluded: it is checked only after handshake types.
+    /// RandomTrailers makes handshake lengths variable. With different
+    /// S-prefix lengths, a transport packet can be examined at the wrong
+    /// offset by an earlier handshake classifier and be silently discarded
+    /// before its transport AEAD is tried (upstream amneziawg-go#186).
+    ///
+    /// Requiring one common S offset makes every classifier inspect the same
+    /// four-byte type field. Since ObfuscationRanges rejects overlapping H1-H4
+    /// ranges, a transport tag selected from H4 cannot match H1-H3. This is a
+    /// deterministic framing constraint, not a probabilistic width heuristic.
     pub(crate) fn validate_random_trailers(&self, obf: ObfuscationRanges) -> Result<(), String> {
+        let _ = obf; // H-range disjointness is guaranteed by ObfuscationRanges::new.
         if self.random_trailers {
-            let width = obf.random_trailer_collision_width();
-            if width > MAX_RANDOM_TRAILER_COLLISION_WIDTH {
+            let s = self.init_packet_junk_size;
+            if self.response_packet_junk_size != s
+                || self.cookie_packet_junk_size != s
+                || self.transport_packet_junk_size != s
+            {
                 return Err(format!(
-                    "RandomTrailers requires the combined inclusive H1-H3 range width to be at most {} (current: {}); wider ranges can silently misclassify transport packets",
-                    MAX_RANDOM_TRAILER_COLLISION_WIDTH, width
+                    "RandomTrailers requires S1 = S2 = S3 = S4 (all currently must equal {}); different offsets can misclassify and silently drop transport packets",
+                    s
                 ));
             }
         }
@@ -1854,57 +1861,57 @@ mod tests {
     }
 
     #[test]
-    fn random_trailers_rejects_wide_h1_h3_ranges() {
-        let cfg = AmneziaConfig::new(0, 0, 0, 0).with_random_trailers(true);
-        let wide = ObfuscationRanges::new(
-            100_000, 300_000, 500_000, 800_000, 1_000_000, 1_300_000, 1_500_000, 1_500_001,
+    fn random_trailers_require_equal_s_prefixes_even_with_narrow_h_ranges() {
+        // This profile reproduces the structural ambiguity in upstream issue
+        // #186: the transport type at S4 can be re-read as a control tag at S2.
+        let obf = ObfuscationRanges::new(
+            405_138_553, 456_138_212,
+            680_931_238, 1_038_459_501,
+            1_114_423_399, 1_432_068_193,
+            1_500_000_000, 1_500_000_000,
         )
-        .unwrap();
-        let error = cfg
-            .validate_random_trailers(wide)
-            .expect_err("wide handshake ranges would silently eat transport packets");
-        assert!(error.contains("H1-H3"));
+        .expect("all H ranges are disjoint");
+
+        let unequal = AmneziaConfig::new(97, 41, 133, 24).with_random_trailers(true);
+        let error = unequal
+            .validate_random_trailers(obf)
+            .expect_err("different offsets can misclassify valid transport packets");
+        assert!(error.contains("S1 = S2 = S3 = S4"));
         assert!(error.contains("RandomTrailers"));
 
-        let narrow = ObfuscationRanges::new(
-            100_000, 100_100, 500_000, 500_100, 1_000_000, 1_000_100, 1_500_000, 1_500_100,
-        )
-        .unwrap();
-        cfg.validate_random_trailers(narrow)
-            .expect("narrow H1-H3 ranges keep false positives below the bound");
+        let equal = AmneziaConfig::new(24, 24, 24, 24).with_random_trailers(true);
+        equal
+            .validate_random_trailers(obf)
+            .expect("equal offsets plus disjoint H ranges make classification unambiguous");
     }
 
     #[test]
-    fn random_trailer_collision_guard_accepts_limit_and_rejects_one_over() {
-        let cfg = AmneziaConfig::new(0, 0, 0, 0).with_random_trailers(true);
-        let max_width = MAX_RANDOM_TRAILER_COLLISION_WIDTH as u32;
+    fn equal_s_prefixes_keep_transport_tags_out_of_handshake_classifiers() {
+        let obf = ObfuscationRanges::new(
+            405_138_553, 456_138_212,
+            680_931_238, 1_038_459_501,
+            1_114_423_399, 1_432_068_193,
+            1_500_000_000, 1_500_000_000,
+        )
+        .expect("all H ranges are disjoint");
+        let cfg = AmneziaConfig::new(24, 24, 24, 24).with_random_trailers(true);
+        let transport_tag = 1_500_000_000u32;
+        let response_tag = 700_000_000u32;
+        let mut packet = vec![0u8; 376];
+        packet[24..28].copy_from_slice(&transport_tag.to_le_bytes());
+        // This is where an unequal S2=41 classifier would look and falsely
+        // see a valid H2 response tag. Equal S values never inspect this offset.
+        packet[41..45].copy_from_slice(&response_tag.to_le_bytes());
 
-        let at_limit = ObfuscationRanges::new(100_000, 100_000 + max_width - 3, 2, 0, 3, 0, 4, 0)
-            .expect("non-overlapping ranges");
-        assert_eq!(
-            at_limit.random_trailer_collision_width(),
-            u64::from(max_width)
-        );
-        assert!(
-            cfg.validate_random_trailers(at_limit).is_ok(),
-            "the documented collision-probability limit is inclusive"
-        );
-
-        let over_limit = ObfuscationRanges::new(100_000, 100_000 + max_width - 2, 2, 0, 3, 0, 4, 0)
-            .expect("non-overlapping ranges");
-        assert_eq!(
-            over_limit.random_trailer_collision_width(),
-            u64::from(max_width) + 1
-        );
-        assert!(
-            cfg.validate_random_trailers(over_limit).is_err(),
-            "one value above the collision-probability limit must be rejected"
-        );
+        let stripped = cfg
+            .strip_inbound(obf, &packet)
+            .expect("transport must be classified using the common S offset");
+        assert_eq!(&stripped[..4], &transport_tag.to_le_bytes());
     }
 
     #[test]
     fn random_trailers_are_clamped_to_destination_capacity() {
-        let cfg = AmneziaConfig::new(12, 0, 0, 0).with_random_trailers(true);
+        let cfg = AmneziaConfig::new(12, 12, 12, 12).with_random_trailers(true);
         let mut rng = ChaCha8Rng::seed_from_u64(0xCAFE);
         let mut buffer = vec![0u8; HANDSHAKE_INIT_SZ + 12 + 10];
         write_tag(&mut buffer, HANDSHAKE_INIT);
@@ -1928,7 +1935,7 @@ mod tests {
             (HANDSHAKE_RESP, HANDSHAKE_RESP_SZ, 0, 12, 0),
             (COOKIE_REPLY, COOKIE_REPLY_SZ, 0, 0, 12),
         ] {
-            let cfg = AmneziaConfig::new(s1, s2, s3, 0).with_random_trailers(true);
+            let cfg = AmneziaConfig::new(12, 12, 12, 12).with_random_trailers(true);
             let mut rng = ChaCha8Rng::seed_from_u64(0xA11CE);
             let mut buffer = vec![0u8; DEFAULT_UDP_WINDOW];
             write_tag(&mut buffer, tag);
@@ -1949,7 +1956,7 @@ mod tests {
 
     #[test]
     fn cookie_random_trailer_is_bounded_by_triggering_request() {
-        let cfg = AmneziaConfig::new(0, 0, 12, 0).with_random_trailers(true);
+        let cfg = AmneziaConfig::new(12, 12, 12, 12).with_random_trailers(true);
         let mut rng = ChaCha8Rng::seed_from_u64(0xC001);
         let mut buffer = vec![0u8; 512];
         write_tag(&mut buffer, COOKIE_REPLY);
