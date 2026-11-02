@@ -50,11 +50,11 @@
 - [x] Добавлять случайное число нулевых байтов к transport plaintext до AEAD encryption.
 - [x] Ограничивать добавление свободным местом до tunnel MTU; пустые keepalive не дополнять.
 - [x] Приёмная сторона обрезает расшифрованный пакет по IPv4 Total Length / IPv6 Payload Length через существующий validator.
-- [ ] Добавить граничные/IPv4/IPv6/межоперационные тесты и пройти Linux CI.
+- [ ] Добавить отдельные IPv6/boundary и межоперационные тесты; Linux CI для текущего SHA `a5f5d548c3d7aa364df0acd624e67a0b102036d5` прошёл (кроме rustfmt, исправляемого следующим коммитом).
 
 **Готово, когда:** пакеты не превышают MTU/буферные лимиты, payload восстанавливается без изменений, значения диапазона соблюдаются.
 
-**Реализация в работе:** range/config/UAPI, MTU clamp и обработка до AEAD добавлены в рабочую ветку. При отсутствии параметра прежнее поведение BoringTun сохраняется. Тест проверяет MTU clamp, пустой keepalive и восстановление исходного IPv4-пакета; CI ещё не запускался.
+**Реализация в работе:** range/config/UAPI, MTU clamp и обработка до AEAD добавлены в рабочую ветку. При отсутствии параметра прежнее поведение BoringTun сохраняется. Тест проверяет MTU clamp, пустой keepalive и восстановление исходного IPv4-пакета. На SHA `a5f5d548c3d7aa364df0acd624e67a0b102036d5` прошли tests, integration-tests, Clippy, check_features и Semgrep; rustfmt выявил только форматирование, которое исправляется.
 
 ### Этап 4. Рандомизация протокольных таймеров
 - [ ] Определить соответствие RekeyAfterTime, RekeyTimeout, RejectAfterTime, KeepaliveTimeout и MaxHandshakeAttempts внутренним таймерам BoringTun.
@@ -103,7 +103,7 @@
 | DNS/SIP/STUN/QUIC imitation | Реализовано как существующее расширение | Сохранить |
 | DisableCookies | Реализуется в PR #8 | Этап 1 |
 | HeaderProtectionKey | Не реализовано | Этап 2 |
-| ContentPaddingAddition | Реализуется в текущем PR: config/UAPI, MTU-bounded transport padding и receive trimming; тест/CI ожидают проверки | Этап 3 |
+| ContentPaddingAddition | Реализовано в текущем PR: config/UAPI, MTU-bounded transport padding и receive trimming; IPv4/MTU/keepalive тест и основной Linux CI прошли, кроме rustfmt formatting fix | Этап 3 |
 | Randomized timers | Не реализовано | Этап 4 |
 | RandomTrailers | Не реализовано | Этап 5 |
 
@@ -128,7 +128,7 @@
 ## Последний handoff (2026-11-02)
 
 - Рабочая ветка: `feat/amneziawg-3.1-disable-cookies`, PR #8.
-- Последний полностью проверенный CI HEAD перед текущим этапом ContentPaddingAddition: `5248ff1c53afc4f8649d42235615a5e84097badf` (PR CI run `41459160125`: rustfmt, check_features, tests, clippy, integration-tests и all-systems-go — success; Semgrep run `41459160160` — success). Текущие изменения ContentPaddingAddition ещё не проверены CI.
+- Предыдущий полностью зелёный HEAD до ContentPaddingAddition: `5248ff1c53afc4f8649d42235615a5e84097badf`. На HEAD `a5f5d548c3d7aa364df0acd624e67a0b102036d5` завершились успешно `tests`, `integration-tests`, `clippy`, `check_features` и Semgrep; `rustfmt` выявил форматирование, которое исправлено в следующем пакетном коммите. Повторный Linux CI будет запущен после этого коммита.
 - Header Protection сейчас частично реализован в `noise/amnezia.rs`, `noise/mod.rs`, `device/api.rs`; зависимость raw ChaCha20 добавлена в `boringtun/Cargo.toml` и lockfile.
 - Upstream receive path: `device/receive.go`. Он сначала строит cipher по `packet[:12]`, восстанавливает type из ChaCha20 keystream, определяет packet kind/padding по H-ranges, затем XOR-ит оставшуюся часть handshake/cookie или только `packet[4:MessageTransportHeaderSize]` для transport. Send path шифрует handshake/cookie целиком, transport header отдельно. Не шифровать transport AEAD payload.
 - Важное исправление уже внесено: transport egress ограничен первыми 16 байтами; payload/tag AEAD остаются нетронутыми.

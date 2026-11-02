@@ -506,11 +506,9 @@ impl Tunn {
             // ContentPaddingAddition is applied to the plaintext IP packet before
             // AEAD encryption. Its size is capped by the interface MTU; empty
             // keepalives remain empty and retain their ordinary wire size.
-            let content_padding = self.amnezia.content_padding_size(
-                src.len(),
-                self.mtu,
-                &mut self.handshake.rng,
-            );
+            let content_padding =
+                self.amnezia
+                    .content_padding_size(src.len(), self.mtu, &mut self.handshake.rng);
             if dst.len() < src.len() + content_padding + DATA_OVERHEAD_SZ {
                 return TunnResult::Err(WireGuardError::DestinationBufferTooSmall);
             }
@@ -645,13 +643,8 @@ impl Tunn {
 
         let session = self.handshake.receive_handshake_response(p)?;
 
-        let keepalive_packet = session.format_packet_data(
-            self.handshake.obf,
-            &mut self.handshake.rng,
-            &[],
-            0,
-            dst,
-        );
+        let keepalive_packet =
+            session.format_packet_data(self.handshake.obf, &mut self.handshake.rng, &[], 0, dst);
         let keepalive_packet_size = keepalive_packet.len();
         // Store new session in ring buffer
         let l_idx = session.local_index();
@@ -2129,7 +2122,11 @@ mod tests {
         let init = create_handshake_init(&mut sender);
         let response = create_handshake_response(&mut receiver, &init);
         let keepalive = parse_handshake_resp(&mut sender, &response);
-        assert_eq!(keepalive.len(), DATA_OVERHEAD_SZ, "keepalive must not be padded");
+        assert_eq!(
+            keepalive.len(),
+            DATA_OVERHEAD_SZ,
+            "keepalive must not be padded"
+        );
         parse_keepalive(&mut receiver, &keepalive);
 
         let mut network_buffer = vec![0u8; 4096];
@@ -2149,5 +2146,4 @@ mod tests {
             other => panic!("expected restored IPv4 packet, got {:?}", other),
         }
     }
-
 }

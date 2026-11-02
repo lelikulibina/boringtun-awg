@@ -409,7 +409,11 @@ fn api_get(writer: &mut BufWriter<&UnixStream>, d: &Device) -> i32 {
             if padding_min == padding_max {
                 writeln!(writer, "content_padding_addition={}", padding_min);
             } else {
-                writeln!(writer, "content_padding_addition={}-{}", padding_min, padding_max);
+                writeln!(
+                    writer,
+                    "content_padding_addition={}-{}",
+                    padding_min, padding_max
+                );
             }
         }
 
@@ -936,7 +940,8 @@ mod tests {
         let mut invalid = AwgParams::default();
         invalid.content_padding_addition = Some((32, 8));
         invalid.seen = true;
-        assert!(invalid.merged(ObfuscationRanges::default(), &current).is_err());
+        assert!(invalid
+            .merged(ObfuscationRanges::default(), &current)
+            .is_err());
     }
-
 }
