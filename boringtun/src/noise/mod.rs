@@ -2385,15 +2385,13 @@ mod tests {
     #[test]
     fn runtime_obfuscation_update_validates_before_mutating_tunnel() {
         let (mut tun, _peer) = create_two_tuns_with_amnezia(AmneziaConfig::new(0, 0, 0, 0));
-        let invalid = AmneziaConfig::new(0, 0, 0, 0)
-            .with_header_protection_key([0x42; 32]);
+        let invalid = AmneziaConfig::new(0, 0, 0, 0).with_header_protection_key([0x42; 32]);
         assert!(tun
             .try_set_obfuscation(ObfuscationRanges::default(), invalid)
             .is_err());
         assert!(!tun.amnezia.header_protection_enabled());
 
-        let valid = AmneziaConfig::new(12, 12, 12, 12)
-            .with_header_protection_key([0x42; 32]);
+        let valid = AmneziaConfig::new(12, 12, 12, 12).with_header_protection_key([0x42; 32]);
         assert!(tun
             .try_set_obfuscation(ObfuscationRanges::default(), valid)
             .is_ok());
