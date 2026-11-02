@@ -363,6 +363,7 @@ impl Tunn {
         amnezia: AmneziaConfig,
     ) -> Result<Self, String> {
         amnezia.validate_timer_ranges()?;
+        amnezia.validate_random_trailers(obf)?;
         let static_public = x25519::PublicKey::from(&static_private);
         let timers = Timers::new(persistent_keepalive, rate_limiter.is_none(), &amnezia);
 
