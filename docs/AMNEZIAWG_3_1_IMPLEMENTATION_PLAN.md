@@ -31,13 +31,17 @@
 **Готово, когда:** обычное поведение без флага не меняется; с флагом MAC1 продолжает проверяться, но under-load MAC2/cookie challenge отключён (handshake без MAC2 допускается), как в upstream; входящие Cookie Reply продолжают обрабатываться.
 
 ### Этап 2. HeaderProtectionKey (AWG 3.0+, требуется для полного профиля 3.1)
-- [ ] Сверить побайтную реализацию upstream: порядок обработки S-prefix, nonce, шифруемый диапазон для каждого типа пакета, направление XOR при приёме/отправке.
-- [ ] Добавить 32-байтовый ключ в конфигурацию и UAPI (формат ключа согласовать с существующим интерфейсом BoringTun).
-- [ ] Валидировать ключ и требование S1-S4 >= 12 при включённой защите.
-- [ ] Реализовать защиту служебных полей Init/Response/Cookie/Data на ingress и egress.
-- [ ] Сохранить H1-H4 legacy-режим; при включённой Header Protection поддержать стандартные значения H1-H4 согласно upstream.
-- [ ] Добавить известные тест-векторы/дифференциальные тесты против amneziawg-go и тесты round-trip.
-- [ ] Проверить отсутствие изменения wire bytes при выключенной защите.
+- [x] Сверить upstream receive/send path: первые 12 байт S-prefix — nonce; ChaCha20 XOR начинается с байта 0 WG-сообщения; на приёме тип восстанавливается до выбора H-range; transport защищает только 16-байтовый заголовок, handshake/cookie — всё фиксированное сообщение.
+- [ ] Подтвердить точное совпадение Rust wire bytes с upstream Go известными тест-векторами/дифференциальным тестом.
+- [x] Добавить 32-байтовый ключ в `AmneziaConfig` и UAPI `header_protection_key` (64 hex-символа); all-zero key отключает защиту.
+- [x] Валидировать требование S1-S4 >= 12 при включённой защите и отклонять некорректную конфигурацию.
+- [x] Добавить ChaCha20 protection на egress/ingress: handshake/cookie защищаются целиком; transport — только type/receiver/counter (16 байт), AEAD ciphertext не меняется.
+- [ ] Полностью согласовать H1-H4 detection и legacy-режим с upstream, включая все допустимые ranges.
+- [x] Добавить unit round-trip и config validation coverage.
+- [ ] Добавить upstream differential vectors и проверить interop на реальном amneziawg-go peer.
+- [ ] Проверить отсутствие изменения wire bytes при выключенной защите и полную vanilla WG/AWG 2.x регрессию.
+
+**Статус:** реализация ingress/egress и UAPI начата в PR #8; этап не завершён. Нужны подтверждение побайтной совместимости с upstream, реальный двусторонний handshake, и успешные Linux проверки на актуальном SHA.
 
 **Готово, когда:** BoringTun и официальный AWG взаимно устанавливают туннель с одинаковым ключом, неверный ключ/недостаточный S-prefix корректно отклоняется, а vanilla WG и AWG 2.x не меняют поведение.
 
@@ -110,6 +114,16 @@
 - `boringtun/src/device/mod.rs` — UDP ingress/egress и маршрутизация пакетов.
 - `boringtun/src/device/api.rs` — UAPI parsing, merge и get.
 - `boringtun/src/noise/rate_limiter.rs` — MAC/cookie/rate-limit поведение.
+
+## Последний handoff (2026-11-02)
+
+- Рабочая ветка: `feat/amneziawg-3.1-disable-cookies`, PR #8.
+- Последний известный CI HEAD перед текущей серией Header Protection изменений: смотри PR #8 и Actions; не переносить старые результаты на новый SHA.
+- Header Protection сейчас частично реализован в `noise/amnezia.rs`, `noise/mod.rs`, `device/api.rs`; зависимость raw ChaCha20 добавлена в `boringtun/Cargo.toml` и lockfile.
+- Upstream receive path: `device/receive.go`. Он сначала строит cipher по `packet[:12]`, восстанавливает type из ChaCha20 keystream, определяет packet kind/padding по H-ranges, затем XOR-ит оставшуюся часть handshake/cookie или только `packet[4:MessageTransportHeaderSize]` для transport. Send path шифрует handshake/cookie целиком, transport header отдельно. Не шифровать transport AEAD payload.
+- Важное исправление уже внесено: transport egress ограничен первыми 16 байтами; payload/tag AEAD остаются нетронутыми.
+- В CI workflow оставлены только Ubuntu/Linux jobs; macOS/Windows отключены, Semgrep остаётся отдельным workflow.
+- Не считать этап Header Protection завершённым до differential test vectors и двустороннего теста с upstream. Сверить текущий код по актуальному upstream commit перед продолжением.
 
 ## Протокол продолжения работы для нового агента
 
