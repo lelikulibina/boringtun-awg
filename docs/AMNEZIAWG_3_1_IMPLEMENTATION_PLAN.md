@@ -39,8 +39,10 @@
 - [x] Добавить ChaCha20 protection на egress/ingress: handshake/cookie защищаются целиком; transport — только type/receiver/counter (16 байт), AEAD ciphertext не меняется.
 - [ ] Полностью согласовать H1-H4 detection и legacy-режим с upstream, включая все допустимые ranges.
 - [x] Добавить unit round-trip и config validation coverage.
-- [ ] Добавить upstream differential vectors и проверить interop на реальном amneziawg-go peer. Текущий Rust test проверяет фиксированный IETF ChaCha20 keystream и протокольное правило: handshake полностью, transport только первые 16 байт.
-- [ ] Проверить отсутствие изменения wire bytes при выключенной защите и полную vanilla WG/AWG 2.x регрессию.
+- [x] Проверить реальный двусторонний interop с amneziawg-go для HeaderProtectionKey: обе серверные роли прошли handshake и bidirectional ICMP в CI (профиль HeaderProtectionKey, 2/2).
+- [ ] Добавить точные upstream Go differential vectors. Текущий Rust test проверяет фиксированный IETF ChaCha20 keystream и протокольное правило: handshake полностью, transport только первые 16 байт.
+- [x] Проверить базовые vanilla WG/AWG 2.x регрессии handshake + bidirectional ICMP в CI (профили vanilla WireGuard и AWG 2.x, 4/4).
+- [ ] Добавить отдельное побайтовое сравнение wire bytes при выключенной защите.
 
 **Статус:** реализация ingress/egress и UAPI находится в PR #8. Добавлен фиксированный ChaCha20 reference-vector test (key `0x42` × 32, nonce `00..0b`) для handshake и transport; он проверяет IETF ChaCha20 keystream и wire layout, но не является differential test с официальным Go peer. В device UDP ingress запрещён plaintext fallback, если HeaderProtectionKey включён; добавлен deterministic negative test на отклонение plaintext initiation. Полный Linux CI для SHA `5248ff1c53afc4f8649d42235615a5e84097badf` прошёл: rustfmt, check_features, tests, clippy, integration-tests и all-systems-go — success; Semgrep также success. Этап не завершён: нужны upstream Go differential test, реальный двусторонний handshake и проверка vanilla WG/AWG 2.x.
 
