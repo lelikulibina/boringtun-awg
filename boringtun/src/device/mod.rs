@@ -1057,12 +1057,13 @@ impl Device {
                     // unpadded packet, so verifying the padded datagram fails
                     // the check. It mirrors the kernel module, which strips at
                     // device level before peer lookup.
-                    let parsed_packet = match rate_limiter.verify_packet(
+                    let parsed_packet = match rate_limiter.verify_packet_with_cookie_policy(
                         obf,
                         &mut OsRng,
                         Some(from.ip()),
                         packet,
                         &mut t.dst_buf,
+                        d.config.amnezia.disable_cookies,
                     ) {
                         Ok(packet) => packet,
                         Err(TunnResult::WriteToNetwork(cookie)) => {
