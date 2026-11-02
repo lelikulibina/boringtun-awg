@@ -1092,6 +1092,61 @@ mod tests {
     }
 
     #[test]
+    fn combined_awg31_uapi_update_merges_all_extensions_atomically() {
+        let current = AmneziaConfig::new(12, 12, 12, 12);
+        let mut params = AwgParams::default();
+        params.set_header("h1", (100_000, 100_010));
+        params.set_header("h2", (200_000, 200_000));
+        params.set_header("h3", (300_000, 300_000));
+        params.set_header("h4", (400_000, 400_000));
+        params.disable_cookies = Some(true);
+        params.random_trailers = Some(true);
+        params.header_protection_key = Some([0x5a; 32]);
+        params.content_padding_addition = Some((8, 32));
+        params.rekey_after_time = Some((100, 140));
+        params.rekey_timeout = Some((3, 7));
+        params.reject_after_time = Some((150, 190));
+        params.keepalive_timeout = Some((8, 12));
+        params.max_handshake_attempts = Some((5, 9));
+        params.seen = true;
+
+        let (obf, merged) = params
+            .merged(ObfuscationRanges::default(), &current)
+            .expect("all AWG 3.1 values should validate as one transaction");
+
+        assert!(obf.matches_h1(100_010));
+        assert!(obf.matches_h2(200_000));
+        assert!(obf.matches_h3(300_000));
+        assert!(obf.matches_h4(400_000));
+        assert!(merged.disable_cookies);
+        assert!(merged.random_trailers);
+        assert_eq!(merged.header_protection_key, [0x5a; 32]);
+        assert_eq!(merged.content_padding_addition, (8, 32));
+        assert_eq!(merged.rekey_after_time, (100, 140));
+        assert_eq!(merged.rekey_timeout, (3, 7));
+        assert_eq!(merged.reject_after_time, (150, 190));
+        assert_eq!(merged.keepalive_timeout, (8, 12));
+        assert_eq!(merged.max_handshake_attempts, (5, 9));
+
+        // A later partial update changes only its named field.
+        let mut partial = AwgParams::default();
+        partial.keepalive_timeout = Some((20, 20));
+        partial.seen = true;
+        let (unchanged_obf, partial_merged) = partial
+            .merged(obf, &merged)
+            .expect("partial UAPI updates preserve the valid AWG 3.1 state");
+        assert_eq!(unchanged_obf, obf);
+        assert_eq!(partial_merged.keepalive_timeout, (20, 20));
+        assert!(partial_merged.disable_cookies);
+        assert!(partial_merged.random_trailers);
+        assert_eq!(partial_merged.header_protection_key, [0x5a; 32]);
+        assert_eq!(partial_merged.content_padding_addition, (8, 32));
+        assert_eq!(partial_merged.rekey_after_time, (100, 140));
+        assert_eq!(partial_merged.rekey_timeout, (3, 7));
+        assert_eq!(partial_merged.reject_after_time, (150, 190));
+    }
+
+    #[test]
     fn content_padding_addition_range_is_parsed_and_merged() {
         assert_eq!(parse_u16_range("24"), Some((24, 24)));
         assert_eq!(parse_u16_range("0-64"), Some((0, 64)));
