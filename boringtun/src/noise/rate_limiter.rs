@@ -153,7 +153,8 @@ impl RateLimiter {
         Ok(&mut dst[..super::COOKIE_REPLY_SZ])
     }
 
-    /// Verify the MAC fields on the datagram, and apply rate limiting if needed
+    /// Verify MAC fields and apply standard WireGuard cookie rate limiting.
+    /// This compatibility entry point preserves the original public API.
     pub fn verify_packet<'a, 'b>(
         &self,
         obf: ObfuscationRanges,
@@ -161,6 +162,19 @@ impl RateLimiter {
         src_addr: Option<IpAddr>,
         src: &'a [u8],
         dst: &'b mut [u8],
+    ) -> Result<Packet<'a>, TunnResult<'b>> {
+        self.verify_packet_with_cookie_policy(obf, rng, src_addr, src, dst, false)
+    }
+
+    /// Verify a packet with optional AmneziaWG 3.1 Cookie Reply suppression.
+    pub(crate) fn verify_packet_with_cookie_policy<'a, 'b>(
+        &self,
+        obf: ObfuscationRanges,
+        rng: &mut impl RngCore,
+        src_addr: Option<IpAddr>,
+        src: &'a [u8],
+        dst: &'b mut [u8],
+        disable_cookie_reply: bool,
     ) -> Result<Packet<'a>, TunnResult<'b>> {
         let packet = Tunn::parse_incoming_packet(obf, src)?;
 
@@ -187,6 +201,11 @@ impl RateLimiter {
                 let computed_mac2 = b2s_keyed_mac_16_2(&cookie, msg, mac1);
 
                 if !constant_time_eq(&computed_mac2[..16], mac2) {
+                    // AWG 3.1 suppresses only outgoing Cookie Reply packets.
+                    // The invalid-MAC2 handshake is still rejected under load.
+                    if disable_cookie_reply {
+                        return Err(TunnResult::Err(WireGuardError::UnderLoad));
+                    }
                     let cookie_packet = self
                         .format_cookie_reply(obf, rng, sender_idx, cookie, mac1, dst)
                         .map_err(TunnResult::Err)?;
