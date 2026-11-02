@@ -246,3 +246,6 @@ Upstream точки сверки:
 - `handshake_attempts` открыт для родительского тестового модуля через `pub(super)`; внешний API не расширен.
 
 Последний полностью завершённый CI до этих новых тестов: run `41499066051` — `rustfmt`, `check_features`, `integration-tests`, `tests`, `clippy`, `awg31-interoperability` и `all-systems-go` завершились успешно; Semgrep `41499065998` также успешен. Новые regressions добавлены в последующих коммитах и требуют отдельного зелёного CI.
+
+
+Проверка на HEAD `eb5eadbcb7d509eba5e60c97bd17e6d51eacb0fe` завершена: Linux `rustfmt`, `clippy`, `check_features`, `tests`, `integration-tests`, `awg31-interoperability` и `all-systems-go` — success; Semgrep OSS scan — success. Peer-level DisableCookies и timer cancellation regressions вошли в зелёный прогон. Interop harness подтвердил 16/16 профилей на том же upstream SHA; macOS/Windows в этом цикле не запускались.
