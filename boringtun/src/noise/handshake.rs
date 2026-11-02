@@ -1221,3 +1221,69 @@ mod constant_time_tests {
         assert!(constant_time_eq(&mac, &mac));
     }
 }
+
+
+#[cfg(test)]
+mod wire_vector_tests {
+    use super::{b2s_hash, b2s_keyed_mac_16, b2s_keyed_mac_16_2, LABEL_COOKIE, LABEL_MAC1};
+
+    /// Fixed BLAKE2s-128 known answers using the same construction as
+    /// amneziawg-go's CookieGenerator.AddMacs and CookieChecker.CheckMAC2.
+    /// Inputs are fixed so this detects changes to labels, key derivation,
+    /// truncation size, and whether MAC2 covers the preceding MAC1.
+    #[test]
+    fn mac1_and_mac2_match_upstream_blake2s_vectors() {
+        let peer_public: [u8; 32] = core::array::from_fn(|i| i as u8);
+        let mac1_key = b2s_hash(LABEL_MAC1, &peer_public);
+        assert_eq!(
+            mac1_key,
+            [
+                0x4f, 0xb2, 0x52, 0x7a, 0xc9, 0x56, 0x00, 0x15, 0x53, 0xdc, 0x1a, 0xd9, 0xb5, 0x51,
+                0x71, 0xb7, 0xd9, 0xaa, 0x3d, 0xe1, 0xcd, 0xbc, 0xd7, 0x14, 0x51, 0x83, 0x01, 0x70,
+                0xc7, 0xe6, 0xca, 0xec,
+            ]
+        );
+
+        let message: Vec<u8> = (0..116)
+            .map(|i| (i as u8).wrapping_mul(3).wrapping_add(7))
+            .collect();
+        let mac1 = b2s_keyed_mac_16(&mac1_key, &message);
+        assert_eq!(
+            mac1,
+            [
+                0xef, 0xf9, 0xb7, 0x1a, 0x78, 0x68, 0x28, 0x70, 0xe0, 0x4e, 0x01, 0xb2, 0x7b, 0x69,
+                0x5a, 0x74,
+            ]
+        );
+
+        let cookie_encryption_key = b2s_hash(LABEL_COOKIE, &peer_public);
+        assert_eq!(
+            cookie_encryption_key,
+            [
+                0x3d, 0xd5, 0x86, 0x9c, 0x52, 0x02, 0xe4, 0x51, 0x46, 0x93, 0x6d, 0x16, 0x44, 0xf7,
+                0x6f, 0xf6, 0x97, 0x06, 0x16, 0x61, 0xc1, 0x81, 0xf3, 0xfd, 0x45, 0x0e, 0xae, 0x43,
+                0x93, 0x2e, 0xac, 0xec,
+            ]
+        );
+
+        let secret: [u8; 32] = core::array::from_fn(|i| (i as u8).wrapping_mul(5).wrapping_add(1));
+        let source = [192, 168, 13, 37, 10, 10, 10];
+        let cookie = b2s_keyed_mac_16(&secret, &source);
+        assert_eq!(
+            cookie,
+            [
+                0x0f, 0x4d, 0x68, 0x09, 0xaa, 0xef, 0x56, 0x18, 0xef, 0x63, 0xa0, 0x17, 0x7b, 0x1a,
+                0x99, 0x98,
+            ]
+        );
+
+        let mac2 = b2s_keyed_mac_16_2(&cookie, &message, &mac1);
+        assert_eq!(
+            mac2,
+            [
+                0x9d, 0xf1, 0x4d, 0xf7, 0xa5, 0x69, 0x44, 0x48, 0x46, 0x6e, 0x2e, 0x77, 0xd8, 0x5c,
+                0x04, 0x34,
+            ]
+        );
+    }
+}
