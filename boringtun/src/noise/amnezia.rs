@@ -412,11 +412,26 @@ impl AmneziaConfig {
     }
 
     /// Configure inclusive AmneziaWG timer ranges (seconds). `(0, 0)` keeps the WireGuard default.
-    pub fn with_rekey_after_time(mut self, min: u32, max: u32) -> Self { self.rekey_after_time = (min, max); self }
-    pub fn with_rekey_timeout(mut self, min: u32, max: u32) -> Self { self.rekey_timeout = (min, max); self }
-    pub fn with_reject_after_time(mut self, min: u32, max: u32) -> Self { self.reject_after_time = (min, max); self }
-    pub fn with_keepalive_timeout(mut self, min: u32, max: u32) -> Self { self.keepalive_timeout = (min, max); self }
-    pub fn with_max_handshake_attempts(mut self, min: u32, max: u32) -> Self { self.max_handshake_attempts = (min, max); self }
+    pub fn with_rekey_after_time(mut self, min: u32, max: u32) -> Self {
+        self.rekey_after_time = (min, max);
+        self
+    }
+    pub fn with_rekey_timeout(mut self, min: u32, max: u32) -> Self {
+        self.rekey_timeout = (min, max);
+        self
+    }
+    pub fn with_reject_after_time(mut self, min: u32, max: u32) -> Self {
+        self.reject_after_time = (min, max);
+        self
+    }
+    pub fn with_keepalive_timeout(mut self, min: u32, max: u32) -> Self {
+        self.keepalive_timeout = (min, max);
+        self
+    }
+    pub fn with_max_handshake_attempts(mut self, min: u32, max: u32) -> Self {
+        self.max_handshake_attempts = (min, max);
+        self
+    }
 
     /// Select a random content-padding size, bounded by the remaining tunnel MTU.
     /// Empty keepalives and packets larger than the configured MTU are never padded.
