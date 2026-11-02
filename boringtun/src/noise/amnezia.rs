@@ -268,6 +268,9 @@ pub struct AmneziaConfig {
     pub(crate) transport_packet_junk_size: u16,
     pub(crate) pre_handshake_junk: AmneziaPreHandshakeJunk,
     pub(crate) imitation: AmneziaImitation,
+    /// Do not send Cookie Reply packets when the handshake rate limiter is active.
+    /// Incoming Cookie Reply packets remain fully supported.
+    pub(crate) disable_cookies: bool,
     /// Suppress the client-only pre-handshake burst (Jc junk packets and the
     /// protocol imitation sequence) while keeping every other AmneziaWG
     /// behaviour. See [`AmneziaConfig::as_responder`].
@@ -356,8 +359,16 @@ impl AmneziaConfig {
             transport_packet_junk_size: s4,
             pre_handshake_junk: AmneziaPreHandshakeJunk::default(),
             imitation: AmneziaImitation::default(),
+            disable_cookies: false,
             suppress_pre_handshake: false,
         }
+    }
+
+    /// Disable outgoing Cookie Reply packets under handshake rate limiting.
+    /// Incoming Cookie Reply packets continue to be processed normally.
+    pub fn with_disable_cookies(mut self, disabled: bool) -> Self {
+        self.disable_cookies = disabled;
+        self
     }
 
     pub fn with_pre_handshake_junk(
