@@ -1789,60 +1789,6 @@ mod tests {
 
     #[test]
     #[cfg(feature = "mock-instant")]
-    fn authenticated_inbound_data_cancels_inactivity_handshake_deadline() {
-        let config = AmneziaConfig::new(0, 0, 0, 0)
-            .with_rekey_after_time(120, 120)
-            .with_rekey_timeout(2, 2)
-            .with_keepalive_timeout(3, 3);
-        let (mut initiator, mut responder) = create_two_tuns_with_amnezia(config);
-
-        let init = create_handshake_init(&mut initiator);
-        let response = create_handshake_response(&mut responder, &init);
-        let keepalive = parse_handshake_resp(&mut initiator, &response);
-        parse_keepalive(&mut responder, &keepalive);
-
-        let mut network = [0u8; 2048];
-        let mut tunnel = [0u8; 2048];
-        let packet = create_ipv4_udp_packet();
-
-        // First outbound data starts the inactivity deadline.
-        assert!(matches!(
-            initiator.encapsulate(&packet, &mut network),
-            TunnResult::WriteToNetwork(_)
-        ));
-        assert!(initiator.timers.new_handshake_deadline.is_some());
-
-        // A valid authenticated packet in the reverse direction cancels it.
-        let reverse_packet = create_ipv4_udp_packet();
-        let reverse = match responder.encapsulate(&reverse_packet, &mut network) {
-            TunnResult::WriteToNetwork(packet) => packet.to_vec(),
-            other => panic!("expected authenticated reverse data packet, got {:?}", other),
-        };
-        let mut corrupted = reverse.clone();
-        let last = corrupted.len() - 1;
-        corrupted[last] ^= 0x01;
-        assert!(matches!(
-            initiator.decapsulate(None, &corrupted, &mut tunnel),
-            TunnResult::Err(_)
-        ));
-        assert!(
-            initiator.timers.new_handshake_deadline.is_some(),
-            "unauthenticated inbound data must not cancel the inactivity deadline"
-        );
-
-        assert!(matches!(
-            initiator.decapsulate(None, &reverse, &mut tunnel),
-            TunnResult::WriteToTunnelV4(_, _)
-        ));
-        assert_eq!(
-            initiator.timers.new_handshake_deadline,
-            None,
-            "authenticated inbound data must cancel the inactivity handshake deadline"
-        );
-    }
-
-    #[test]
-    #[cfg(feature = "mock-instant")]
     fn inactivity_handshake_deadline_starts_at_first_data_send() {
         let config = AmneziaConfig::new(0, 0, 0, 0)
             .with_rekey_after_time(120, 120)
@@ -1984,6 +1930,19 @@ mod tests {
             TunnResult::WriteToNetwork(packet) => packet.to_vec(),
             other => panic!("expected authenticated reply packet, got {:?}", other),
         };
+        let mut corrupted_reply = reply.clone();
+        let last = corrupted_reply.len() - 1;
+        corrupted_reply[last] ^= 0x01;
+        assert!(matches!(
+            initiator.decapsulate(None, &corrupted_reply, &mut tunnel),
+            TunnResult::Err(_)
+        ));
+        assert_eq!(
+            initiator.timers.new_handshake_deadline,
+            deadline,
+            "unauthenticated inbound traffic must not cancel the pending inactivity handshake"
+        );
+
         assert!(matches!(
             initiator.decapsulate(None, &reply, &mut tunnel),
             TunnResult::WriteToTunnelV4(_, _)
