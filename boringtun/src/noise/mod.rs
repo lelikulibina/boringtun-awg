@@ -1695,16 +1695,24 @@ mod tests {
 
     #[test]
     fn completed_handshake_resets_attempt_count_and_reselects_configured_budget() {
-        let config = AmneziaConfig::new(0, 0, 0, 0).with_max_handshake_attempts(7, 7);
-        let (mut initiator, mut responder) = create_two_tuns_with_amnezia(config);
-        assert_eq!(initiator.timers.max_handshake_attempts, 7);
-        assert_eq!(responder.timers.max_handshake_attempts, 7);
+        let initial = AmneziaConfig::new(0, 0, 0, 0).with_max_handshake_attempts(2, 2);
+        let replacement = AmneziaConfig::new(0, 0, 0, 0).with_max_handshake_attempts(7, 7);
+        let (mut initiator, mut responder) = create_two_tuns_with_amnezia(initial);
+        assert_eq!(initiator.timers.max_handshake_attempts, 2);
+        assert_eq!(responder.timers.max_handshake_attempts, 2);
 
+        // The selected budget is stable throughout the attempt cycle. A live
+        // configuration update is sampled only when the handshake completes,
+        // matching upstream timersStart/timersHandshakeComplete.
+        initiator.timers.set_timer_ranges(&replacement);
+        responder.timers.set_timer_ranges(&replacement);
         initiator.timers.handshake_attempts = 5;
         responder.timers.handshake_attempts = 3;
         let init = create_handshake_init(&mut initiator);
+        assert_eq!(initiator.timers.max_handshake_attempts, 2);
         let response = create_handshake_response(&mut responder, &init);
         let keepalive = parse_handshake_resp(&mut initiator, &response);
+        assert_eq!(initiator.timers.max_handshake_attempts, 7);
         parse_keepalive(&mut responder, &keepalive);
 
         assert_eq!(initiator.timers.handshake_attempts, 0);
