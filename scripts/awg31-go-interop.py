@@ -226,7 +226,7 @@ def run_profile(bt: str, go: str, name: str, extra: str, awg_enabled: bool) -> N
                 tail = log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-12:]
                 if tail:
                     print(f"--- {name}: {log_path.name} ---", file=sys.stderr)
-                    print("\\n".join(tail), file=sys.stderr)
+                    print("\n".join(tail), file=sys.stderr)
         raise
     finally:
         for process in reversed(processes):
