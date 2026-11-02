@@ -222,12 +222,13 @@ impl RateLimiter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::noise::{HANDSHAKE_INIT, HANDSHAKE_INIT_SZ};
     use rand_core::OsRng;
+
+    const HANDSHAKE_INIT_SZ: usize = 148;
 
     fn initiation_with_valid_mac1(limiter: &RateLimiter) -> [u8; HANDSHAKE_INIT_SZ] {
         let mut packet = [0u8; HANDSHAKE_INIT_SZ];
-        packet[..4].copy_from_slice(&HANDSHAKE_INIT.to_le_bytes());
+        packet[..4].copy_from_slice(&1u32.to_le_bytes());
         packet[4..8].copy_from_slice(&7u32.to_le_bytes());
 
         let mac_offset = HANDSHAKE_INIT_SZ - 32;
