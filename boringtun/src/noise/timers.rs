@@ -70,7 +70,7 @@ pub struct Timers {
     timer_ranges: [(u32, u32); 5],
     rekey_after_time: Duration,
     rekey_timeout: Duration,
-    reject_after_time: Duration,
+    pub(super) reject_after_time: Duration,
     keepalive_timeout: Duration,
     keepalive_timeout_max: Duration,
     new_handshake_timeout: Duration,
