@@ -359,6 +359,7 @@ impl Tunn {
     pub fn update_timers<'a>(&mut self, dst: &'a mut [u8]) -> TunnResult<'a> {
         let mut handshake_initiation_required = false;
         let mut keepalive_required = false;
+        let mut keepalive_rearm = None;
 
         let time = Instant::now();
 
@@ -514,6 +515,12 @@ impl Tunn {
                     {
                         tracing::debug!("KEEPALIVE(KEEPALIVE_TIMEOUT)");
                         self.timers.send_keepalive_deadline = None;
+                        if self.timers.need_another_keepalive {
+                            self.timers.need_another_keepalive = false;
+                            let timeout =
+                                self.timers.pick_range(3, KEEPALIVE_TIMEOUT.as_secs() as u32);
+                            keepalive_rearm = Some(Duration::from_secs(timeout as u64));
+                        }
                         keepalive_required = true;
                     }
 
@@ -535,17 +542,11 @@ impl Tunn {
         }
 
         if keepalive_required {
-            let rearm = if self.timers.need_another_keepalive {
-                self.timers.need_another_keepalive = false;
-                let timeout = self.timers.pick_range(3, KEEPALIVE_TIMEOUT.as_secs() as u32);
-                Some(Duration::from_secs(timeout as u64))
-            } else {
-                None
-            };
             let result = self.encapsulate(&[], dst);
             // encapsulate marks the keepalive as sent and clears the old
-            // deadline. Re-arm only after that send, matching expiredSendKeepalive.
-            if let Some(timeout) = rearm {
+            // deadline. Re-arm only after a timer-driven send, matching
+            // expiredSendKeepalive; a persistent keepalive must not re-arm it.
+            if let Some(timeout) = keepalive_rearm {
                 self.timers.send_keepalive_deadline = Some(
                     Instant::now().duration_since(self.timers.time_started) + timeout,
                 );
