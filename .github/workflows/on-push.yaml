@@ -76,6 +76,39 @@ jobs:
       - uses: taiki-e/install-action@cargo-hack
       - run: cargo hack test --each-feature
 
+  # Real bidirectional wire test against the upstream Go implementation.
+  # This is deliberately separate from the unit/integration test matrix above:
+  # it needs network namespaces, TUN devices and the external Go reference.
+  awg31-interoperability:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+          cache: false
+      - name: Install Linux networking and Python dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y iproute2 iputils-ping python3-cryptography
+      - name: Build BoringTun userspace device
+        run: cargo build -p boringtun-cli --release
+      - name: Fetch official AmneziaWG Go reference
+        uses: actions/checkout@v6
+        with:
+          repository: amnezia-vpn/amneziawg-go
+          ref: master
+          path: upstream-amneziawg-go
+      - name: Build official AmneziaWG Go
+        working-directory: upstream-amneziawg-go
+        run: go build -v -o ../amneziawg-go .
+      - name: Run AWG 3.1 bidirectional interoperability matrix
+        run: sudo python3 scripts/awg31-go-interop.py ./target/release/boringtun-cli ./amneziawg-go
+
   integration-tests:
     strategy:
       matrix:
