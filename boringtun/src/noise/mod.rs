@@ -1446,6 +1446,64 @@ mod tests {
 
     #[test]
     #[cfg(feature = "mock-instant")]
+    fn authenticated_inbound_data_cancels_and_restarts_inactivity_deadline() {
+        let config = AmneziaConfig::new(0, 0, 0, 0)
+            .with_rekey_after_time(120, 120)
+            .with_rekey_timeout(2, 2)
+            .with_reject_after_time(180, 180)
+            .with_keepalive_timeout(6, 6);
+        let (mut sender, mut receiver) = create_two_tuns_with_amnezia(config);
+
+        let init = create_handshake_init(&mut sender);
+        let response = create_handshake_response(&mut receiver, &init);
+        let keepalive = parse_handshake_resp(&mut sender, &response);
+        parse_keepalive(&mut receiver, &keepalive);
+
+        let packet = create_ipv4_udp_packet();
+        let mut network = [0u8; 2048];
+        let mut tunnel = [0u8; 2048];
+
+        assert!(matches!(
+            sender.encapsulate(&packet, &mut network),
+            TunnResult::WriteToNetwork(_)
+        ));
+        let first_deadline = sender
+            .timers
+            .new_handshake_deadline
+            .expect("first outbound data starts inactivity deadline");
+
+        mock_instant::MockClock::advance(Duration::from_secs(1));
+        let reply = match receiver.encapsulate(&packet, &mut network) {
+            TunnResult::WriteToNetwork(packet) => packet.to_vec(),
+            other => panic!("expected authenticated peer data, got {:?}", other),
+        };
+        assert!(matches!(
+            sender.decapsulate(None, &reply, &mut tunnel),
+            TunnResult::WriteToTunnelV4(_, _)
+        ));
+        assert_eq!(
+            sender.timers.new_handshake_deadline,
+            None,
+            "authenticated inbound data must cancel the pending inactivity deadline"
+        );
+
+        mock_instant::MockClock::advance(Duration::from_secs(1));
+        assert!(matches!(
+            sender.encapsulate(&packet, &mut network),
+            TunnResult::WriteToNetwork(_)
+        ));
+        let restarted_deadline = sender
+            .timers
+            .new_handshake_deadline
+            .expect("the next outbound data starts a fresh inactivity deadline");
+        assert!(
+            restarted_deadline > first_deadline,
+            "the restarted deadline must be based on the authenticated inbound activity"
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "mock-instant")]
     fn receive_side_rekey_uses_reject_minus_min_keepalive_and_rekey_timeout() {
         let config = AmneziaConfig::new(0, 0, 0, 0)
             .with_rekey_after_time(120, 120)
