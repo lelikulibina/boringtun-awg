@@ -347,3 +347,12 @@ Upstream точки сверки:
 - Peer-level DisableCookies coverage подтверждает полный handshake при искусственном under-load, обязательность MAC1 и bypass MAC2/cookie challenge для Init и Response.
 - На HEAD `9387c3bdb0f4c5b029bdbe4636f22cd939e3a758` обязательные проверки прошли: rustfmt, clippy, check_features, tests (включая mock-instant timer regressions), integration-tests, Windows core check, macOS build, AWG interop (16/16) и all-systems-go; Semgrep — success.
 - Следующий этап: расширить differential wire fixtures для CPA и RandomTrailers, включая сравнение точных внешних datagram lengths и authenticated plaintext boundaries с закреплённым upstream.
+
+### Этап 14: детерминированная защита классификации RandomTrailers (2026-11-02)
+
+- Заменено вероятностное ограничение суммарной ширины H1-H3 на детерминированную проверку: при включённом RandomTrailers BoringTun требует S1 = S2 = S3 = S4. При одинаковом смещении все четыре классификатора читают одно поле типа; непересекающиеся H1-H4 исключают описанную в upstream #186 ложную классификацию transport как handshake.
+- Добавлены regressions на диапазонах из upstream issue #186: конфигурация с разными S отклоняется, одинаковые S проходят; синтетический transport frame с ложным H2-кандидатом на старом S2-offset корректно распознаётся как transport при общем offset.
+- Interop harness переведён на S1-S4 = 120 для профилей RandomTrailers и совместного AWG 3.1, сохраняя AWG 2.x baseline и все двусторонние роли.
+- Публичный Tunn::new_with_obfuscation теперь вызывает полную AmneziaConfig::validate, а не только timer validation, чтобы прямой constructor не обходил ограничения размеров, CPA и cookie amplification.
+- Это осознанно более строгое поведение, чем upstream Go: официальная документация рекомендует одинаковые S при RandomTrailers, но Go не отклоняет неравные значения. BoringTun теперь сообщает ошибку при конфигурации, которая может приводить к тихой потере transport-пакетов.
+- CI на HEAD bbf43d0f3fa6fbb3254895424d617df6eb460272 запущен; результаты ещё не получены. До завершения CI изменения не считаются проверенными.
