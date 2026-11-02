@@ -1224,7 +1224,70 @@ mod constant_time_tests {
 
 #[cfg(test)]
 mod wire_vector_tests {
-    use super::{b2s_hash, b2s_keyed_mac_16, b2s_keyed_mac_16_2, LABEL_COOKIE, LABEL_MAC1};
+    use super::{
+        b2s_hash, b2s_keyed_mac_16, b2s_keyed_mac_16_2, Handshake, ObfuscationRanges,
+        PacketCookieReply, LABEL_COOKIE, LABEL_MAC1,
+    };
+    use crate::x25519;
+
+    #[test]
+    fn cookie_reply_xchacha20_poly1305_matches_upstream_known_answer() {
+        let peer_secret = x25519::StaticSecret::from(core::array::from_fn(|i| i as u8));
+        let peer_public = x25519::PublicKey::from(&peer_secret);
+        let static_secret = x25519::StaticSecret::from([0xA5; 32]);
+        let static_public = x25519::PublicKey::from(&static_secret);
+        let local_index = 0x1122_3344;
+        let nonce: [u8; 24] = core::array::from_fn(|i| i as u8);
+        let encrypted_cookie = [
+            0x45, 0x99, 0xe0, 0x55, 0xab, 0xaa, 0xb8, 0x98, 0xf9, 0x04, 0xa3, 0xd7, 0x26, 0xac,
+            0xa2, 0x54, 0x33, 0x0a, 0xff, 0xa5, 0xc4, 0xd0, 0x44, 0xc8, 0x90, 0xa8, 0x0c, 0x28,
+            0xc1, 0x97, 0x76, 0xdd,
+        ];
+        let expected_cookie = [
+            0x02, 0x09, 0x10, 0x17, 0x1e, 0x25, 0x2c, 0x33, 0x3a, 0x41, 0x48, 0x4f, 0x56, 0x5d,
+            0x64, 0x6b,
+        ];
+        let mac1 = [
+            0xef, 0xf9, 0xb7, 0x1a, 0x78, 0x68, 0x28, 0x70, 0xe0, 0x4e, 0x01, 0xb2, 0x7b, 0x69,
+            0x5a, 0x74,
+        ];
+
+        let mut handshake = Handshake::new(
+            static_secret,
+            static_public,
+            peer_public,
+            local_index,
+            None,
+            ObfuscationRanges::default(),
+        )
+        .expect("fixed test handshake must initialize");
+        handshake.cookies.last_mac1 = Some(mac1);
+        handshake.cookies.index = local_index;
+
+        handshake
+            .receive_cookie_reply(PacketCookieReply {
+                receiver_idx: local_index,
+                nonce: &nonce,
+                encrypted_cookie: &encrypted_cookie,
+            })
+            .expect("upstream XChaCha20-Poly1305 cookie reply must decrypt");
+        assert_eq!(handshake.cookies.write_cookie, Some(expected_cookie));
+
+        // The cookie reply is authenticated against the exact last MAC1.
+        handshake.cookies.write_cookie = None;
+        handshake.cookies.last_mac1 = Some([0u8; 16]);
+        assert!(
+            handshake
+                .receive_cookie_reply(PacketCookieReply {
+                    receiver_idx: local_index,
+                    nonce: &nonce,
+                    encrypted_cookie: &encrypted_cookie,
+                })
+                .is_err(),
+            "a reply with a different MAC1 AAD must fail authentication"
+        );
+        assert_eq!(handshake.cookies.write_cookie, None);
+    }
 
     /// Fixed BLAKE2s-128 known answers using the same construction as
     /// amneziawg-go's CookieGenerator.AddMacs and CookieChecker.CheckMAC2.
