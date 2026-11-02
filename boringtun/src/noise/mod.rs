@@ -431,10 +431,28 @@ impl Tunn {
     /// pre-handshake junk is dropped, since it was generated under the previous
     /// configuration.
     pub fn set_obfuscation(&mut self, obf: ObfuscationRanges, amnezia: AmneziaConfig) {
+        if let Err(error) = self.try_set_obfuscation(obf, amnezia) {
+            tracing::error!(message = "rejecting invalid AmneziaWG tunnel configuration", error = %error);
+        }
+    }
+
+    /// Fallible variant of the runtime obfuscation update.
+    ///
+    /// Validate all framing and timer constraints before changing the live
+    /// tunnel. On failure the previous configuration remains active.
+    pub fn try_set_obfuscation(
+        &mut self,
+        obf: ObfuscationRanges,
+        amnezia: AmneziaConfig,
+    ) -> Result<(), String> {
+        amnezia.validate()?;
+        amnezia.validate_random_trailers(obf)?;
+
         self.handshake.set_obfuscation(obf);
         self.timers.set_timer_ranges(&amnezia);
         self.amnezia = amnezia;
         self.pending_amnezia_junk = None;
+        Ok(())
     }
 
     /// Update the persistent-keepalive interval.
@@ -2362,6 +2380,24 @@ mod tests {
             saw_padding,
             "learned UDP window should permit reverse padding"
         );
+    }
+
+    #[test]
+    fn runtime_obfuscation_update_validates_before_mutating_tunnel() {
+        let (mut tun, _peer) = create_two_tuns_with_amnezia(AmneziaConfig::new(0, 0, 0, 0));
+        let invalid = AmneziaConfig::new(0, 0, 0, 0)
+            .with_header_protection_key([0x42; 32]);
+        assert!(tun
+            .try_set_obfuscation(ObfuscationRanges::default(), invalid)
+            .is_err());
+        assert!(!tun.amnezia.header_protection_enabled());
+
+        let valid = AmneziaConfig::new(12, 12, 12, 12)
+            .with_header_protection_key([0x42; 32]);
+        assert!(tun
+            .try_set_obfuscation(ObfuscationRanges::default(), valid)
+            .is_ok());
+        assert!(tun.amnezia.header_protection_enabled());
     }
 
     #[test]
