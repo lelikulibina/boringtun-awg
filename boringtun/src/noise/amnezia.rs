@@ -1791,6 +1791,84 @@ mod tests {
             .to_vec()
     }
 
+    #[test]
+    fn random_trailers_roundtrip_handshake_and_cookie_packets() {
+        let obf = ObfuscationRanges::default();
+        for (tag, base_size, s1, s2, s3) in [
+            (HANDSHAKE_INIT, HANDSHAKE_INIT_SZ, 12, 0, 0),
+            (HANDSHAKE_RESP, HANDSHAKE_RESP_SZ, 0, 12, 0),
+            (COOKIE_REPLY, COOKIE_REPLY_SZ, 0, 0, 12),
+        ] {
+            let cfg = AmneziaConfig::new(s1, s2, s3, 0).with_random_trailers(true);
+            let mut rng = ChaCha8Rng::seed_from_u64(0xA11CE);
+            let mut buffer = vec![0u8; DEFAULT_UDP_WINDOW];
+            write_tag(&mut buffer, tag);
+            buffer[4] = 0x42;
+
+            let wire = cfg
+                .prepend_outbound(obf, &mut buffer, base_size, &mut rng)
+                .expect("packet fits")
+                .to_vec();
+            assert!(wire.len() > base_size + expected_junk(&cfg, tag));
+            assert!(wire.len() < DEFAULT_UDP_WINDOW);
+
+            let recovered = cfg.strip_inbound(obf, &wire).expect("trailer is accepted");
+            assert_eq!(recovered.len(), base_size);
+            assert_eq!(recovered[4], 0x42);
+        }
+    }
+
+    #[test]
+    fn cookie_random_trailer_is_bounded_by_triggering_request() {
+        let cfg = AmneziaConfig::new(0, 0, 12, 0).with_random_trailers(true);
+        let mut rng = ChaCha8Rng::seed_from_u64(0xC001);
+        let mut buffer = vec![0u8; 512];
+        write_tag(&mut buffer, COOKIE_REPLY);
+        let wire = cfg
+            .prepend_outbound_with_limits(
+                ObfuscationRanges::default(),
+                &mut buffer,
+                COOKIE_REPLY_SZ,
+                DEFAULT_UDP_WINDOW,
+                92,
+                &mut rng,
+            )
+            .expect("bounded cookie reply fits")
+            .to_vec();
+        assert!(wire.len() <= 92);
+        assert_eq!(
+            cfg.strip_inbound(ObfuscationRanges::default(), &wire)
+                .expect("cookie with trailer is accepted")
+                .len(),
+            COOKIE_REPLY_SZ
+        );
+    }
+
+    #[test]
+    fn random_transport_padding_respects_content_padding_precedence_and_mtu() {
+        let mut rng = ChaCha8Rng::seed_from_u64(0xBEEF);
+        let random = AmneziaConfig::new(0, 0, 0, 0).with_random_trailers(true);
+        let packet_size = 80;
+        let padding = random.transport_padding_size(packet_size - DATA_OVERHEAD_SZ, packet_size, 1500, 500, &mut rng);
+        assert!(padding < 500 - packet_size);
+        assert!(packet_size + padding <= 1500 + DATA_OVERHEAD_SZ);
+
+        let explicit = AmneziaConfig::new(0, 0, 0, 0)
+            .with_random_trailers(true)
+            .with_content_padding_addition(7, 7);
+        assert_eq!(
+            explicit.transport_padding_size(
+                packet_size - DATA_OVERHEAD_SZ,
+                packet_size,
+                1500,
+                500,
+                &mut rng,
+            ),
+            7,
+            "ContentPaddingAddition takes precedence over RandomTrailers"
+        );
+    }
+
     fn expected_junk(cfg: &AmneziaConfig, tag: u32) -> usize {
         let size = match tag {
             HANDSHAKE_INIT => cfg.init_packet_junk_size,
