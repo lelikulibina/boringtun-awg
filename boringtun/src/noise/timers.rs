@@ -58,10 +58,13 @@ pub struct Timers {
     time_started: Instant,
     timers: [Duration; TimerName::Top as usize],
     pub(super) session_timers: [Duration; super::N_SESSIONS],
-    /// Did we receive data without sending anything back?
-    want_keepalive: bool,
-    /// Did we send data without hearing back?
-    want_handshake: bool,
+    /// Deadline for the first authenticated-data-send inactivity timer.
+    /// Subsequent data sends do not move it until an authenticated packet arrives.
+    new_handshake_deadline: Option<Duration>,
+    /// Deadline for the first authenticated-data-receive keepalive timer.
+    /// Further data receives while pending request one additional keepalive.
+    send_keepalive_deadline: Option<Duration>,
+    need_another_keepalive: bool,
     persistent_keepalive: usize,
     /// Should this timer call reset rr function (if not a shared rr instance)
     pub(super) should_reset_rr: bool,
@@ -89,8 +92,9 @@ impl Timers {
             time_started: Instant::now(),
             timers: Default::default(),
             session_timers: Default::default(),
-            want_keepalive: Default::default(),
-            want_handshake: Default::default(),
+            new_handshake_deadline: None,
+            send_keepalive_deadline: None,
+            need_another_keepalive: false,
             persistent_keepalive: usize::from(persistent_keepalive.unwrap_or(0)),
             should_reset_rr: reset_rr,
             timer_ranges: [
@@ -126,8 +130,9 @@ impl Timers {
         for t in &mut self.timers[..] {
             *t = now;
         }
-        self.want_handshake = false;
-        self.want_keepalive = false;
+        self.new_handshake_deadline = None;
+        self.send_keepalive_deadline = None;
+        self.need_another_keepalive = false;
         self.handshake_attempts = 0;
     }
 
@@ -229,14 +234,19 @@ mod tests {
 
 impl Tunn {
     pub(super) fn timer_tick(&mut self, timer_name: TimerName) {
+        let now = Instant::now().duration_since(self.timers.time_started);
+        self.timers[TimeCurrent] = now;
+
         match timer_name {
             TimeLastPacketReceived => {
-                self.timers.want_keepalive = true;
-                self.timers.want_handshake = false;
+                // Any authenticated packet from the peer cancels the inactivity
+                // handshake timer, as timersAnyAuthenticatedPacketReceived does
+                // in amneziawg-go.
+                self.timers.new_handshake_deadline = None;
             }
             TimeLastPacketSent => {
-                self.timers.want_handshake = true;
-                self.timers.want_keepalive = false;
+                // Any authenticated outbound packet cancels a pending keepalive.
+                self.timers.send_keepalive_deadline = None;
             }
             TimeLastHandshakeStarted => {
                 self.timers.rekey_timeout = Duration::from_secs(
@@ -250,21 +260,38 @@ impl Tunn {
                 self.timers.rekey_after_time = Duration::from_secs(
                     self.timers.pick_range(0, REKEY_AFTER_TIME.as_secs() as u32) as u64,
                 );
-                self.timers.keepalive_timeout_max = Duration::from_secs(
-                    self.timers.range_max(3, KEEPALIVE_TIMEOUT.as_secs() as u32) as u64,
-                );
-                let rekey_timeout = self.timers.pick_range(1, REKEY_TIMEOUT.as_secs() as u32);
-                self.timers.new_handshake_timeout =
-                    self.timers.keepalive_timeout_max + Duration::from_secs(rekey_timeout as u64);
-                self.timers.new_handshake_jitter =
-                    Duration::from_millis((OsRng.next_u32() % 334) as u64);
+                // Upstream starts this timer on the first data send after the
+                // last authenticated receive; later sends do not reset it.
+                if self.timers.new_handshake_deadline.is_none() {
+                    self.timers.keepalive_timeout_max = Duration::from_secs(
+                        self.timers.range_max(3, KEEPALIVE_TIMEOUT.as_secs() as u32) as u64,
+                    );
+                    let rekey_timeout =
+                        self.timers.pick_range(1, REKEY_TIMEOUT.as_secs() as u32);
+                    self.timers.new_handshake_timeout =
+                        self.timers.keepalive_timeout_max + Duration::from_secs(rekey_timeout as u64);
+                    self.timers.new_handshake_jitter =
+                        Duration::from_millis((OsRng.next_u32() % 334) as u64);
+                    self.timers.new_handshake_deadline = Some(
+                        now + self.timers.new_handshake_timeout + self.timers.new_handshake_jitter,
+                    );
+                }
             }
             TimeLastDataPacketReceived => {
-                self.timers.keepalive_timeout = Duration::from_secs(
-                    self.timers
-                        .pick_range(3, KEEPALIVE_TIMEOUT.as_secs() as u32)
-                        as u64,
-                );
+                // The first data receive starts the keepalive timer. Further
+                // receives while it is pending request one more keepalive after
+                // the first one, rather than moving the existing deadline.
+                if self.timers.send_keepalive_deadline.is_none() {
+                    self.timers.keepalive_timeout = Duration::from_secs(
+                        self.timers
+                            .pick_range(3, KEEPALIVE_TIMEOUT.as_secs() as u32)
+                            as u64,
+                    );
+                    self.timers.send_keepalive_deadline =
+                        Some(now + self.timers.keepalive_timeout);
+                } else {
+                    self.timers.need_another_keepalive = true;
+                }
                 self.timers.keepalive_timeout_max = Duration::from_secs(
                     self.timers.range_max(3, KEEPALIVE_TIMEOUT.as_secs() as u32) as u64,
                 );
@@ -277,8 +304,7 @@ impl Tunn {
             _ => {}
         }
 
-        let time = self.timers[TimeCurrent];
-        self.timers[timer_name] = time;
+        self.timers[timer_name] = now;
     }
 
     pub(super) fn timer_tick_session_established(
@@ -290,6 +316,9 @@ impl Tunn {
         self.timers.session_timers[session_idx % crate::noise::N_SESSIONS] =
             self.timers[TimeCurrent];
         self.timers.is_initiator = is_initiator;
+        self.timers.new_handshake_deadline = None;
+        self.timers.send_keepalive_deadline = None;
+        self.timers.need_another_keepalive = false;
         self.timers.max_handshake_attempts = self.timers.pick_range(4, 18);
         self.timers.handshake_attempts = 0;
         self.timers.handshake_retry_jitter = Duration::from_millis((OsRng.next_u32() % 334) as u64);
@@ -465,23 +494,29 @@ impl Tunn {
                 // If we have sent a packet to a given peer but have not received a
                 // packet after from that peer for (KEEPALIVE + REKEY_TIMEOUT) ms,
                 // we initiate a new handshake.
-                if data_packet_sent > aut_packet_received
-                    && now - aut_packet_received
-                        >= self.timers.new_handshake_timeout + self.timers.new_handshake_jitter
-                    && mem::replace(&mut self.timers.want_handshake, false)
+                if self
+                    .timers
+                    .new_handshake_deadline
+                    .map(|deadline| now >= deadline)
+                    .unwrap_or(false)
                 {
                     tracing::warn!("HANDSHAKE(KEEPALIVE + REKEY_TIMEOUT)");
+                    self.timers.new_handshake_deadline = None;
                     handshake_initiation_required = true;
                 }
 
                 if !handshake_initiation_required {
-                    // If a packet has been received from a given peer, but we have not sent one back
-                    // to the given peer in KEEPALIVE ms, we send an empty packet.
-                    if data_packet_received > aut_packet_sent
-                        && now - aut_packet_sent >= self.timers.keepalive_timeout
-                        && mem::replace(&mut self.timers.want_keepalive, false)
+                    // The first data receive starts this timer. If more data
+                    // arrived while it was pending, upstream sends one extra
+                    // keepalive after the first keepalive has gone out.
+                    if self
+                        .timers
+                        .send_keepalive_deadline
+                        .map(|deadline| now >= deadline)
+                        .unwrap_or(false)
                     {
                         tracing::debug!("KEEPALIVE(KEEPALIVE_TIMEOUT)");
+                        self.timers.send_keepalive_deadline = None;
                         keepalive_required = true;
                     }
 
@@ -503,7 +538,22 @@ impl Tunn {
         }
 
         if keepalive_required {
-            return self.encapsulate(&[], dst);
+            let rearm = if self.timers.need_another_keepalive {
+                self.timers.need_another_keepalive = false;
+                let timeout = self.timers.pick_range(3, KEEPALIVE_TIMEOUT.as_secs() as u32);
+                Some(Duration::from_secs(timeout as u64))
+            } else {
+                None
+            };
+            let result = self.encapsulate(&[], dst);
+            // encapsulate marks the keepalive as sent and clears the old
+            // deadline. Re-arm only after that send, matching expiredSendKeepalive.
+            if let Some(timeout) = rearm {
+                self.timers.send_keepalive_deadline = Some(
+                    Instant::now().duration_since(self.timers.time_started) + timeout,
+                );
+            }
+            return result;
         }
 
         TunnResult::Done
