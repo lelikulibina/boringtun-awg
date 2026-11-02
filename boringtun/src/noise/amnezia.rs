@@ -1964,6 +1964,43 @@ mod tests {
         );
     }
 
+    #[test]
+    fn content_padding_addition_is_inclusive_and_clamped_to_udp_window() {
+        let mut rng = ChaCha8Rng::seed_from_u64(0xC0FFEE);
+        let ranged = AmneziaConfig::new(0, 0, 0, 0).with_content_padding_addition(4, 12);
+
+        for _ in 0..256 {
+            let padding = ranged.content_padding_size(100, 132, 500, &mut rng);
+            assert!(
+                (4..=12).contains(&padding),
+                "selected ContentPaddingAddition {padding} outside inclusive range 4..=12"
+            );
+        }
+
+        let fixed_max = AmneziaConfig::new(0, 0, 0, 0)
+            .with_content_padding_addition(12, 12);
+        assert_eq!(
+            fixed_max.content_padding_size(100, 132, 500, &mut rng),
+            12,
+            "the configured maximum is inclusive"
+        );
+        assert_eq!(
+            ranged.content_padding_size(100, 495, 500, &mut rng),
+            5,
+            "padding is clamped to the remaining UDP window"
+        );
+        assert_eq!(
+            ranged.content_padding_size(100, 500, 500, &mut rng),
+            0,
+            "a full UDP window leaves no room for padding"
+        );
+        assert_eq!(
+            ranged.content_padding_size(0, 32, 500, &mut rng),
+            0,
+            "empty keepalives must not receive content padding"
+        );
+    }
+
     fn expected_junk(cfg: &AmneziaConfig, tag: u32) -> usize {
         let size = match tag {
             HANDSHAKE_INIT => cfg.init_packet_junk_size,
