@@ -975,6 +975,35 @@ mod tests {
         assert_eq!(parse_tag_range("1-5"), Some((1, 5)));
     }
     #[test]
+    fn randomized_timer_ranges_are_parsed_merged_and_validated() {
+        assert_eq!(parse_u32_range("12"), Some((12, 12)));
+        assert_eq!(parse_u32_range("5-9"), Some((5, 9)));
+        assert_eq!(parse_u32_range("9-5"), None);
+        assert_eq!(parse_u32_range("4294967296"), None);
+
+        let current = AmneziaConfig::new(0, 0, 0, 0);
+        let mut params = AwgParams::default();
+        params.rekey_after_time = parse_u32_range("100-140");
+        params.rekey_timeout = parse_u32_range("3-7");
+        params.reject_after_time = parse_u32_range("150-190");
+        params.keepalive_timeout = parse_u32_range("8-12");
+        params.max_handshake_attempts = parse_u32_range("10-20");
+        params.seen = true;
+        let (_, merged) = params.merged(ObfuscationRanges::default(), &current)
+            .expect("valid timer ranges");
+        assert_eq!(merged.rekey_after_time, (100, 140));
+        assert_eq!(merged.rekey_timeout, (3, 7));
+        assert_eq!(merged.reject_after_time, (150, 190));
+        assert_eq!(merged.keepalive_timeout, (8, 12));
+        assert_eq!(merged.max_handshake_attempts, (10, 20));
+
+        let mut invalid = AwgParams::default();
+        invalid.rekey_timeout = Some((9, 3));
+        invalid.seen = true;
+        assert!(invalid.merged(ObfuscationRanges::default(), &current).is_err());
+    }
+
+    #[test]
     fn content_padding_addition_range_is_parsed_and_merged() {
         assert_eq!(parse_u16_range("24"), Some((24, 24)));
         assert_eq!(parse_u16_range("0-64"), Some((0, 64)));
