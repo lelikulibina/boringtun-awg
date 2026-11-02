@@ -1459,7 +1459,14 @@ mod tests {
             None,
             2,
             Some(rate_limiter.clone()),
-            0, 0, 0, 0, 0, 0, 0, 0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
             config,
         )
         .unwrap();
