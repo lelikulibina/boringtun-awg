@@ -1657,7 +1657,10 @@ mod tests {
         );
 
         mock_instant::MockClock::advance(Duration::from_secs(10));
-        assert!(matches!(initiator.update_timers(&mut network), TunnResult::Done));
+        assert!(matches!(
+            initiator.update_timers(&mut network),
+            TunnResult::Done
+        ));
     }
 
     #[test]
@@ -1697,7 +1700,10 @@ mod tests {
         );
 
         mock_instant::MockClock::advance(Duration::from_secs(10));
-        assert!(matches!(receiver.update_timers(&mut network), TunnResult::Done));
+        assert!(matches!(
+            receiver.update_timers(&mut network),
+            TunnResult::Done
+        ));
     }
 
     #[test]
