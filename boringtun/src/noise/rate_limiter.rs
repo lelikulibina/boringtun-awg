@@ -283,6 +283,27 @@ mod tests {
     }
 
     #[test]
+    fn default_cookie_policy_still_rejects_under_load_without_source_address() {
+        let public_key = crate::x25519::PublicKey::from([7u8; 32]);
+        let limiter = RateLimiter::new(&public_key, 0);
+        let packet = initiation_with_valid_mac1(&limiter);
+        let mut dst = [0u8; 128];
+
+        let result = limiter.verify_packet(
+            ObfuscationRanges::default(),
+            &mut OsRng,
+            None,
+            &packet,
+            &mut dst,
+        );
+
+        assert!(matches!(
+            result,
+            Err(TunnResult::Err(WireGuardError::UnderLoad))
+        ));
+    }
+
+    #[test]
     fn cookie_replies_remain_enabled_by_default() {
         let public_key = crate::x25519::PublicKey::from([7u8; 32]);
         let limiter = RateLimiter::new(&public_key, 0);
