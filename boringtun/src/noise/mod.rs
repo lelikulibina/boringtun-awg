@@ -2370,8 +2370,9 @@ mod tests {
         let (mut sender, mut receiver) = create_two_tuns_with_amnezia(cfg);
         let mut packet = create_ipv4_udp_packet();
         packet.resize(600, 0);
-        packet[2..4].copy_from_slice(&(packet.len() as u16).to_be_bytes());
-        packet[24..26].copy_from_slice(&((packet.len() - 20) as u16).to_be_bytes());
+        let packet_len = packet.len();
+        packet[2..4].copy_from_slice(&(packet_len as u16).to_be_bytes());
+        packet[24..26].copy_from_slice(&((packet_len - 20) as u16).to_be_bytes());
 
         let init = create_handshake_init(&mut sender);
         let response = create_handshake_response(&mut receiver, &init);
