@@ -231,6 +231,22 @@ mod tests {
     }
 
     #[test]
+    fn persistent_keepalive_updates_preserve_zero_and_disabled_semantics() {
+        let config = AmneziaConfig::new(0, 0, 0, 0);
+        let mut timers = Timers::new(Some(25), false, &config);
+        assert_eq!(timers.persistent_keepalive, 25);
+
+        timers.set_persistent_keepalive(Some(0));
+        assert_eq!(timers.persistent_keepalive, 0);
+
+        timers.set_persistent_keepalive(None);
+        assert_eq!(timers.persistent_keepalive, 0);
+
+        timers.set_persistent_keepalive(Some(10));
+        assert_eq!(timers.persistent_keepalive, 10);
+    }
+
+    #[test]
     fn replacing_timer_ranges_updates_the_live_timer_configuration() {
         let initial = AmneziaConfig::new(0, 0, 0, 0).with_rekey_timeout(2, 3);
         let replacement = AmneziaConfig::new(0, 0, 0, 0).with_rekey_timeout(7, 9);
