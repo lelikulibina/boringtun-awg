@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import socket
+import struct
 import subprocess
 import sys
 import tempfile
@@ -19,6 +20,7 @@ import uuid
 from pathlib import Path
 
 from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 
 PORT = 51820
@@ -217,6 +219,126 @@ def verify_udp_roundtrip(server_ns: str, client_ns: str) -> None:
                 server.wait()
 
 
+
+def verify_wire_pcap(
+    pcap_path: Path,
+    *,
+    awg_enabled: bool,
+    header_protection: bool,
+    random_trailers: bool,
+    expect_rekey: bool,
+) -> None:
+    """Decode captured UDP envelopes and assert normalized wire semantics.
+
+    Noise ephemeral keys and nonces are random, so byte-for-byte equality
+    between independent peers is not a valid differential criterion. Decode
+    the protected type and verify direction, envelope sizes and framing.
+    """
+    raw = pcap_path.read_bytes()
+    if len(raw) < 24:
+        raise RuntimeError("wire capture is empty or truncated")
+    magic = raw[:4]
+    if magic == b"\xd4\xc3\xb2\xa1":
+        endian = "<"
+    elif magic == b"\xa1\xb2\xc3\xd4":
+        endian = ">"
+    else:
+        raise RuntimeError(f"unsupported pcap magic: {magic.hex()}")
+    link_type = struct.unpack_from(endian + "I", raw, 20)[0]
+    if link_type != 1:
+        raise RuntimeError(f"expected Ethernet pcap (link type 1), got {link_type}")
+
+    prefix = 120 if awg_enabled else 0
+    h_tags = (
+        {1: 169887817, 2: 390382747, 3: 1033691040, 4: 1526332224}
+        if awg_enabled else {1: 1, 2: 2, 3: 3, 4: 4}
+    )
+    base_sizes = {1: 148, 2: 92, 3: 64, 4: 32}
+    counts = {
+        "client_to_server": {1: 0, 2: 0, 3: 0, 4: 0},
+        "server_to_client": {1: 0, 2: 0, 3: 0, 4: 0},
+    }
+    hp_key = bytes.fromhex(HPK) if header_protection else None
+    offset = 24
+    packets = 0
+
+    while offset + 16 <= len(raw):
+        _sec, _usec, captured_len, _original_len = struct.unpack_from(
+            endian + "IIII", raw, offset
+        )
+        offset += 16
+        frame = raw[offset:offset + captured_len]
+        offset += captured_len
+        if len(frame) < 14 or int.from_bytes(frame[12:14], "big") != 0x0800:
+            continue
+        ip = frame[14:]
+        if len(ip) < 20 or ip[0] >> 4 != 4 or ip[9] != 17:
+            continue
+        ihl = (ip[0] & 0x0F) * 4
+        if len(ip) < ihl + 8:
+            continue
+        src_port, dst_port, udp_len, _checksum = struct.unpack_from("!HHHH", ip, ihl)
+        if src_port != 51820 and dst_port != 51820:
+            continue
+        payload = ip[ihl + 8:min(len(ip), ihl + udp_len)]
+        if len(payload) < prefix + 4:
+            continue
+        packets += 1
+        direction = "server_to_client" if src_port == 51820 else "client_to_server"
+        encrypted_tag = payload[prefix:prefix + 4]
+        if hp_key is not None:
+            if len(payload) < 12:
+                continue
+            nonce = payload[:12]
+            cipher = Cipher(
+                algorithms.ChaCha20(hp_key, b"\x00" * 4 + nonce),
+                mode=None,
+            ).encryptor()
+            stream = cipher.update(b"\x00" * 4)
+            tag_bytes = bytes(a ^ b for a, b in zip(encrypted_tag, stream))
+        else:
+            tag_bytes = encrypted_tag
+        tag = int.from_bytes(tag_bytes, "little")
+        kind = next((k for k, value in h_tags.items() if value == tag), None)
+        if kind is None:
+            # Jc junk packets are not WireGuard message envelopes.
+            continue
+
+        packet_size = len(payload)
+        minimum = prefix + base_sizes[kind]
+        if packet_size < minimum:
+            raise RuntimeError(
+                f"truncated type-{kind} envelope: {packet_size} < {minimum}"
+            )
+        if kind != 4 and not random_trailers and packet_size != minimum:
+            raise RuntimeError(
+                f"type-{kind} fixed envelope has length {packet_size}, expected {minimum}"
+            )
+        if kind != 4 and random_trailers and packet_size > 500:
+            raise RuntimeError(
+                f"type-{kind} RandomTrailers envelope exceeds 500-byte UDP window: {packet_size}"
+            )
+        counts[direction][kind] += 1
+
+    if packets == 0:
+        raise RuntimeError("pcap contains no UDP tunnel traffic on port 51820")
+    required = {"client_to_server": (1, 4), "server_to_client": (2, 4)}
+    for direction, kinds in required.items():
+        for kind in kinds:
+            minimum_count = 2 if expect_rekey and kind in (1, 2) else 1
+            if counts[direction][kind] < minimum_count:
+                raise RuntimeError(
+                    f"pcap missing type-{kind} from {direction}: "
+                    f"observed {counts[direction][kind]}, expected >= {minimum_count}"
+                )
+    print(
+        "PCAP "
+        f"client->server={counts['client_to_server']} "
+        f"server->client={counts['server_to_client']} "
+        f"datagrams={packets}"
+    )
+
+
 def run_profile(
     bt: str, go: str, name: str, extra: str,
     awg_enabled: bool, bt_is_server: bool,
@@ -228,6 +350,9 @@ def run_profile(
     processes: list[subprocess.Popen] = []
     log_files = []
     links_created = False
+    capture_proc = None
+    capture_log = None
+    capture_path = logs / "wire.pcap"
     workdir = tempfile.TemporaryDirectory(prefix="awg31-interop-")
     logs = Path(workdir.name)
 
@@ -257,6 +382,18 @@ def run_profile(
         ns(ns_server, "ip", "link", "set", veth_server, "up")
         ns(ns_client, "ip", "link", "set", veth_client, "up")
         ns(ns_client, "ping", "-c1", "-W3", SERVER_LINK)
+        capture_log = open(logs / "tcpdump.log", "w", encoding="utf-8")
+        capture_proc = subprocess.Popen(
+            [
+                "ip", "netns", "exec", ns_server, "tcpdump", "-U", "-n",
+                "-i", veth_server, "-w", str(capture_path), "udp port 51820",
+            ],
+            stdout=capture_log,
+            stderr=subprocess.STDOUT,
+        )
+        time.sleep(0.2)
+        if capture_proc.poll() is not None:
+            raise RuntimeError("tcpdump exited before the interop scenario started")
 
         def keypair() -> tuple[str, str]:
             private = os.urandom(32)
@@ -316,7 +453,19 @@ def run_profile(
         verify_udp_roundtrip(ns_server, ns_client)
         if name == "accelerated rekey":
             verify_udp_roundtrip(ns_server, ns_client)
-        print(f"PASS {name} ({role}): handshake + bidirectional ICMP/UDP traffic")
+        capture_proc.terminate()
+        capture_proc.wait(timeout=3)
+        capture_proc = None
+        capture_log.close()
+        capture_log = None
+        verify_wire_pcap(
+            capture_path,
+            awg_enabled=awg_enabled,
+            header_protection="header_protection_key=" in extra,
+            random_trailers="random_trailers=true" in extra,
+            expect_rekey=name == "accelerated rekey",
+        )
+        print(f"PASS {name} ({role}): handshake + bidirectional ICMP/UDP + normalized pcap")
     except Exception:
         for log_path in logs.glob("*.log"):
             tail = log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-12:]
@@ -325,6 +474,15 @@ def run_profile(
                 print("\n".join(tail), file=sys.stderr)
         raise
     finally:
+        if capture_proc is not None:
+            capture_proc.terminate()
+            try:
+                capture_proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                capture_proc.kill()
+                capture_proc.wait()
+        if capture_log is not None:
+            capture_log.close()
         for process in reversed(processes):
             if process.poll() is None:
                 process.terminate()

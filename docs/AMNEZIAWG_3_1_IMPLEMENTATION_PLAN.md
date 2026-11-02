@@ -398,3 +398,12 @@ Upstream точки сверки:
 - В interop matrix добавлен профиль accelerated rekey с короткими UAPI ranges: RekeyAfterTime=2s, RekeyTimeout=2s, RejectAfterTime=30s, KeepaliveTimeout=2s и MaxHandshakeAttempts=3.
 - В обеих ролях сервера harness запоминает timestamp первого handshake, создаёт исходящий трафик и ожидает его изменения после повторного handshake; затем повторно проверяет UDP request/reply через новую сессию.
 - Это внешний differential state-machine test между BoringTun и закреплённым amneziawg-go, дополняющий локальный mock-clock coverage. Требуется CI на новом HEAD.
+
+
+### Финальный этап A: нормализованная wire/pcap differential-проверка (2026-11-03)
+
+- Interop harness захватывает реальные UDP datagrams на серверном veth через tcpdump для каждого из 9 профилей в обеих ролях (18 независимых сценариев).
+- Pcap verifier декодирует Ethernet/IPv4/UDP, восстанавливает защищённое поле типа AWG 3.1 через ChaCha20 (для HPK-профилей), затем классифицирует H1-H4 и проверяет направление, фиксированные размеры Initiation/Response/Cookie Reply и framing Transport.
+- Для RandomTrailers проверяются границы handshake/cookie envelope; для accelerated rekey в pcap требуются минимум два Initiation и два Response, а UDP roundtrip повторно проходит после смены handshake.
+- Сравнение выполняется по нормализованной семантике пакетов, а не по полным байтам: ephemeral Noise keys, nonce и случайные trailers закономерно различаются между независимыми запусками. Побайтовое равенство двух независимых pcap не является корректным критерием.
+- Требуется CI на новом HEAD; этап не считается завершённым до проверки.
