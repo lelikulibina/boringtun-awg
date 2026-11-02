@@ -278,6 +278,12 @@ pub struct AmneziaConfig {
     /// Inclusive range of extra zero bytes appended to the encrypted IP payload.
     /// `(0, 0)` disables ContentPaddingAddition.
     pub(crate) content_padding_addition: (u16, u16),
+    /// Inclusive timer ranges in seconds; (0, 0) preserves WireGuard defaults.
+    pub(crate) rekey_after_time: (u32, u32),
+    pub(crate) rekey_timeout: (u32, u32),
+    pub(crate) reject_after_time: (u32, u32),
+    pub(crate) keepalive_timeout: (u32, u32),
+    pub(crate) max_handshake_attempts: (u32, u32),
     /// Suppress the client-only pre-handshake burst (Jc junk packets and the
     /// protocol imitation sequence) while keeping every other AmneziaWG
     /// behaviour. See [`AmneziaConfig::as_responder`].
@@ -369,6 +375,11 @@ impl AmneziaConfig {
             disable_cookies: false,
             header_protection_key: [0u8; 32],
             content_padding_addition: (0, 0),
+            rekey_after_time: (0, 0),
+            rekey_timeout: (0, 0),
+            reject_after_time: (0, 0),
+            keepalive_timeout: (0, 0),
+            max_handshake_attempts: (0, 0),
             suppress_pre_handshake: false,
         }
     }
@@ -399,6 +410,13 @@ impl AmneziaConfig {
         self.content_padding_addition = (min, max);
         self
     }
+
+    /// Configure inclusive AmneziaWG timer ranges (seconds). `(0, 0)` keeps the WireGuard default.
+    pub fn with_rekey_after_time(mut self, min: u32, max: u32) -> Self { self.rekey_after_time = (min, max); self }
+    pub fn with_rekey_timeout(mut self, min: u32, max: u32) -> Self { self.rekey_timeout = (min, max); self }
+    pub fn with_reject_after_time(mut self, min: u32, max: u32) -> Self { self.reject_after_time = (min, max); self }
+    pub fn with_keepalive_timeout(mut self, min: u32, max: u32) -> Self { self.keepalive_timeout = (min, max); self }
+    pub fn with_max_handshake_attempts(mut self, min: u32, max: u32) -> Self { self.max_handshake_attempts = (min, max); self }
 
     /// Select a random content-padding size, bounded by the remaining tunnel MTU.
     /// Empty keepalives and packets larger than the configured MTU are never padded.
