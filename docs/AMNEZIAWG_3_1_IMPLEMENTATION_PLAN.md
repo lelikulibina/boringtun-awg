@@ -292,3 +292,12 @@ Upstream точки сверки:
 - Проверено, что inactivity handshake deadline не сбрасывается неаутентифицированным transport-пакетом и сбрасывается только после успешной AEAD-аутентификации входящего data.
 - CI на кодовом HEAD `488407da2f2e1a9e3da9a666a9d5dbb02b311d07`: `rustfmt`, `clippy`, `check_features`, `tests` (261 passed, 9 ignored), `integration-tests`, Windows core check, `awg31-interoperability` (16/16) и `all-systems-go` — success; Semgrep — success. Дополнительная macOS job не входила в merge gate и ожидала runner.
 - Эти проверки закрывают timer state transitions и контроль AEAD-гейта для inactivity deadline. Они не заменяют wire-level differential vectors для MAC/H1-H4 и pcap-сравнение внешних датаграмм.
+
+
+### Этап 7: outbound wire-векторы HeaderProtection и H1-H4 (2026-11-02)
+
+- Добавлен тест outbound HeaderProtection, который для handshake initiation, response, cookie reply и transport строит эталонный ChaCha20-результат с nonce из S-prefix и сравнивает каждый защищаемый байт. Для transport отдельно проверяется, что payload/AEAD ciphertext после первых 16 байт не изменён.
+- Добавлен тест классификации нестандартных singleton H1-H4 tags с HeaderProtection для всех четырёх типов пакетов.
+- Существующие inbound known-answer vectors продолжают проверять стандартный ChaCha20 поток для полного handshake/cookie сообщения и 16-байтового transport header.
+- CI на кодовом HEAD `d3ac38be1e394a4fc32d7f07a4fb4e534c377c3d`: `rustfmt`, `clippy`, `check_features`, tests (263 passed, 9 ignored), integration-tests, Windows core check, interop (16/16), `all-systems-go` и Semgrep — success. Дополнительная macOS job остаётся вне merge gate и ожидает runner.
+- Следующая задача — фиксированные differential fixtures для MAC1/MAC2 и побайтовая проверка внешних S-prefix/trailer datagrams; текущие tests подтверждают ChaCha20-обработку и сохранность AEAD payload, но не являются полным pcap comparison.
