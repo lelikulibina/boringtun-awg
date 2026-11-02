@@ -166,7 +166,7 @@ impl RateLimiter {
         self.verify_packet_with_cookie_policy(obf, rng, src_addr, src, dst, false)
     }
 
-    /// Verify a packet with optional AmneziaWG 3.1 Cookie Reply suppression.
+    /// Verify a packet with AmneziaWG 3.1 DisableCookies semantics.
     pub(crate) fn verify_packet_with_cookie_policy<'a, 'b>(
         &self,
         obf: ObfuscationRanges,
@@ -174,7 +174,7 @@ impl RateLimiter {
         src_addr: Option<IpAddr>,
         src: &'a [u8],
         dst: &'b mut [u8],
-        disable_cookie_reply: bool,
+        disable_cookies: bool,
     ) -> Result<Packet<'a>, TunnResult<'b>> {
         let packet = Tunn::parse_incoming_packet(obf, src)?;
 
@@ -190,7 +190,11 @@ impl RateLimiter {
                 return Err(TunnResult::Err(WireGuardError::InvalidMac));
             }
 
-            if self.is_under_load() {
+            // Upstream AmneziaWG semantics: DisableCookies disables the whole
+            // under-load cookie challenge, not just transmission of Cookie Reply.
+            // MAC1 is still mandatory; when disabled, MAC2/rate-limit checks are
+            // skipped so a peer can complete the handshake without a cookie.
+            if !disable_cookies && self.is_under_load() {
                 let addr = match src_addr {
                     None => return Err(TunnResult::Err(WireGuardError::UnderLoad)),
                     Some(addr) => addr,
@@ -201,11 +205,6 @@ impl RateLimiter {
                 let computed_mac2 = b2s_keyed_mac_16_2(&cookie, msg, mac1);
 
                 if !constant_time_eq(&computed_mac2[..16], mac2) {
-                    // AWG 3.1 suppresses only outgoing Cookie Reply packets.
-                    // The invalid-MAC2 handshake is still rejected under load.
-                    if disable_cookie_reply {
-                        return Err(TunnResult::Err(WireGuardError::UnderLoad));
-                    }
                     let cookie_packet = self
                         .format_cookie_reply(obf, rng, sender_idx, cookie, mac1, dst)
                         .map_err(TunnResult::Err)?;
@@ -238,7 +237,7 @@ mod tests {
     }
 
     #[test]
-    fn disable_cookies_suppresses_reply_but_still_rejects_handshake_under_load() {
+    fn disable_cookies_bypasses_under_load_cookie_challenge() {
         let public_key = crate::x25519::PublicKey::from([7u8; 32]);
         let limiter = RateLimiter::new(&public_key, 0);
         let packet = initiation_with_valid_mac1(&limiter);
@@ -253,10 +252,7 @@ mod tests {
             true,
         );
 
-        assert!(matches!(
-            result,
-            Err(TunnResult::Err(WireGuardError::UnderLoad))
-        ));
+        assert!(matches!(result, Ok(Packet::HandshakeInit(_))));
     }
 
     #[test]
