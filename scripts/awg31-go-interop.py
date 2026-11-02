@@ -373,7 +373,10 @@ def verify_wire_pcap(
         missing_hex = ", ".join(value.hex() for value in sorted(missing_signatures))
         raise RuntimeError(f"pcap missing configured CPS signature datagrams: {missing_hex}")
     if expected_signatures and first_handshake_position is not None:
-        last_signature_position = max(signature_positions.values())
+        signature_order = [signature_positions[value] for value in expected_signatures]
+        if signature_order != sorted(signature_order):
+            raise RuntimeError("CPS signature datagrams were not emitted in I1-I5 slot order")
+        last_signature_position = max(signature_order)
         if last_signature_position >= first_handshake_position:
             raise RuntimeError(
                 "CPS signature datagrams were not all sent before the first handshake initiation"
