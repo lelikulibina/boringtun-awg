@@ -43,7 +43,7 @@
 
 В upstream зафиксированы edge cases:
 - [Issue #185](https://github.com/amnezia-vpn/amneziawg-go/issues/185): ContentPaddingAddition имеет приоритет над RandomTrailers только для transport; handshake/cookie по-прежнему получают RandomTrailers.
-- [Issue #186](https://github.com/amnezia-vpn/amneziawg-go/issues/186): широкие H1-H3 при RandomTrailers могут приводить к ложной классификации и потере transport-пакетов. В этой реализации конфигурация с различными S1-S4 отклоняется при применении, а не принимается молча.
+- [Issue #186](https://github.com/amnezia-vpn/amneziawg-go/issues/186): при RandomTrailers разные S1-S4 могут приводить к ложной классификации и потере transport-пакетов даже при включённом Header Protection. В этой реализации неодинаковые S1-S4 отклоняются при применении; одинаковые S и непересекающиеся H1-H4 обеспечивают единое смещение классификации.
 
 ## Проверка с официальным amneziawg-go
 
