@@ -901,6 +901,9 @@ impl AmneziaConfig {
         };
 
         let junk_size = self.outbound_junk_size(kind);
+        if self.header_protection_enabled() && junk_size < 12 {
+            return Err(WireGuardError::InvalidPacket);
+        }
         if junk_size == 0 {
             return Ok(&mut buffer[..packet_size]);
         }
@@ -910,10 +913,6 @@ impl AmneziaConfig {
             .ok_or(WireGuardError::DestinationBufferTooSmall)?;
         if buffer.len() < new_size {
             return Err(WireGuardError::DestinationBufferTooSmall);
-        }
-
-        if self.header_protection_enabled() && junk_size < 12 {
-            return Err(WireGuardError::InvalidPacket);
         }
 
         buffer.copy_within(0..packet_size, junk_size);
