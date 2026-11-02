@@ -391,3 +391,10 @@ Upstream точки сверки:
 - Добавлен фиксированный 64-байтовый Cookie Reply fixture с детерминированными nonce key/counter, AEAD key, cookie, MAC1 и H3 tag.
 - Эталон независимо рассчитан через keyed BLAKE2s-192 и XChaCha20-Poly1305 (HChaCha20 + ChaCha20-Poly1305); сравнивается весь wire envelope: type, receiver index, nonce, ciphertext и Poly1305 tag.
 - Это закрывает ранее отмеченный пробел между MAC1/MAC2 known-answer vectors и end-to-end проверкой Cookie Reply authentication. Требуется CI на новом HEAD.
+
+
+### Этап 19: реальный send-side rekey между BoringTun и Go (2026-11-03)
+
+- В interop matrix добавлен профиль accelerated rekey с короткими UAPI ranges: RekeyAfterTime=2s, RekeyTimeout=2s, RejectAfterTime=30s, KeepaliveTimeout=2s и MaxHandshakeAttempts=3.
+- В обеих ролях сервера harness запоминает timestamp первого handshake, создаёт исходящий трафик и ожидает его изменения после повторного handshake; затем повторно проверяет UDP request/reply через новую сессию.
+- Это внешний differential state-machine test между BoringTun и закреплённым amneziawg-go, дополняющий локальный mock-clock coverage. Требуется CI на новом HEAD.

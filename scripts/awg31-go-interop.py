@@ -53,6 +53,13 @@ PROFILES = [
         True,
     ),
     (
+        "accelerated rekey",
+        "rekey_after_time=2-2\\nrekey_timeout=2-2\\n"
+        "reject_after_time=30-30\\nkeepalive_timeout=2-2\\n"
+        "max_handshake_attempts=3-3\\n",
+        True,
+    ),
+    (
         "all AWG 3.1 extensions combined",
         f"header_protection_key={HPK}\n"
         "content_padding_addition=16-64\nrandom_trailers=true\n"
@@ -128,23 +135,45 @@ def set_peer(iface: str, private: str, public: str, endpoint: str,
         raise RuntimeError(f"could not configure {iface}: {response}")
 
 
-def wait_handshake(server_iface: str, client_ns: str, server_ip: str) -> None:
+def last_handshake_time(iface: str) -> int:
+    status = uapi(iface, "get=1\\n\\n")
+    for line in status.splitlines():
+        if line.startswith("last_handshake_time_sec="):
+            value = line.split("=", 1)[1]
+            return int(value) if value.isdigit() else 0
+    return 0
+
+
+def wait_handshake(server_iface: str, client_ns: str, server_ip: str) -> int:
     deadline = time.monotonic() + 22
     while time.monotonic() < deadline:
         run("ip", "netns", "exec", client_ns, "ping", "-c1", "-W1",
             server_ip, check=False)
-        status = uapi(server_iface, "get=1\n\n")
-        for line in status.splitlines():
-            if line.startswith("last_handshake_time_sec="):
-                value = line.split("=", 1)[1]
-                if value.isdigit() and int(value) > 0:
-                    # A successful ping proves encrypted traffic in both
-                    # directions, not just a completed Noise handshake.
-                    run("ip", "netns", "exec", client_ns, "ping", "-c3",
-                        "-W2", server_ip)
-                    return
+        handshake_time = last_handshake_time(server_iface)
+        if handshake_time > 0:
+            return handshake_time
         time.sleep(0.4)
     raise RuntimeError("no handshake/traffic before timeout")
+
+
+def wait_rekey(
+    server_iface: str, client_ns: str, server_ip: str, initial_handshake_time: int,
+) -> None:
+    """Wait for the original initiator to complete an accelerated send-side rekey."""
+    deadline = time.monotonic() + 14
+    while time.monotonic() < deadline:
+        run("ip", "netns", "exec", client_ns, "ping", "-c1", "-W1",
+            server_ip, check=False)
+        current_handshake_time = last_handshake_time(server_iface)
+        if current_handshake_time > initial_handshake_time:
+            run("ip", "netns", "exec", client_ns, "ping", "-c3",
+                "-W2", server_ip)
+            return
+        time.sleep(0.2)
+    raise RuntimeError(
+        "no completed send-side rekey observed before timeout "
+        f"(initial={initial_handshake_time}, current={last_handshake_time(server_iface)})"
+    )
 
 
 def verify_udp_roundtrip(server_ns: str, client_ns: str) -> None:
@@ -279,8 +308,14 @@ def run_profile(
         ns(ns_client, "ip", "addr", "add", f"{CLIENT_TUN}/32", "dev", client_iface)
         ns(ns_client, "ip", "link", "set", client_iface, "up", "mtu", "1420")
         ns(ns_client, "ip", "route", "add", f"{SERVER_TUN}/32", "dev", client_iface)
-        wait_handshake(server_iface, ns_client, SERVER_TUN)
+        initial_handshake_time = wait_handshake(server_iface, ns_client, SERVER_TUN)
+        if name == "accelerated rekey":
+            wait_rekey(server_iface, ns_client, SERVER_TUN, initial_handshake_time)
+        else:
+            ns(ns_client, "ping", "-c3", "-W2", SERVER_TUN)
         verify_udp_roundtrip(ns_server, ns_client)
+        if name == "accelerated rekey":
+            verify_udp_roundtrip(ns_server, ns_client)
         print(f"PASS {name} ({role}): handshake + bidirectional ICMP/UDP traffic")
     except Exception:
         for log_path in logs.glob("*.log"):
