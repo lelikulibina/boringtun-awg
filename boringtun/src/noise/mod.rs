@@ -1203,8 +1203,8 @@ mod tests {
 
     fn create_ipv6_udp_packet() -> Vec<u8> {
         let header = etherparse::PacketBuilder::ipv6(
-            [0x2001, 0xdb8, 0, 0, 0, 0, 0, 2],
-            [0x2001, 0xdb8, 0, 0, 0, 0, 0, 3],
+            [0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2],
+            [0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3],
             64,
         )
         .udp(5678, 23);
