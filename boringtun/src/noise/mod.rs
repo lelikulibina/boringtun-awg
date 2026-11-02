@@ -1732,8 +1732,8 @@ mod tests {
     fn inactivity_handshake_deadline_starts_at_first_data_send() {
         let config = AmneziaConfig::new(0, 0, 0, 0)
             .with_rekey_after_time(120, 120)
-            .with_rekey_timeout(1, 1)
-            .with_keepalive_timeout(3, 3);
+            .with_rekey_timeout(1, 2)
+            .with_keepalive_timeout(3, 8);
         let (mut initiator, mut responder) = create_two_tuns_with_amnezia(config);
 
         let init = create_handshake_init(&mut initiator);
@@ -1755,6 +1755,12 @@ mod tests {
             TunnResult::Done
         ));
         let first_deadline = initiator.timers.new_handshake_deadline;
+        let first_deadline = first_deadline.expect("first data send starts the deadline");
+        let selected_delay = first_deadline - initiator.timers[TimerName::TimeCurrent];
+        assert!(
+            (Duration::from_secs(9)..=Duration::from_millis(10_333)).contains(&selected_delay),
+            "upstream uses KeepaliveTimeout.Hi + random RekeyTimeout + 0..333ms jitter; got {selected_delay:?}"
+        );
 
         mock_instant::MockClock::advance(Duration::from_secs(1));
         assert!(matches!(
@@ -1766,9 +1772,9 @@ mod tests {
             "subsequent data sends must not postpone the active inactivity timer"
         );
 
-        // The selected deadline is keepalive_timeout.Hi + rekey_timeout plus
-        // at most 333 ms of jitter. Four more seconds clears every possible draw.
-        mock_instant::MockClock::advance(Duration::from_secs(4));
+        // The latest possible deadline is 8s + 2s + 333ms after the first
+        // send. Ten more seconds after the second send clears every possible draw.
+        mock_instant::MockClock::advance(Duration::from_secs(10));
         assert!(matches!(
             initiator.update_timers(&mut network),
             TunnResult::WriteToNetwork(_)
