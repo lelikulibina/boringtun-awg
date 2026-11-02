@@ -71,9 +71,9 @@ PROFILES = [
     ),
     (
         "long peer lifecycle soak",
-        "rekey_after_time=2-2\\nrekey_timeout=2-2\\n"
-        "reject_after_time=30-30\\nkeepalive_timeout=2-2\\n"
-        "max_handshake_attempts=3-3\\n",
+        "rekey_after_time=2-2\nrekey_timeout=2-2\n"
+        "reject_after_time=30-30\nkeepalive_timeout=2-2\n"
+        "max_handshake_attempts=3-3\n",
         True,
     ),
     (
