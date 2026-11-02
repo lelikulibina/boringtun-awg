@@ -283,3 +283,12 @@ Upstream точки сверки:
 - Обязательная Windows-сборка protocol core (`cargo check -p boringtun --no-default-features`) прошла.
 - Linux rustfmt, clippy, check_features, tests, integration-tests, 16/16 upstream interop и all-systems-go прошли на кодовом HEAD `396c5f9dd696c6ebc1d2ae03b2fce8d811573c21`; Semgrep прошёл на HEAD `ee6722106002ed4b649cba3a958843c1eecda18d`.
 - Дополнительная macOS device/CLI job сохранена, но runner assignment остаётся в очереди и не блокирует обязательный gate. macOS build пока не считается проверенным.
+
+
+### Этап 6: семантика повторного handshake и таймеров активности (2026-11-02)
+
+- Retry budget теперь выбирается при создании peer и после успешного handshake; начало новой попытки и retransmit не пересэмплируют `MaxHandshakeAttempts`. Изменение UAPI timer range влияет на следующий успешный handshake, а не на уже активный цикл повторов.
+- Добавлены проверки send-side `RekeyAfterTime` на точной границе и receive-side порога `RejectAfterTime - KeepaliveTimeout.Lo - RekeyTimeout.Lo` с диапазонами и детерминированным clock boundary.
+- Проверено, что inactivity handshake deadline не сбрасывается неаутентифицированным transport-пакетом и сбрасывается только после успешной AEAD-аутентификации входящего data.
+- CI на кодовом HEAD `488407da2f2e1a9e3da9a666a9d5dbb02b311d07`: `rustfmt`, `clippy`, `check_features`, `tests` (261 passed, 9 ignored), `integration-tests`, Windows core check, `awg31-interoperability` (16/16) и `all-systems-go` — success; Semgrep — success. Дополнительная macOS job не входила в merge gate и ожидала runner.
+- Эти проверки закрывают timer state transitions и контроль AEAD-гейта для inactivity deadline. Они не заменяют wire-level differential vectors для MAC/H1-H4 и pcap-сравнение внешних датаграмм.
