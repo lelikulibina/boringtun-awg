@@ -2154,6 +2154,60 @@ mod tests {
 
     #[test]
     #[cfg(feature = "mock-instant")]
+    fn lost_handshake_response_is_retried_and_session_recovers() {
+        let config = AmneziaConfig::new(0, 0, 0, 0)
+            .with_rekey_timeout(2, 2)
+            .with_max_handshake_attempts(3, 3);
+        let (mut initiator, mut responder) = create_two_tuns_with_amnezia(config);
+
+        // The responder processes the first initiation and emits a valid
+        // response, but the network drops that response.
+        let first_init = create_handshake_init(&mut initiator);
+        let dropped_response = create_handshake_response(&mut responder, &first_init);
+        assert!(matches!(
+            Tunn::parse_incoming_packet(initiator.handshake.obf, &dropped_response),
+            Ok(Packet::HandshakeResponse(_))
+        ));
+        assert_eq!(initiator.timers.handshake_attempts, 0);
+
+        // Retry timeout is two seconds plus the upstream 0..333 ms jitter.
+        // Advancing by three seconds guarantees the retransmit is due.
+        mock_instant::MockClock::advance(Duration::from_secs(3));
+        let mut network = [0u8; 2048];
+        let retry_init = unwrap_network_packet(initiator.update_timers(&mut network));
+        assert!(matches!(
+            Tunn::parse_incoming_packet(initiator.handshake.obf, &retry_init),
+            Ok(Packet::HandshakeInit(_))
+        ));
+        assert_eq!(initiator.timers.handshake_attempts, 1);
+
+        // A fresh initiation must recover even though the responder already
+        // processed the first one whose response was lost.
+        let retry_response = create_handshake_response(&mut responder, &retry_init);
+        let keepalive = parse_handshake_resp(&mut initiator, &retry_response);
+        parse_keepalive(&mut responder, &keepalive);
+
+        assert_eq!(
+            initiator.timers.handshake_attempts, 0,
+            "successful retry handshake resets the retry budget"
+        );
+        assert!(
+            initiator.sessions.iter().any(Option::is_some)
+                && responder.sessions.iter().any(Option::is_some),
+            "both peers must install sessions after the retransmitted handshake"
+        );
+
+        let packet = create_ipv4_udp_packet();
+        let mut tunnel = [0u8; 2048];
+        let outbound = unwrap_network_packet(initiator.encapsulate(&packet, &mut network));
+        assert!(matches!(
+            responder.decapsulate(None, &outbound, &mut tunnel),
+            TunnResult::WriteToTunnelV4(restored, _) if restored == packet
+        ));
+    }
+
+    #[test]
+    #[cfg(feature = "mock-instant")]
     fn handshake_attempt_budget_is_checked_on_retry_expiry() {
         let (mut my_tun, _their_tun) = create_two_tuns();
         let _init = create_handshake_init(&mut my_tun);
