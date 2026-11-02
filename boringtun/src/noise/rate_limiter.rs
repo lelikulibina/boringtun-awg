@@ -217,3 +217,63 @@ impl RateLimiter {
         Ok(packet)
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::noise::{HANDSHAKE_INIT, HANDSHAKE_INIT_SZ};
+    use rand_core::OsRng;
+
+    fn initiation_with_valid_mac1(limiter: &RateLimiter) -> [u8; HANDSHAKE_INIT_SZ] {
+        let mut packet = [0u8; HANDSHAKE_INIT_SZ];
+        packet[..4].copy_from_slice(&HANDSHAKE_INIT.to_le_bytes());
+        packet[4..8].copy_from_slice(&7u32.to_le_bytes());
+
+        let mac_offset = HANDSHAKE_INIT_SZ - 32;
+        let mac1 = b2s_keyed_mac_16(&limiter.mac1_key, &packet[..mac_offset]);
+        packet[mac_offset..mac_offset + 16].copy_from_slice(&mac1);
+        // Leave MAC2 zeroed: it is invalid for the selected source address.
+        packet
+    }
+
+    #[test]
+    fn disable_cookies_suppresses_reply_but_still_rejects_handshake_under_load() {
+        let public_key = crate::x25519::PublicKey::from([7u8; 32]);
+        let limiter = RateLimiter::new(&public_key, 0);
+        let packet = initiation_with_valid_mac1(&limiter);
+        let mut dst = [0u8; 128];
+
+        let result = limiter.verify_packet_with_cookie_policy(
+            ObfuscationRanges::default(),
+            &mut OsRng,
+            Some(IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)),
+            &packet,
+            &mut dst,
+            true,
+        );
+
+        assert!(matches!(
+            result,
+            Err(TunnResult::Err(WireGuardError::UnderLoad))
+        ));
+    }
+
+    #[test]
+    fn cookie_replies_remain_enabled_by_default() {
+        let public_key = crate::x25519::PublicKey::from([7u8; 32]);
+        let limiter = RateLimiter::new(&public_key, 0);
+        let packet = initiation_with_valid_mac1(&limiter);
+        let mut dst = [0u8; 128];
+
+        let result = limiter.verify_packet(
+            ObfuscationRanges::default(),
+            &mut OsRng,
+            Some(IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)),
+            &packet,
+            &mut dst,
+        );
+
+        assert!(matches!(result, Err(TunnResult::WriteToNetwork(_))));
+    }
+}
