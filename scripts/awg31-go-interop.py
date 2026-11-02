@@ -70,6 +70,13 @@ PROFILES = [
         True,
     ),
     (
+        "long peer lifecycle soak",
+        "rekey_after_time=2-2\\nrekey_timeout=2-2\\n"
+        "reject_after_time=30-30\\nkeepalive_timeout=2-2\\n"
+        "max_handshake_attempts=3-3\\n",
+        True,
+    ),
+    (
         "all AWG 3.1 extensions combined",
         f"header_protection_key={HPK}\n"
         "content_padding_addition=16-64\nrandom_trailers=true\n"
@@ -530,13 +537,16 @@ def run_profile(
         ns(ns_client, "ip", "link", "set", client_iface, "up", "mtu", "1420")
         ns(ns_client, "ip", "route", "add", f"{SERVER_TUN}/32", "dev", client_iface)
         initial_handshake_time = wait_handshake(server_iface, ns_client, SERVER_TUN)
-        if name == "accelerated rekey":
+        if name in ("accelerated rekey", "long peer lifecycle soak"):
             handshake_time = initial_handshake_time
-            for cycle in range(30):
+            cycle_count = 120 if name == "long peer lifecycle soak" else 30
+            for cycle in range(cycle_count):
                 wait_rekey(server_iface, ns_client, SERVER_TUN, handshake_time)
                 handshake_time = last_handshake_time(server_iface)
                 verify_udp_roundtrip(ns_server, ns_client)
-                print(f"REKEY soak cycle {cycle + 1}/30 completed ({role})")
+                print(
+                    f"REKEY soak cycle {cycle + 1}/{cycle_count} completed ({role})"
+                )
         elif name == "rekey packet-loss recovery":
             drop_client_egress_during_rekey(ns_client, veth_client)
             wait_rekey(server_iface, ns_client, SERVER_TUN, initial_handshake_time)
@@ -554,7 +564,12 @@ def run_profile(
             awg_enabled=awg_enabled,
             header_protection="header_protection_key=" in extra,
             random_trailers="random_trailers=true" in extra,
-            expected_handshakes=(31 if name == "accelerated rekey" else 2 if name == "rekey packet-loss recovery" else 1),
+            expected_handshakes=(
+                121 if name == "long peer lifecycle soak"
+                else 31 if name == "accelerated rekey"
+                else 2 if name == "rekey packet-loss recovery"
+                else 1
+            ),
             expected_signatures=[
                 bytes.fromhex(value)
                 for value in re.findall(r"i[1-5]=<b 0x([0-9a-fA-F]+)>", extra)
