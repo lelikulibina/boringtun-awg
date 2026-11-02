@@ -1437,6 +1437,96 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "mock-instant")]
+    fn inactivity_handshake_deadline_starts_at_first_data_send() {
+        let config = AmneziaConfig::new(0, 0, 0, 0)
+            .with_rekey_timeout(1, 1)
+            .with_keepalive_timeout(3, 3);
+        let (mut initiator, mut responder) = create_two_tuns_with_amnezia(config);
+
+        let init = create_handshake_init(&mut initiator);
+        let response = create_handshake_response(&mut responder, &init);
+        let keepalive = parse_handshake_resp(&mut initiator, &response);
+        parse_keepalive(&mut responder, &keepalive);
+
+        // A long idle period before the first outbound data packet must not
+        // consume the inactivity timer: upstream starts it on that first send.
+        mock_instant::MockClock::advance(Duration::from_secs(20));
+        let packet = create_ipv4_udp_packet();
+        let mut network = [0u8; 2048];
+        assert!(matches!(
+            initiator.encapsulate(&packet, &mut network),
+            TunnResult::WriteToNetwork(_)
+        ));
+        assert!(matches!(
+            initiator.update_timers(&mut network),
+            TunnResult::Done
+        ));
+
+        // The selected deadline is keepalive_timeout.Hi + rekey_timeout plus
+        // at most 333 ms of jitter. Five seconds clears every possible draw.
+        mock_instant::MockClock::advance(Duration::from_secs(5));
+        assert!(matches!(
+            initiator.update_timers(&mut network),
+            TunnResult::WriteToNetwork(_)
+        ));
+    }
+
+    #[test]
+    #[cfg(feature = "mock-instant")]
+    fn repeated_data_receives_do_not_postpone_keepalive_and_request_one_more() {
+        let config = AmneziaConfig::new(0, 0, 0, 0).with_keepalive_timeout(3, 3);
+        let (mut sender, mut receiver) = create_two_tuns_with_amnezia(config);
+
+        let init = create_handshake_init(&mut sender);
+        let response = create_handshake_response(&mut receiver, &init);
+        let keepalive = parse_handshake_resp(&mut sender, &response);
+        parse_keepalive(&mut receiver, &keepalive);
+
+        let packet = create_ipv4_udp_packet();
+        let mut network = [0u8; 2048];
+        let mut tunnel = [0u8; 2048];
+        for _ in 0..2 {
+            let outbound = match sender.encapsulate(&packet, &mut network) {
+                TunnResult::WriteToNetwork(packet) => packet.to_vec(),
+                other => panic!("expected data packet, got {:?}", other),
+            };
+            assert!(matches!(
+                receiver.decapsulate(None, &outbound, &mut tunnel),
+                TunnResult::WriteToTunnelV4(_, _)
+            ));
+            if receiver.timers.send_keepalive_deadline.is_some() {
+                break;
+            }
+        }
+
+        // The first receive starts a three-second timer. A second receive while
+        // it is pending requests one additional keepalive but does not reset it.
+        mock_instant::MockClock::advance(Duration::from_secs(1));
+        let outbound = match sender.encapsulate(&packet, &mut network) {
+            TunnResult::WriteToNetwork(packet) => packet.to_vec(),
+            other => panic!("expected second data packet, got {:?}", other),
+        };
+        assert!(matches!(
+            receiver.decapsulate(None, &outbound, &mut tunnel),
+            TunnResult::WriteToTunnelV4(_, _)
+        ));
+
+        mock_instant::MockClock::advance(Duration::from_secs(2));
+        assert!(matches!(
+            receiver.update_timers(&mut network),
+            TunnResult::WriteToNetwork(_)
+        ));
+        mock_instant::MockClock::advance(Duration::from_secs(2));
+        assert!(matches!(receiver.update_timers(&mut network), TunnResult::Done));
+        mock_instant::MockClock::advance(Duration::from_secs(1));
+        assert!(matches!(
+            receiver.update_timers(&mut network),
+            TunnResult::WriteToNetwork(_)
+        ));
+    }
+
+    #[test]
     fn one_ip_packet() {
         let (mut my_tun, mut their_tun) = create_two_tuns_and_handshake();
         let mut my_dst = [0u8; 1024];
