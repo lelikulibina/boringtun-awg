@@ -1548,7 +1548,11 @@ mod tests {
 
         let mut network = [0u8; 4096];
         let first_init = create_handshake_init(&mut initiator);
-        let cookie = match responder.decapsulate(None, &first_init, &mut network) {
+        let cookie = match responder.decapsulate(
+            Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
+            &first_init,
+            &mut network,
+        ) {
             TunnResult::WriteToNetwork(packet) => packet.to_vec(),
             other => panic!(
                 "expected protected cookie reply under load, got {:?}",
@@ -1562,7 +1566,11 @@ mod tests {
         ));
 
         let authenticated_init = create_handshake_init(&mut initiator);
-        let response = match responder.decapsulate(None, &authenticated_init, &mut network) {
+        let response = match responder.decapsulate(
+            Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
+            &authenticated_init,
+            &mut network,
+        ) {
             TunnResult::WriteToNetwork(packet) => packet.to_vec(),
             other => panic!("expected MAC2-authenticated response, got {:?}", other),
         };
