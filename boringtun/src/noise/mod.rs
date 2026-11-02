@@ -1401,6 +1401,51 @@ mod tests {
 
     #[test]
     #[cfg(feature = "mock-instant")]
+    fn send_side_rekey_fires_at_selected_rekey_after_time() {
+        let config = AmneziaConfig::new(0, 0, 0, 0)
+            .with_rekey_after_time(2, 2)
+            .with_rekey_timeout(2, 2)
+            .with_reject_after_time(180, 180)
+            .with_keepalive_timeout(10, 10);
+        let (mut initiator, mut responder) = create_two_tuns_with_amnezia(config);
+
+        let init = create_handshake_init(&mut initiator);
+        let response = create_handshake_response(&mut responder, &init);
+        let keepalive = parse_handshake_resp(&mut initiator, &response);
+        parse_keepalive(&mut responder, &keepalive);
+
+        // Upstream checks keyRefreshTimeoutSending() on each outbound data
+        // packet, using the selected RekeyAfterTime value for this keypair.
+        mock_instant::MockClock::advance(Duration::from_millis(1));
+        let packet = create_ipv4_udp_packet();
+        let mut network = [0u8; 2048];
+        assert!(matches!(
+            initiator.encapsulate(&packet, &mut network),
+            TunnResult::WriteToNetwork(_)
+        ));
+
+        mock_instant::MockClock::advance(Duration::from_millis(1998));
+        assert!(matches!(
+            initiator.update_timers(&mut network),
+            TunnResult::Done
+        ));
+
+        mock_instant::MockClock::advance(Duration::from_millis(1));
+        match initiator.update_timers(&mut network) {
+            TunnResult::WriteToNetwork(packet) => assert_eq!(
+                packet.len(),
+                HANDSHAKE_INIT_SZ,
+                "RekeyAfterTime must trigger a fresh handshake at its configured boundary"
+            ),
+            other => panic!(
+                "expected send-side RekeyAfterTime handshake at two seconds, got {:?}",
+                other
+            ),
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "mock-instant")]
     fn receive_side_rekey_uses_reject_minus_min_keepalive_and_rekey_timeout() {
         let config = AmneziaConfig::new(0, 0, 0, 0)
             .with_rekey_after_time(120, 120)
