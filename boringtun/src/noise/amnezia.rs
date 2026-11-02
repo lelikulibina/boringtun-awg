@@ -2047,7 +2047,10 @@ mod tests {
         let width = u32::from(max) - u32::from(min) + 1;
         let zone = u32::MAX - (u32::MAX % width);
 
-        assert_eq!(AmneziaConfig::map_content_padding_sample(min, max, 0), Some(7));
+        assert_eq!(
+            AmneziaConfig::map_content_padding_sample(min, max, 0),
+            Some(7)
+        );
         assert_eq!(
             AmneziaConfig::map_content_padding_sample(min, max, zone - 1),
             Some(16),
