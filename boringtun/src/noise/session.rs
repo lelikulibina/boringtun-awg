@@ -199,9 +199,11 @@ impl Session {
         obf: ObfuscationRanges,
         rng: &mut impl RngCore,
         src: &[u8],
+        content_padding: usize,
         dst: &'a mut [u8],
     ) -> &'a mut [u8] {
-        if dst.len() < src.len() + super::DATA_OVERHEAD_SZ {
+        let content_len = src.len() + content_padding;
+        if dst.len() < content_len + super::DATA_OVERHEAD_SZ {
             panic!("The destination buffer is too small");
         }
 
@@ -220,15 +222,16 @@ impl Session {
             let mut nonce = [0u8; 12];
             nonce[4..12].copy_from_slice(&sending_key_counter.to_le_bytes());
             data[..src.len()].copy_from_slice(src);
+            data[src.len()..content_len].fill(0);
             self.sender
                 .seal_in_place_separate_tag(
                     Nonce::assume_unique_for_key(nonce),
                     Aad::from(&[]),
-                    &mut data[..src.len()],
+                    &mut data[..content_len],
                 )
                 .map(|tag| {
-                    data[src.len()..src.len() + AEAD_SIZE].copy_from_slice(tag.as_ref());
-                    src.len() + AEAD_SIZE
+                    data[content_len..content_len + AEAD_SIZE].copy_from_slice(tag.as_ref());
+                    content_len + AEAD_SIZE
                 })
                 .unwrap()
         };

@@ -596,7 +596,7 @@ impl Device {
         // accepted, so its error was unreachable -- and asserting an
         // unreachable error with `expect` turns any future gap in that
         // reasoning into a dead daemon.
-        let tunn = Tunn::new_with_obfuscation(
+        let mut tunn = Tunn::new_with_obfuscation(
             device_key_pair.0.clone(),
             pub_key,
             preshared_key,
@@ -615,6 +615,7 @@ impl Device {
             self.config.amnezia.clone(),
         )
         .map_err(Error::PeerSetup)?;
+        tunn.set_mtu(self.mtu.load(Ordering::Relaxed));
 
         let peer = Peer::new(tunn, next_index, endpoint, preshared_key);
 

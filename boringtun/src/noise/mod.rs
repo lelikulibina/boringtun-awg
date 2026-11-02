@@ -87,6 +87,8 @@ pub struct Tunn {
     tx_bytes: usize,
     rx_bytes: usize,
     amnezia: AmneziaConfig,
+    /// Tunnel MTU used to cap ContentPaddingAddition.
+    mtu: usize,
     pending_amnezia_junk: Option<PendingAmneziaJunk>,
     rate_limiter: Arc<RateLimiter>,
 }
@@ -380,6 +382,7 @@ impl Tunn {
             tx_bytes: Default::default(),
             rx_bytes: Default::default(),
             amnezia,
+            mtu: 0,
             pending_amnezia_junk: None,
 
             packet_queue: VecDeque::new(),
@@ -434,6 +437,12 @@ impl Tunn {
     /// unaffected and re-handshaking would be gratuitous.
     pub fn set_persistent_keepalive(&mut self, keepalive: Option<u16>) {
         self.timers.set_persistent_keepalive(keepalive);
+    }
+
+    /// Set the tunnel MTU used to cap AmneziaWG ContentPaddingAddition.
+    /// A value of zero disables the MTU-bounded addition for standalone tunnels.
+    pub fn set_mtu(&mut self, mtu: usize) {
+        self.mtu = mtu;
     }
 
     /// The peer's optional pre-shared key.
@@ -494,9 +503,25 @@ impl Tunn {
     pub fn encapsulate<'a>(&mut self, src: &[u8], dst: &'a mut [u8]) -> TunnResult<'a> {
         let current = self.current;
         if let Some(ref session) = self.sessions[current % N_SESSIONS] {
+            // ContentPaddingAddition is applied to the plaintext IP packet before
+            // AEAD encryption. Its size is capped by the interface MTU; empty
+            // keepalives remain empty and retain their ordinary wire size.
+            let content_padding = self.amnezia.content_padding_size(
+                src.len(),
+                self.mtu,
+                &mut self.handshake.rng,
+            );
+            if dst.len() < src.len() + content_padding + DATA_OVERHEAD_SZ {
+                return TunnResult::Err(WireGuardError::DestinationBufferTooSmall);
+            }
             // Send the packet using an established session
-            let packet =
-                session.format_packet_data(self.handshake.obf, &mut self.handshake.rng, src, dst);
+            let packet = session.format_packet_data(
+                self.handshake.obf,
+                &mut self.handshake.rng,
+                src,
+                content_padding,
+                dst,
+            );
             let packet_size = packet.len();
             self.timer_tick(TimerName::TimeLastPacketSent);
             // Exclude Keepalive packets from timer update.
@@ -620,8 +645,13 @@ impl Tunn {
 
         let session = self.handshake.receive_handshake_response(p)?;
 
-        let keepalive_packet =
-            session.format_packet_data(self.handshake.obf, &mut self.handshake.rng, &[], dst);
+        let keepalive_packet = session.format_packet_data(
+            self.handshake.obf,
+            &mut self.handshake.rng,
+            &[],
+            0,
+            dst,
+        );
         let keepalive_packet_size = keepalive_packet.len();
         // Store new session in ring buffer
         let l_idx = session.local_index();
@@ -2087,4 +2117,37 @@ mod tests {
         );
         assert!(res.is_err());
     }
+    #[test]
+    fn content_padding_addition_is_mtu_bounded_and_removed_after_decryption() {
+        let cfg = AmneziaConfig::new(0, 0, 0, 0).with_content_padding_addition(8, 32);
+        let (mut sender, mut receiver) = create_two_tuns_with_amnezia(cfg);
+        let packet = create_ipv4_udp_packet();
+        let mtu = packet.len() + 5;
+        sender.set_mtu(mtu);
+        receiver.set_mtu(mtu);
+
+        let init = create_handshake_init(&mut sender);
+        let response = create_handshake_response(&mut receiver, &init);
+        let keepalive = parse_handshake_resp(&mut sender, &response);
+        assert_eq!(keepalive.len(), DATA_OVERHEAD_SZ, "keepalive must not be padded");
+        parse_keepalive(&mut receiver, &keepalive);
+
+        let mut network_buffer = vec![0u8; 4096];
+        let outbound = match sender.encapsulate(&packet, &mut network_buffer) {
+            TunnResult::WriteToNetwork(datagram) => datagram.to_vec(),
+            other => panic!("expected transport datagram, got {:?}", other),
+        };
+        assert_eq!(
+            outbound.len(),
+            DATA_OVERHEAD_SZ + packet.len() + 5,
+            "random addition must be clamped to the five bytes left before MTU"
+        );
+
+        let mut tunnel_buffer = vec![0u8; 4096];
+        match receiver.decapsulate(None, &outbound, &mut tunnel_buffer) {
+            TunnResult::WriteToTunnelV4(restored, _) => assert_eq!(restored, packet),
+            other => panic!("expected restored IPv4 packet, got {:?}", other),
+        }
+    }
+
 }

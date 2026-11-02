@@ -36,6 +36,17 @@ const AWG_SOCK_DIR: &str = "/var/run/amneziawg/";
 /// inclusive range (`"342871004-442871003"`). A bare value is a degenerate
 /// range, which is exactly how the kernel module's `mh_genspec` treats it, so
 /// existing single-value configs map across unchanged.
+fn parse_u16_range(val: &str) -> Option<(u16, u16)> {
+    let (start, end) = match val.split_once('-') {
+        Some((start, end)) => (start.trim().parse().ok()?, end.trim().parse().ok()?),
+        None => {
+            let value: u16 = val.trim().parse().ok()?;
+            (value, value)
+        }
+    };
+    (start <= end).then_some((start, end))
+}
+
 fn parse_tag_range(val: &str) -> Option<(u32, u32)> {
     let (start, end) = match val.split_once('-') {
         Some((start, end)) => (start.trim().parse().ok()?, end.trim().parse().ok()?),
@@ -79,6 +90,7 @@ struct AwgParams {
     h4: Option<(u32, u32)>,
     disable_cookies: Option<bool>,
     header_protection_key: Option<[u8; 32]>,
+    content_padding_addition: Option<(u16, u16)>,
     seen: bool,
 }
 
@@ -163,6 +175,9 @@ impl AwgParams {
         amnezia.header_protection_key = self
             .header_protection_key
             .unwrap_or(amnezia.header_protection_key);
+        amnezia.content_padding_addition = self
+            .content_padding_addition
+            .unwrap_or(amnezia.content_padding_addition);
         let amnezia = amnezia.with_pre_handshake_junk(
             self.jc.unwrap_or(cur_junk.packet_count),
             self.jmin.unwrap_or(cur_junk.packet_size_min),
@@ -389,6 +404,14 @@ fn api_get(writer: &mut BufWriter<&UnixStream>, d: &Device) -> i32 {
         if a.disable_cookies {
             writeln!(writer, "disable_cookies=true");
         }
+        let (padding_min, padding_max) = a.content_padding_addition;
+        if padding_min != 0 || padding_max != 0 {
+            if padding_min == padding_max {
+                writeln!(writer, "content_padding_addition={}", padding_min);
+            } else {
+                writeln!(writer, "content_padding_addition={}-{}", padding_min, padding_max);
+            }
+        }
 
         for (key, val) in [
             ("jc", a.pre_handshake_junk.packet_count),
@@ -588,6 +611,13 @@ fn api_set(reader: &mut BufReader<&UnixStream>, d: &mut LockReadGuard<Device>) -
                                 awg.seen = true;
                             }
                             _ => return EINVAL,
+                        },
+                        "content_padding_addition" => match parse_u16_range(val) {
+                            Some(range) => {
+                                awg.content_padding_addition = Some(range);
+                                awg.seen = true;
+                            }
+                            None => return EINVAL,
                         },
                         "disable_cookies" => match val.parse::<bool>() {
                             Ok(value) => {
@@ -887,4 +917,26 @@ mod tests {
         assert_eq!(parse_tag_range("1"), Some((1, 1)));
         assert_eq!(parse_tag_range("1-5"), Some((1, 5)));
     }
+    #[test]
+    fn content_padding_addition_range_is_parsed_and_merged() {
+        assert_eq!(parse_u16_range("24"), Some((24, 24)));
+        assert_eq!(parse_u16_range("0-64"), Some((0, 64)));
+        assert_eq!(parse_u16_range("65-64"), None);
+        assert_eq!(parse_u16_range("-1"), None);
+
+        let current = AmneziaConfig::new(0, 0, 0, 0);
+        let mut params = AwgParams::default();
+        params.content_padding_addition = parse_u16_range("8-32");
+        params.seen = true;
+        let (_, merged) = params
+            .merged(ObfuscationRanges::default(), &current)
+            .expect("valid ContentPaddingAddition range");
+        assert_eq!(merged.content_padding_addition, (8, 32));
+
+        let mut invalid = AwgParams::default();
+        invalid.content_padding_addition = Some((32, 8));
+        invalid.seen = true;
+        assert!(invalid.merged(ObfuscationRanges::default(), &current).is_err());
+    }
+
 }

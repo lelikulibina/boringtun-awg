@@ -41,18 +41,20 @@
 - [ ] Добавить upstream differential vectors и проверить interop на реальном amneziawg-go peer. Текущий Rust test проверяет фиксированный IETF ChaCha20 keystream и протокольное правило: handshake полностью, transport только первые 16 байт.
 - [ ] Проверить отсутствие изменения wire bytes при выключенной защите и полную vanilla WG/AWG 2.x регрессию.
 
-**Статус:** реализация ingress/egress и UAPI находится в PR #8. Добавлен фиксированный ChaCha20 reference-vector test (key `0x42` × 32, nonce `00..0b`) для handshake и transport; он проверяет IETF ChaCha20 keystream и wire layout, но не является differential test с официальным Go peer. В device UDP ingress запрещён plaintext fallback, если HeaderProtectionKey включён; добавлен deterministic negative test на отклонение plaintext initiation. На SHA `6bec7f4b7f65da3f932f736747b3468c39065a46` прошли Linux tests, integration-tests, Clippy и feature checks; rustfmt выявил только два форматирующих отклонения, исправляемых этим коммитом. Этап не завершён: нужны внешний differential test с официальным Go peer, реальный двусторонний handshake и проверка vanilla WG/AWG 2.x.
+**Статус:** реализация ingress/egress и UAPI находится в PR #8. Добавлен фиксированный ChaCha20 reference-vector test (key `0x42` × 32, nonce `00..0b`) для handshake и transport; он проверяет IETF ChaCha20 keystream и wire layout, но не является differential test с официальным Go peer. В device UDP ingress запрещён plaintext fallback, если HeaderProtectionKey включён; добавлен deterministic negative test на отклонение plaintext initiation. Полный Linux CI для SHA `5248ff1c53afc4f8649d42235615a5e84097badf` прошёл: rustfmt, check_features, tests, clippy, integration-tests и all-systems-go — success; Semgrep также success. Этап не завершён: нужны upstream Go differential test, реальный двусторонний handshake и проверка vanilla WG/AWG 2.x.
 
 **Готово, когда:** BoringTun и официальный AWG взаимно устанавливают туннель с одинаковым ключом, неверный ключ/недостаточный S-prefix корректно отклоняется, а vanilla WG и AWG 2.x не меняют поведение.
 
 ### Этап 3. ContentPaddingAddition
-- [ ] Добавить диапазон (одиночное значение или inclusive min-max) в конфиг/UAPI.
-- [ ] Случайно выбирать добавочный padding transport payload по правилам upstream.
-- [ ] Учитывать MTU и максимально допустимый размер UDP-датаграммы без фрагментации/переполнения буфера.
-- [ ] Проверить обработку входящего transport payload: padding должен сниматься корректно после расшифрования.
-- [ ] Добавить тесты границ, keepalive, IPv4/IPv6, больших пакетов и межоперабельности.
+- [x] Добавить inclusive range (одно значение или min-max) в `AmneziaConfig` и UAPI set/get.
+- [x] Добавлять случайное число нулевых байтов к transport plaintext до AEAD encryption.
+- [x] Ограничивать добавление свободным местом до tunnel MTU; пустые keepalive не дополнять.
+- [x] Приёмная сторона обрезает расшифрованный пакет по IPv4 Total Length / IPv6 Payload Length через существующий validator.
+- [ ] Добавить граничные/IPv4/IPv6/межоперационные тесты и пройти Linux CI.
 
 **Готово, когда:** пакеты не превышают MTU/буферные лимиты, payload восстанавливается без изменений, значения диапазона соблюдаются.
+
+**Реализация в работе:** range/config/UAPI, MTU clamp и обработка до AEAD добавлены в рабочую ветку. При отсутствии параметра прежнее поведение BoringTun сохраняется. Тест проверяет MTU clamp, пустой keepalive и восстановление исходного IPv4-пакета; CI ещё не запускался.
 
 ### Этап 4. Рандомизация протокольных таймеров
 - [ ] Определить соответствие RekeyAfterTime, RekeyTimeout, RejectAfterTime, KeepaliveTimeout и MaxHandshakeAttempts внутренним таймерам BoringTun.
@@ -101,7 +103,7 @@
 | DNS/SIP/STUN/QUIC imitation | Реализовано как существующее расширение | Сохранить |
 | DisableCookies | Реализуется в PR #8 | Этап 1 |
 | HeaderProtectionKey | Не реализовано | Этап 2 |
-| ContentPaddingAddition | Не реализовано | Этап 3 |
+| ContentPaddingAddition | Реализуется в текущем PR: config/UAPI, MTU-bounded transport padding и receive trimming; тест/CI ожидают проверки | Этап 3 |
 | Randomized timers | Не реализовано | Этап 4 |
 | RandomTrailers | Не реализовано | Этап 5 |
 
@@ -115,10 +117,18 @@
 - `boringtun/src/device/api.rs` — UAPI parsing, merge и get.
 - `boringtun/src/noise/rate_limiter.rs` — MAC/cookie/rate-limit поведение.
 
+### ContentPaddingAddition: upstream wire semantics
+
+- Upstream `device/send.go` выбирает случайное добавление по inclusive range для непустого transport payload, ограничивает его свободным местом до tunnel MTU, добавляет нулевые байты к plaintext IP-пакету и затем шифрует расширенный payload через AEAD. Это отличается от S4 — незашифрованного префикса перед WireGuard message.
+- Upstream `device/receive.go` сначала расшифровывает, затем проверяет внутреннюю длину IPv4 Total Length или IPv6 Payload Length и обрезает plaintext перед записью в TUN. BoringTun уже выполняет это в `Tunn::validate_decapsulated_packet`, поэтому дополнительное поле framing не требуется.
+- Пустые keepalive не дополняются. Если параметр не задан, эта реализация сохраняет существующие размеры пакетов BoringTun, не меняя legacy wire lengths побочным эффектом.
+- Текущая реализация добавляет inclusive `u16` range в `AmneziaConfig` и UAPI `content_padding_addition`, задаёт TUN MTU каждому `Tunn`, добавляет нулевые байты до AEAD и ограничивает размер доступным MTU. RandomTrailers и рандомизация таймеров пока не реализуются.
+- Upstream sources: `device/send.go` (`randomPaddingAddition`, `RoutineEncryption`) и `device/receive.go` (`RoutineDecryption` и IPv4/IPv6 length validation). В upstream есть отдельные edge-case reports по сочетанию ContentPaddingAddition/RandomTrailers; RandomTrailers остаётся выключенным до отдельного аудита.
+
 ## Последний handoff (2026-11-02)
 
 - Рабочая ветка: `feat/amneziawg-3.1-disable-cookies`, PR #8.
-- Последний проверенный CI HEAD перед форматирующим исправлением: `6bec7f4b7f65da3f932f736747b3468c39065a46` (PR CI run `41458206943`: tests, integration-tests, Clippy и check_features — success; rustfmt — failure только на двух новых форматирующих фрагментах. Semgrep run `41458206903` — success). Следующий commit включает оба rustfmt исправления и актуализацию этого handoff; итоговый CI должен быть проверен на новом SHA.
+- Последний полностью проверенный CI HEAD перед текущим этапом ContentPaddingAddition: `5248ff1c53afc4f8649d42235615a5e84097badf` (PR CI run `41459160125`: rustfmt, check_features, tests, clippy, integration-tests и all-systems-go — success; Semgrep run `41459160160` — success). Текущие изменения ContentPaddingAddition ещё не проверены CI.
 - Header Protection сейчас частично реализован в `noise/amnezia.rs`, `noise/mod.rs`, `device/api.rs`; зависимость raw ChaCha20 добавлена в `boringtun/Cargo.toml` и lockfile.
 - Upstream receive path: `device/receive.go`. Он сначала строит cipher по `packet[:12]`, восстанавливает type из ChaCha20 keystream, определяет packet kind/padding по H-ranges, затем XOR-ит оставшуюся часть handshake/cookie или только `packet[4:MessageTransportHeaderSize]` для transport. Send path шифрует handshake/cookie целиком, transport header отдельно. Не шифровать transport AEAD payload.
 - Важное исправление уже внесено: transport egress ограничен первыми 16 байтами; payload/tag AEAD остаются нетронутыми.

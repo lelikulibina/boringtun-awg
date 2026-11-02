@@ -275,6 +275,9 @@ pub struct AmneziaConfig {
     /// 32-byte raw ChaCha20 key for AmneziaWG 3.1 header protection.
     /// An all-zero key disables header protection, matching upstream.
     pub(crate) header_protection_key: [u8; 32],
+    /// Inclusive range of extra zero bytes appended to the encrypted IP payload.
+    /// `(0, 0)` disables ContentPaddingAddition.
+    pub(crate) content_padding_addition: (u16, u16),
     /// Suppress the client-only pre-handshake burst (Jc junk packets and the
     /// protocol imitation sequence) while keeping every other AmneziaWG
     /// behaviour. See [`AmneziaConfig::as_responder`].
@@ -365,6 +368,7 @@ impl AmneziaConfig {
             imitation: AmneziaImitation::default(),
             disable_cookies: false,
             header_protection_key: [0u8; 32],
+            content_padding_addition: (0, 0),
             suppress_pre_handshake: false,
         }
     }
@@ -387,6 +391,37 @@ impl AmneziaConfig {
 
     pub(crate) fn header_protection_enabled(&self) -> bool {
         self.header_protection_key != [0u8; 32]
+    }
+
+    /// Set the inclusive ContentPaddingAddition range in bytes.
+    /// Use `(0, 0)` to disable additional content padding.
+    pub fn with_content_padding_addition(mut self, min: u16, max: u16) -> Self {
+        self.content_padding_addition = (min, max);
+        self
+    }
+
+    /// Select a random content-padding size, bounded by the remaining tunnel MTU.
+    /// Empty keepalives and packets larger than the configured MTU are never padded.
+    pub(crate) fn content_padding_size(
+        &self,
+        packet_size: usize,
+        mtu: usize,
+        rng: &mut impl RngCore,
+    ) -> usize {
+        let (min, max) = self.content_padding_addition;
+        if (min == 0 && max == 0) || min > max || packet_size == 0 || mtu <= packet_size {
+            return 0;
+        }
+        let width = max as u32 - min as u32 + 1;
+        let zone = u32::MAX - (u32::MAX % width);
+        let sample = loop {
+            let value = rng.next_u32();
+            if value < zone {
+                break value;
+            }
+        };
+        let selected = min as usize + (sample % width) as usize;
+        selected.min(mtu - packet_size)
     }
 
     pub fn with_pre_handshake_junk(
@@ -449,6 +484,14 @@ impl AmneziaConfig {
     /// intentional, and argued at the check rather than here, so that "every
     /// working kernel configuration is accepted" is not read as covering it.
     pub fn validate(&self) -> Result<(), String> {
+        let (padding_min, padding_max) = self.content_padding_addition;
+        if padding_min > padding_max {
+            return Err(format!(
+                "ContentPaddingAddition minimum {} exceeds maximum {}",
+                padding_min, padding_max
+            ));
+        }
+
         for (label, junk, base) in [
             ("S1", self.init_packet_junk_size, HANDSHAKE_INIT_SZ),
             ("S2", self.response_packet_junk_size, HANDSHAKE_RESP_SZ),
