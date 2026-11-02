@@ -3162,6 +3162,14 @@ mod tests {
         let mut cipher = chacha20::ChaCha20::new_from_slices(&key, &nonce).unwrap();
         cipher.apply_keystream(&mut transport_ciphertext[..16]);
         assert_eq!(
+            &transport_ciphertext[..16],
+            &[
+                0x32, 0x3e, 0xe1, 0x64, 0x40, 0x09, 0x1d, 0xd5, 0xdf, 0xcc, 0xa5, 0xd5, 0xf9,
+                0x33, 0xf6, 0x09,
+            ],
+            "upstream transport vector protects type, receiver index, and counter"
+        );
+        assert_eq!(
             &transport_ciphertext[16..],
             payload.as_slice(),
             "transport AEAD ciphertext must remain byte-for-byte untouched"
