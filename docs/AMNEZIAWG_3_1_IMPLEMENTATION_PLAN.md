@@ -32,7 +32,7 @@
 
 ### Этап 2. HeaderProtectionKey (AWG 3.0+, требуется для полного профиля 3.1)
 - [x] Сверить upstream receive/send path: первые 12 байт S-prefix — nonce; ChaCha20 XOR начинается с байта 0 WG-сообщения; на приёме тип восстанавливается до выбора H-range; transport защищает только 16-байтовый заголовок, handshake/cookie — всё фиксированное сообщение.
-- [ ] Подтвердить точное совпадение Rust wire bytes с upstream Go известными тест-векторами/дифференциальным тестом. Добавлен детерминированный ChaCha20 reference-vector test для handshake и transport; результат ожидает Linux CI.
+- [ ] Подтвердить точное совпадение Rust wire bytes с upstream Go известными тест-векторами/дифференциальным тестом. Добавлен детерминированный ChaCha20 reference-vector test для handshake и transport; тест проходит Linux CI, но не является differential test с Go peer.
 - [x] Добавить 32-байтовый ключ в `AmneziaConfig` и UAPI `header_protection_key` (64 hex-символа); all-zero key отключает защиту.
 - [x] Валидировать требование S1-S4 >= 12 при включённой защите и отклонять некорректную конфигурацию.
 - [x] Добавить ChaCha20 protection на egress/ingress: handshake/cookie защищаются целиком; transport — только type/receiver/counter (16 байт), AEAD ciphertext не меняется.
@@ -50,7 +50,7 @@
 - [x] Добавлять случайное число нулевых байтов к transport plaintext до AEAD encryption.
 - [x] Ограничивать ContentPaddingAddition остатком peer UDP window (по умолчанию 500 байт); пустые keepalive не дополнять.
 - [x] Приёмная сторона обрезает расшифрованный пакет по IPv4 Total Length / IPv6 Payload Length через существующий validator.
-- [x] Добавить IPv4/IPv6 boundary и receive-trimming tests, включая clamp по доступному peer UDP window. Linux CI на HEAD `526f60b40c6b2a8edcaab1b53247ad752230c7ff` прошёл; после последующего исправления UDP-window self-growth и нового regression test требуется повторный CI.
+- [x] Добавить IPv4/IPv6 boundary и receive-trimming tests, включая clamp по доступному peer UDP window. На актуальном HEAD `34343e78f1cd5250d636cdf322c2b7026c9bbf1a` прошли Linux tests, integration-tests, clippy, check_features, rustfmt и Semgrep.
 
 **Готово, когда:** пакеты не превышают MTU/буферные лимиты, payload восстанавливается без изменений, значения диапазона соблюдаются.
 
@@ -136,16 +136,15 @@
 
 ## Последний handoff (2026-11-02)
 
-- Рабочая ветка: `feat/amneziawg-3.1-disable-cookies`, PR #8.
-- Предыдущий полностью зелёный HEAD до ContentPaddingAddition: `5248ff1c53afc4f8649d42235615a5e84097badf`. На HEAD `a5f5d548c3d7aa364df0acd624e67a0b102036d5` завершились успешно `tests`, `integration-tests`, `clippy`, `check_features` и Semgrep; `rustfmt` выявил форматирование, которое исправлено в следующем пакетном коммите. Повторный Linux CI будет запущен после этого коммита.
-- Header Protection сейчас частично реализован в `noise/amnezia.rs`, `noise/mod.rs`, `device/api.rs`; зависимость raw ChaCha20 добавлена в `boringtun/Cargo.toml` и lockfile.
-- Upstream receive path: `device/receive.go`. Он сначала строит cipher по `packet[:12]`, восстанавливает type из ChaCha20 keystream, определяет packet kind/padding по H-ranges, затем XOR-ит оставшуюся часть handshake/cookie или только `packet[4:MessageTransportHeaderSize]` для transport. Send path шифрует handshake/cookie целиком, transport header отдельно. Не шифровать transport AEAD payload.
-- Важное исправление уже внесено: transport egress ограничен первыми 16 байтами; payload/tag AEAD остаются нетронутыми.
-- RandomTrailers реализованы в `AmneziaConfig`, UAPI и Tunn framing: handshake/cookie trailer добавляется после фиксированного WG-сообщения; transport zero padding входит в AEAD plaintext. На ingress handshake/cookie trailer отрезается до MAC/Noise parsing, transport padding — после AEAD по IP length. `ContentPaddingAddition` заменяет RandomTrailers только для transport; handshake/cookie trailer остаётся активным.
-- Peer UDP window начинается с 500 байт, растёт только по размеру аутентифицированных входящих transport datagrams и сбрасывается при roaming. Не увеличивать его исходящим пакетом: пакет больше текущего окна не должен получать padding. Cookie reply ограничен размером вызвавшей его датаграммы.
-- В device UDP ingress при включённом HeaderProtectionKey не допускается fallback к raw plaintext после неудачной расшифровки; такой пакет отбрасывается. Есть детерминированный negative test.
-- В CI workflow оставлены только Ubuntu/Linux jobs; macOS/Windows отключены, Semgrep остаётся отдельным workflow.
-- Не считать этап Header Protection завершённым до differential test vectors, реального двустороннего теста с upstream и vanilla WG/AWG 2.x регрессии. Текущий Rust reference-vector test — не полноценный Go differential test. Сверить текущий код по актуальному upstream commit перед продолжением.
+- Рабочая ветка: `feat/amneziawg-3.1-disable-cookies`, draft PR #8.
+- Актуальный полностью зелёный HEAD: `34343e78f1cd5250d636cdf322c2b7026c9bbf1a`. Linux jobs `tests`, `integration-tests`, `clippy`, `check_features`, `rustfmt`, `all-systems-go` и Semgrep завершились успешно. macOS/Windows не запускались по требованию.
+- Header Protection: raw ChaCha20, nonce из первых 12 байт S-prefix; handshake/cookie защищаются целиком, transport — только первые 16 байт. Plaintext fallback при включённом ключе запрещён. Rust reference-vector и negative tests проходят, но Go differential и реальный двусторонний peer handshake ещё не выполнены.
+- ContentPaddingAddition: transport plaintext padding ограничен peer UDP window; IPv4/IPv6 receive trimming и boundary tests проходят. Пустой keepalive не получает CPA.
+- RandomTrailers: UAPI и framing реализованы. Handshake/cookie получают внешний случайный trailer, transport — нулевое дополнение внутри AEAD. Для transport CPA имеет приоритет; cookie reply ограничен размером вызвавшей датаграммы.
+- Исправлен важный UDP-window дефект: окно растёт только по аутентифицированной входящей transport-датаграмме, а не от исходящего пакета. Есть regression test для пакета больше начального окна 500 байт.
+- Добавлен fallible `Tunn::try_set_obfuscation`, который валидирует настройки до изменения живого туннеля; старый setter сохранён для API-совместимости.
+- UAPI get сериализует оба состояния `disable_cookies` и `random_trailers`; интеграционные ожидания обновлены. Добавлена пользовательская документация `docs/AMNEZIAWG_3_1_CONFIGURATION.md` и ссылка из README.
+- Открытые критерии: Go differential tests для HP/RandomTrailers/cookie/H ranges; полный rekey/inactivity/retry differential audit; vanilla WG и AWG 2.x регрессии; BoringTun ↔ amneziawg-go в обоих направлениях. Полную поддержку AmneziaWG 3.1 не заявлять до завершения этих проверок.
 
 ## Протокол продолжения работы для нового агента
 
