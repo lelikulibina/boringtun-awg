@@ -508,12 +508,12 @@ impl Tunn {
     pub fn encapsulate<'a>(&mut self, src: &[u8], dst: &'a mut [u8]) -> TunnResult<'a> {
         let current = self.current;
         if let Some(ref session) = self.sessions[current % N_SESSIONS] {
-            // ContentPaddingAddition is applied to the plaintext IP packet before
-            // AEAD encryption. Its size is capped by the interface MTU; empty
-            // keepalives remain empty and retain their ordinary wire size.
+            // ContentPaddingAddition and RandomTrailers are applied to the
+            // plaintext IP packet before AEAD encryption. Their combined size
+            // is bounded by the peer's learned UDP window; empty keepalives
+            // remain empty and retain their ordinary wire size.
             let wire_packet_size =
                 src.len() + DATA_OVERHEAD_SZ + self.amnezia.transport_packet_junk_size as usize;
-            self.udp_window = self.udp_window.max(wire_packet_size);
             let content_padding = self.amnezia.transport_padding_size(
                 src.len(),
                 wire_packet_size,
