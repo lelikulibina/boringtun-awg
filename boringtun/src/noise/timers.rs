@@ -330,11 +330,9 @@ impl Tunn {
                 // Handshake Initiation Retransmission
                 let legacy_attempt_deadline = self.timers.timer_ranges.iter().all(|range| *range == (0, 0))
                     && now - handshake_started >= REKEY_ATTEMPT_TIME;
-                if legacy_attempt_deadline || self.timers.handshake_attempts > self.timers.max_handshake_attempts {
-                    // After REKEY_ATTEMPT_TIME ms of trying to initiate a new handshake,
-                    // the retries give up and cease, and clear all existing packets queued
-                    // up to be sent. If a packet is explicitly queued up to be sent, then
-                    // this timer is reset.
+                if legacy_attempt_deadline {
+                    // Preserve BoringTun's legacy 90-second timeout when no AWG
+                    // timer ranges are configured.
                     tracing::error!("CONNECTION_EXPIRED(REKEY_ATTEMPT_TIME)");
                     self.handshake.set_expired();
                     self.clear_all();
@@ -342,11 +340,17 @@ impl Tunn {
                 }
 
                 if time_init_sent.elapsed() >= self.timers.rekey_timeout + self.timers.handshake_retry_jitter {
-                    // We avoid using `time` here, because it can be earlier than `time_init_sent`.
-                    // Once `checked_duration_since` is stable we can use that.
-                    // A handshake initiation is retried after REKEY_TIMEOUT + jitter ms,
-                    // if a response has not been received, where jitter is some random
-                    // value between 0 and 333 ms.
+                    // The upstream checks the retry budget when the retransmit
+                    // timer expires, not on every polling tick.
+                    if self.timers.handshake_attempts > self.timers.max_handshake_attempts {
+                        tracing::error!("CONNECTION_EXPIRED(MAX_HANDSHAKE_ATTEMPTS)");
+                        self.handshake.set_expired();
+                        self.clear_all();
+                        return TunnResult::Err(WireGuardError::ConnectionExpired);
+                    }
+
+                    // A handshake initiation is retried after the configured
+                    // timeout plus 0..333 ms jitter.
                     tracing::warn!("HANDSHAKE(REKEY_TIMEOUT)");
                     self.timers.handshake_attempts = self.timers.handshake_attempts.saturating_add(1);
                     self.timers.rekey_timeout = Duration::from_secs(self.timers.pick_range(1, REKEY_TIMEOUT.as_secs() as u32) as u64);
