@@ -927,7 +927,15 @@ impl AmneziaConfig {
                 &nonce,
             )
             .map_err(|_| WireGuardError::InvalidPacket)?;
-            cipher.apply_keystream(&mut buffer[junk_size..new_size]);
+            // Handshake messages protect the complete fixed-size message.
+            // Transport packets protect only type + receiver index + counter;
+            // the AEAD ciphertext and authentication tag must remain untouched.
+            let protected_len = if kind == PacketKind::TransportData {
+                16
+            } else {
+                packet_size
+            };
+            cipher.apply_keystream(&mut buffer[junk_size..junk_size + protected_len]);
         }
 
         Ok(&mut buffer[..new_size])
