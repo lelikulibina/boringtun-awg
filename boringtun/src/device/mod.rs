@@ -1036,8 +1036,19 @@ impl Device {
                     // fails. The order lives inside `classify` rather than here
                     // so it can be tested; see its doc for why getting it
                     // backwards makes the server answer its own clients.
+                    // Reverse Header Protection before the shared S/H
+                    // classifier and peer demultiplexer inspect the packet.
+                    // Keep the S-prefix intact so classify can preserve the
+                    // established probe-vs-WireGuard ordering and strip it
+                    // only after the recovered H tag has matched.
+                    let raw_datagram = &t.src_buf[..packet_len];
+                    let decoded_datagram = d
+                        .config
+                        .amnezia
+                        .decrypt_inbound_with_prefix(obf, raw_datagram);
+                    let datagram = decoded_datagram.as_deref().unwrap_or(raw_datagram);
                     let packet = match probe_reply::classify(
-                        &t.src_buf[..packet_len],
+                        datagram,
                         &d.config.amnezia,
                         obf,
                         from,
@@ -1467,6 +1478,8 @@ mod ingress_tests {
 
         // A datagram matching no configured shape is dropped, exactly as the
         // real ingress path does.
+        let decoded = amnezia.decrypt_inbound_with_prefix(obf, datagram);
+        let datagram = decoded.as_deref().unwrap_or(datagram);
         let stripped = amnezia.strip_inbound(obf, datagram)?;
         let parsed = limiter
             .verify_packet(obf, &mut OsRng, Some(src_addr), stripped, &mut scratch)

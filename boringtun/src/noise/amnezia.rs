@@ -711,6 +711,21 @@ impl AmneziaConfig {
     /// range can identify the packet kind; the same cipher stream then
     /// continues at byte four, exactly as in amneziawg-go.
     pub(crate) fn decrypt_inbound(&self, obf: ObfuscationRanges, packet: &[u8]) -> Option<Vec<u8>> {
+        let decoded = self.decrypt_inbound_with_prefix(obf, packet)?;
+        self.strip_inbound(obf, &decoded).map(<[u8]>::to_vec)
+    }
+
+    /// Decrypt a Header Protection packet while retaining its S-prefix.
+    ///
+    /// The device-level anonymous UDP path must classify the S/H framing
+    /// before it knows which peer owns the packet. Returning the prefix here
+    /// lets that path run the same S/H classifier on the recovered type,
+    /// while the connected-peer path uses decrypt_inbound above.
+    pub(crate) fn decrypt_inbound_with_prefix(
+        &self,
+        obf: ObfuscationRanges,
+        packet: &[u8],
+    ) -> Option<Vec<u8>> {
         if !self.header_protection_enabled() {
             return None;
         }
@@ -750,13 +765,15 @@ impl AmneziaConfig {
                 continue;
             }
 
-            let mut decoded = packet[prefix_size..].to_vec();
-            decoded[..4].copy_from_slice(&message_type);
+            let mut decoded = packet.to_vec();
+            decoded[prefix_size..prefix_size + 4].copy_from_slice(&message_type);
             // Handshake and cookie messages are fixed-size and fully protected.
             // For transport, only type + receiver index + counter (16 bytes)
             // are header-protected; the payload remains AEAD ciphertext.
             let protected_header_len = if is_transport { 16 } else { base_size };
-            cipher.apply_keystream(&mut decoded[4..protected_header_len]);
+            cipher.apply_keystream(
+                &mut decoded[prefix_size + 4..prefix_size + protected_header_len],
+            );
             return Some(decoded);
         }
 
