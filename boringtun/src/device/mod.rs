@@ -1511,7 +1511,8 @@ mod ingress_tests {
             342871004, 442871003, 542871004, 642871003, 742871004, 842871003, 942871004, 1042871003,
         )
         .unwrap();
-        let amnezia = AmneziaConfig::new(37, 121, 88, 64);
+        let amnezia = AmneziaConfig::new(37, 121, 88, 64)
+            .with_header_protection_key([0x37; 32]);
 
         let mut client = Tunn::new_with_amnezia(
             client_secret,
@@ -1540,8 +1541,11 @@ mod ingress_tests {
 
         // S1 = 37 bytes of junk ahead of the 148-byte initiation.
         assert_eq!(datagram.len(), 37 + 148, "S1 prefix present on the wire");
+        let decoded = amnezia
+            .decrypt_inbound_with_prefix(obf, &datagram)
+            .expect("device ingress must recover the protected H1 tag");
         let mut tag_bytes = [0u8; 4];
-        tag_bytes.copy_from_slice(&datagram[37..41]);
+        tag_bytes.copy_from_slice(&decoded[37..41]);
         let tag = u32::from_le_bytes(tag_bytes);
         assert!(
             (342871004..=442871003).contains(&tag),

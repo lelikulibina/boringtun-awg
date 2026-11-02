@@ -771,9 +771,8 @@ impl AmneziaConfig {
             // For transport, only type + receiver index + counter (16 bytes)
             // are header-protected; the payload remains AEAD ciphertext.
             let protected_header_len = if is_transport { 16 } else { base_size };
-            cipher.apply_keystream(
-                &mut decoded[prefix_size + 4..prefix_size + protected_header_len],
-            );
+            cipher
+                .apply_keystream(&mut decoded[prefix_size + 4..prefix_size + protected_header_len]);
             return Some(decoded);
         }
 
