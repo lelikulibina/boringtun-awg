@@ -1818,6 +1818,18 @@ mod tests {
             TunnResult::WriteToNetwork(packet) => packet.to_vec(),
             other => panic!("expected authenticated reverse data packet, got {:?}", other),
         };
+        let mut corrupted = reverse.clone();
+        let last = corrupted.len() - 1;
+        corrupted[last] ^= 0x01;
+        assert!(matches!(
+            initiator.decapsulate(None, &corrupted, &mut tunnel),
+            TunnResult::Err(_)
+        ));
+        assert!(
+            initiator.timers.new_handshake_deadline.is_some(),
+            "unauthenticated inbound data must not cancel the inactivity deadline"
+        );
+
         assert!(matches!(
             initiator.decapsulate(None, &reverse, &mut tunnel),
             TunnResult::WriteToTunnelV4(_, _)
