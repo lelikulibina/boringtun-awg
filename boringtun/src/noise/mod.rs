@@ -3239,7 +3239,7 @@ mod tests {
 
     #[test]
     fn random_trailers_learn_udp_window_from_authenticated_inbound_data() {
-        let cfg = AmneziaConfig::new(0, 0, 0, 600).with_random_trailers(true);
+        let cfg = AmneziaConfig::new(600, 600, 600, 600).with_random_trailers(true);
         let (mut sender, mut receiver) = create_two_tuns_with_amnezia(cfg);
 
         let init = create_handshake_init(&mut sender);
