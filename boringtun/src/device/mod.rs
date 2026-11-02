@@ -1103,10 +1103,12 @@ impl Device {
                                     // does not know about S3. Re-prefix it in
                                     // place before sending, or the peer will
                                     // reject it.
-                                    if let Ok(out) = d.config.amnezia.prepend_outbound(
+                                    if let Ok(out) = d.config.amnezia.prepend_outbound_with_limits(
                                         obf,
                                         &mut t.dst_buf,
                                         cookie_len,
+                                        crate::noise::amnezia::DEFAULT_UDP_WINDOW,
+                                        packet_len,
                                         &mut t.junk_rng,
                                     ) {
                                         let _: Result<_, _> = udp.send_to(out, &addr);
