@@ -361,6 +361,16 @@ impl Tunn {
 }
 
 impl Timers {
+    pub(super) fn set_timer_ranges(&mut self, amnezia: &AmneziaConfig) {
+        self.timer_ranges = [
+            amnezia.rekey_after_time,
+            amnezia.rekey_timeout,
+            amnezia.reject_after_time,
+            amnezia.keepalive_timeout,
+            amnezia.max_handshake_attempts,
+        ];
+    }
+
     /// Replace the persistent-keepalive interval. `None` (or zero) disables it,
     /// matching how [`Timers::new`] interprets the same argument.
     pub(super) fn set_persistent_keepalive(&mut self, keepalive: Option<u16>) {
