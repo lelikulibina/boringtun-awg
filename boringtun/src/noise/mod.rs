@@ -1607,6 +1607,83 @@ mod tests {
     }
 
     #[test]
+    fn disable_cookies_accepts_handshake_response_under_forced_load_but_checks_mac1() {
+        let initiator_secret = x25519::StaticSecret::random_from_rng(OsRng);
+        let initiator_public = x25519::PublicKey::from(&initiator_secret);
+        let responder_secret = x25519::StaticSecret::random_from_rng(OsRng);
+        let responder_public = x25519::PublicKey::from(&responder_secret);
+        let initiator_limiter = Arc::new(RateLimiter::new(&initiator_public, 0));
+        let responder_limiter = Arc::new(RateLimiter::new(&responder_public, 0));
+        let config = AmneziaConfig::new(0, 0, 0, 0).with_disable_cookies(true);
+
+        let mut initiator = Tunn::new_with_amnezia(
+            initiator_secret,
+            responder_public,
+            None,
+            None,
+            1,
+            Some(initiator_limiter),
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            config.clone(),
+        )
+        .unwrap();
+        let mut responder = Tunn::new_with_amnezia(
+            responder_secret,
+            initiator_public,
+            None,
+            None,
+            2,
+            Some(responder_limiter),
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            config,
+        )
+        .unwrap();
+
+        let init = create_handshake_init(&mut initiator);
+        let mut network = [0u8; 2048];
+        let response = match responder.decapsulate(None, &init, &mut network) {
+            TunnResult::WriteToNetwork(packet) => packet.to_vec(),
+            other => panic!("expected responder handshake response, got {:?}", other),
+        };
+
+        let mut invalid_mac1 = response.clone();
+        let mac1_offset = invalid_mac1.len() - 32;
+        invalid_mac1[mac1_offset] ^= 0x80;
+        assert!(matches!(
+            initiator.decapsulate(None, &invalid_mac1, &mut network),
+            TunnResult::Err(WireGuardError::InvalidMac)
+        ));
+
+        let keepalive = match initiator.decapsulate(None, &response, &mut network) {
+            TunnResult::WriteToNetwork(packet) => packet.to_vec(),
+            other => panic!(
+                "DisableCookies must bypass the response-side forced-load cookie challenge while still accepting only valid MAC1, got {:?}",
+                other
+            ),
+        };
+        parse_keepalive(&mut responder, &keepalive);
+        assert!(
+            initiator.sessions.iter().any(Option::is_some)
+                && responder.sessions.iter().any(Option::is_some),
+            "both peers must establish a session without Cookie Reply in the response-side rate-limit path"
+        );
+    }
+
+    #[test]
     fn disable_cookies_composes_with_header_protection_padding_and_random_trailers() {
         let initiator_secret = x25519::StaticSecret::random_from_rng(OsRng);
         let initiator_public = x25519::PublicKey::from(&initiator_secret);
