@@ -1440,6 +1440,7 @@ mod tests {
     #[cfg(feature = "mock-instant")]
     fn inactivity_handshake_deadline_starts_at_first_data_send() {
         let config = AmneziaConfig::new(0, 0, 0, 0)
+            .with_rekey_after_time(120, 120)
             .with_rekey_timeout(1, 1)
             .with_keepalive_timeout(3, 3);
         let (mut initiator, mut responder) = create_two_tuns_with_amnezia(config);
