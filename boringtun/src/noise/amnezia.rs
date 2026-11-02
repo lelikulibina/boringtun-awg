@@ -598,8 +598,7 @@ impl AmneziaConfig {
     /// four-byte type field. Since ObfuscationRanges rejects overlapping H1-H4
     /// ranges, a transport tag selected from H4 cannot match H1-H3. This is a
     /// deterministic framing constraint, not a probabilistic width heuristic.
-    pub(crate) fn validate_random_trailers(&self, obf: ObfuscationRanges) -> Result<(), String> {
-        let _ = obf; // H-range disjointness is guaranteed by ObfuscationRanges::new.
+    pub(crate) fn validate_random_trailers(&self, _obf: ObfuscationRanges) -> Result<(), String> {
         if self.random_trailers {
             let s = self.init_packet_junk_size;
             if self.response_packet_junk_size != s
@@ -1930,10 +1929,10 @@ mod tests {
     #[test]
     fn random_trailers_roundtrip_handshake_and_cookie_packets() {
         let obf = ObfuscationRanges::default();
-        for (tag, base_size, s1, s2, s3) in [
-            (HANDSHAKE_INIT, HANDSHAKE_INIT_SZ, 12, 0, 0),
-            (HANDSHAKE_RESP, HANDSHAKE_RESP_SZ, 0, 12, 0),
-            (COOKIE_REPLY, COOKIE_REPLY_SZ, 0, 0, 12),
+        for (tag, base_size) in [
+            (HANDSHAKE_INIT, HANDSHAKE_INIT_SZ),
+            (HANDSHAKE_RESP, HANDSHAKE_RESP_SZ),
+            (COOKIE_REPLY, COOKIE_REPLY_SZ),
         ] {
             let cfg = AmneziaConfig::new(12, 12, 12, 12).with_random_trailers(true);
             let mut rng = ChaCha8Rng::seed_from_u64(0xA11CE);
