@@ -128,3 +128,32 @@
 - Официальный upstream: https://github.com/amnezia-vpn/amneziawg-go
 - Upstream receive path: https://github.com/amnezia-vpn/amneziawg-go/blob/master/device/receive.go
 - Upstream send path: https://github.com/amnezia-vpn/amneziawg-go/blob/master/device/send.go
+
+
+## Технические заметки по аудиту upstream (2026-11-02)
+
+Проверен актуальный upstream `amnezia-vpn/amneziawg-go` (ветка `master`); для воспроизводимого аудита перед реализацией каждого этапа нужно зафиксировать конкретный commit SHA upstream.
+
+### Header Protection: подтверждённый порядок обработки
+
+- Upstream хранит ключ как 32-байтовый `HeaderCipherKey`; UAPI принимает hex (`header_protection_key`), то есть 64 hex-символа. В пользовательском конфиге может быть base64-представление, но это отдельный слой сериализации.
+- Upstream создаёт raw ChaCha20 stream cipher: `chacha20.NewUnauthenticatedCipher(key, salt)`. `salt` — первые 12 байт S-prefix конкретного датаграмма; это не AEAD и не отдельная аутентификация.
+- На отправке сначала формируется полный WireGuard message и его MAC-поля, затем тот же ChaCha20 stream XOR-ится с байтами сообщения от offset 0 до конца защищаемой части. Префикс S остаётся открытым и служит nonce.
+- На приёме cipher создаётся из первых 12 байт префикса. Сначала нулевой 4-байтовый буфер XOR-ится с первыми 4 байтами keystream, чтобы восстановить тип сообщения и сопоставить H1-H4. Затем тем же экземпляром cipher (с уже сдвинутой позицией потока) расшифровываются байты сообщения начиная с offset 4. Для transport дополнительно расшифровывается заголовок до receiver index/counter lookup; для handshake/cookie расшифровывается остальное фиксированное сообщение.
+- Поэтому текущий `strip_inbound`, который проверяет H-tag в открытом виде, нельзя просто оставить перед парсером. Нужен отдельный этап классификации с расшифровкой типа до выбора H-range, а затем полная расшифровка до проверки MAC1/MAC2 и разбора WireGuard-пакета.
+- Все четыре S-prefix должны быть не короче 12 байт при включённом ключе. Проверка должна происходить атомарно при merge UAPI, чтобы частичная конфигурация не оставляла устройство в невалидном состоянии.
+- Когда ключ не задан, байты и текущая legacy-проверка H1-H4 должны оставаться абсолютно неизменными.
+
+Upstream точки сверки:
+- `device/receive.go`: `RoutineReceiveIncoming`, `DeterminePacketTypeAndPadding`, `applyHash`.
+- `device/send.go`: `SendHandshakeInitiation`, `SendHandshakeResponse`, `SendHandshakeCookie`, `RoutineEncryption`.
+- `device/noise-protocol.go`: `HeaderProtectionCipher`.
+- `device/noise-types.go`: размеры ключа и nonce.
+
+### Текущая проверка CI для PR #8
+
+Последний документальный commit на момент заметки: `02c269f57579cb951785032d5e8a9f9b0e553c00`.
+
+- Semgrep OSS scan: success.
+- Linux: rustfmt, clippy, check_features, tests и integration-tests завершились success на предыдущем SHA `0a00757110660a40fe0a9684cb7fbafafb7f4dfa`.
+- Для SHA документа `02c269f57579cb951785032d5e8a9f9b0e553c00` запущен новый PR workflow; на момент проверки часть Linux jobs ещё выполнялась, macOS jobs были queued. Не считать CI полностью зелёным, пока все jobs последнего SHA не завершатся.
