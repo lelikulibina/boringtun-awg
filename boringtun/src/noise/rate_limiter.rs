@@ -256,6 +256,11 @@ mod tests {
         );
 
         assert!(matches!(result, Ok(Packet::HandshakeInit(_))));
+        assert_eq!(
+            limiter.count.load(Ordering::SeqCst),
+            0,
+            "DisableCookies skips the under-load counter as well as the cookie challenge"
+        );
     }
 
     #[test]
