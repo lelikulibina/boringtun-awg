@@ -520,15 +520,7 @@ impl AmneziaConfig {
     /// this genuinely refuses a configuration the kernel module runs. It is
     /// intentional, and argued at the check rather than here, so that "every
     /// working kernel configuration is accepted" is not read as covering it.
-    pub fn validate(&self) -> Result<(), String> {
-        let (padding_min, padding_max) = self.content_padding_addition;
-        if padding_min > padding_max {
-            return Err(format!(
-                "ContentPaddingAddition minimum {} exceeds maximum {}",
-                padding_min, padding_max
-            ));
-        }
-
+    pub(crate) fn validate_timer_ranges(&self) -> Result<(), String> {
         for (name, (min, max)) in [
             ("rekey_after_time", self.rekey_after_time),
             ("rekey_timeout", self.rekey_timeout),
@@ -540,6 +532,19 @@ impl AmneziaConfig {
                 return Err(format!("{} minimum {} exceeds maximum {}", name, min, max));
             }
         }
+        Ok(())
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        let (padding_min, padding_max) = self.content_padding_addition;
+        if padding_min > padding_max {
+            return Err(format!(
+                "ContentPaddingAddition minimum {} exceeds maximum {}",
+                padding_min, padding_max
+            ));
+        }
+
+        self.validate_timer_ranges()?;
 
         for (label, junk, base) in [
             ("S1", self.init_packet_junk_size, HANDSHAKE_INIT_SZ),
