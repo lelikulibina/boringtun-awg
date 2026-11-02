@@ -1553,8 +1553,14 @@ mod tests {
         // At t=181s the original key is 181s old and must be retired, while
         // the replacement key is only 61s old and must remain usable.
         mock_instant::MockClock::advance(Duration::from_secs(61));
-        assert!(matches!(initiator.update_timers(&mut network), TunnResult::Done));
-        assert!(matches!(responder.update_timers(&mut network), TunnResult::Done));
+        assert!(matches!(
+            initiator.update_timers(&mut network),
+            TunnResult::Done
+        ));
+        assert!(matches!(
+            responder.update_timers(&mut network),
+            TunnResult::Done
+        ));
 
         assert_eq!(
             initiator.sessions.iter().filter(|s| s.is_some()).count(),
