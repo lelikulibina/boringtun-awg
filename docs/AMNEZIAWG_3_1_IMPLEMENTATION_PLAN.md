@@ -363,3 +363,9 @@ Upstream точки сверки:
 - Добавлен отдельный rate-limiter regression для `DisableCookies` на Handshake Response: корректный MAC1 принимается под искусственной нагрузкой без MAC2, cookie challenge и увеличения under-load счётчика. Это дополняет существующие initiation-тесты.
 - Кроссплатформенные jobs macOS/Windows временно исключены из PR workflow на время протокольной валидации AWG 3.1; Linux checks и Go interoperability остаются обязательными. После завершения wire-level/differential этапа платформенные jobs следует вернуть.
 - Новый тест и изменение workflow требуют отдельного CI на обновлённом HEAD; до его завершения их прохождение не заявляется.
+
+### Этап 15: завершённый send-side rekey (2026-11-03)
+
+- Добавлен mock-clock regression, который не ограничивается проверкой факта отправки нового Handshake Initiation: после достижения `RekeyAfterTime` инициатор и peer проходят полный повторный Noise handshake, handshake timestamp обновляется, а новый transport session подтверждается реальным зашифрованным IPv4-пакетом.
+- Проверка кроссует timer trigger → initiation → response → keepalive/session installation → authenticated data; до этого предыдущий тест подтверждал только отправку initiation в момент deadline.
+- Требуется подтверждение Linux CI на новом HEAD. Это локальный peer-level state-machine regression, а не замена длительного differential-теста с amneziawg-go.
