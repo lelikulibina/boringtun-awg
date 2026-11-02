@@ -1512,8 +1512,7 @@ mod tests {
             TunnResult::WriteToTunnelV4(_, _)
         ));
         assert_eq!(
-            sender.timers.new_handshake_deadline,
-            None,
+            sender.timers.new_handshake_deadline, None,
             "authenticated inbound data must cancel the pending inactivity deadline"
         );
 
