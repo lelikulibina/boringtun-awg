@@ -1336,7 +1336,10 @@ mod tests {
 
         mock_instant::MockClock::advance(REKEY_TIMEOUT + Duration::from_millis(334));
         let mut dst = [0u8; 2048];
-        assert!(matches!(my_tun.update_timers(&mut dst), TunnResult::WriteToNetwork(_)));
+        assert!(matches!(
+            my_tun.update_timers(&mut dst),
+            TunnResult::WriteToNetwork(_)
+        ));
 
         // The retry budget is not exhausted until the retransmit timer for
         // the just-sent retry expires; polling immediately must not kill it.
