@@ -324,3 +324,10 @@ Upstream точки сверки:
 
 - В сквозном cookie-challenge тесте с HeaderProtectionKey и RandomTrailers добавлена порча байта AEAD-тега внутри защищённого 64-байтового Cookie Reply. Получатель обязан вернуть InvalidAeadTag; затем исходный корректный Cookie Reply принимается, и MAC2 handshake завершается. Это подтверждает, что случайный внешний trailer не сдвигает границы фиксированного сообщения и отвергнутый пакет не мешает последующей корректной cookie-авторизации.
 - На HEAD 642ff21410a366159a75dd0cd81838f2c2d84d37: tests (266 passed, 9 ignored), rustfmt, clippy, check_features, integration-tests, Windows и macOS core/device builds, awg31-interoperability (16/16), all-systems-go и Semgrep — success.
+
+
+### Этап 11: DisableCookies для обеих сторон handshake (2026-11-02)
+
+- Добавлен peer-level тест входящего Handshake Response под принудительной нагрузкой на RateLimiter. При DisableCookies корректный ответ принимается без Cookie Reply; испорченный MAC1 отклоняется как InvalidMac. После этого исходный ответ принимается, и сессия успешно завершается.
+- Это дополняет проверку инициирующего Handshake Init и подтверждает одинаковую политику bypass для обоих типов handshake-сообщений при обязательной проверке MAC1.
+- На HEAD 62953032edf0b1e6d89db601d6f33c4141d3c991: tests (267 passed, 9 ignored), rustfmt, clippy, check_features, integration-tests, Windows и macOS builds, awg31-interoperability (16/16), all-systems-go и Semgrep — success.
