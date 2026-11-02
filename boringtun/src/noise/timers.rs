@@ -161,17 +161,30 @@ impl Timers {
         if min >= max {
             return min;
         }
-        // Use u64 for the inclusive width so the full 0..=u32::MAX
-        // range is representable without overflow.
-        let width = max as u64 - min as u64 + 1;
-        let zone = (1u64 << 32) / width * width;
         let mut rng = OsRng;
         loop {
-            let value = rng.next_u32() as u64;
-            if value < zone {
-                return min + (value % width) as u32;
+            if let Some(selected) = Self::map_range_sample(min, max, rng.next_u32()) {
+                return selected;
             }
         }
+    }
+
+    /// Map one uniformly distributed u32 sample into an inclusive range.
+    /// A missing result means the sample is in the rejection tail needed to
+    /// avoid modulo bias. The u64 width represents the complete u32 domain.
+    fn map_range_sample(min: u32, max: u32, sample: u32) -> Option<u32> {
+        if min >= max {
+            return Some(min);
+        }
+
+        let width = max as u64 - min as u64 + 1;
+        let zone = (1u64 << 32) / width * width;
+        let value = sample as u64;
+        if value >= zone {
+            return None;
+        }
+
+        Some(min + (value % width) as u32)
     }
 }
 
@@ -277,6 +290,32 @@ mod tests {
                 "reversed timer bounds must be rejected"
             );
         }
+    }
+
+    #[test]
+    fn range_sampler_maps_full_u32_domain_without_truncation() {
+        assert_eq!(Timers::map_range_sample(0, u32::MAX, 0), Some(0));
+        assert_eq!(Timers::map_range_sample(0, u32::MAX, 1), Some(1));
+        assert_eq!(
+            Timers::map_range_sample(0, u32::MAX, u32::MAX),
+            Some(u32::MAX)
+        );
+    }
+
+    #[test]
+    fn range_sampler_rejects_modulo_bias_tail() {
+        // For a range of width three, the largest u32 sample is the sole
+        // value outside the largest evenly divisible sampling zone.
+        assert_eq!(Timers::map_range_sample(10, 12, 0), Some(10));
+        assert_eq!(Timers::map_range_sample(10, 12, 1), Some(11));
+        assert_eq!(Timers::map_range_sample(10, 12, 2), Some(12));
+        assert_eq!(Timers::map_range_sample(10, 12, u32::MAX), None);
+    }
+
+    #[test]
+    fn range_sampler_handles_single_value_ranges() {
+        assert_eq!(Timers::map_range_sample(42, 42, 0), Some(42));
+        assert_eq!(Timers::map_range_sample(42, 42, u32::MAX), Some(42));
     }
 
     #[test]
