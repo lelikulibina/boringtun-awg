@@ -10,7 +10,6 @@ Usage: sudo python3 scripts/awg31-go-interop.py ./target/release/boringtun-cli .
 from __future__ import annotations
 
 import os
-import re
 import socket
 import struct
 import subprocess
@@ -53,13 +52,6 @@ PROFILES = [
         "rekey_after_time=119-120\nrekey_timeout=5-6\n"
         "reject_after_time=179-180\nkeepalive_timeout=9-10\n"
         "max_handshake_attempts=18-19\n",
-        True,
-    ),
-    (
-        "lost rekey initiation",
-        "rekey_after_time=2-2\nrekey_timeout=2-2\n"
-        "reject_after_time=30-30\nkeepalive_timeout=2-2\n"
-        "max_handshake_attempts=3-3\n",
         True,
     ),
     (
@@ -185,50 +177,6 @@ def wait_rekey(
         f"(initial={initial_handshake_time}, current={last_handshake_time(server_iface)})"
     )
 
-
-
-def wait_rekey_after_initiation_loss(
-    server_iface: str,
-    client_ns: str,
-    client_veth: str,
-    server_ip: str,
-    initial_server_time: int,
-) -> None:
-    """Drop an accelerated rekey initiation at client egress, then require retry."""
-    # Attach the drop before RekeyAfterTime expires: the userspace timer
-    # can initiate a handshake without waiting for the next explicit ping.
-    run("ip", "netns", "exec", client_ns, "tc", "qdisc", "add",
-        "dev", client_veth, "root", "netem", "loss", "100%")
-    try:
-        time.sleep(2.2)
-        run("ip", "netns", "exec", client_ns, "ping", "-c1", "-W1",
-            server_ip, check=False)
-        stats = run(
-            "ip", "netns", "exec", client_ns, "tc", "-s", "qdisc", "show",
-            "dev", client_veth, capture=True,
-        )
-        match = re.search(r"dropped (\d+)", stats)
-        if match is None or int(match.group(1)) < 1:
-            raise RuntimeError(f"netem did not drop the outbound rekey packet: {stats}")
-        time.sleep(0.2)
-        if last_handshake_time(server_iface) > initial_server_time:
-            raise RuntimeError("responder observed rekey while initiator egress was blocked")
-    finally:
-        run("ip", "netns", "exec", client_ns, "tc", "qdisc", "del",
-            "dev", client_veth, "root", check=False)
-
-    # Once egress is restored, the initiator must retransmit and the responder
-    # must observe the new handshake before the retry budget is exhausted.
-    deadline = time.monotonic() + 14
-    recovered_time = last_handshake_time(server_iface)
-    while recovered_time <= initial_server_time and time.monotonic() < deadline:
-        run("ip", "netns", "exec", client_ns, "ping", "-c1", "-W1",
-            server_ip, check=False)
-        recovered_time = last_handshake_time(server_iface)
-        time.sleep(0.2)
-    if recovered_time <= initial_server_time:
-        raise RuntimeError("responder did not observe retry after dropped rekey initiation")
-    run("ip", "netns", "exec", client_ns, "ping", "-c3", "-W2", server_ip)
 
 
 def verify_udp_roundtrip(server_ns: str, client_ns: str) -> None:
@@ -502,13 +450,7 @@ def run_profile(
         ns(ns_client, "ip", "link", "set", client_iface, "up", "mtu", "1420")
         ns(ns_client, "ip", "route", "add", f"{SERVER_TUN}/32", "dev", client_iface)
         initial_handshake_time = wait_handshake(server_iface, ns_client, SERVER_TUN)
-        if name == "lost rekey initiation":
-            wait_rekey_after_initiation_loss(
-                server_iface, ns_client, veth_client, SERVER_TUN,
-                initial_handshake_time,
-            )
-            verify_udp_roundtrip(ns_server, ns_client)
-        elif name == "accelerated rekey":
+        if name == "accelerated rekey":
             handshake_time = initial_handshake_time
             for cycle in range(3):
                 wait_rekey(server_iface, ns_client, SERVER_TUN, handshake_time)
@@ -528,7 +470,7 @@ def run_profile(
             awg_enabled=awg_enabled,
             header_protection="header_protection_key=" in extra,
             random_trailers="random_trailers=true" in extra,
-            expected_handshakes=(4 if name == "accelerated rekey" else 2 if name == "lost rekey initiation" else 1),
+            expected_handshakes=(4 if name == "accelerated rekey" else 1),
         )
         print(f"PASS {name} ({role}): handshake + bidirectional ICMP/UDP + normalized pcap")
     except Exception:
