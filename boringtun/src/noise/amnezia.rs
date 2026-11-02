@@ -3277,7 +3277,7 @@ mod tests {
                 .to_vec();
 
             assert_eq!(wire.len(), 12 + size);
-            let nonce: &[u8; 12] = wire[..12].try_into().unwrap();
+            let nonce = &wire[..12];
             let protected_len = if tag == DATA { 16 } else { size };
             let mut reference = original;
             let mut cipher = chacha20::ChaCha20::new_from_slices(&key, nonce).unwrap();
