@@ -188,20 +188,19 @@ def wait_rekey(
 
 
 def wait_rekey_after_initiation_loss(
-    client_iface: str,
+    server_iface: str,
     client_ns: str,
     client_veth: str,
     server_ip: str,
-    initial_client_time: int,
+    initial_server_time: int,
 ) -> None:
     """Drop an accelerated rekey initiation at client egress, then require retry."""
-    # Install the drop before RekeyAfterTime expires. This avoids a race in
-    # which a userspace timer poll could start and complete the rekey before
-    # netem is attached to the initiator's egress.
+    # The initiator's key is older than RekeyAfterTime; the next outbound packet
+    # must trigger a new handshake, which netem drops before it reaches the peer.
+    time.sleep(2.2)
     run("ip", "netns", "exec", client_ns, "tc", "qdisc", "add",
         "dev", client_veth, "root", "netem", "loss", "100%")
     try:
-        time.sleep(2.2)
         run("ip", "netns", "exec", client_ns, "ping", "-c1", "-W1",
             server_ip, check=False)
         stats = run(
@@ -212,23 +211,23 @@ def wait_rekey_after_initiation_loss(
         if match is None or int(match.group(1)) < 1:
             raise RuntimeError(f"netem did not drop the outbound rekey packet: {stats}")
         time.sleep(0.2)
-        if last_handshake_time(client_iface) > initial_client_time:
-            raise RuntimeError("client completed rekey while its egress was blocked")
+        if last_handshake_time(server_iface) > initial_server_time:
+            raise RuntimeError("responder observed rekey while initiator egress was blocked")
     finally:
         run("ip", "netns", "exec", client_ns, "tc", "qdisc", "del",
             "dev", client_veth, "root", check=False)
 
-    # Once egress is restored, the initiator must retransmit the handshake and
-    # install a new session before the timeout/retry budget is exhausted.
+    # Once egress is restored, the initiator must retransmit and the responder
+    # must observe the new handshake before the retry budget is exhausted.
     deadline = time.monotonic() + 14
-    recovered_time = last_handshake_time(client_iface)
-    while recovered_time <= initial_client_time and time.monotonic() < deadline:
+    recovered_time = last_handshake_time(server_iface)
+    while recovered_time <= initial_server_time and time.monotonic() < deadline:
         run("ip", "netns", "exec", client_ns, "ping", "-c1", "-W1",
             server_ip, check=False)
-        recovered_time = last_handshake_time(client_iface)
+        recovered_time = last_handshake_time(server_iface)
         time.sleep(0.2)
-    if recovered_time <= initial_client_time:
-        raise RuntimeError("client did not recover after the dropped rekey initiation")
+    if recovered_time <= initial_server_time:
+        raise RuntimeError("responder did not observe retry after dropped rekey initiation")
     run("ip", "netns", "exec", client_ns, "ping", "-c3", "-W2", server_ip)
 
 
@@ -504,17 +503,9 @@ def run_profile(
         ns(ns_client, "ip", "route", "add", f"{SERVER_TUN}/32", "dev", client_iface)
         initial_handshake_time = wait_handshake(server_iface, ns_client, SERVER_TUN)
         if name == "lost rekey initiation":
-            initial_client_time = last_handshake_time(client_iface)
-            deadline = time.monotonic() + 6
-            while initial_client_time == 0 and time.monotonic() < deadline:
-                ns(ns_client, "ping", "-c1", "-W1", SERVER_TUN, check=False)
-                initial_client_time = last_handshake_time(client_iface)
-                time.sleep(0.1)
-            if initial_client_time == 0:
-                raise RuntimeError("client did not record the initial handshake")
             wait_rekey_after_initiation_loss(
-                client_iface, ns_client, veth_client, SERVER_TUN,
-                initial_client_time,
+                server_iface, ns_client, veth_client, SERVER_TUN,
+                initial_handshake_time,
             )
             verify_udp_roundtrip(ns_server, ns_client)
         elif name == "accelerated rekey":
