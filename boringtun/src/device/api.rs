@@ -9,7 +9,7 @@ use crate::noise::amnezia::AmneziaConfig;
 use crate::noise::handshake::ObfuscationRanges;
 use crate::serialization::KeyBytes;
 use crate::x25519;
-use hex::encode as encode_hex;
+use hex::{decode as decode_hex, encode as encode_hex};
 use libc::*;
 use std::collections::HashMap;
 use std::fs::{create_dir, remove_file};
@@ -78,6 +78,7 @@ struct AwgParams {
     h3: Option<(u32, u32)>,
     h4: Option<(u32, u32)>,
     disable_cookies: Option<bool>,
+    header_protection_key: Option<[u8; 32]>,
     seen: bool,
 }
 
@@ -159,6 +160,9 @@ impl AwgParams {
         amnezia.cookie_packet_junk_size = self.s3.unwrap_or(amnezia.cookie_packet_junk_size);
         amnezia.transport_packet_junk_size = self.s4.unwrap_or(amnezia.transport_packet_junk_size);
         amnezia.disable_cookies = self.disable_cookies.unwrap_or(amnezia.disable_cookies);
+        amnezia.header_protection_key = self
+            .header_protection_key
+            .unwrap_or(amnezia.header_protection_key);
         let amnezia = amnezia.with_pre_handshake_junk(
             self.jc.unwrap_or(cur_junk.packet_count),
             self.jmin.unwrap_or(cur_junk.packet_size_min),
@@ -375,6 +379,13 @@ fn api_get(writer: &mut BufWriter<&UnixStream>, d: &Device) -> i32 {
     // a bare value when the range is degenerate, `start-end` otherwise.
     {
         let a = &d.config.amnezia;
+        if a.header_protection_enabled() {
+            writeln!(
+                writer,
+                "header_protection_key={}",
+                encode_hex(&a.header_protection_key)
+            );
+        }
         if a.disable_cookies {
             writeln!(writer, "disable_cookies=true");
         }
@@ -568,6 +579,15 @@ fn api_set(reader: &mut BufReader<&UnixStream>, d: &mut LockReadGuard<Device>) -
                         "h1" | "h2" | "h3" | "h4" => match parse_tag_range(val) {
                             Some(range) => awg.set_header(key, range),
                             None => return EINVAL,
+                        },
+                        "header_protection_key" => match decode_hex(val) {
+                            Ok(bytes) if bytes.len() == 32 => {
+                                let mut key = [0u8; 32];
+                                key.copy_from_slice(&bytes);
+                                awg.header_protection_key = Some(key);
+                                awg.seen = true;
+                            }
+                            _ => return EINVAL,
                         },
                         "disable_cookies" => match val.parse::<bool>() {
                             Ok(value) => {
