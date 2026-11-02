@@ -318,3 +318,9 @@ Upstream точки сверки:
 - На кодовом HEAD 43dbbda4bbba05b005290a855c66bbc2b2336def: tests (266 passed, 9 ignored), rustfmt, clippy, check_features, integration-tests, Windows core build, awg31-interoperability (16/16), all-systems-go и Semgrep — success.
 - Дополнительная macOS job выполняется отдельно и не блокирует обязательный gate.
 - Первый вариант regression выявил некорректную тестовую конфигурацию: 8-байтовый S-prefix несовместим с HeaderProtection, которому требуется не менее 12 байт для nonce. Тест исправлен на валидные 12 байт; итоговый CI прошёл.
+
+
+### Этап 10: аутентичность Cookie Reply при HeaderProtection (2026-11-02)
+
+- В сквозном cookie-challenge тесте с HeaderProtectionKey и RandomTrailers добавлена порча байта AEAD-тега внутри защищённого 64-байтового Cookie Reply. Получатель обязан вернуть InvalidAeadTag; затем исходный корректный Cookie Reply принимается, и MAC2 handshake завершается. Это подтверждает, что случайный внешний trailer не сдвигает границы фиксированного сообщения и отвергнутый пакет не мешает последующей корректной cookie-авторизации.
+- На HEAD 642ff21410a366159a75dd0cd81838f2c2d84d37: tests (266 passed, 9 ignored), rustfmt, clippy, check_features, integration-tests, Windows и macOS core/device builds, awg31-interoperability (16/16), all-systems-go и Semgrep — success.
