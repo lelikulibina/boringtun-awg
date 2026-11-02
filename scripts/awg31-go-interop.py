@@ -9,7 +9,6 @@ Usage: sudo python3 scripts/awg31-go-interop.py ./target/release/boringtun-cli .
 """
 from __future__ import annotations
 
-import base64
 import os
 import socket
 import subprocess
@@ -181,8 +180,7 @@ def run_profile(bt: str, go: str, name: str, extra: str) -> None:
             raw_public = public.public_bytes(
                 serialization.Encoding.Raw, serialization.PublicFormat.Raw
             )
-            return (base64.b64encode(private).decode(),
-                    base64.b64encode(raw_public).decode())
+            return private.hex(), raw_public.hex()
 
         server_private, server_public = keypair()
         client_private, client_public = keypair()
