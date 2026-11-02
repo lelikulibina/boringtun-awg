@@ -493,7 +493,7 @@ mod tests {
         assert_eq!(
             wg.wg_get(),
             format!(
-                "own_public_key={}\nlisten_port={}\nerrno=0\n\n",
+                "own_public_key={}\nlisten_port={}\ndisable_cookies=false\nrandom_trailers=false\nerrno=0\n\n",
                 encode(own_public_key.as_bytes()),
                 port
             )
