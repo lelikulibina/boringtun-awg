@@ -386,7 +386,7 @@ impl Tunn {
             pending_amnezia_junk: None,
 
             packet_queue: VecDeque::new(),
-            timers: Timers::new(persistent_keepalive, rate_limiter.is_none()),
+            timers: Timers::new(persistent_keepalive, rate_limiter.is_none(), &amnezia),
 
             rate_limiter: rate_limiter.unwrap_or_else(|| {
                 Arc::new(RateLimiter::new(&static_public, PEER_HANDSHAKE_RATE_LIMIT))
