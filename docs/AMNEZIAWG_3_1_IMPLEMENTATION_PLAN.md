@@ -57,12 +57,15 @@
 **Реализация в работе:** range/config/UAPI, MTU clamp и обработка до AEAD добавлены в рабочую ветку. При отсутствии параметра прежнее поведение BoringTun сохраняется. Тесты проверяют MTU clamp и восстановление исходных IPv4/IPv6 пакетов; IPv4 также проверяет, что keepalive не дополняется. CI на коммите `c991679f90ec489ff46465971a84e8b429e2c7e3` полностью зелёный. IPv6 тест ожидает CI на следующем коммите.
 
 ### Этап 4. Рандомизация протокольных таймеров
-- [ ] Определить соответствие RekeyAfterTime, RekeyTimeout, RejectAfterTime, KeepaliveTimeout и MaxHandshakeAttempts внутренним таймерам BoringTun.
-- [ ] Добавить диапазоны и UAPI/config parsing с безопасной валидацией.
-- [ ] Выбирать значения в тех же точках жизненного цикла, что и upstream (не каждый тик, если upstream выбирает один раз на сессию/пир).
-- [ ] Добавить тесты min/max, повторного выбора, нулевых/обратных диапазонов и отсутствующих параметров.
+- [x] Сопоставить RekeyAfterTime, RekeyTimeout, RejectAfterTime, KeepaliveTimeout и MaxHandshakeAttempts с polling state machine BoringTun; документировать архитектурные отличия.
+- [x] Добавить диапазоны и UAPI set/get parsing с merge semantics и проверкой обратных диапазонов.
+- [x] Добавить случайный inclusive range picker, выбор порогов по событиям data sent/received и handshake lifecycle, jitter 0..333 ms и счётчик handshake retries.
+- [x] Добавить тесты parsing/merge, fixed-range selection и WireGuard defaults.
+- [ ] Differentially verify точные точки выбора диапазонов и retry/expiry semantics против upstream peer; покрыть сценарии rekey/inactivity/handshake exhaustion.
 
 **Готово, когда:** интервалы и поведение соответствуют upstream и не меняют дефолты WireGuard.
+
+**Текущий статус:** базовая реализация диапазонов, UAPI и событийной рандомизации добавлена. Этап не считается завершённым до дифференциальных тестов с upstream: BoringTun использует polling `update_timers`, поэтому точность таймерных переходов и количество попыток handshake требуют отдельной проверки.
 
 ### Этап 5. RandomTrailers
 - [ ] Сверить upstream алгоритм, особенно условия включения и поведение с H1-H4 ranges.
@@ -104,7 +107,7 @@
 | DisableCookies | Реализуется в PR #8 | Этап 1 |
 | HeaderProtectionKey | Не реализовано | Этап 2 |
 | ContentPaddingAddition | Реализовано в текущем PR: config/UAPI, MTU-bounded transport padding и receive trimming; IPv4/IPv6 MTU-clamp/receive-trimming tests added; IPv4 keepalive test; Linux CI passed on prior commit | Этап 3 |
-| Randomized timers | Не реализовано | Этап 4 |
+| Randomized timers | Реализованы диапазоны UAPI/config, случайный выбор порогов, jitter и retry budget; differential interop ещё не выполнен | Этап 4 |
 | RandomTrailers | Не реализовано | Этап 5 |
 
 ## Точки входа в код
