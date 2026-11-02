@@ -1565,7 +1565,10 @@ mod tests {
             TunnResult::Done
         ));
 
-        let authenticated_init = create_handshake_init(&mut initiator);
+        let authenticated_init = match initiator.format_handshake_initiation(&mut network, true) {
+            TunnResult::WriteToNetwork(packet) => packet.to_vec(),
+            other => panic!("expected cookie-authenticated initiation, got {:?}", other),
+        };
         let response = match responder.decapsulate(
             Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
             &authenticated_init,
