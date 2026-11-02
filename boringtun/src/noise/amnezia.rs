@@ -3251,6 +3251,54 @@ mod tests {
     }
 
     #[test]
+    fn outbound_header_protection_matches_reference_for_every_packet_kind() {
+        let obf = ObfuscationRanges::default();
+        let key = [0x42; 32];
+        let cfg = AmneziaConfig::new(12, 12, 12, 12).with_header_protection_key(key);
+
+        for (tag, size) in [
+            (HANDSHAKE_INIT, HANDSHAKE_INIT_SZ),
+            (HANDSHAKE_RESP, HANDSHAKE_RESP_SZ),
+            (COOKIE_REPLY, COOKIE_REPLY_SZ),
+            (DATA, DATA_OVERHEAD_SZ + 48),
+        ] {
+            let mut original = vec![0u8; size];
+            write_tag(&mut original, tag);
+            for (i, byte) in original[4..].iter_mut().enumerate() {
+                *byte = (i as u8).wrapping_mul(13).wrapping_add(tag as u8);
+            }
+
+            let mut buffer = vec![0u8; 12 + size + 64];
+            buffer[..size].copy_from_slice(&original);
+            let mut rng = ChaCha8Rng::seed_from_u64(u64::from(tag) + 0xA31);
+            let wire = cfg
+                .prepend_outbound(obf, &mut buffer, size, &mut rng)
+                .expect("outbound header protection must succeed")
+                .to_vec();
+
+            assert_eq!(wire.len(), 12 + size);
+            let nonce: &[u8; 12] = wire[..12].try_into().unwrap();
+            let protected_len = if tag == DATA { 16 } else { size };
+            let mut reference = original;
+            let mut cipher = chacha20::ChaCha20::new_from_slices(&key, nonce).unwrap();
+            cipher.apply_keystream(&mut reference[..protected_len]);
+
+            assert_eq!(
+                &wire[12..],
+                reference.as_slice(),
+                "outbound type {tag} must match upstream ChaCha20 protection byte-for-byte"
+            );
+            if tag == DATA {
+                assert_eq!(
+                    &wire[12 + 16..],
+                    &reference[16..],
+                    "transport AEAD ciphertext and tag must remain untouched"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn header_protection_requires_all_s_prefixes_to_be_at_least_12() {
         let cfg = AmneziaConfig::new(12, 12, 12, 11).with_header_protection_key([0x24; 32]);
         let error = cfg.validate().expect_err("S4 is too short for the nonce");
