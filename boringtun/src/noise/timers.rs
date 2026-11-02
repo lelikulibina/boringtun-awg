@@ -229,6 +229,25 @@ mod tests {
         assert_eq!(timers.pick_range(3, 10), 10);
         assert_eq!(timers.max_handshake_attempts, 18);
     }
+
+    #[test]
+    fn timer_range_bounds_use_wireguard_fallbacks_only_when_both_are_zero() {
+        let config = AmneziaConfig::new(0, 0, 0, 0)
+            .with_rekey_after_time(0, 7)
+            .with_rekey_timeout(2, 0)
+            .with_reject_after_time(0, 0)
+            .with_keepalive_timeout(3, 9);
+        let timers = Timers::new(None, false, &config);
+
+        assert_eq!(timers.range_min(0, 120), 0);
+        assert_eq!(timers.range_max(0, 120), 7);
+        assert_eq!(timers.range_min(1, 5), 2);
+        assert_eq!(timers.range_max(1, 5), 0);
+        assert_eq!(timers.range_min(2, 180), 180);
+        assert_eq!(timers.range_max(2, 180), 180);
+        assert_eq!(timers.range_min(3, 10), 3);
+        assert_eq!(timers.range_max(3, 10), 9);
+    }
 }
 
 impl Tunn {
