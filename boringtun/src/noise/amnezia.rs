@@ -1185,19 +1185,9 @@ impl AmneziaConfig {
         rng: &mut impl RngCore,
     ) -> usize {
         if self.content_padding_addition != (0, 0) {
-            return self.content_padding_size(
-                ip_packet_size,
-                wire_packet_size,
-                udp_window,
-                rng,
-            );
+            return self.content_padding_size(ip_packet_size, wire_packet_size, udp_window, rng);
         }
-        self.random_trailer_len(
-            wire_packet_size,
-            udp_window,
-            MAX_SENDABLE_DATAGRAM,
-            rng,
-        )
+        self.random_trailer_len(wire_packet_size, udp_window, MAX_SENDABLE_DATAGRAM, rng)
     }
 
     pub fn fill_pre_handshake_junk<'a>(

@@ -2298,7 +2298,7 @@ mod tests {
         };
         assert_eq!(
             outbound.len(),
-            DATA_OVERHEAD_SZ + packet.len() + 3,
+            DATA_OVERHEAD_SZ + packet.len() + 5,
             "IPv6 content addition must be clamped to the five bytes left in the UDP window"
         );
 
