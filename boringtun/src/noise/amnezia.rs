@@ -1860,7 +1860,7 @@ mod tests {
     }
 
     #[test]
-    fn random_trailers_require_equal_s_prefixes_even_with_narrow_h_ranges() {
+    fn random_trailers_require_equal_s_prefixes_with_disjoint_h_ranges() {
         // This profile reproduces the structural ambiguity in upstream issue
         // #186: the transport type at S4 can be re-read as a control tag at S2.
         let obf = ObfuscationRanges::new(
