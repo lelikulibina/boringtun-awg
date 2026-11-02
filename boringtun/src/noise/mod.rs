@@ -1694,6 +1694,31 @@ mod tests {
     }
 
     #[test]
+    fn fresh_peer_handshake_reselects_configured_retry_budget() {
+        let initial = AmneziaConfig::new(0, 0, 0, 0).with_max_handshake_attempts(2, 2);
+        let (mut initiator, mut responder) = create_two_tuns_with_amnezia(initial);
+
+        let init = create_handshake_init(&mut initiator);
+        let response = create_handshake_response(&mut responder, &init);
+        let keepalive = parse_handshake_resp(&mut initiator, &response);
+        parse_keepalive(&mut responder, &keepalive);
+        assert_eq!(initiator.timers.max_handshake_attempts, 2);
+
+        let replacement = AmneziaConfig::new(0, 0, 0, 0).with_max_handshake_attempts(7, 7);
+        initiator.timers.set_timer_ranges(&replacement);
+        let mut network = [0u8; 2048];
+        assert!(matches!(
+            initiator.format_handshake_initiation(&mut network, false),
+            TunnResult::WriteToNetwork(_)
+        ));
+        assert_eq!(
+            initiator.timers.max_handshake_attempts, 7,
+            "a fresh peer handshake must use the current configured retry budget"
+        );
+        assert_eq!(initiator.timers.handshake_attempts, 0);
+    }
+
+    #[test]
     fn completed_handshake_resets_attempt_count_and_reselects_configured_budget() {
         let config = AmneziaConfig::new(0, 0, 0, 0).with_max_handshake_attempts(7, 7);
         let (mut initiator, mut responder) = create_two_tuns_with_amnezia(config);
