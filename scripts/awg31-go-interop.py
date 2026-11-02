@@ -207,7 +207,7 @@ def wait_rekey_after_initiation_loss(
             "ip", "netns", "exec", client_ns, "tc", "-s", "qdisc", "show",
             "dev", client_veth, capture=True,
         )
-        match = re.search(r"dropped (\\d+)", stats)
+        match = re.search(r"dropped (\d+)", stats)
         if match is None or int(match.group(1)) < 1:
             raise RuntimeError(f"netem did not drop the outbound rekey packet: {stats}")
         time.sleep(0.2)
