@@ -154,6 +154,39 @@ impl IndexMut<TimerName> for Timers {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::noise::amnezia::AmneziaConfig;
+
+    #[test]
+    fn timer_range_selection_is_inclusive_and_honors_fixed_values() {
+        let config = AmneziaConfig::new(0, 0, 0, 0)
+            .with_rekey_after_time(100, 100)
+            .with_rekey_timeout(3, 3)
+            .with_reject_after_time(170, 170)
+            .with_keepalive_timeout(8, 8)
+            .with_max_handshake_attempts(12, 12);
+        let timers = Timers::new(None, false, &config);
+        assert_eq!(timers.pick_range(0, 120), 100);
+        assert_eq!(timers.pick_range(1, 5), 3);
+        assert_eq!(timers.pick_range(2, 180), 170);
+        assert_eq!(timers.pick_range(3, 10), 8);
+        assert_eq!(timers.max_handshake_attempts, 12);
+    }
+
+    #[test]
+    fn unset_timer_ranges_preserve_wireguard_defaults() {
+        let config = AmneziaConfig::new(0, 0, 0, 0);
+        let timers = Timers::new(None, false, &config);
+        assert_eq!(timers.pick_range(0, 120), 120);
+        assert_eq!(timers.pick_range(1, 5), 5);
+        assert_eq!(timers.pick_range(2, 180), 180);
+        assert_eq!(timers.pick_range(3, 10), 10);
+        assert_eq!(timers.max_handshake_attempts, 18);
+    }
+}
+
 impl Tunn {
     pub(super) fn timer_tick(&mut self, timer_name: TimerName) {
         match timer_name {
