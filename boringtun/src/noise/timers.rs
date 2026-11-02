@@ -364,6 +364,20 @@ mod tests {
     }
 
     #[test]
+    fn handshake_jitter_uses_the_full_inclusive_upstream_window() {
+        assert_eq!(Timers::map_range_sample(0, 333, 0), Some(0));
+        assert_eq!(Timers::map_range_sample(0, 333, 333), Some(333));
+
+        for _ in 0..512 {
+            let jitter = Timers::random_jitter();
+            assert!(
+                jitter <= Duration::from_millis(333),
+                "handshake jitter {jitter:?} exceeds the upstream 333ms maximum"
+            );
+        }
+    }
+
+    #[test]
     fn range_sampler_handles_single_value_ranges() {
         assert_eq!(Timers::map_range_sample(42, 42, 0), Some(42));
         assert_eq!(Timers::map_range_sample(42, 42, u32::MAX), Some(42));
