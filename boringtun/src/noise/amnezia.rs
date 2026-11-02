@@ -1070,8 +1070,15 @@ impl AmneziaConfig {
         let prefixed_size = packet_size
             .checked_add(junk_size)
             .ok_or(WireGuardError::DestinationBufferTooSmall)?;
+        // Never let optional trailers turn an otherwise sendable packet into
+        // DestinationBufferTooSmall. The caller's actual output slice is the
+        // final bound, alongside UDP's protocol maximum and any cookie request
+        // bound supplied by the caller.
+        let trailer_limit = max_datagram_size
+            .min(buffer.len())
+            .min(MAX_SENDABLE_DATAGRAM);
         let trailer_len = if self.random_trailers && kind != PacketKind::TransportData {
-            self.random_trailer_len(prefixed_size, udp_window, max_datagram_size, rng)
+            self.random_trailer_len(prefixed_size, udp_window, trailer_limit, rng)
         } else {
             0
         };
@@ -1146,7 +1153,9 @@ impl AmneziaConfig {
         if self.content_padding_addition != (0, 0) {
             return self.content_padding_size(ip_packet_size, mtu, rng);
         }
-        let max_packet_size = mtu.saturating_add(DATA_OVERHEAD_SZ);
+        let max_packet_size = mtu
+            .saturating_add(DATA_OVERHEAD_SZ)
+            .min(MAX_SENDABLE_DATAGRAM);
         self.random_trailer_len(
             wire_packet_size,
             udp_window.min(max_packet_size),
@@ -1841,6 +1850,24 @@ mod tests {
         .unwrap();
         cfg.validate_random_trailers(narrow)
             .expect("narrow H1-H3 ranges keep false positives below the bound");
+    }
+
+    #[test]
+    fn random_trailers_are_clamped_to_destination_capacity() {
+        let cfg = AmneziaConfig::new(12, 0, 0, 0).with_random_trailers(true);
+        let mut rng = ChaCha8Rng::seed_from_u64(0xCAFE);
+        let mut buffer = vec![0u8; HANDSHAKE_INIT_SZ + 12 + 10];
+        write_tag(&mut buffer, HANDSHAKE_INIT);
+        let wire = cfg
+            .prepend_outbound(
+                ObfuscationRanges::default(),
+                &mut buffer,
+                HANDSHAKE_INIT_SZ,
+                &mut rng,
+            )
+            .expect("optional trailer must be shortened to fit the caller's buffer");
+        assert!(wire.len() <= HANDSHAKE_INIT_SZ + 12 + 10);
+        assert!(wire.len() >= HANDSHAKE_INIT_SZ + 12);
     }
 
     #[test]

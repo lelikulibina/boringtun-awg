@@ -2245,7 +2245,8 @@ mod tests {
 
         let mut large_packet = create_ipv4_udp_packet();
         large_packet.resize(200, 0);
-        large_packet[2..4].copy_from_slice(&(large_packet.len() as u16).to_be_bytes());
+        let large_packet_len = large_packet.len();
+        large_packet[2..4].copy_from_slice(&(large_packet_len as u16).to_be_bytes());
         large_packet[24..26].copy_from_slice(&((large_packet.len() - 20) as u16).to_be_bytes());
 
         let mut network_buffer = vec![0u8; 4096];
