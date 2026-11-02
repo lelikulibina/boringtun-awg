@@ -364,8 +364,10 @@ impl AmneziaConfig {
         }
     }
 
-    /// Disable outgoing Cookie Reply packets under handshake rate limiting.
-    /// Incoming Cookie Reply packets continue to be processed normally.
+    /// Disable the under-load cookie challenge, matching AmneziaWG 3.1.
+    /// When enabled, MAC1 is still verified, but the under-load MAC2/rate-limit
+    /// challenge is bypassed and no Cookie Reply is sent. Incoming Cookie Reply
+    /// packets remain supported.
     pub fn with_disable_cookies(mut self, disabled: bool) -> Self {
         self.disable_cookies = disabled;
         self
