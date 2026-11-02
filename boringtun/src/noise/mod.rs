@@ -1756,7 +1756,10 @@ mod tests {
         let response = match responder.decapsulate(Some(source), &authenticated_init, &mut network)
         {
             TunnResult::WriteToNetwork(packet) => packet.to_vec(),
-            other => panic!("expected MAC2-authenticated handshake response, got {:?}", other),
+            other => panic!(
+                "expected MAC2-authenticated handshake response, got {:?}",
+                other
+            ),
         };
         let keepalive = parse_handshake_resp(&mut initiator, &response);
         parse_keepalive(&mut responder, &keepalive);
