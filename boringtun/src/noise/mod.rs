@@ -2365,6 +2365,38 @@ mod tests {
     }
 
     #[test]
+    fn random_trailers_do_not_grow_the_udp_window_for_oversized_outbound_packets() {
+        let cfg = AmneziaConfig::new(0, 0, 0, 0).with_random_trailers(true);
+        let (mut sender, mut receiver) = create_two_tuns_with_amnezia(cfg);
+        let mut packet = create_ipv4_udp_packet();
+        packet.resize(600, 0);
+        packet[2..4].copy_from_slice(&(packet.len() as u16).to_be_bytes());
+        packet[24..26].copy_from_slice(&((packet.len() - 20) as u16).to_be_bytes());
+
+        let init = create_handshake_init(&mut sender);
+        let response = create_handshake_response(&mut receiver, &init);
+        let keepalive = parse_handshake_resp(&mut sender, &response);
+        parse_keepalive(&mut receiver, &keepalive);
+
+        let mut network_buffer = vec![0u8; 4096];
+        let outbound = match sender.encapsulate(&packet, &mut network_buffer) {
+            TunnResult::WriteToNetwork(datagram) => datagram.to_vec(),
+            other => panic!("expected transport datagram, got {:?}", other),
+        };
+        assert_eq!(
+            outbound.len(),
+            DATA_OVERHEAD_SZ + packet.len(),
+            "a packet larger than the default 500-byte UDP window must not expand that window or receive random padding"
+        );
+
+        let mut tunnel_buffer = vec![0u8; 4096];
+        match receiver.decapsulate(None, &outbound, &mut tunnel_buffer) {
+            TunnResult::WriteToTunnelV4(restored, _) => assert_eq!(restored, packet),
+            other => panic!("expected restored IPv4 packet, got {:?}", other),
+        }
+    }
+
+    #[test]
     fn random_trailers_pad_transport_inside_aead_and_restore_ip_packet() {
         let cfg = AmneziaConfig::new(0, 0, 0, 0).with_random_trailers(true);
         let (mut sender, mut receiver) = create_two_tuns_with_amnezia(cfg);
