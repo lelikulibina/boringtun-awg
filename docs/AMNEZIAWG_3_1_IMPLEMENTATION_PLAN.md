@@ -407,3 +407,12 @@ Upstream точки сверки:
 - Для RandomTrailers проверяются границы handshake/cookie envelope; для accelerated rekey в pcap требуются минимум два Initiation и два Response, а UDP roundtrip повторно проходит после смены handshake.
 - Сравнение выполняется по нормализованной семантике пакетов, а не по полным байтам: ephemeral Noise keys, nonce и случайные trailers закономерно различаются между независимыми запусками. Побайтовое равенство двух независимых pcap не является корректным критерием.
 - Требуется CI на новом HEAD; этап не считается завершённым до проверки.
+
+
+### Финальный этап B: повторные rekey и непрерывная передача данных (2026-11-03)
+
+- В обоих направлениях interop добавлены три последовательных send-side rekey с коротким интервалом 2 секунды.
+- После каждого повторного handshake harness проверяет новый UAPI handshake timestamp и выполняет двусторонний UDP request/reply с точным payload.
+- Pcap verifier требует не менее четырёх Handshake Initiation и четырёх Handshake Response на accelerated-rekey сценарий: исходный handshake плюс три rekey; transport traffic проверяется между переходами.
+- Это короткий multi-rekey soak, а не длительный многочасовой тест и не симуляция packet loss. Проверка истечения старых ключей и потерь handshake-пакетов остаётся отдельным критерием до объявления полной поддержки.
+- Требуется CI на новом HEAD.

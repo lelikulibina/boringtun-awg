@@ -325,7 +325,7 @@ def verify_wire_pcap(
     required = {"client_to_server": (1, 4), "server_to_client": (2, 4)}
     for direction, kinds in required.items():
         for kind in kinds:
-            minimum_count = 2 if expect_rekey and kind in (1, 2) else 1
+            minimum_count = 4 if expect_rekey and kind in (1, 2) else 1
             if counts[direction][kind] < minimum_count:
                 raise RuntimeError(
                     f"pcap missing type-{kind} from {direction}: "
@@ -450,11 +450,14 @@ def run_profile(
         ns(ns_client, "ip", "route", "add", f"{SERVER_TUN}/32", "dev", client_iface)
         initial_handshake_time = wait_handshake(server_iface, ns_client, SERVER_TUN)
         if name == "accelerated rekey":
-            wait_rekey(server_iface, ns_client, SERVER_TUN, initial_handshake_time)
+            handshake_time = initial_handshake_time
+            for cycle in range(3):
+                wait_rekey(server_iface, ns_client, SERVER_TUN, handshake_time)
+                handshake_time = last_handshake_time(server_iface)
+                verify_udp_roundtrip(ns_server, ns_client)
+                print(f"REKEY soak cycle {cycle + 1}/3 completed ({role})")
         else:
             ns(ns_client, "ping", "-c3", "-W2", SERVER_TUN)
-        verify_udp_roundtrip(ns_server, ns_client)
-        if name == "accelerated rekey":
             verify_udp_roundtrip(ns_server, ns_client)
         capture_proc.terminate()
         capture_proc.wait(timeout=3)
