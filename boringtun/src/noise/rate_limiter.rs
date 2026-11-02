@@ -243,16 +243,43 @@ mod tests {
         let packet = initiation_with_valid_mac1(&limiter);
         let mut dst = [0u8; 128];
 
+        // With cookies disabled, an authenticated MAC1 is sufficient even
+        // when the caller has no source address from which a cookie could be
+        // derived. This is the behavior the UAPI switch promises.
         let result = limiter.verify_packet_with_cookie_policy(
             ObfuscationRanges::default(),
             &mut OsRng,
-            Some(IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)),
+            None,
             &packet,
             &mut dst,
             true,
         );
 
         assert!(matches!(result, Ok(Packet::HandshakeInit(_))));
+    }
+
+    #[test]
+    fn disable_cookies_does_not_disable_mac1_authentication() {
+        let public_key = crate::x25519::PublicKey::from([7u8; 32]);
+        let limiter = RateLimiter::new(&public_key, 0);
+        let mut packet = initiation_with_valid_mac1(&limiter);
+        let mac_offset = HANDSHAKE_INIT_SZ - 32;
+        packet[mac_offset] ^= 0x80;
+        let mut dst = [0u8; 128];
+
+        let result = limiter.verify_packet_with_cookie_policy(
+            ObfuscationRanges::default(),
+            &mut OsRng,
+            None,
+            &packet,
+            &mut dst,
+            true,
+        );
+
+        assert!(matches!(
+            result,
+            Err(TunnResult::Err(WireGuardError::InvalidMac))
+        ));
     }
 
     #[test]
