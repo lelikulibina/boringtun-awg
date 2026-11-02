@@ -604,7 +604,7 @@ impl Tunn {
             _ => unreachable!(),
         };
 
-        self.handle_verified_packet(packet, dst)
+        self.handle_verified_packet_with_datagram_size(packet, dst, request_datagram_size)
     }
 
     pub(crate) fn handle_verified_packet<'a>(
@@ -612,11 +612,20 @@ impl Tunn {
         packet: Packet,
         dst: &'a mut [u8],
     ) -> TunnResult<'a> {
+        self.handle_verified_packet_with_datagram_size(packet, dst, 0)
+    }
+
+    pub(crate) fn handle_verified_packet_with_datagram_size<'a>(
+        &mut self,
+        packet: Packet,
+        dst: &'a mut [u8],
+        datagram_size: usize,
+    ) -> TunnResult<'a> {
         match packet {
             Packet::HandshakeInit(p) => self.handle_handshake_init(p, dst),
             Packet::HandshakeResponse(p) => self.handle_handshake_response(p, dst),
             Packet::PacketCookieReply(p) => self.handle_cookie_reply(p),
-            Packet::PacketData(p) => self.handle_data(p, dst),
+            Packet::PacketData(p) => self.handle_data(p, dst, datagram_size),
         }
         .unwrap_or_else(TunnResult::from)
     }
@@ -716,6 +725,7 @@ impl Tunn {
         &mut self,
         packet: PacketData,
         dst: &'a mut [u8],
+        datagram_size: usize,
     ) -> Result<TunnResult<'a>, WireGuardError> {
         let r_idx = packet.receiver_idx as usize;
         let idx = r_idx % N_SESSIONS;
@@ -729,6 +739,12 @@ impl Tunn {
             })?;
             session.receive_packet_data(packet, dst)?
         };
+
+        // Match upstream's per-peer UDP window: learn only from authenticated
+        // transport datagrams, including their S4 prefix and any outer trailer.
+        if datagram_size > 0 {
+            self.udp_window = self.udp_window.max(datagram_size);
+        }
 
         self.set_current_session(r_idx);
 

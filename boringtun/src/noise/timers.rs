@@ -75,6 +75,7 @@ pub struct Timers {
     pub(super) max_handshake_attempts: u32,
     handshake_attempts: u32,
     handshake_retry_jitter: Duration,
+    new_handshake_jitter: Duration,
 }
 
 impl Timers {
@@ -108,6 +109,7 @@ impl Timers {
             max_handshake_attempts: 18,
             handshake_attempts: 0,
             handshake_retry_jitter: Duration::ZERO,
+            new_handshake_jitter: Duration::ZERO,
         };
         timers.max_handshake_attempts = timers.pick_range(4, 18);
         timers
@@ -254,6 +256,8 @@ impl Tunn {
                 let rekey_timeout = self.timers.pick_range(1, REKEY_TIMEOUT.as_secs() as u32);
                 self.timers.new_handshake_timeout =
                     self.timers.keepalive_timeout_max + Duration::from_secs(rekey_timeout as u64);
+                self.timers.new_handshake_jitter =
+                    Duration::from_millis((OsRng.next_u32() % 334) as u64);
             }
             TimeLastDataPacketReceived => {
                 self.timers.keepalive_timeout = Duration::from_secs(
@@ -462,7 +466,8 @@ impl Tunn {
                 // packet after from that peer for (KEEPALIVE + REKEY_TIMEOUT) ms,
                 // we initiate a new handshake.
                 if data_packet_sent > aut_packet_received
-                    && now - aut_packet_received >= self.timers.new_handshake_timeout
+                    && now - aut_packet_received
+                        >= self.timers.new_handshake_timeout + self.timers.new_handshake_jitter
                     && mem::replace(&mut self.timers.want_handshake, false)
                 {
                     tracing::warn!("HANDSHAKE(KEEPALIVE + REKEY_TIMEOUT)");
