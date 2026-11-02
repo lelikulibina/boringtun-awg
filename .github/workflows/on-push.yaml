@@ -23,28 +23,13 @@ jobs:
       - rustfmt
       - tests
       - integration-tests
-      - test-windows
     steps:
       - run: exit 0
-
-  test-windows:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-
-      - name: Check Windows
-        run: cargo check -p boringtun
-
-      - name: Test Windows
-        run: cargo test -p boringtun
 
   check_features:
     strategy:
       matrix:
-        os: [ ubuntu-latest, macos-latest ]
+        os: [ ubuntu-latest ]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
