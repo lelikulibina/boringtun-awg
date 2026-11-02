@@ -530,11 +530,21 @@ impl Tunn {
             return self.send_queued_packet(dst);
         }
 
-        // A datagram that matches no configured shape is rejected here rather
-        // than re-parsed at offset 0. With a junk prefix configured this is the
-        // S-prefix doing its job as an input filter.
-        let datagram = match self.amnezia.strip_inbound(self.handshake.obf, datagram) {
-            Some(d) => d,
+        // Header-protected datagrams must be decrypted far enough to recover
+        // their type and receiver index before the regular WireGuard parser
+        // and rate limiter can inspect them. Without a key, retain the
+        // allocation-free legacy S/H parsing path byte-for-byte.
+        let decoded_datagram = self
+            .amnezia
+            .decrypt_inbound(self.handshake.obf, datagram);
+        let datagram = match decoded_datagram.as_deref() {
+            Some(decoded) => decoded,
+            None if !self.amnezia.header_protection_enabled() => {
+                match self.amnezia.strip_inbound(self.handshake.obf, datagram) {
+                    Some(d) => d,
+                    None => return TunnResult::Err(WireGuardError::InvalidPacket),
+                }
+            }
             None => return TunnResult::Err(WireGuardError::InvalidPacket),
         };
         let mut cookie = [0u8; COOKIE_REPLY_SZ];
