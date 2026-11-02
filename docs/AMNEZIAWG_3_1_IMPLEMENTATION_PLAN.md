@@ -338,3 +338,12 @@ Upstream точки сверки:
 - Вынесено отображение случайного u32 в inclusive CPA range в отдельный mapper. Rejection sampling сохраняет отсутствие modulo bias и явно отбрасывает хвост распределения.
 - Добавлены детерминированные проверки: первый/последний допустимый sample, первый sample rejection tail, полный диапазон u16 без переполнения, singleton и reversed bounds.
 - На HEAD b3304c0b0ec570f9976c58c3a62f6abb9ecb61b2: tests (268 passed, 9 ignored), rustfmt, clippy, check_features, integration-tests, Windows и macOS builds, awg31-interoperability (16/16), all-systems-go и Semgrep — success.
+
+
+### Этап 13: аутентифицированный сброс inactivity deadline и роли rekey (2026-11-02)
+
+- Добавлен regression: первый исходящий data packet запускает inactivity-handshake deadline; последующий аутентифицированный входящий data packet отменяет его; следующий исходящий data packet начинает новый deadline. Отдельный существующий тест подтверждает, что повреждённый AEAD packet не отменяет deadline.
+- Добавлен regression роли responder: исходный responder не инициирует send-side rekey только по достижении RekeyAfterTime; этот порог относится к исходному initiator. Параллельно сохраняется точная проверка send-side rekey для initiator и receive-side порога RejectAfterTime - KeepaliveTimeout.Lo - RekeyTimeout.Lo.
+- Peer-level DisableCookies coverage подтверждает полный handshake при искусственном under-load, обязательность MAC1 и bypass MAC2/cookie challenge для Init и Response.
+- На HEAD `9387c3bdb0f4c5b029bdbe4636f22cd939e3a758` обязательные проверки прошли: rustfmt, clippy, check_features, tests (включая mock-instant timer regressions), integration-tests, Windows core check, macOS build, AWG interop (16/16) и all-systems-go; Semgrep — success.
+- Следующий этап: расширить differential wire fixtures для CPA и RandomTrailers, включая сравнение точных внешних datagram lengths и authenticated plaintext boundaries с закреплённым upstream.
