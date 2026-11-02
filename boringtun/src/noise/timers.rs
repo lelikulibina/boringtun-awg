@@ -231,6 +231,26 @@ mod tests {
     }
 
     #[test]
+    fn fixed_timer_ranges_are_deterministic_for_every_timer() {
+        let config = AmneziaConfig::new(0, 0, 0, 0)
+            .with_rekey_after_time(111, 111)
+            .with_rekey_timeout(4, 4)
+            .with_reject_after_time(177, 177)
+            .with_keepalive_timeout(6, 6)
+            .with_max_handshake_attempts(9, 9);
+        let timers = Timers::new(None, false, &config);
+
+        for _ in 0..32 {
+            assert_eq!(timers.pick_range(0, 120), 111);
+            assert_eq!(timers.pick_range(1, 5), 4);
+            assert_eq!(timers.pick_range(2, 180), 177);
+            assert_eq!(timers.pick_range(3, 10), 6);
+            assert_eq!(timers.pick_range(4, 18), 9);
+        }
+        assert_eq!(timers.max_handshake_attempts, 9);
+    }
+
+    #[test]
     fn timer_range_bounds_use_wireguard_fallbacks_only_when_both_are_zero() {
         let config = AmneziaConfig::new(0, 0, 0, 0)
             .with_rekey_after_time(0, 7)
