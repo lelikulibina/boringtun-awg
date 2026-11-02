@@ -356,3 +356,10 @@ Upstream точки сверки:
 - Публичный Tunn::new_with_obfuscation теперь вызывает полную AmneziaConfig::validate, а не только timer validation, чтобы прямой constructor не обходил ограничения размеров, CPA и cookie amplification.
 - Это осознанно более строгое поведение, чем upstream Go: официальная документация рекомендует одинаковые S при RandomTrailers, но Go не отклоняет неравные значения. BoringTun теперь сообщает ошибку при конфигурации, которая может приводить к тихой потере transport-пакетов.
 - CI на HEAD bbf43d0f3fa6fbb3254895424d617df6eb460272 запущен; результаты ещё не получены. До завершения CI изменения не считаются проверенными.
+
+## Продолжение работ — 2026-11-03
+
+- На HEAD `53d4b10aac55b4c000644d6947ab7f4791f89bde` подтверждены Linux tests, integration tests, clippy, check_features, rustfmt, AWG 3.1 interoperability (16/16) и Semgrep — все успешно.
+- Добавлен отдельный rate-limiter regression для `DisableCookies` на Handshake Response: корректный MAC1 принимается под искусственной нагрузкой без MAC2, cookie challenge и увеличения under-load счётчика. Это дополняет существующие initiation-тесты.
+- Кроссплатформенные jobs macOS/Windows временно исключены из PR workflow на время протокольной валидации AWG 3.1; Linux checks и Go interoperability остаются обязательными. После завершения wire-level/differential этапа платформенные jobs следует вернуть.
+- Новый тест и изменение workflow требуют отдельного CI на обновлённом HEAD; до его завершения их прохождение не заявляется.
