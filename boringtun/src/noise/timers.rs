@@ -231,6 +231,21 @@ mod tests {
     }
 
     #[test]
+    fn replacing_timer_ranges_updates_the_live_timer_configuration() {
+        let initial = AmneziaConfig::new(0, 0, 0, 0).with_rekey_timeout(2, 3);
+        let replacement = AmneziaConfig::new(0, 0, 0, 0).with_rekey_timeout(7, 9);
+        let mut timers = Timers::new(None, false, &initial);
+
+        assert_eq!(timers.range_min(1, 5), 2);
+        assert_eq!(timers.range_max(1, 5), 3);
+
+        timers.set_timer_ranges(&replacement);
+
+        assert_eq!(timers.range_min(1, 5), 7);
+        assert_eq!(timers.range_max(1, 5), 9);
+    }
+
+    #[test]
     fn timer_range_validation_rejects_reversed_bounds_for_every_timer() {
         let invalid = [
             AmneziaConfig::new(0, 0, 0, 0).with_rekey_after_time(2, 1),
