@@ -1753,11 +1753,8 @@ mod tests {
                 other
             ),
         };
-        let response = match responder.decapsulate(
-            Some(source),
-            &authenticated_init,
-            &mut network,
-        ) {
+        let response = match responder.decapsulate(Some(source), &authenticated_init, &mut network)
+        {
             TunnResult::WriteToNetwork(packet) => packet.to_vec(),
             other => panic!("expected MAC2-authenticated handshake response, got {:?}", other),
         };
