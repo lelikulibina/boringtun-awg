@@ -258,3 +258,11 @@ Upstream точки сверки:
 - Для ContentPaddingAddition добавлены границы inclusive `[min, max]`, проверка включённого верхнего endpoint, clamp к свободному месту UDP window, нулевого остатка окна и отсутствия padding для keepalive.
 - CI на кодовом HEAD `a6237d7638ef17a50489a55c6e311b8c133b6392`: rustfmt, clippy, check_features, tests, integration-tests, awg31-interoperability (16/16), all-systems-go и Semgrep — success.
 - Эти фиксированные векторы проверяют ChaCha20/защищённые поля и не заменяют полную дифференциальную запись всех wire datagrams с upstream; отдельные randomized trailer lengths и MAC поля всё ещё требуют точечных differential fixtures.
+
+
+### Этап 5: cookie/MAC flow при совместной обфускации
+
+- Добавлен peer-level тест полного under-load cookie exchange при одновременно включённых HeaderProtectionKey и RandomTrailers: responder выдаёт защищённый Cookie Reply с S3/trailer, initiator принимает его и принудительно повторяет handshake с MAC2, responder принимает MAC2 и обе стороны устанавливают session.
+- Тест явно задаёт source IP responder-у: без адреса rate limiter корректно возвращает `UnderLoad`, а не Cookie Reply, поскольку cookie криптографически привязан к IP.
+- После получения cookie повторный `format_handshake_initiation` выполняется с `force_resend = true`, что соответствует повторной отправке уже начатого handshake после cookie challenge.
+- CI на кодовом HEAD `4e9f8be619e78e8d1fa5c4199263cf5e73f6bc43`: rustfmt, clippy, check_features, tests, integration-tests, awg31-interoperability (16/16), all-systems-go и Semgrep — success.
