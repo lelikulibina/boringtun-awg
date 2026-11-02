@@ -122,6 +122,7 @@ impl Tunn {
             TimeLastHandshakeStarted => {
                 self.timers.rekey_timeout = Duration::from_secs(self.timers.pick_range(1, REKEY_TIMEOUT.as_secs() as u32) as u64);
                 self.timers.handshake_attempts = 0;
+                self.timers.handshake_retry_jitter = Duration::from_millis((OsRng.next_u32() % 334) as u64);
             }
             TimeLastDataPacketSent => {
                 self.timers.rekey_after_time = Duration::from_secs(self.timers.pick_range(0, REKEY_AFTER_TIME.as_secs() as u32) as u64);
@@ -149,6 +150,7 @@ impl Tunn {
         self.timers.is_initiator = is_initiator;
         self.timers.max_handshake_attempts = self.timers.pick_range(4, 18);
         self.timers.handshake_attempts = 0;
+        self.timers.handshake_retry_jitter = Duration::from_millis((OsRng.next_u32() % 334) as u64);
         self.pending_amnezia_junk = None;
     }
 
@@ -166,10 +168,11 @@ impl Tunn {
     }
 
     fn update_session_timers(&mut self, time_now: Duration) {
+        let reject_after = Duration::from_secs(self.timers.range_max(2, REJECT_AFTER_TIME.as_secs() as u32) as u64);
         let timers = &mut self.timers;
 
         for (i, t) in timers.session_timers.iter_mut().enumerate() {
-            if time_now - *t > Duration::from_secs(timers.range_max(2, REJECT_AFTER_TIME.as_secs() as u32) as u64) {
+            if time_now - *t > reject_after {
                 if let Some(session) = self.sessions[i].take() {
                     tracing::debug!(
                         message = "SESSION_EXPIRED(REJECT_AFTER_TIME)",
@@ -245,8 +248,7 @@ impl Tunn {
                     return TunnResult::Err(WireGuardError::ConnectionExpired);
                 }
 
-                let jitter = Duration::from_millis((OsRng.next_u32() % 334) as u64);
-                if time_init_sent.elapsed() >= self.timers.rekey_timeout + jitter {
+                if time_init_sent.elapsed() >= self.timers.rekey_timeout + self.timers.handshake_retry_jitter {
                     // We avoid using `time` here, because it can be earlier than `time_init_sent`.
                     // Once `checked_duration_since` is stable we can use that.
                     // A handshake initiation is retried after REKEY_TIMEOUT + jitter ms,
@@ -255,6 +257,7 @@ impl Tunn {
                     tracing::warn!("HANDSHAKE(REKEY_TIMEOUT)");
                     self.timers.handshake_attempts = self.timers.handshake_attempts.saturating_add(1);
                     self.timers.rekey_timeout = Duration::from_secs(self.timers.pick_range(1, REKEY_TIMEOUT.as_secs() as u32) as u64);
+                    self.timers.handshake_retry_jitter = Duration::from_millis((OsRng.next_u32() % 334) as u64);
                     handshake_initiation_required = true;
                 }
             } else {
