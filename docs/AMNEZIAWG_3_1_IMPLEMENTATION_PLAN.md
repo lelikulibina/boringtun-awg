@@ -219,3 +219,9 @@ Upstream точки сверки:
 Архитектурное отличие BoringTun: Tunn::update_timers — polling state machine, тогда как upstream использует независимые peer timers и хранит отдельные счётчики попыток. Простая замена четырёх констант диапазонами даст неправильную точку повторного выбора и неверную семантику max attempts. До реализации необходимо добавить в Timers явное состояние выбранных порогов/счётчика handshake attempts и привязать выбор к событиям (session established, authenticated data sent/received, handshake initiation/retry), сохранив mock-instant поведение. Не менять криптографический state machine и не считать 90s deadline заменой max_handshake_attempts.
 
 Текущий статус этапа 4: range state в AmneziaConfig/UAPI и Timers реализован; polling-модель BoringTun использует явные deadlines, чтобы сохранить семантику запуска и отмены upstream timers. Повторные события не должны случайно продлевать активные deadlines. Следующий шаг — differential peer tests для rekey, inactivity, retry exhaustion и expiry. Реализация должна оставаться opt-in и сохранять vanilla WG defaults.
+
+Дополнительное покрытие timer state (последующие коммиты в feature-ветке):
+- Добавлены regressions для fallback только при диапазоне `(0, 0)`, fixed min=max endpoints для всех пяти параметров, нулевой нижней границы и полного диапазона `u32` без переполнения.
+- Добавлена проверка отклонения reversed bounds для каждого из пяти timer-параметров.
+- Добавлены проверки замены диапазонов в уже созданном `Timers` и обновления/отключения persistent keepalive.
+- Эти тесты покрывают выбор диапазонов и конфигурационное состояние, но не моделируют течение времени и реальные повторные handshake. Они должны пройти полный CI на актуальном HEAD; differential peer lifecycle tests остаются отдельной задачей.
