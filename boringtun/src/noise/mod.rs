@@ -452,6 +452,11 @@ impl Tunn {
         self.mtu = mtu;
     }
 
+    /// Reset the peer's learned UDP datagram window after endpoint roaming.
+    pub(crate) fn reset_udp_window(&mut self) {
+        self.udp_window = amnezia::DEFAULT_UDP_WINDOW;
+    }
+
     /// The peer's optional pre-shared key.
     pub fn preshared_key(&self) -> Option<[u8; 32]> {
         self.handshake.preshared_key()
@@ -2224,6 +2229,56 @@ mod tests {
             }
             other => panic!("expected restored IPv6 packet, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn random_trailers_learn_udp_window_from_authenticated_inbound_data() {
+        let cfg = AmneziaConfig::new(0, 0, 0, 600).with_random_trailers(true);
+        let (mut sender, mut receiver) = create_two_tuns_with_amnezia(cfg);
+        sender.set_mtu(1500);
+        receiver.set_mtu(1500);
+
+        let init = create_handshake_init(&mut sender);
+        let response = create_handshake_response(&mut receiver, &init);
+        let keepalive = parse_handshake_resp(&mut sender, &response);
+        parse_keepalive(&mut receiver, &keepalive);
+
+        let mut large_packet = create_ipv4_udp_packet();
+        large_packet.resize(200, 0);
+        large_packet[2..4].copy_from_slice(&(large_packet.len() as u16).to_be_bytes());
+        large_packet[24..26].copy_from_slice(&((large_packet.len() - 20) as u16).to_be_bytes());
+
+        let mut network_buffer = vec![0u8; 4096];
+        let outbound = match sender.encapsulate(&large_packet, &mut network_buffer) {
+            TunnResult::WriteToNetwork(datagram) => datagram.to_vec(),
+            other => panic!("expected transport datagram, got {:?}", other),
+        };
+        let observed_size = outbound.len();
+        let mut tunnel_buffer = vec![0u8; 4096];
+        match receiver.decapsulate(None, &outbound, &mut tunnel_buffer) {
+            TunnResult::WriteToTunnelV4(restored, _) => assert_eq!(restored, large_packet),
+            other => panic!("expected restored IPv4 packet, got {:?}", other),
+        }
+        assert_eq!(
+            receiver.udp_window, observed_size,
+            "the authenticated receive path must learn the complete UDP datagram size"
+        );
+
+        let small_packet = create_ipv4_udp_packet();
+        let mut saw_padding = false;
+        for _ in 0..64 {
+            let mut reverse_buffer = vec![0u8; 4096];
+            let reverse = match receiver.encapsulate(&small_packet, &mut reverse_buffer) {
+                TunnResult::WriteToNetwork(datagram) => datagram.to_vec(),
+                other => panic!("expected reverse transport datagram, got {:?}", other),
+            };
+            assert!(
+                reverse.len() <= observed_size,
+                "random trailers must stay within the learned UDP window"
+            );
+            saw_padding |= reverse.len() > DATA_OVERHEAD_SZ + 600 + small_packet.len();
+        }
+        assert!(saw_padding, "learned UDP window should permit reverse padding");
     }
 
     #[test]

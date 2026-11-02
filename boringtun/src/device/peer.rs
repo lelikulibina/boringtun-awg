@@ -90,6 +90,8 @@ impl Peer {
     pub fn set_endpoint(&self, addr: SocketAddr) {
         let mut endpoint = self.endpoint.write();
         if endpoint.addr != Some(addr) {
+            // A roaming peer gets a fresh UDP size estimate, as in upstream.
+            self.tunnel.reset_udp_window();
             // We only need to update the endpoint if it differs from the current one
             if let Some(conn) = endpoint.conn.take() {
                 conn.shutdown(Shutdown::Both).unwrap();
