@@ -26,7 +26,7 @@ const COOKIE_EXPIRATION_TIME: Duration = Duration::from_secs(120);
 
 #[derive(Debug)]
 pub enum TimerName {
-    /// Current time, updated each call to `update_timers`
+    /// Current time, updated by timer events and each call to `update_timers`
     TimeCurrent,
     /// Time when last handshake was completed
     TimeSessionEstablished,
@@ -267,8 +267,8 @@ impl Tunn {
                     );
                     let rekey_timeout =
                         self.timers.pick_range(1, REKEY_TIMEOUT.as_secs() as u32);
-                    self.timers.new_handshake_timeout =
-                        self.timers.keepalive_timeout_max + Duration::from_secs(rekey_timeout as u64);
+                    self.timers.new_handshake_timeout = self.timers.keepalive_timeout_max
+                        + Duration::from_secs(rekey_timeout as u64);
                     self.timers.new_handshake_jitter =
                         Duration::from_millis((OsRng.next_u32() % 334) as u64);
                     self.timers.new_handshake_deadline = Some(
