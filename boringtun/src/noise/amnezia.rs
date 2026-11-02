@@ -3299,6 +3299,37 @@ mod tests {
     }
 
     #[test]
+    fn header_protection_classifies_custom_h1_through_h4_tags() {
+        let obf = ObfuscationRanges::new(11, 11, 22, 22, 33, 33, 44, 44).unwrap();
+        let cfg = AmneziaConfig::new(12, 12, 12, 12).with_header_protection_key([0x24; 32]);
+
+        for (tag, size) in [
+            (11u32, HANDSHAKE_INIT_SZ),
+            (22u32, HANDSHAKE_RESP_SZ),
+            (33u32, COOKIE_REPLY_SZ),
+            (44u32, DATA_OVERHEAD_SZ + 8),
+        ] {
+            let mut original = vec![0u8; size];
+            write_tag(&mut original, tag);
+            original[4..].fill(tag as u8);
+
+            let mut buffer = vec![0u8; 12 + size];
+            buffer[..size].copy_from_slice(&original);
+            let mut rng = ChaCha8Rng::seed_from_u64(u64::from(tag));
+            let wire = cfg
+                .prepend_outbound(obf, &mut buffer, size, &mut rng)
+                .expect("custom H1-H4 packet must be classified")
+                .to_vec();
+
+            assert_eq!(
+                cfg.decrypt_inbound(obf, &wire).as_deref(),
+                Some(original.as_slice()),
+                "custom H tag {tag} must survive header protection"
+            );
+        }
+    }
+
+    #[test]
     fn header_protection_requires_all_s_prefixes_to_be_at_least_12() {
         let cfg = AmneziaConfig::new(12, 12, 12, 11).with_header_protection_key([0x24; 32]);
         let error = cfg.validate().expect_err("S4 is too short for the nonce");
