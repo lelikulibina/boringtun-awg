@@ -3110,7 +3110,7 @@ mod tests {
 
         for (tag, size, expected_prefix) in [
             (
-                HANDSHAKE_RESP,
+                2u32,
                 HANDSHAKE_RESP_SZ,
                 [
                     0x34, 0x3e, 0xe1, 0x64, 0x3b, 0x55, 0x38, 0xdf, 0xc8, 0xed, 0x8e, 0xe4,
@@ -3118,7 +3118,7 @@ mod tests {
                 ],
             ),
             (
-                COOKIE_REPLY,
+                3u32,
                 COOKIE_REPLY_SZ,
                 [
                     0x35, 0x3e, 0xe1, 0x64, 0x3b, 0x55, 0x38, 0xdf, 0xc8, 0xed, 0x8e, 0xe4,
