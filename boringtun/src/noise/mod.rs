@@ -1201,6 +1201,19 @@ mod tests {
         packet
     }
 
+    fn create_ipv6_udp_packet() -> Vec<u8> {
+        let header = etherparse::PacketBuilder::ipv6(
+            [0x2001, 0xdb8, 0, 0, 0, 0, 0, 2],
+            [0x2001, 0xdb8, 0, 0, 0, 0, 0, 3],
+            64,
+        )
+        .udp(5678, 23);
+        let payload = [4, 3, 2, 1, 0];
+        let mut packet = Vec::<u8>::with_capacity(header.size(payload.len()));
+        header.write(&mut packet, &payload).unwrap();
+        packet
+    }
+
     /// Move time forward past a pacing gate, whichever clock is compiled in.
     ///
     /// The imitation and Jc sequences are paced by `Instant::now()`, so a test
@@ -2110,6 +2123,40 @@ mod tests {
         );
         assert!(res.is_err());
     }
+    #[test]
+    fn content_padding_addition_is_mtu_bounded_and_removed_after_decryption_ipv6() {
+        let cfg = AmneziaConfig::new(0, 0, 0, 0).with_content_padding_addition(0, 12);
+        let (mut sender, mut receiver) = create_two_tuns_with_amnezia(cfg);
+        let packet = create_ipv6_udp_packet();
+        let mtu = packet.len() + 3;
+        sender.set_mtu(mtu);
+        receiver.set_mtu(mtu);
+
+        let init = create_handshake_init(&mut sender);
+        let response = create_handshake_response(&mut receiver, &init);
+        let keepalive = parse_handshake_resp(&mut sender, &response);
+        parse_keepalive(&mut receiver, &keepalive);
+
+        let mut network_buffer = vec![0u8; 4096];
+        let outbound = match sender.encapsulate(&packet, &mut network_buffer) {
+            TunnResult::WriteToNetwork(datagram) => datagram.to_vec(),
+            other => panic!("expected transport datagram, got {:?}", other),
+        };
+        assert_eq!(
+            outbound.len(),
+            DATA_OVERHEAD_SZ + packet.len() + 3,
+            "IPv6 content addition must be clamped to the three bytes left before MTU"
+        );
+
+        let mut tunnel_buffer = vec![0u8; 4096];
+        match receiver.decapsulate(None, &outbound, &mut tunnel_buffer) {
+            TunnResult::WriteToTunnelV6(restored, _) => {
+                assert_eq!(restored, packet.as_slice())
+            }
+            other => panic!("expected restored IPv6 packet, got {:?}", other),
+        }
+    }
+
     #[test]
     fn content_padding_addition_is_mtu_bounded_and_removed_after_decryption() {
         let cfg = AmneziaConfig::new(0, 0, 0, 0).with_content_padding_addition(8, 32);

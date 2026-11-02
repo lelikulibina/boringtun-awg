@@ -50,11 +50,11 @@
 - [x] Добавлять случайное число нулевых байтов к transport plaintext до AEAD encryption.
 - [x] Ограничивать добавление свободным местом до tunnel MTU; пустые keepalive не дополнять.
 - [x] Приёмная сторона обрезает расшифрованный пакет по IPv4 Total Length / IPv6 Payload Length через существующий validator.
-- [ ] Добавить отдельные IPv6/boundary и межоперационные тесты; Linux CI для текущего SHA `a5f5d548c3d7aa364df0acd624e67a0b102036d5` прошёл (кроме rustfmt, исправляемого следующим коммитом).
+- [ ] Добавить отдельные boundary и межоперационные тесты. IPv4 и IPv6 MTU-clamp/receive-trimming тесты добавлены; ожидают CI на новом коммите.
 
 **Готово, когда:** пакеты не превышают MTU/буферные лимиты, payload восстанавливается без изменений, значения диапазона соблюдаются.
 
-**Реализация в работе:** range/config/UAPI, MTU clamp и обработка до AEAD добавлены в рабочую ветку. При отсутствии параметра прежнее поведение BoringTun сохраняется. Тест проверяет MTU clamp, пустой keepalive и восстановление исходного IPv4-пакета. На SHA `a5f5d548c3d7aa364df0acd624e67a0b102036d5` прошли tests, integration-tests, Clippy, check_features и Semgrep; rustfmt выявил только форматирование, которое исправляется.
+**Реализация в работе:** range/config/UAPI, MTU clamp и обработка до AEAD добавлены в рабочую ветку. При отсутствии параметра прежнее поведение BoringTun сохраняется. Тесты проверяют MTU clamp и восстановление исходных IPv4/IPv6 пакетов; IPv4 также проверяет, что keepalive не дополняется. CI на коммите `c991679f90ec489ff46465971a84e8b429e2c7e3` полностью зелёный. IPv6 тест ожидает CI на следующем коммите.
 
 ### Этап 4. Рандомизация протокольных таймеров
 - [ ] Определить соответствие RekeyAfterTime, RekeyTimeout, RejectAfterTime, KeepaliveTimeout и MaxHandshakeAttempts внутренним таймерам BoringTun.
@@ -103,7 +103,7 @@
 | DNS/SIP/STUN/QUIC imitation | Реализовано как существующее расширение | Сохранить |
 | DisableCookies | Реализуется в PR #8 | Этап 1 |
 | HeaderProtectionKey | Не реализовано | Этап 2 |
-| ContentPaddingAddition | Реализовано в текущем PR: config/UAPI, MTU-bounded transport padding и receive trimming; IPv4/MTU/keepalive тест и основной Linux CI прошли, кроме rustfmt formatting fix | Этап 3 |
+| ContentPaddingAddition | Реализовано в текущем PR: config/UAPI, MTU-bounded transport padding и receive trimming; IPv4/IPv6 MTU-clamp/receive-trimming tests added; IPv4 keepalive test; Linux CI passed on prior commit | Этап 3 |
 | Randomized timers | Не реализовано | Этап 4 |
 | RandomTrailers | Не реализовано | Этап 5 |
 
