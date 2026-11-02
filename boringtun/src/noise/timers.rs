@@ -276,6 +276,16 @@ mod tests {
     }
 
     #[test]
+    fn random_jitter_respects_the_inclusive_333_millisecond_limit() {
+        assert_eq!(Timers::map_range_sample(0, 333, 0), Some(0));
+        assert_eq!(Timers::map_range_sample(0, 333, 333), Some(333));
+
+        for _ in 0..512 {
+            assert!(Timers::random_jitter() <= Duration::from_millis(333));
+        }
+    }
+
+    #[test]
     fn fresh_handshake_reselects_retry_budget_from_current_timer_range() {
         let initial = AmneziaConfig::new(0, 0, 0, 0).with_max_handshake_attempts(2, 2);
         let replacement = AmneziaConfig::new(0, 0, 0, 0).with_max_handshake_attempts(7, 7);
