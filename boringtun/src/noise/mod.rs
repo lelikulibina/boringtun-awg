@@ -1441,7 +1441,14 @@ mod tests {
             None,
             1,
             None,
-            0, 0, 0, 0, 0, 0, 0, 0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
             config.clone(),
         )
         .unwrap();
@@ -1470,7 +1477,10 @@ mod tests {
 
         let response = match responder.decapsulate(None, &init, &mut network) {
             TunnResult::WriteToNetwork(packet) => packet.to_vec(),
-            other => panic!("DisableCookies should allow a valid MAC1 under load, got {:?}", other),
+            other => panic!(
+                "DisableCookies should allow a valid MAC1 under load, got {:?}",
+                other
+            ),
         };
         let keepalive = parse_handshake_resp(&mut initiator, &response);
         parse_keepalive(&mut responder, &keepalive);
