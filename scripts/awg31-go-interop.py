@@ -195,12 +195,12 @@ def wait_rekey_after_initiation_loss(
     initial_server_time: int,
 ) -> None:
     """Drop an accelerated rekey initiation at client egress, then require retry."""
-    # The initiator's key is older than RekeyAfterTime; the next outbound packet
-    # must trigger a new handshake, which netem drops before it reaches the peer.
-    time.sleep(2.2)
+    # Attach the drop before RekeyAfterTime expires: the userspace timer
+    # can initiate a handshake without waiting for the next explicit ping.
     run("ip", "netns", "exec", client_ns, "tc", "qdisc", "add",
         "dev", client_veth, "root", "netem", "loss", "100%")
     try:
+        time.sleep(2.2)
         run("ip", "netns", "exec", client_ns, "ping", "-c1", "-W1",
             server_ip, check=False)
         stats = run(
