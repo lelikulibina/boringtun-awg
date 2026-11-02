@@ -1865,6 +1865,49 @@ mod tests {
     }
 
     #[test]
+    fn random_trailer_collision_guard_accepts_limit_and_rejects_one_over() {
+        let cfg = AmneziaConfig::new(0, 0, 0, 0).with_random_trailers(true);
+        let max_width = MAX_RANDOM_TRAILER_COLLISION_WIDTH as u32;
+
+        let at_limit = ObfuscationRanges::new(
+            100_000,
+            100_000 + max_width - 1,
+            2,
+            0,
+            3,
+            0,
+            4,
+            0,
+        )
+        .expect("non-overlapping ranges");
+        assert_eq!(at_limit.random_trailer_collision_width(), u64::from(max_width));
+        assert!(
+            cfg.validate_random_trailers(at_limit).is_ok(),
+            "the documented collision-probability limit is inclusive"
+        );
+
+        let over_limit = ObfuscationRanges::new(
+            100_000,
+            100_000 + max_width,
+            2,
+            0,
+            3,
+            0,
+            4,
+            0,
+        )
+        .expect("non-overlapping ranges");
+        assert_eq!(
+            over_limit.random_trailer_collision_width(),
+            u64::from(max_width) + 1
+        );
+        assert!(
+            cfg.validate_random_trailers(over_limit).is_err(),
+            "one value above the collision-probability limit must be rejected"
+        );
+    }
+
+    #[test]
     fn random_trailers_are_clamped_to_destination_capacity() {
         let cfg = AmneziaConfig::new(12, 0, 0, 0).with_random_trailers(true);
         let mut rng = ChaCha8Rng::seed_from_u64(0xCAFE);
