@@ -100,7 +100,8 @@
 - [ ] Прогнать vanilla WireGuard ↔ BoringTun в обоих направлениях.
 - [ ] Прогнать AWG 2.x без новых параметров.
 - [ ] Прогнать AWG 3.1 с каждым механизмом отдельно и со всеми вместе.
-- [x] Выполнить cargo fmt, cargo hack check/test/clippy --each-feature и CI на Linux. macOS/Windows не запускать по требованию пользователя.
+- [x] Выполнить cargo fmt, cargo hack check/test/clippy --each-feature и Linux CI.
+- [x] Добавить Windows `cargo check -p boringtun --no-default-features` как обязательную проверку `all-systems-go`; macOS `cargo check -p boringtun --all-features` и `cargo check -p boringtun-cli` вынесены в отдельную дополнительную job, не блокирующую основной merge gate.
 - [x] Прогнать существующие probe/imitation unit tests и Linux integration tests; полный upstream interop остаётся отдельным незавершённым пунктом.
 - [ ] После review и зелёного CI обновить PR и только затем обсуждать merge.
 
