@@ -147,7 +147,10 @@ def wait_handshake(server_iface: str, client_ns: str, server_ip: str) -> None:
     raise RuntimeError("no handshake/traffic before timeout")
 
 
-def run_profile(bt: str, go: str, name: str, extra: str, awg_enabled: bool) -> None:
+def run_profile(
+    bt: str, go: str, name: str, extra: str,
+    awg_enabled: bool, bt_is_server: bool,
+) -> None:
     token = uuid.uuid4().hex[:10]
     ns_server, ns_client = f"awg31s{token}", f"awg31c{token}"
     bt_iface, go_iface = f"bt31{token}", f"go31{token}"
@@ -157,6 +160,12 @@ def run_profile(bt: str, go: str, name: str, extra: str, awg_enabled: bool) -> N
     links_created = False
     workdir = tempfile.TemporaryDirectory(prefix="awg31-interop-")
     logs = Path(workdir.name)
+
+    server_iface = bt_iface if bt_is_server else go_iface
+    client_iface = go_iface if bt_is_server else bt_iface
+    server_name = "boringtun" if bt_is_server else "amneziawg-go"
+    client_name = "amneziawg-go" if bt_is_server else "boringtun"
+    role = f"{server_name} server"
 
     def ns(ns_name: str, *cmd: str) -> None:
         run("ip", "netns", "exec", ns_name, *cmd)
@@ -190,43 +199,53 @@ def run_profile(bt: str, go: str, name: str, extra: str, awg_enabled: bool) -> N
         server_private, server_public = keypair()
         client_private, client_public = keypair()
 
-        bt_log = open(logs / "boringtun.log", "w", encoding="utf-8")
-        go_log = open(logs / "amneziawg-go.log", "w", encoding="utf-8")
-        log_files.extend((bt_log, go_log))
-        bt_proc = subprocess.Popen(
-            ["ip", "netns", "exec", ns_server, bt,
-             "--foreground", "--disable-drop-privileges", bt_iface],
-            stdout=bt_log, stderr=subprocess.STDOUT,
+        server_binary = bt if bt_is_server else go
+        client_binary = go if bt_is_server else bt
+        server_command = (
+            [server_binary, "--foreground", "--disable-drop-privileges", server_iface]
+            if bt_is_server else [server_binary, "-f", server_iface]
         )
-        processes.append(bt_proc)
-        go_proc = subprocess.Popen(
-            ["ip", "netns", "exec", ns_client, go, "-f", go_iface],
-            stdout=go_log, stderr=subprocess.STDOUT,
+        client_command = (
+            [client_binary, "-f", client_iface]
+            if bt_is_server else
+            [client_binary, "--foreground", "--disable-drop-privileges", client_iface]
         )
-        processes.append(go_proc)
-        wait_socket(bt_iface, bt_proc)
-        wait_socket(go_iface, go_proc)
+
+        server_log = open(logs / f"{server_name}-server.log", "w", encoding="utf-8")
+        client_log = open(logs / f"{client_name}-client.log", "w", encoding="utf-8")
+        log_files.extend((server_log, client_log))
+        server_proc = subprocess.Popen(
+            ["ip", "netns", "exec", ns_server, *server_command],
+            stdout=server_log, stderr=subprocess.STDOUT,
+        )
+        processes.append(server_proc)
+        client_proc = subprocess.Popen(
+            ["ip", "netns", "exec", ns_client, *client_command],
+            stdout=client_log, stderr=subprocess.STDOUT,
+        )
+        processes.append(client_proc)
+        wait_socket(server_iface, server_proc)
+        wait_socket(client_iface, client_proc)
 
         awg = (S_AND_H if awg_enabled else "") + extra
-        set_peer(bt_iface, server_private, client_public, "none",
+        set_peer(server_iface, server_private, client_public, "none",
                  f"{CLIENT_TUN}/32", awg)
-        set_peer(go_iface, client_private, server_public,
+        set_peer(client_iface, client_private, server_public,
                  f"{SERVER_LINK}:{PORT}", f"{SERVER_TUN}/32", awg)
 
-        ns(ns_server, "ip", "addr", "add", f"{SERVER_TUN}/24", "dev", bt_iface)
-        ns(ns_server, "ip", "link", "set", bt_iface, "up", "mtu", "1420")
-        ns(ns_client, "ip", "addr", "add", f"{CLIENT_TUN}/32", "dev", go_iface)
-        ns(ns_client, "ip", "link", "set", go_iface, "up", "mtu", "1420")
-        ns(ns_client, "ip", "route", "add", f"{SERVER_TUN}/32", "dev", go_iface)
-        wait_handshake(bt_iface, ns_client, SERVER_TUN)
-        print(f"PASS {name}: handshake + bidirectional traffic")
+        ns(ns_server, "ip", "addr", "add", f"{SERVER_TUN}/24", "dev", server_iface)
+        ns(ns_server, "ip", "link", "set", server_iface, "up", "mtu", "1420")
+        ns(ns_client, "ip", "addr", "add", f"{CLIENT_TUN}/32", "dev", client_iface)
+        ns(ns_client, "ip", "link", "set", client_iface, "up", "mtu", "1420")
+        ns(ns_client, "ip", "route", "add", f"{SERVER_TUN}/32", "dev", client_iface)
+        wait_handshake(server_iface, ns_client, SERVER_TUN)
+        print(f"PASS {name} ({role}): handshake + bidirectional traffic")
     except Exception:
-        for log_path in (logs / "boringtun.log", logs / "amneziawg-go.log"):
-            if log_path.exists():
-                tail = log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-12:]
-                if tail:
-                    print(f"--- {name}: {log_path.name} ---", file=sys.stderr)
-                    print("\n".join(tail), file=sys.stderr)
+        for log_path in logs.glob("*.log"):
+            tail = log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-12:]
+            if tail:
+                print(f"--- {name} ({role}): {log_path.name} ---", file=sys.stderr)
+                print("\n".join(tail), file=sys.stderr)
         raise
     finally:
         for process in reversed(processes):
@@ -252,7 +271,6 @@ def run_profile(bt: str, go: str, name: str, extra: str, awg_enabled: bool) -> N
             run("ip", "link", "del", veth_server, check=False)
         workdir.cleanup()
 
-
 def main() -> int:
     if os.geteuid() != 0:
         print("Run as root (creates disposable network namespaces).", file=sys.stderr)
@@ -266,13 +284,17 @@ def main() -> int:
             print(f"not an executable file: {binary}", file=sys.stderr)
             return 2
     failures = 0
+    total = 0
     for name, extra, awg_enabled in PROFILES:
-        try:
-            run_profile(bt, go, name, extra, awg_enabled)
-        except Exception as error:
-            failures += 1
-            print(f"FAIL {name}: {error}", file=sys.stderr)
-    print(f"SUMMARY: {len(PROFILES) - failures} passed, {failures} failed")
+        for bt_is_server in (True, False):
+            total += 1
+            try:
+                run_profile(bt, go, name, extra, awg_enabled, bt_is_server)
+            except Exception as error:
+                failures += 1
+                role = "BoringTun server" if bt_is_server else "amneziawg-go server"
+                print(f"FAIL {name} ({role}): {error}", file=sys.stderr)
+    print(f"SUMMARY: {total - failures}/{total} passed, {failures} failed")
     return 1 if failures else 0
 
 
