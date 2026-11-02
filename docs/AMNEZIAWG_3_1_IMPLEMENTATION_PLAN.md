@@ -331,3 +331,10 @@ Upstream точки сверки:
 - Добавлен peer-level тест входящего Handshake Response под принудительной нагрузкой на RateLimiter. При DisableCookies корректный ответ принимается без Cookie Reply; испорченный MAC1 отклоняется как InvalidMac. После этого исходный ответ принимается, и сессия успешно завершается.
 - Это дополняет проверку инициирующего Handshake Init и подтверждает одинаковую политику bypass для обоих типов handshake-сообщений при обязательной проверке MAC1.
 - На HEAD 62953032edf0b1e6d89db601d6f33c4141d3c991: tests (267 passed, 9 ignored), rustfmt, clippy, check_features, integration-tests, Windows и macOS builds, awg31-interoperability (16/16), all-systems-go и Semgrep — success.
+
+
+### Этап 12: детерминированные границы ContentPaddingAddition (2026-11-02)
+
+- Вынесено отображение случайного u32 в inclusive CPA range в отдельный mapper. Rejection sampling сохраняет отсутствие modulo bias и явно отбрасывает хвост распределения.
+- Добавлены детерминированные проверки: первый/последний допустимый sample, первый sample rejection tail, полный диапазон u16 без переполнения, singleton и reversed bounds.
+- На HEAD b3304c0b0ec570f9976c58c3a62f6abb9ecb61b2: tests (268 passed, 9 ignored), rustfmt, clippy, check_features, integration-tests, Windows и macOS builds, awg31-interoperability (16/16), all-systems-go и Semgrep — success.
