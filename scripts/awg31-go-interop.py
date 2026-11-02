@@ -145,10 +145,10 @@ def wait_handshake(server_iface: str, client_ns: str, server_ip: str) -> None:
 
 
 def run_profile(bt: str, go: str, name: str, extra: str) -> None:
-    token = uuid.uuid4().hex[:6]
+    token = uuid.uuid4().hex[:10]
     ns_server, ns_client = f"awg31s{token}", f"awg31c{token}"
     bt_iface, go_iface = f"bt31{token}", f"go31{token}"
-    veth_server, veth_client = f"awg31vs{token}", f"awg31vc{token}"
+    veth_server, veth_client = f"avs{token}", f"avc{token}"
     processes: list[subprocess.Popen] = []
     links_created = False
     workdir = tempfile.TemporaryDirectory(prefix="awg31-interop-")
