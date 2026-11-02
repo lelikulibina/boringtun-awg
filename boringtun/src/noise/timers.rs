@@ -231,6 +231,21 @@ mod tests {
     }
 
     #[test]
+    fn timer_range_selection_handles_the_full_u32_domain_without_overflow() {
+        let config = AmneziaConfig::new(0, 0, 0, 0)
+            .with_rekey_timeout(0, u32::MAX);
+        let timers = Timers::new(None, false, &config);
+
+        for _ in 0..512 {
+            let selected = timers.pick_range(1, 5);
+            assert!(
+                selected <= u32::MAX,
+                "selected {selected} exceeds the configured u32 range"
+            );
+        }
+    }
+
+    #[test]
     fn timer_ranges_include_zero_as_a_valid_configured_minimum() {
         let config = AmneziaConfig::new(0, 0, 0, 0).with_rekey_timeout(0, 1);
         let timers = Timers::new(None, false, &config);
