@@ -1401,6 +1401,60 @@ mod tests {
 
     #[test]
     #[cfg(feature = "mock-instant")]
+    fn receive_side_rekey_uses_reject_minus_min_keepalive_and_rekey_timeout() {
+        let config = AmneziaConfig::new(0, 0, 0, 0)
+            .with_rekey_after_time(120, 120)
+            .with_rekey_timeout(2, 2)
+            .with_reject_after_time(10, 10)
+            .with_keepalive_timeout(6, 6);
+        let (mut initiator, mut responder) = create_two_tuns_with_amnezia(config);
+
+        let init = create_handshake_init(&mut initiator);
+        let response = create_handshake_response(&mut responder, &init);
+        let keepalive = parse_handshake_resp(&mut initiator, &response);
+        parse_keepalive(&mut responder, &keepalive);
+
+        // The initiator must have authenticated receive activity after the
+        // session was established for the receive-side key refresh rule.
+        mock_instant::MockClock::advance(Duration::from_millis(1));
+        let packet = create_ipv4_udp_packet();
+        let mut network = [0u8; 2048];
+        let mut tunnel = [0u8; 2048];
+        let outbound = match responder.encapsulate(&packet, &mut network) {
+            TunnResult::WriteToNetwork(packet) => packet.to_vec(),
+            other => panic!("expected responder data packet, got {:?}", other),
+        };
+        assert!(matches!(
+            initiator.decapsulate(None, &outbound, &mut tunnel),
+            TunnResult::WriteToTunnelV4(_, _)
+        ));
+
+        // Upstream keyRefreshTimeoutReceiving() is
+        // RejectAfterTime - KeepaliveTimeout.Lo - RekeyTimeout.Lo = 2s.
+        mock_instant::MockClock::advance(Duration::from_millis(1998));
+        assert!(matches!(
+            initiator.update_timers(&mut network),
+            TunnResult::Done
+        ));
+
+        mock_instant::MockClock::advance(Duration::from_millis(1));
+        match initiator.update_timers(&mut network) {
+            TunnResult::WriteToNetwork(packet) => {
+                assert_eq!(
+                    packet.len(),
+                    HANDSHAKE_INIT_SZ,
+                    "the receive-side refresh threshold must emit a new handshake"
+                );
+            }
+            other => panic!(
+                "expected rekey exactly at RejectAfterTime - KeepaliveTimeout.Lo - RekeyTimeout.Lo, got {:?}",
+                other
+            ),
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "mock-instant")]
     fn reject_expiry_uses_configured_upper_bound_and_inclusive_key_lifetime() {
         let config = AmneziaConfig::new(0, 0, 0, 0).with_reject_after_time(180, 200);
         let (mut tun, _peer) = create_two_tuns_and_handshake_with_amnezia(config);
