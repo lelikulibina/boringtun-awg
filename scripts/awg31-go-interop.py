@@ -9,6 +9,7 @@ Usage: sudo python3 scripts/awg31-go-interop.py ./target/release/boringtun-cli .
 """
 from __future__ import annotations
 
+import base64
 import os
 import socket
 import subprocess
@@ -17,6 +18,9 @@ import tempfile
 import time
 import uuid
 from pathlib import Path
+
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 
 PORT = 51820
 SERVER_LINK, CLIENT_LINK = "10.55.0.1", "10.55.0.2"
@@ -171,17 +175,17 @@ def run_profile(bt: str, go: str, name: str, extra: str) -> None:
         ns(ns_client, "ip", "link", "set", veth_client, "up")
         ns(ns_client, "ping", "-c1", "-W3", SERVER_LINK)
 
-        server_private = run("sh", "-c", "head -c32 /dev/urandom | base64 -w0",
-                             capture=True)
-        client_private = run("sh", "-c", "head -c32 /dev/urandom | base64 -w0",
-                             capture=True)
-        # X25519 public keys are derived by the standard wg utility.
-        server_public = run("sh", "-c",
-                            f"printf '%s' '{server_private}' | wg pubkey",
-                            capture=True)
-        client_public = run("sh", "-c",
-                            f"printf '%s' '{client_private}' | wg pubkey",
-                            capture=True)
+        def keypair() -> tuple[str, str]:
+            private = os.urandom(32)
+            public = X25519PrivateKey.from_private_bytes(private).public_key()
+            raw_public = public.public_bytes(
+                serialization.Encoding.Raw, serialization.PublicFormat.Raw
+            )
+            return (base64.b64encode(private).decode(),
+                    base64.b64encode(raw_public).decode())
+
+        server_private, server_public = keypair()
+        client_private, client_public = keypair()
 
         bt_log = open(logs / "boringtun.log", "w", encoding="utf-8")
         go_log = open(logs / "amneziawg-go.log", "w", encoding="utf-8")
