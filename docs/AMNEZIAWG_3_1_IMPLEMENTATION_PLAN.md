@@ -266,3 +266,11 @@ Upstream точки сверки:
 - Тест явно задаёт source IP responder-у: без адреса rate limiter корректно возвращает `UnderLoad`, а не Cookie Reply, поскольку cookie криптографически привязан к IP.
 - После получения cookie повторный `format_handshake_initiation` выполняется с `force_resend = true`, что соответствует повторной отправке уже начатого handshake после cookie challenge.
 - CI на кодовом HEAD `4e9f8be619e78e8d1fa5c4199263cf5e73f6bc43`: rustfmt, clippy, check_features, tests, integration-tests, awg31-interoperability (16/16), all-systems-go и Semgrep — success.
+
+
+### Этап 5: границы RandomTrailers и collision guard (2026-11-02)
+
+- Добавлен regression test, сверяющий распределённую границу RandomTrailers с upstream `fastrandn(udpWindow - packetSize)`: верхняя граница exclusive, а размер дополнительно ограничивается лимитом исходного запроса/датаграммы и peer UDP window; отсутствие свободного места и выключенный флаг дают нулевой trailer.
+- Добавлен boundary test для совокупной inclusive ширины H1-H3: конфигурация ровно на лимите collision guard принимается, превышение на одно значение отклоняется. В расчёте учитываются singleton H2/H3, а не только диапазон H1.
+- На HEAD `3660a39e974c74efd70c6efb9ba9a8c5b6b06bc9` прошли `tests`, `integration-tests`, `clippy`, `check_features`, `rustfmt`, `awg31-interoperability` (16/16) и Semgrep. Windows core build прошёл на предыдущем HEAD `981ee08becc6b0fda5349812a49297623525445a`; macOS job ожидал runner. Для нового runner закреплён `macos-15-intel`; CI HEAD `e85c16400fc554ee8a6cf333eb3ed19823df7cfe` выполняется.
+- Эти тесты подтверждают арифметику размеров и защиту от H1-H3 false-positive роста, но не заменяют полное дифференциальное сравнение pcap/wire datagrams с Go для всех вариантов RandomTrailers.
