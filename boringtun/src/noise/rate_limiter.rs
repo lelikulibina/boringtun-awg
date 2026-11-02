@@ -309,6 +309,32 @@ mod tests {
     }
 
     #[test]
+    fn valid_mac2_is_accepted_under_load() {
+        let public_key = crate::x25519::PublicKey::from([7u8; 32]);
+        let limiter = RateLimiter::new(&public_key, 0);
+        let mut packet = initiation_with_valid_mac1(&limiter);
+        let source = IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
+        let mac_offset = HANDSHAKE_INIT_SZ - 32;
+        let (message, macs) = packet.split_at_mut(mac_offset);
+        let (mac1, mac2) = macs.split_at_mut(16);
+        let cookie = limiter.current_cookie(source);
+        let expected_mac2 = b2s_keyed_mac_16_2(&cookie, message, mac1);
+        mac2.copy_from_slice(&expected_mac2);
+
+        let mut dst = [0u8; 128];
+        let result = limiter.verify_packet(
+            ObfuscationRanges::default(),
+            &mut OsRng,
+            Some(source),
+            &packet,
+            &mut dst,
+        );
+
+        assert!(matches!(result, Ok(Packet::HandshakeInit(_))));
+        assert_eq!(limiter.count.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
     fn cookie_replies_remain_enabled_by_default() {
         let public_key = crate::x25519::PublicKey::from([7u8; 32]);
         let limiter = RateLimiter::new(&public_key, 0);
