@@ -1530,7 +1530,10 @@ mod tests {
             TunnResult::WriteToNetwork(_)
         ));
         mock_instant::MockClock::advance(Duration::from_secs(2));
-        assert!(matches!(receiver.update_timers(&mut network), TunnResult::Done));
+        assert!(matches!(
+            receiver.update_timers(&mut network),
+            TunnResult::Done
+        ));
         mock_instant::MockClock::advance(Duration::from_secs(1));
         assert!(matches!(
             receiver.update_timers(&mut network),
