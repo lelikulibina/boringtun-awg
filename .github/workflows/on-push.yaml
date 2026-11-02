@@ -22,6 +22,7 @@ jobs:
       - rustfmt
       - tests
       - integration-tests
+      - awg31-interoperability
     steps:
       - run: exit 0
 
