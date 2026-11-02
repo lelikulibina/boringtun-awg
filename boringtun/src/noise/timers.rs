@@ -75,7 +75,7 @@ pub struct Timers {
     keepalive_timeout_max: Duration,
     new_handshake_timeout: Duration,
     pub(super) max_handshake_attempts: u32,
-    handshake_attempts: u32,
+    pub(super) handshake_attempts: u32,
     handshake_retry_jitter: Duration,
     new_handshake_jitter: Duration,
 }
