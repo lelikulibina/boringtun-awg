@@ -1869,34 +1869,16 @@ mod tests {
         let cfg = AmneziaConfig::new(0, 0, 0, 0).with_random_trailers(true);
         let max_width = MAX_RANDOM_TRAILER_COLLISION_WIDTH as u32;
 
-        let at_limit = ObfuscationRanges::new(
-            100_000,
-            100_000 + max_width - 1,
-            2,
-            0,
-            3,
-            0,
-            4,
-            0,
-        )
-        .expect("non-overlapping ranges");
+        let at_limit = ObfuscationRanges::new(100_000, 100_000 + max_width - 3, 2, 0, 3, 0, 4, 0)
+            .expect("non-overlapping ranges");
         assert_eq!(at_limit.random_trailer_collision_width(), u64::from(max_width));
         assert!(
             cfg.validate_random_trailers(at_limit).is_ok(),
             "the documented collision-probability limit is inclusive"
         );
 
-        let over_limit = ObfuscationRanges::new(
-            100_000,
-            100_000 + max_width,
-            2,
-            0,
-            3,
-            0,
-            4,
-            0,
-        )
-        .expect("non-overlapping ranges");
+        let over_limit = ObfuscationRanges::new(100_000, 100_000 + max_width - 2, 2, 0, 3, 0, 4, 0)
+            .expect("non-overlapping ranges");
         assert_eq!(
             over_limit.random_trailer_collision_width(),
             u64::from(max_width) + 1
