@@ -1446,6 +1446,36 @@ mod tests {
 
     #[test]
     #[cfg(feature = "mock-instant")]
+    fn responder_does_not_initiate_send_side_rekey_after_rekey_after_time() {
+        let config = AmneziaConfig::new(0, 0, 0, 0)
+            .with_rekey_after_time(2, 2)
+            .with_rekey_timeout(2, 2)
+            .with_reject_after_time(180, 180)
+            .with_keepalive_timeout(10, 10);
+        let (mut initiator, mut responder) = create_two_tuns_with_amnezia(config);
+
+        let init = create_handshake_init(&mut initiator);
+        let response = create_handshake_response(&mut responder, &init);
+        let keepalive = parse_handshake_resp(&mut initiator, &response);
+        parse_keepalive(&mut responder, &keepalive);
+
+        mock_instant::MockClock::advance(Duration::from_millis(1));
+        let packet = create_ipv4_udp_packet();
+        let mut network = [0u8; 2048];
+        assert!(matches!(
+            responder.encapsulate(&packet, &mut network),
+            TunnResult::WriteToNetwork(_)
+        ));
+
+        mock_instant::MockClock::advance(Duration::from_secs(2));
+        assert!(
+            matches!(responder.update_timers(&mut network), TunnResult::Done),
+            "the original handshake responder must not start send-side rekey solely at RekeyAfterTime"
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "mock-instant")]
     fn authenticated_inbound_data_cancels_and_restarts_inactivity_deadline() {
         let config = AmneziaConfig::new(0, 0, 0, 0)
             .with_rekey_after_time(120, 120)
