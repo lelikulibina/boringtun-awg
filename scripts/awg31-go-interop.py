@@ -354,17 +354,16 @@ def run_profile(
     capture_log = None
     workdir = tempfile.TemporaryDirectory(prefix="awg31-interop-")
     logs = Path(workdir.name)
-    capture_dir = Path("target/awg31-wire-pcaps")
-    capture_dir.mkdir(parents=True, exist_ok=True)
-    capture_path = capture_dir / (
-        f"{name.replace(' ', '_')}-{role.replace(' ', '_')}.pcap"
-    )
-
     server_iface = bt_iface if bt_is_server else go_iface
     client_iface = go_iface if bt_is_server else bt_iface
     server_name = "boringtun" if bt_is_server else "amneziawg-go"
     client_name = "amneziawg-go" if bt_is_server else "boringtun"
     role = f"{server_name} server"
+    capture_dir = Path("target/awg31-wire-pcaps")
+    capture_dir.mkdir(parents=True, exist_ok=True)
+    capture_path = capture_dir / (
+        f"{name.replace(' ', '_')}-{role.replace(' ', '_')}.pcap"
+    )
 
     def ns(ns_name: str, *cmd: str) -> None:
         run("ip", "netns", "exec", ns_name, *cmd)
