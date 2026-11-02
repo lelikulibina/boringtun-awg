@@ -1936,6 +1936,44 @@ mod tests {
     }
 
     #[test]
+    fn random_trailer_matches_upstream_exclusive_window_and_all_limits() {
+        let cfg = AmneziaConfig::new(0, 0, 0, 0).with_random_trailers(true);
+        let mut rng = ChaCha8Rng::seed_from_u64(0x7A11);
+
+        // Upstream fastrandn(udpWindow - packetSize) selects [0, space),
+        // not an inclusive endpoint. Exercise the exact upper bound and
+        // intersecting request, UDP-window and output-buffer limits.
+        for _ in 0..4096 {
+            let trailer = cfg.random_trailer_len(80, 500, 120, &mut rng);
+            assert!(trailer < 40, "request limit must cap the exclusive range");
+            assert!(80 + trailer <= 120);
+            assert!(80 + trailer <= 500);
+
+            let trailer = cfg.random_trailer_len(80, 100, 500, &mut rng);
+            assert!(trailer < 20, "peer UDP window must cap the exclusive range");
+
+            let trailer = cfg.random_trailer_len(80, 500, 500, &mut rng);
+            assert!(trailer < 420, "default peer window is exclusive");
+        }
+
+        assert_eq!(
+            cfg.random_trailer_len(80, 80, 500, &mut rng),
+            0,
+            "no room in peer window means no trailer"
+        );
+        assert_eq!(
+            cfg.random_trailer_len(80, 500, 80, &mut rng),
+            0,
+            "no room in caller datagram limit means no trailer"
+        );
+        assert_eq!(
+            AmneziaConfig::new(0, 0, 0, 0).random_trailer_len(80, 500, 120, &mut rng),
+            0,
+            "disabled RandomTrailers must not consume space"
+        );
+    }
+
+    #[test]
     fn random_transport_padding_respects_content_padding_precedence_and_mtu() {
         let mut rng = ChaCha8Rng::seed_from_u64(0xBEEF);
         let random = AmneziaConfig::new(0, 0, 0, 0).with_random_trailers(true);
