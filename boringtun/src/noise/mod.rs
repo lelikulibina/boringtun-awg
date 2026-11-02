@@ -1499,6 +1499,81 @@ mod tests {
     }
 
     #[test]
+    fn header_protection_and_random_trailers_preserve_cookie_challenge_mac_flow() {
+        let initiator_secret = x25519::StaticSecret::random_from_rng(OsRng);
+        let initiator_public = x25519::PublicKey::from(&initiator_secret);
+        let responder_secret = x25519::StaticSecret::random_from_rng(OsRng);
+        let responder_public = x25519::PublicKey::from(&responder_secret);
+        let rate_limiter = Arc::new(RateLimiter::new(&responder_public, 0));
+        let config = AmneziaConfig::new(12, 12, 12, 12)
+            .with_header_protection_key([0x5a; 32])
+            .with_random_trailers(true);
+
+        let mut initiator = Tunn::new_with_amnezia(
+            initiator_secret,
+            responder_public,
+            None,
+            None,
+            1,
+            None,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            config.clone(),
+        )
+        .unwrap();
+        let mut responder = Tunn::new_with_amnezia(
+            responder_secret,
+            initiator_public,
+            None,
+            None,
+            2,
+            Some(rate_limiter),
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            config,
+        )
+        .unwrap();
+
+        let mut network = [0u8; 4096];
+        let first_init = create_handshake_init(&mut initiator);
+        let cookie = match responder.decapsulate(None, &first_init, &mut network) {
+            TunnResult::WriteToNetwork(packet) => packet.to_vec(),
+            other => panic!("expected protected cookie reply under load, got {:?}", other),
+        };
+        assert!(cookie.len() > 12 + COOKIE_REPLY_SZ - 1);
+        assert!(matches!(
+            initiator.decapsulate(None, &cookie, &mut network),
+            TunnResult::Done
+        ));
+
+        let authenticated_init = create_handshake_init(&mut initiator);
+        let response = match responder.decapsulate(None, &authenticated_init, &mut network) {
+            TunnResult::WriteToNetwork(packet) => packet.to_vec(),
+            other => panic!("expected MAC2-authenticated response, got {:?}", other),
+        };
+        let keepalive = parse_handshake_resp(&mut initiator, &response);
+        parse_keepalive(&mut responder, &keepalive);
+
+        assert!(
+            initiator.sessions.iter().any(Option::is_some)
+                && responder.sessions.iter().any(Option::is_some),
+            "header protection, random trailers and cookie MAC flow should establish a session"
+        );
+    }
+
+    #[test]
     fn completed_handshake_resets_attempt_count_and_reselects_configured_budget() {
         let config = AmneziaConfig::new(0, 0, 0, 0).with_max_handshake_attempts(7, 7);
         let (mut initiator, mut responder) = create_two_tuns_with_amnezia(config);
