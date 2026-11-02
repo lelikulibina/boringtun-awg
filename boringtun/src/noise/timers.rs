@@ -261,7 +261,9 @@ impl Tunn {
                         .pick_range(3, KEEPALIVE_TIMEOUT.as_secs() as u32)
                         as u64,
                 );
-                self.timers.keepalive_timeout_max = Duration::from_secs(self.timers.range_max(3, KEEPALIVE_TIMEOUT.as_secs() as u32) as u64);
+                self.timers.keepalive_timeout_max = Duration::from_secs(
+                    self.timers.range_max(3, KEEPALIVE_TIMEOUT.as_secs() as u32) as u64,
+                );
                 self.timers.reject_after_time = Duration::from_secs(
                     self.timers
                         .pick_range(2, REJECT_AFTER_TIME.as_secs() as u32)
