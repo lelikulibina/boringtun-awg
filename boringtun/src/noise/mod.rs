@@ -1328,6 +1328,28 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "mock-instant")]
+    fn handshake_attempt_budget_is_checked_on_retry_expiry() {
+        let (mut my_tun, _their_tun) = create_two_tuns();
+        let _init = create_handshake_init(&mut my_tun);
+        my_tun.timers.max_handshake_attempts = 0;
+
+        mock_instant::MockClock::advance(REKEY_TIMEOUT + Duration::from_millis(334));
+        let mut dst = [0u8; 2048];
+        assert!(matches!(my_tun.update_timers(&mut dst), TunnResult::WriteToNetwork(_)));
+
+        // The retry budget is not exhausted until the retransmit timer for
+        // the just-sent retry expires; polling immediately must not kill it.
+        assert!(matches!(my_tun.update_timers(&mut dst), TunnResult::Done));
+
+        mock_instant::MockClock::advance(REKEY_TIMEOUT + Duration::from_millis(334));
+        assert!(matches!(
+            my_tun.update_timers(&mut dst),
+            TunnResult::Err(WireGuardError::ConnectionExpired)
+        ));
+    }
+
+    #[test]
     fn one_ip_packet() {
         let (mut my_tun, mut their_tun) = create_two_tuns_and_handshake();
         let mut my_dst = [0u8; 1024];
