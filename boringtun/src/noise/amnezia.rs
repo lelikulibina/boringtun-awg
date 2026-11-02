@@ -1821,14 +1821,7 @@ mod tests {
     fn random_trailers_rejects_wide_h1_h3_ranges() {
         let cfg = AmneziaConfig::new(0, 0, 0, 0).with_random_trailers(true);
         let wide = ObfuscationRanges::new(
-            100_000,
-            300_000,
-            500_000,
-            800_000,
-            1_000_000,
-            1_300_000,
-            1_500_000,
-            1_500_001,
+            100_000, 300_000, 500_000, 800_000, 1_000_000, 1_300_000, 1_500_000, 1_500_001,
         )
         .unwrap();
         let error = cfg
@@ -1838,14 +1831,7 @@ mod tests {
         assert!(error.contains("RandomTrailers"));
 
         let narrow = ObfuscationRanges::new(
-            100_000,
-            100_100,
-            500_000,
-            500_100,
-            1_000_000,
-            1_000_100,
-            1_500_000,
-            1_500_100,
+            100_000, 100_100, 500_000, 500_100, 1_000_000, 1_000_100, 1_500_000, 1_500_100,
         )
         .unwrap();
         cfg.validate_random_trailers(narrow)

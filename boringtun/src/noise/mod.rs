@@ -2247,7 +2247,8 @@ mod tests {
         large_packet.resize(200, 0);
         let large_packet_len = large_packet.len();
         large_packet[2..4].copy_from_slice(&(large_packet_len as u16).to_be_bytes());
-        large_packet[24..26].copy_from_slice(&((large_packet.len() - 20) as u16).to_be_bytes());
+        let large_udp_len = large_packet_len - 20;
+        large_packet[24..26].copy_from_slice(&(large_udp_len as u16).to_be_bytes());
 
         let mut network_buffer = vec![0u8; 4096];
         let outbound = match sender.encapsulate(&large_packet, &mut network_buffer) {
@@ -2279,7 +2280,10 @@ mod tests {
             );
             saw_padding |= reverse.len() > DATA_OVERHEAD_SZ + 600 + small_packet.len();
         }
-        assert!(saw_padding, "learned UDP window should permit reverse padding");
+        assert!(
+            saw_padding,
+            "learned UDP window should permit reverse padding"
+        );
     }
 
     #[test]

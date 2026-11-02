@@ -1158,14 +1158,11 @@ impl Device {
 
                     // We found a peer, use it to decapsulate the message+
                     let mut flush = false; // Are there packets to send from the queue?
-                    match p
-                        .tunnel
-                        .handle_verified_packet_with_datagram_size(
-                            parsed_packet,
-                            &mut t.dst_buf[..],
-                            packet_len,
-                        )
-                    {
+                    match p.tunnel.handle_verified_packet_with_datagram_size(
+                        parsed_packet,
+                        &mut t.dst_buf[..],
+                        packet_len,
+                    ) {
                         TunnResult::Done => {}
                         TunnResult::Err(_) => continue,
                         TunnResult::WriteToNetwork(packet) => {
