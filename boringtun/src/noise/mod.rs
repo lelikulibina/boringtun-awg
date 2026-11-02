@@ -1511,6 +1511,7 @@ mod tests {
         let keepalive = parse_handshake_resp(&mut initiator, &response);
         parse_keepalive(&mut responder, &keepalive);
 
+        mock_instant::MockClock::advance(Duration::from_secs(1));
         let packet = create_ipv4_udp_packet();
         let mut network = [0u8; 2048];
         let mut tunnel = [0u8; 2048];
@@ -1520,9 +1521,10 @@ mod tests {
             TunnResult::WriteToTunnelV4(restored, _) if restored == packet
         ));
 
-        // Rekey at 120 seconds. Both peers temporarily retain the old and new
-        // receive keys, as WireGuard does while packets may still be in flight.
-        mock_instant::MockClock::advance(Duration::from_secs(120));
+        // The first data send is at t=1s; RekeyAfterTime is measured from
+        // session establishment, so rekey is due at t=120s.
+        // Both peers temporarily retain old and new receive keys.
+        mock_instant::MockClock::advance(Duration::from_secs(119));
         let rekey_init = unwrap_network_packet(initiator.update_timers(&mut network));
         assert!(matches!(
             Tunn::parse_incoming_packet(initiator.handshake.obf, &rekey_init),
