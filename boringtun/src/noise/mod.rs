@@ -1522,7 +1522,7 @@ mod tests {
 
         // Rekey at 120 seconds. Both peers temporarily retain the old and new
         // receive keys, as WireGuard does while packets may still be in flight.
-        mock_instant::MockClock::advance(Duration::from_secs(119));
+        mock_instant::MockClock::advance(Duration::from_secs(120));
         let rekey_init = unwrap_network_packet(initiator.update_timers(&mut network));
         assert!(matches!(
             Tunn::parse_incoming_packet(initiator.handshake.obf, &rekey_init),
