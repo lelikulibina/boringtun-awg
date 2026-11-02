@@ -41,24 +41,24 @@ HPK = "42" * 32
 PROFILES = [
     ("vanilla WireGuard baseline", "", False),
     ("AWG 2.x baseline", "", True),
-    ("HeaderProtectionKey", f"header_protection_key={HPK}\\n", True),
-    ("ContentPaddingAddition", "content_padding_addition=16-64\\n", True),
-    ("RandomTrailers", "random_trailers=true\\n", True),
-    ("DisableCookies", "disable_cookies=true\\n", True),
+    ("HeaderProtectionKey", f"header_protection_key={HPK}\n", True),
+    ("ContentPaddingAddition", "content_padding_addition=16-64\n", True),
+    ("RandomTrailers", "random_trailers=true\n", True),
+    ("DisableCookies", "disable_cookies=true\n", True),
     (
         "randomized timers",
-        "rekey_after_time=119-120\\nrekey_timeout=5-6\\n"
-        "reject_after_time=179-180\\nkeepalive_timeout=9-10\\n"
-        "max_handshake_attempts=18-19\\n",
+        "rekey_after_time=119-120\nrekey_timeout=5-6\n"
+        "reject_after_time=179-180\nkeepalive_timeout=9-10\n"
+        "max_handshake_attempts=18-19\n",
         True,
     ),
     (
         "all AWG 3.1 extensions combined",
-        f"header_protection_key={HPK}\\n"
-        "content_padding_addition=16-64\\nrandom_trailers=true\\n"
-        "disable_cookies=true\\nrekey_after_time=119-120\\n"
-        "rekey_timeout=5-6\\nreject_after_time=179-180\\n"
-        "keepalive_timeout=9-10\\nmax_handshake_attempts=18-19\\n",
+        f"header_protection_key={HPK}\n"
+        "content_padding_addition=16-64\nrandom_trailers=true\n"
+        "disable_cookies=true\nrekey_after_time=119-120\n"
+        "rekey_timeout=5-6\nreject_after_time=179-180\n"
+        "keepalive_timeout=9-10\nmax_handshake_attempts=18-19\n",
         True,
     ),
 ]
