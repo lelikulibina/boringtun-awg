@@ -443,12 +443,8 @@ fn api_get(writer: &mut BufWriter<&UnixStream>, d: &Device) -> i32 {
                 encode_hex(&a.header_protection_key)
             );
         }
-        if a.disable_cookies {
-            writeln!(writer, "disable_cookies=true");
-        }
-        if a.random_trailers {
-            writeln!(writer, "random_trailers=true");
-        }
+        writeln!(writer, "disable_cookies={}", a.disable_cookies);
+        writeln!(writer, "random_trailers={}", a.random_trailers);
         for (index, chain) in a.signature_packets.iter().enumerate() {
             if let Some(chain) = chain {
                 writeln!(writer, "i{}={}", index + 1, chain.spec());
