@@ -6,9 +6,13 @@ name: PR Status Checks
 # work -- 47 commits, with only Semgrep and the review bot for company. A
 # `pull_request` entry filters on the *base* branch, so this covers the
 # short-lived branches that merge into it too.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
 on:
   push:
-    branches: [ "main", "master", "awg-2.0-extensions", "feat/amneziawg-3.1-disable-cookies" ]
+    branches: [ "main", "master", "awg-2.0-extensions" ]
   pull_request:
     branches: [ "main", "master", "awg-2.0-extensions" ]
 
