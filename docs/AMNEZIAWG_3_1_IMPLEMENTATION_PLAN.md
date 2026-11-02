@@ -301,3 +301,11 @@ Upstream точки сверки:
 - Существующие inbound known-answer vectors продолжают проверять стандартный ChaCha20 поток для полного handshake/cookie сообщения и 16-байтового transport header.
 - CI на кодовом HEAD `d3ac38be1e394a4fc32d7f07a4fb4e534c377c3d`: `rustfmt`, `clippy`, `check_features`, tests (263 passed, 9 ignored), integration-tests, Windows core check, interop (16/16), `all-systems-go` и Semgrep — success. Дополнительная macOS job остаётся вне merge gate и ожидает runner.
 - Следующая задача — фиксированные differential fixtures для MAC1/MAC2 и побайтовая проверка внешних S-prefix/trailer datagrams; текущие tests подтверждают ChaCha20-обработку и сохранность AEAD payload, но не являются полным pcap comparison.
+
+
+### Этап 8: MAC1/MAC2 BLAKE2s known-answer vectors (2026-11-02)
+
+- Добавлен детерминированный known-answer test для ключа MAC1 (`BLAKE2s-256("mac1----" || peer_public)`), MAC1 (`BLAKE2s-128` keyed), cookie-encryption key (`BLAKE2s-256("cookie--" || peer_public)`), source-bound cookie и MAC2 над `message || MAC1`.
+- Векторы вычислены независимой реализацией Python `hashlib.blake2s` с фиксированными ключами/входами и соответствуют upstream Go `blake2s.New256/New128` semantics; тест ловит изменения labels, key derivation, truncation и coverage MAC2.
+- На кодовом HEAD `172446911971da2106d267c920b6fa90fd039997`: tests (264 passed, 9 ignored), `rustfmt`, `clippy`, `check_features`, integration-tests, Windows core check, interop (16/16), `all-systems-go` и Semgrep — success. Дополнительная macOS job ещё выполнялась и не блокирует merge gate.
+- Следующая проверка — deterministic XChaCha20-Poly1305 cookie-reply fixture и внешние wire datagrams с trailer bytes; текущие MAC vectors проверяют ключи/теги, но не AEAD cookie envelope.
