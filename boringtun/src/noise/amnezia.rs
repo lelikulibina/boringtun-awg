@@ -2063,8 +2063,10 @@ mod tests {
             Some(0),
             "the full u16 CPA range must not overflow"
         );
+        let full_width = u32::from(u16::MAX) + 1;
+        let full_zone = u32::MAX - (u32::MAX % full_width);
         assert_eq!(
-            AmneziaConfig::map_content_padding_sample(0, u16::MAX, u32::MAX - 1),
+            AmneziaConfig::map_content_padding_sample(0, u16::MAX, full_zone - 1),
             Some(u16::MAX as usize),
             "the final accepted full-range sample must reach the maximum"
         );
