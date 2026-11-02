@@ -423,11 +423,7 @@ impl AmneziaConfig {
 
     /// Configure one AmneziaWG I1-I5 signature chain (index 0..=4).
     /// An empty/no-tag specification clears that slot.
-    pub fn with_signature_packet(
-        mut self,
-        index: usize,
-        spec: &str,
-    ) -> Result<Self, String> {
+    pub fn with_signature_packet(mut self, index: usize, spec: &str) -> Result<Self, String> {
         let slot = self
             .signature_packets
             .get_mut(index)

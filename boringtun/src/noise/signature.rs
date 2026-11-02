@@ -57,7 +57,9 @@ impl SignatureChain {
                 "b" => {
                     let hex = value.strip_prefix("0x").unwrap_or(value);
                     if hex.is_empty() || hex.len() % 2 != 0 {
-                        return Err("signature <b> requires a non-empty even-length hex value".into());
+                        return Err(
+                            "signature <b> requires a non-empty even-length hex value".into()
+                        );
                     }
                     let mut bytes = Vec::with_capacity(hex.len() / 2);
                     for pair in hex.as_bytes().chunks_exact(2) {
@@ -69,10 +71,12 @@ impl SignatureChain {
                                 _ => None,
                             }
                         };
-                        let high = digit(pair[0])
-                            .ok_or_else(|| "signature <b> contains non-hex characters".to_owned())?;
-                        let low = digit(pair[1])
-                            .ok_or_else(|| "signature <b> contains non-hex characters".to_owned())?;
+                        let high = digit(pair[0]).ok_or_else(|| {
+                            "signature <b> contains non-hex characters".to_owned()
+                        })?;
+                        let low = digit(pair[1]).ok_or_else(|| {
+                            "signature <b> contains non-hex characters".to_owned()
+                        })?;
                         bytes.push((high << 4) | low);
                     }
                     SignatureOperation::Bytes(bytes)
@@ -100,7 +104,9 @@ impl SignatureChain {
             wire_len = wire_len
                 .checked_add(operation_len)
                 .filter(|len| *len <= MAX_SIGNATURE_DATAGRAM)
-                .ok_or_else(|| "signature chain exceeds the maximum UDP datagram size".to_owned())?;
+                .ok_or_else(|| {
+                    "signature chain exceeds the maximum UDP datagram size".to_owned()
+                })?;
             operations.push(operation);
         }
 
@@ -166,7 +172,10 @@ fn parse_length(value: &str, tag: &str) -> Result<usize, String> {
         .parse::<usize>()
         .map_err(|_| format!("signature <{}> requires a non-negative length", tag))?;
     if len > MAX_SIGNATURE_DATAGRAM {
-        return Err(format!("signature <{}> length exceeds the UDP datagram limit", tag));
+        return Err(format!(
+            "signature <{}> length exceeds the UDP datagram limit",
+            tag
+        ));
     }
     Ok(len)
 }
@@ -178,11 +187,9 @@ mod tests {
 
     #[test]
     fn parses_and_emits_upstream_signature_chain_operations() {
-        let chain = SignatureChain::parse(
-            "<b 0x4142><dz 2><r 4><rc 3><rd 2><t><d><ds>",
-        )
-        .unwrap()
-        .expect("non-empty chain");
+        let chain = SignatureChain::parse("<b 0x4142><dz 2><r 4><rc 3><rd 2><t><d><ds>")
+            .unwrap()
+            .expect("non-empty chain");
         let mut rng = ChaCha8Rng::seed_from_u64(0x1_1_5);
         let packet = chain.emit(&mut rng);
 
