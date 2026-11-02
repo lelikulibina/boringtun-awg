@@ -1401,6 +1401,32 @@ mod tests {
 
     #[test]
     #[cfg(feature = "mock-instant")]
+    fn reject_expiry_uses_configured_upper_bound_and_inclusive_key_lifetime() {
+        let config = AmneziaConfig::new(0, 0, 0, 0).with_reject_after_time(180, 200);
+        let (mut tun, _peer) = create_two_tuns_with_amnezia(config);
+        assert!(tun.sessions.iter().any(Option::is_some));
+
+        // Session expiration is strictly after the configured upper bound.
+        mock_instant::MockClock::advance(Duration::from_secs(200));
+        assert!(matches!(tun.update_timers(&mut []), TunnResult::Done));
+        assert!(tun.sessions.iter().any(Option::is_some));
+
+        mock_instant::MockClock::advance(Duration::from_secs(1));
+        assert!(matches!(tun.update_timers(&mut []), TunnResult::Done));
+        assert!(tun.sessions.iter().all(Option::is_none));
+
+        // The handshake key material lifetime is three times the upper bound.
+        mock_instant::MockClock::advance(Duration::from_secs(398));
+        assert!(matches!(tun.update_timers(&mut []), TunnResult::Done));
+        mock_instant::MockClock::advance(Duration::from_secs(1));
+        assert!(matches!(
+            tun.update_timers(&mut []),
+            TunnResult::Err(WireGuardError::ConnectionExpired)
+        ));
+    }
+
+    #[test]
+    #[cfg(feature = "mock-instant")]
     fn new_handshake_after_two_mins() {
         let (mut my_tun, mut their_tun) = create_two_tuns_and_handshake();
         let mut my_dst = [0u8; 1024];
