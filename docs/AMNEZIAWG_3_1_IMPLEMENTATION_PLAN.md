@@ -68,13 +68,15 @@
 **Текущий статус:** базовая реализация диапазонов, UAPI и событийной рандомизации добавлена. Этап не считается завершённым до дифференциальных тестов с upstream: BoringTun использует polling `update_timers`, поэтому точность таймерных переходов и количество попыток handshake требуют отдельной проверки.
 
 ### Этап 5. RandomTrailers
-- [ ] Сверить upstream алгоритм, особенно условия включения и поведение с H1-H4 ranges.
-- [ ] Реализовать добавление случайных хвостовых байтов к нужным пакетам с учётом MTU.
-- [ ] Реализовать совместное распознавание пакетов и корректное отбрасывание лишнего хвоста.
-- [ ] Добавить регрессионные тесты на переменные H-диапазоны, все S1-S4, транспорт и handshake.
-- [ ] Отдельно проверить известные upstream edge cases и не включать флаг по умолчанию.
+- [x] Сверить upstream алгоритм: handshake/cookie получают случайный незашифрованный хвост; transport получает нулевое дополнение внутри AEAD; предел — peer UDP window (по умолчанию 500 байт).
+- [x] Реализовать опциональный флаг random_trailers (по умолчанию выключен), handshake/cookie trailer и transport padding с ограничением по MTU/UDP window.
+- [x] Реализовать inbound распознавание переменной длины с удалением handshake/cookie trailer до MAC/Noise parsing; для transport лишние нули удаляются по IPv4 Total Length / IPv6 Payload Length после AEAD.
+- [x] Сохранить upstream precedence: ContentPaddingAddition заменяет RandomTrailers только для transport; handshake/cookie trailers остаются независимыми.
+- [x] Ограничить cookie trailer остатком размера исходного запроса, чтобы RandomTrailers не создавал amplification.
+- [x] Добавить unit/tunnel тесты на handshake/cookie framing, HP + trailer, transport AEAD padding, MTU bounds и CPA precedence.
+- [ ] Differentially verify wire lengths, random range boundaries, H1-H4 classification and cookie reply behaviour against upstream Go peer; отдельно закрыть regressions из upstream issues #185/#186.
 
-**Готово, когда:** обе стороны принимают пакеты с trailer, корректно выделяют исходное сообщение и не возникает потерь на допустимых комбинациях диапазонов.
+**Готово, когда:** обе стороны принимают пакеты с trailer, корректно выделяют исходное сообщение и не возникает потерь на допустимых комбинациях диапазонов. Этап не считается завершённым до differential interop.
 
 ### Этап 6. UAPI, конфигурация и документация
 - [ ] Поддержать все новые параметры в set/get, конфигурационном парсинге и round-trip сериализации.
@@ -108,6 +110,7 @@
 | HeaderProtectionKey | Не реализовано | Этап 2 |
 | ContentPaddingAddition | Реализовано в текущем PR: config/UAPI, MTU-bounded transport padding и receive trimming; IPv4/IPv6 MTU-clamp/receive-trimming tests added; IPv4 keepalive test; Linux CI passed on prior commit | Этап 3 |
 | Randomized timers | Реализованы диапазоны UAPI/config, случайный выбор порогов, jitter и retry budget; differential interop ещё не выполнен | Этап 4 |
+| RandomTrailers | Реализованы handshake/cookie trailers и transport AEAD padding, UAPI flag off by default; differential interop ещё не выполнен | Этап 5 |
 | RandomTrailers | Не реализовано | Этап 5 |
 
 ## Точки входа в код
