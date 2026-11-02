@@ -50,7 +50,10 @@ fn parse_u16_range(val: &str) -> Option<(u16, u16)> {
 fn parse_u32_range(val: &str) -> Option<(u32, u32)> {
     let (start, end) = match val.split_once('-') {
         Some((start, end)) => (start.trim().parse().ok()?, end.trim().parse().ok()?),
-        None => { let value: u32 = val.trim().parse().ok()?; (value, value) }
+        None => {
+            let value: u32 = val.trim().parse().ok()?;
+            (value, value)
+        }
     };
     (start <= end).then_some((start, end))
 }
@@ -195,7 +198,9 @@ impl AwgParams {
         amnezia.rekey_timeout = self.rekey_timeout.unwrap_or(amnezia.rekey_timeout);
         amnezia.reject_after_time = self.reject_after_time.unwrap_or(amnezia.reject_after_time);
         amnezia.keepalive_timeout = self.keepalive_timeout.unwrap_or(amnezia.keepalive_timeout);
-        amnezia.max_handshake_attempts = self.max_handshake_attempts.unwrap_or(amnezia.max_handshake_attempts);
+        amnezia.max_handshake_attempts = self
+            .max_handshake_attempts
+            .unwrap_or(amnezia.max_handshake_attempts);
         let amnezia = amnezia.with_pre_handshake_junk(
             self.jc.unwrap_or(cur_junk.packet_count),
             self.jmin.unwrap_or(cur_junk.packet_size_min),
@@ -657,23 +662,38 @@ fn api_set(reader: &mut BufReader<&UnixStream>, d: &mut LockReadGuard<Device>) -
                             None => return EINVAL,
                         },
                         "rekey_after_time" => match parse_u32_range(val) {
-                            Some(range) => { awg.rekey_after_time = Some(range); awg.seen = true; }
+                            Some(range) => {
+                                awg.rekey_after_time = Some(range);
+                                awg.seen = true;
+                            }
                             None => return EINVAL,
                         },
                         "rekey_timeout" => match parse_u32_range(val) {
-                            Some(range) => { awg.rekey_timeout = Some(range); awg.seen = true; }
+                            Some(range) => {
+                                awg.rekey_timeout = Some(range);
+                                awg.seen = true;
+                            }
                             None => return EINVAL,
                         },
                         "reject_after_time" => match parse_u32_range(val) {
-                            Some(range) => { awg.reject_after_time = Some(range); awg.seen = true; }
+                            Some(range) => {
+                                awg.reject_after_time = Some(range);
+                                awg.seen = true;
+                            }
                             None => return EINVAL,
                         },
                         "keepalive_timeout" => match parse_u32_range(val) {
-                            Some(range) => { awg.keepalive_timeout = Some(range); awg.seen = true; }
+                            Some(range) => {
+                                awg.keepalive_timeout = Some(range);
+                                awg.seen = true;
+                            }
                             None => return EINVAL,
                         },
                         "max_handshake_attempts" => match parse_u32_range(val) {
-                            Some(range) => { awg.max_handshake_attempts = Some(range); awg.seen = true; }
+                            Some(range) => {
+                                awg.max_handshake_attempts = Some(range);
+                                awg.seen = true;
+                            }
                             None => return EINVAL,
                         },
                         "disable_cookies" => match val.parse::<bool>() {
@@ -989,7 +1009,8 @@ mod tests {
         params.keepalive_timeout = parse_u32_range("8-12");
         params.max_handshake_attempts = parse_u32_range("10-20");
         params.seen = true;
-        let (_, merged) = params.merged(ObfuscationRanges::default(), &current)
+        let (_, merged) = params
+            .merged(ObfuscationRanges::default(), &current)
             .expect("valid timer ranges");
         assert_eq!(merged.rekey_after_time, (100, 140));
         assert_eq!(merged.rekey_timeout, (3, 7));
@@ -1000,7 +1021,9 @@ mod tests {
         let mut invalid = AwgParams::default();
         invalid.rekey_timeout = Some((9, 3));
         invalid.seen = true;
-        assert!(invalid.merged(ObfuscationRanges::default(), &current).is_err());
+        assert!(invalid
+            .merged(ObfuscationRanges::default(), &current)
+            .is_err());
     }
 
     #[test]
