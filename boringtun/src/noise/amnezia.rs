@@ -510,6 +510,18 @@ impl AmneziaConfig {
             ));
         }
 
+        for (name, (min, max)) in [
+            ("rekey_after_time", self.rekey_after_time),
+            ("rekey_timeout", self.rekey_timeout),
+            ("reject_after_time", self.reject_after_time),
+            ("keepalive_timeout", self.keepalive_timeout),
+            ("max_handshake_attempts", self.max_handshake_attempts),
+        ] {
+            if min > max {
+                return Err(format!("{} minimum {} exceeds maximum {}", name, min, max));
+            }
+        }
+
         for (label, junk, base) in [
             ("S1", self.init_packet_junk_size, HANDSHAKE_INIT_SZ),
             ("S2", self.response_packet_junk_size, HANDSHAKE_RESP_SZ),
