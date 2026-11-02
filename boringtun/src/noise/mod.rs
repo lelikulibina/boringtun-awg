@@ -1446,6 +1446,57 @@ mod tests {
 
     #[test]
     #[cfg(feature = "mock-instant")]
+    fn send_side_rekey_completes_and_new_session_carries_data() {
+        let config = AmneziaConfig::new(0, 0, 0, 0)
+            .with_rekey_after_time(2, 2)
+            .with_rekey_timeout(2, 2)
+            .with_reject_after_time(180, 180)
+            .with_keepalive_timeout(10, 10);
+        let (mut initiator, mut responder) = create_two_tuns_with_amnezia(config);
+
+        let init = create_handshake_init(&mut initiator);
+        let response = create_handshake_response(&mut responder, &init);
+        let keepalive = parse_handshake_resp(&mut initiator, &response);
+        parse_keepalive(&mut responder, &keepalive);
+
+        mock_instant::MockClock::advance(Duration::from_millis(1));
+        let packet = create_ipv4_udp_packet();
+        let mut network = [0u8; 2048];
+        let mut tunnel = [0u8; 2048];
+        assert!(matches!(
+            initiator.encapsulate(&packet, &mut network),
+            TunnResult::WriteToNetwork(_)
+        ));
+
+        mock_instant::MockClock::advance(Duration::from_millis(1999));
+        let rekey_init = unwrap_network_packet(initiator.update_timers(&mut network));
+        assert!(matches!(
+            Tunn::parse_incoming_packet(initiator.handshake.obf, &rekey_init),
+            Ok(Packet::HandshakeInit(_))
+        ));
+
+        let rekey_response = create_handshake_response(&mut responder, &rekey_init);
+        let rekey_keepalive = parse_handshake_resp(&mut initiator, &rekey_response);
+        parse_keepalive(&mut responder, &rekey_keepalive);
+
+        assert_eq!(
+            initiator.time_since_last_handshake(),
+            Some(Duration::ZERO),
+            "successful rekey must refresh the initiator handshake timestamp"
+        );
+
+        let outbound = match initiator.encapsulate(&packet, &mut network) {
+            TunnResult::WriteToNetwork(packet) => packet.to_vec(),
+            other => panic!("expected data under rekeyed session, got {:?}", other),
+        };
+        assert!(matches!(
+            responder.decapsulate(None, &outbound, &mut tunnel),
+            TunnResult::WriteToTunnelV4(_, _)
+        ));
+    }
+
+    #[test]
+    #[cfg(feature = "mock-instant")]
     fn responder_does_not_initiate_send_side_rekey_after_rekey_after_time() {
         let config = AmneziaConfig::new(0, 0, 0, 0)
             .with_rekey_after_time(2, 2)
