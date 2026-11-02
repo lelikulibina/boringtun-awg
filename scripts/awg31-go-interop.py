@@ -153,6 +153,7 @@ def run_profile(bt: str, go: str, name: str, extra: str, awg_enabled: bool) -> N
     bt_iface, go_iface = f"bt31{token}", f"go31{token}"
     veth_server, veth_client = f"avs{token}", f"avc{token}"
     processes: list[subprocess.Popen] = []
+    log_files = []
     links_created = False
     workdir = tempfile.TemporaryDirectory(prefix="awg31-interop-")
     logs = Path(workdir.name)
@@ -191,6 +192,7 @@ def run_profile(bt: str, go: str, name: str, extra: str, awg_enabled: bool) -> N
 
         bt_log = open(logs / "boringtun.log", "w", encoding="utf-8")
         go_log = open(logs / "amneziawg-go.log", "w", encoding="utf-8")
+        log_files.extend((bt_log, go_log))
         bt_proc = subprocess.Popen(
             ["ip", "netns", "exec", ns_server, bt,
              "--foreground", "--disable-drop-privileges", bt_iface],
@@ -218,6 +220,14 @@ def run_profile(bt: str, go: str, name: str, extra: str, awg_enabled: bool) -> N
         ns(ns_client, "ip", "route", "add", f"{SERVER_TUN}/32", "dev", go_iface)
         wait_handshake(bt_iface, ns_client, SERVER_TUN)
         print(f"PASS {name}: handshake + bidirectional traffic")
+    except Exception:
+        for log_path in (logs / "boringtun.log", logs / "amneziawg-go.log"):
+            if log_path.exists():
+                tail = log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-12:]
+                if tail:
+                    print(f"--- {name}: {log_path.name} ---", file=sys.stderr)
+                    print("\\n".join(tail), file=sys.stderr)
+        raise
     finally:
         for process in reversed(processes):
             if process.poll() is None:
@@ -227,6 +237,8 @@ def run_profile(bt: str, go: str, name: str, extra: str, awg_enabled: bool) -> N
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait()
+        for log_file in log_files:
+            log_file.close()
         for iface in (bt_iface, go_iface):
             for directory in ("/var/run/amneziawg", "/var/run/wireguard"):
                 path = f"{directory}/{iface}.sock"
