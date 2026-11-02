@@ -428,6 +428,7 @@ impl Tunn {
     /// configuration.
     pub fn set_obfuscation(&mut self, obf: ObfuscationRanges, amnezia: AmneziaConfig) {
         self.handshake.set_obfuscation(obf);
+        self.timers.set_timer_ranges(&amnezia);
         self.amnezia = amnezia;
         self.pending_amnezia_junk = None;
     }
