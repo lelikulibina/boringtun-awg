@@ -39,23 +39,27 @@ h4=1526332224
 HPK = "42" * 32
 
 PROFILES = [
-    ("HeaderProtectionKey", f"header_protection_key={HPK}\n"),
-    ("ContentPaddingAddition", "content_padding_addition=16-64\n"),
-    ("RandomTrailers", "random_trailers=true\n"),
-    ("DisableCookies", "disable_cookies=true\n"),
+    ("vanilla WireGuard baseline", "", False),
+    ("AWG 2.x baseline", "", True),
+    ("HeaderProtectionKey", f"header_protection_key={HPK}\\n", True),
+    ("ContentPaddingAddition", "content_padding_addition=16-64\\n", True),
+    ("RandomTrailers", "random_trailers=true\\n", True),
+    ("DisableCookies", "disable_cookies=true\\n", True),
     (
         "randomized timers",
-        "rekey_after_time=119-120\nrekey_timeout=5-6\n"
-        "reject_after_time=179-180\nkeepalive_timeout=9-10\n"
-        "max_handshake_attempts=18-19\n",
+        "rekey_after_time=119-120\\nrekey_timeout=5-6\\n"
+        "reject_after_time=179-180\\nkeepalive_timeout=9-10\\n"
+        "max_handshake_attempts=18-19\\n",
+        True,
     ),
     (
         "all AWG 3.1 extensions combined",
-        f"header_protection_key={HPK}\n"
-        "content_padding_addition=16-64\nrandom_trailers=true\n"
-        "disable_cookies=true\nrekey_after_time=119-120\n"
-        "rekey_timeout=5-6\nreject_after_time=179-180\n"
-        "keepalive_timeout=9-10\nmax_handshake_attempts=18-19\n",
+        f"header_protection_key={HPK}\\n"
+        "content_padding_addition=16-64\\nrandom_trailers=true\\n"
+        "disable_cookies=true\\nrekey_after_time=119-120\\n"
+        "rekey_timeout=5-6\\nreject_after_time=179-180\\n"
+        "keepalive_timeout=9-10\\nmax_handshake_attempts=18-19\\n",
+        True,
     ),
 ]
 
@@ -143,7 +147,7 @@ def wait_handshake(server_iface: str, client_ns: str, server_ip: str) -> None:
     raise RuntimeError("no handshake/traffic before timeout")
 
 
-def run_profile(bt: str, go: str, name: str, extra: str) -> None:
+def run_profile(bt: str, go: str, name: str, extra: str, awg_enabled: bool) -> None:
     token = uuid.uuid4().hex[:10]
     ns_server, ns_client = f"awg31s{token}", f"awg31c{token}"
     bt_iface, go_iface = f"bt31{token}", f"go31{token}"
@@ -201,7 +205,7 @@ def run_profile(bt: str, go: str, name: str, extra: str) -> None:
         wait_socket(bt_iface, bt_proc)
         wait_socket(go_iface, go_proc)
 
-        awg = S_AND_H + extra
+        awg = (S_AND_H if awg_enabled else "") + extra
         set_peer(bt_iface, server_private, client_public, "none",
                  f"{CLIENT_TUN}/32", awg)
         set_peer(go_iface, client_private, server_public,
@@ -250,9 +254,9 @@ def main() -> int:
             print(f"not an executable file: {binary}", file=sys.stderr)
             return 2
     failures = 0
-    for name, extra in PROFILES:
+    for name, extra, awg_enabled in PROFILES:
         try:
-            run_profile(bt, go, name, extra)
+            run_profile(bt, go, name, extra, awg_enabled)
         except Exception as error:
             failures += 1
             print(f"FAIL {name}: {error}", file=sys.stderr)
