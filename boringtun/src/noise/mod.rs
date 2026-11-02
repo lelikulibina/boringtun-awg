@@ -2037,6 +2037,18 @@ mod tests {
     }
 
     #[test]
+    fn header_protection_completes_a_full_wireguard_handshake_and_keepalive() {
+        let config = AmneziaConfig::new(12, 12, 12, 12)
+            .with_header_protection_key([0x6b; 32]);
+        let (mut initiator, mut responder) = create_two_tuns_with_amnezia(config);
+
+        let initiation = create_handshake_init(&mut initiator);
+        let response = create_handshake_response(&mut responder, &initiation);
+        let keepalive = parse_handshake_resp(&mut initiator, &response);
+        parse_keepalive(&mut responder, &keepalive);
+    }
+
+    #[test]
     fn obf_ranges_near_u32_max_random_within_bounds() {
         let h1_min = u32::MAX - 10;
         let h1_max = u32::MAX;
