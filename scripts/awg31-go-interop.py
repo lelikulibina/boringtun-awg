@@ -305,15 +305,21 @@ def verify_wire_pcap(
         if src_port != 51820 and dst_port != 51820:
             continue
         payload = ip[ihl + 8:min(len(ip), ihl + udp_len)]
-        if len(payload) < prefix + 4:
+        if len(payload) < 4:
             continue
         packets += 1
         datagram_index += 1
         direction = "server_to_client" if src_port == 51820 else "client_to_server"
+        is_signature = False
         for signature in expected_signatures:
             if payload.startswith(signature):
                 seen_signatures.add(signature)
                 signature_positions.setdefault(signature, datagram_index)
+                is_signature = True
+        if is_signature:
+            continue
+        if len(payload) < prefix + 4:
+            continue
         encrypted_tag = payload[prefix:prefix + 4]
         if hp_key is not None:
             if len(payload) < 12:
