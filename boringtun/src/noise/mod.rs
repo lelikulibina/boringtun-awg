@@ -1938,8 +1938,7 @@ mod tests {
             TunnResult::Err(_)
         ));
         assert_eq!(
-            initiator.timers.new_handshake_deadline,
-            deadline,
+            initiator.timers.new_handshake_deadline, deadline,
             "unauthenticated inbound traffic must not cancel the pending inactivity handshake"
         );
 
