@@ -538,12 +538,13 @@ impl Tunn {
             None => return TunnResult::Err(WireGuardError::InvalidPacket),
         };
         let mut cookie = [0u8; COOKIE_REPLY_SZ];
-        let packet = match self.rate_limiter.verify_packet(
+        let packet = match self.rate_limiter.verify_packet_with_cookie_policy(
             self.handshake.obf,
             &mut self.handshake.rng,
             src_addr,
             datagram,
             &mut cookie,
+            self.amnezia.disable_cookies,
         ) {
             Ok(packet) => packet,
             Err(TunnResult::WriteToNetwork(cookie)) => {
