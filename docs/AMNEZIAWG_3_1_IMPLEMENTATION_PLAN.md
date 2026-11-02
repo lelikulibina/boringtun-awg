@@ -50,7 +50,7 @@
 - [x] Добавлять случайное число нулевых байтов к transport plaintext до AEAD encryption.
 - [x] Ограничивать ContentPaddingAddition остатком peer UDP window (по умолчанию 500 байт); пустые keepalive не дополнять.
 - [x] Приёмная сторона обрезает расшифрованный пакет по IPv4 Total Length / IPv6 Payload Length через существующий validator.
-- [ ] Добавить отдельные boundary и межоперационные тесты. IPv4 и IPv6 MTU-clamp/receive-trimming тесты добавлены; ожидают CI на новом коммите.
+- [x] Добавить IPv4/IPv6 boundary и receive-trimming tests, включая clamp по доступному peer UDP window. Linux CI на HEAD `526f60b40c6b2a8edcaab1b53247ad752230c7ff` прошёл; после последующего исправления UDP-window self-growth и нового regression test требуется повторный CI.
 
 **Готово, когда:** пакеты не превышают MTU/буферные лимиты, payload восстанавливается без изменений, значения диапазона соблюдаются.
 
@@ -69,11 +69,12 @@
 
 ### Этап 5. RandomTrailers
 - [x] Сверить upstream алгоритм: handshake/cookie получают случайный незашифрованный хвост; transport получает нулевое дополнение внутри AEAD; предел — peer UDP window (по умолчанию 500 байт).
-- [x] Реализовать опциональный флаг random_trailers (по умолчанию выключен), handshake/cookie trailer и transport padding с ограничением по peer UDP window и максимальному размеру UDP-датаграммы.
+- [x] Реализовать опциональный флаг `random_trailers` (по умолчанию выключен), handshake/cookie trailer и transport padding с ограничением по peer UDP window и максимальному размеру UDP-датаграммы.
 - [x] Реализовать inbound распознавание переменной длины с удалением handshake/cookie trailer до MAC/Noise parsing; для transport лишние нули удаляются по IPv4 Total Length / IPv6 Payload Length после AEAD.
 - [x] Сохранить upstream precedence: ContentPaddingAddition заменяет RandomTrailers только для transport; handshake/cookie trailers остаются независимыми.
 - [x] Ограничить cookie trailer остатком размера исходного запроса, чтобы RandomTrailers не создавал amplification.
 - [x] Добавить unit/tunnel тесты на handshake/cookie framing, совместную работу HP + trailer, transport AEAD padding, UDP-window bounds и CPA precedence.
+- [x] Исправить локальное увеличение UDP window исходящим размером пакета: окно теперь растёт только по аутентифицированной входящей датаграмме, как в upstream. Добавлен regression test: пакет больше начального окна 500 байт не получает случайное дополнение.
 - [ ] Differentially verify wire lengths, random range boundaries, H1-H4 classification and cookie reply behaviour against upstream Go peer; отдельно закрыть regressions из upstream issues #185/#186.
 
 **Готово, когда:** обе стороны принимают пакеты с trailer, корректно выделяют исходное сообщение и не возникает потерь на допустимых комбинациях диапазонов. Этап не считается завершённым до differential interop.
@@ -111,7 +112,6 @@
 | ContentPaddingAddition | Реализовано в текущем PR: config/UAPI, peer-UDP-window-bounded transport padding и receive trimming; IPv4/IPv6 boundary/receive-trimming tests; IPv4 keepalive test | Этап 3 |
 | Randomized timers | Реализованы диапазоны UAPI/config, случайный выбор порогов, jitter и retry budget; differential interop ещё не выполнен | Этап 4 |
 | RandomTrailers | Реализованы handshake/cookie trailers и transport AEAD padding, UAPI flag off by default; differential interop ещё не выполнен | Этап 5 |
-| RandomTrailers | Не реализовано | Этап 5 |
 
 ## Точки входа в код
 
@@ -128,7 +128,7 @@
 - Upstream `device/send.go` выбирает случайное добавление по inclusive range для непустого transport payload, ограничивает его свободным местом до tunnel MTU, добавляет нулевые байты к plaintext IP-пакету и затем шифрует расширенный payload через AEAD. Это отличается от S4 — незашифрованного префикса перед WireGuard message.
 - Upstream `device/receive.go` сначала расшифровывает, затем проверяет внутреннюю длину IPv4 Total Length или IPv6 Payload Length и обрезает plaintext перед записью в TUN. BoringTun уже выполняет это в `Tunn::validate_decapsulated_packet`, поэтому дополнительное поле framing не требуется.
 - Пустые keepalive не дополняются. Если параметр не задан, эта реализация сохраняет существующие размеры пакетов BoringTun, не меняя legacy wire lengths побочным эффектом.
-- Текущая реализация добавляет inclusive `u16` range в `AmneziaConfig` и UAPI `content_padding_addition`, задаёт TUN MTU каждому `Tunn`, добавляет нулевые байты до AEAD и ограничивает размер доступным MTU. RandomTrailers и рандомизация таймеров пока не реализуются.
+- Текущая реализация добавляет inclusive `u16` range в `AmneziaConfig` и UAPI `content_padding_addition`, добавляет нулевые байты до AEAD и ограничивает их доступным peer UDP window. Пустой payload не получает CPA. В сочетании с RandomTrailers ContentPaddingAddition имеет приоритет для transport, как в upstream.
 - Upstream sources: `device/send.go` (`randomPaddingAddition`, `RoutineEncryption`) и `device/receive.go` (`RoutineDecryption` и IPv4/IPv6 length validation). В upstream есть отдельные edge-case reports по сочетанию ContentPaddingAddition/RandomTrailers; RandomTrailers остаётся выключенным до отдельного аудита.
 
 ## Последний handoff (2026-11-02)
@@ -138,6 +138,8 @@
 - Header Protection сейчас частично реализован в `noise/amnezia.rs`, `noise/mod.rs`, `device/api.rs`; зависимость raw ChaCha20 добавлена в `boringtun/Cargo.toml` и lockfile.
 - Upstream receive path: `device/receive.go`. Он сначала строит cipher по `packet[:12]`, восстанавливает type из ChaCha20 keystream, определяет packet kind/padding по H-ranges, затем XOR-ит оставшуюся часть handshake/cookie или только `packet[4:MessageTransportHeaderSize]` для transport. Send path шифрует handshake/cookie целиком, transport header отдельно. Не шифровать transport AEAD payload.
 - Важное исправление уже внесено: transport egress ограничен первыми 16 байтами; payload/tag AEAD остаются нетронутыми.
+- RandomTrailers реализованы в `AmneziaConfig`, UAPI и Tunn framing: handshake/cookie trailer добавляется после фиксированного WG-сообщения; transport zero padding входит в AEAD plaintext. На ingress handshake/cookie trailer отрезается до MAC/Noise parsing, transport padding — после AEAD по IP length. `ContentPaddingAddition` заменяет RandomTrailers только для transport; handshake/cookie trailer остаётся активным.
+- Peer UDP window начинается с 500 байт, растёт только по размеру аутентифицированных входящих transport datagrams и сбрасывается при roaming. Не увеличивать его исходящим пакетом: пакет больше текущего окна не должен получать padding. Cookie reply ограничен размером вызвавшей его датаграммы.
 - В device UDP ingress при включённом HeaderProtectionKey не допускается fallback к raw plaintext после неудачной расшифровки; такой пакет отбрасывается. Есть детерминированный negative test.
 - В CI workflow оставлены только Ubuntu/Linux jobs; macOS/Windows отключены, Semgrep остаётся отдельным workflow.
 - Не считать этап Header Protection завершённым до differential test vectors, реального двустороннего теста с upstream и vanilla WG/AWG 2.x регрессии. Текущий Rust reference-vector test — не полноценный Go differential test. Сверить текущий код по актуальному upstream commit перед продолжением.
