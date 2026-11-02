@@ -20,6 +20,7 @@ const DNS_OPT_MIN_WIRE_SIZE: usize = DNS_OPT_FIXED_LEN + 4;
 const DEFAULT_JUNK_PACKET_SIZE_MIN: u16 = 50;
 const DEFAULT_JUNK_PACKET_SIZE_MAX: u16 = 1000;
 const MAX_JUNK_PACKET_COUNT: u16 = 128;
+const DEFAULT_UDP_WINDOW: usize = 500;
 const MAX_JUNK_PACKET_SIZE: u16 = 1280;
 const MAX_JUNK_PACKET_DELAY_MS: u16 = 200;
 /// Largest datagram that can actually be sent: the IPv4 UDP payload limit,
@@ -284,6 +285,8 @@ pub struct AmneziaConfig {
     pub(crate) reject_after_time: (u32, u32),
     pub(crate) keepalive_timeout: (u32, u32),
     pub(crate) max_handshake_attempts: (u32, u32),
+    /// Add random trailing bytes to handshake/cookie datagrams and encrypted transport payloads.
+    pub(crate) random_trailers: bool,
     /// Suppress the client-only pre-handshake burst (Jc junk packets and the
     /// protocol imitation sequence) while keeping every other AmneziaWG
     /// behaviour. See [`AmneziaConfig::as_responder`].
@@ -380,6 +383,7 @@ impl AmneziaConfig {
             reject_after_time: (0, 0),
             keepalive_timeout: (0, 0),
             max_handshake_attempts: (0, 0),
+            random_trailers: false,
             suppress_pre_handshake: false,
         }
     }
@@ -408,6 +412,13 @@ impl AmneziaConfig {
     /// Use `(0, 0)` to disable additional content padding.
     pub fn with_content_padding_addition(mut self, min: u16, max: u16) -> Self {
         self.content_padding_addition = (min, max);
+        self
+    }
+
+    /// Enable AmneziaWG RandomTrailers. Transport padding is encrypted; handshake
+    /// and cookie trailers are appended after the fixed-size WireGuard message.
+    pub fn with_random_trailers(mut self, enabled: bool) -> Self {
+        self.random_trailers = enabled;
         self
     }
 
@@ -743,7 +754,10 @@ impl AmneziaConfig {
         base_size: usize,
     ) -> bool {
         let junk_size = self.inbound_junk_size(kind);
-        if packet.len() != junk_size + base_size {
+        let minimum_size = junk_size.saturating_add(base_size);
+        if packet.len() < minimum_size
+            || (!self.random_trailers && packet.len() != minimum_size)
+        {
             return false;
         }
         Self::read_tag(packet, junk_size)
@@ -783,7 +797,8 @@ impl AmneziaConfig {
             (PacketKind::CookieReply, COOKIE_REPLY_SZ),
         ] {
             if self.inbound_kind_at_offset(obf, packet, kind, base) {
-                return Some(&packet[self.inbound_junk_size(kind)..]);
+                let junk = self.inbound_junk_size(kind);
+                return Some(&packet[junk..junk + base]);
             }
         }
 
@@ -840,8 +855,8 @@ impl AmneziaConfig {
 
             let minimum_size = prefix_size.checked_add(base_size)?;
             let is_transport = kind == PacketKind::TransportData;
-            if (is_transport && packet.len() < minimum_size)
-                || (!is_transport && packet.len() != minimum_size)
+            if packet.len() < minimum_size
+                || (!is_transport && !self.random_trailers && packet.len() != minimum_size)
             {
                 continue;
             }
@@ -999,6 +1014,30 @@ impl AmneziaConfig {
         packet_size: usize,
         rng: &mut impl RngCore,
     ) -> Result<&'a mut [u8], WireGuardError> {
+        self.prepend_outbound_with_limits(
+            obf,
+            buffer,
+            packet_size,
+            DEFAULT_UDP_WINDOW,
+            usize::MAX,
+            rng,
+        )
+    }
+
+    /// Apply S-prefix, Header Protection and optional RandomTrailers.
+    ///
+    /// udp_window is the peer's learned maximum datagram size. max_datagram_size
+    /// is normally unbounded, but cookie replies pass the triggering request's
+    /// size so random trailers can never turn a cookie into an amplifier.
+    pub(crate) fn prepend_outbound_with_limits<'a>(
+        &self,
+        obf: ObfuscationRanges,
+        buffer: &'a mut [u8],
+        packet_size: usize,
+        udp_window: usize,
+        max_datagram_size: usize,
+        rng: &mut impl RngCore,
+    ) -> Result<&'a mut [u8], WireGuardError> {
         let packet = buffer
             .get(..packet_size)
             .ok_or(WireGuardError::DestinationBufferTooSmall)?;
@@ -1010,19 +1049,26 @@ impl AmneziaConfig {
         if self.header_protection_enabled() && junk_size < 12 {
             return Err(WireGuardError::InvalidPacket);
         }
-        if junk_size == 0 {
-            return Ok(&mut buffer[..packet_size]);
-        }
 
-        let new_size = packet_size
+        let prefixed_size = packet_size
             .checked_add(junk_size)
+            .ok_or(WireGuardError::DestinationBufferTooSmall)?;
+        let trailer_len = if self.random_trailers && kind != PacketKind::TransportData {
+            self.random_trailer_len(prefixed_size, udp_window, max_datagram_size, rng)
+        } else {
+            0
+        };
+        let new_size = prefixed_size
+            .checked_add(trailer_len)
             .ok_or(WireGuardError::DestinationBufferTooSmall)?;
         if buffer.len() < new_size {
             return Err(WireGuardError::DestinationBufferTooSmall);
         }
 
-        buffer.copy_within(0..packet_size, junk_size);
-        self.fill_outbound_junk(&mut buffer[..junk_size], packet_size, rng);
+        if junk_size > 0 {
+            buffer.copy_within(0..packet_size, junk_size);
+            self.fill_outbound_junk(&mut buffer[..junk_size], packet_size, rng);
+        }
 
         if self.header_protection_enabled() {
             let nonce: [u8; 12] = buffer[..12]
@@ -1042,7 +1088,53 @@ impl AmneziaConfig {
             cipher.apply_keystream(&mut buffer[junk_size..junk_size + protected_len]);
         }
 
+        if trailer_len > 0 {
+            rng.fill_bytes(&mut buffer[prefixed_size..new_size]);
+        }
+
         Ok(&mut buffer[..new_size])
+    }
+
+    /// Random trailer length follows upstream's exclusive upper bound:
+    /// fastrandn(udp_window - packet_size).
+    pub(crate) fn random_trailer_len(
+        &self,
+        packet_size: usize,
+        udp_window: usize,
+        max_datagram_size: usize,
+        rng: &mut impl RngCore,
+    ) -> usize {
+        if !self.random_trailers {
+            return 0;
+        }
+        let available = udp_window
+            .saturating_sub(packet_size)
+            .min(max_datagram_size.saturating_sub(packet_size));
+        if available == 0 {
+            return 0;
+        }
+        random_usize_inclusive(0, available - 1, rng)
+    }
+
+    /// Transport RandomTrailers are zero padding inside the AEAD plaintext.
+    /// Explicit ContentPaddingAddition takes precedence, matching upstream.
+    pub(crate) fn transport_padding_size(
+        &self,
+        packet_size: usize,
+        mtu: usize,
+        udp_window: usize,
+        rng: &mut impl RngCore,
+    ) -> usize {
+        if self.content_padding_addition != (0, 0) {
+            return self.content_padding_size(packet_size, mtu, rng);
+        }
+        let max_packet_size = mtu.saturating_add(DATA_OVERHEAD_SZ);
+        self.random_trailer_len(
+            packet_size,
+            udp_window.min(max_packet_size),
+            max_packet_size,
+            rng,
+        )
     }
 
     pub fn fill_pre_handshake_junk<'a>(
