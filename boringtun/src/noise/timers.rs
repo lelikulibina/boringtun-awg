@@ -276,6 +276,23 @@ mod tests {
     }
 
     #[test]
+    fn handshake_jitter_uses_upstream_inclusive_zero_to_333_ms_range() {
+        assert_eq!(
+            Timers::map_range_sample(0, 333, 0),
+            Some(0),
+            "zero jitter is valid"
+        );
+        assert_eq!(
+            Timers::map_range_sample(0, 333, 333),
+            Some(333),
+            "the upper jitter endpoint is inclusive"
+        );
+        for _ in 0..512 {
+            assert!(Timers::random_jitter() <= Duration::from_millis(333));
+        }
+    }
+
+    #[test]
     fn fresh_handshake_reselects_retry_budget_from_current_timer_range() {
         let initial = AmneziaConfig::new(0, 0, 0, 0).with_max_handshake_attempts(2, 2);
         let replacement = AmneziaConfig::new(0, 0, 0, 0).with_max_handshake_attempts(7, 7);
