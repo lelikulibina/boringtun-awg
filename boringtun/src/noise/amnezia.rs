@@ -20,7 +20,7 @@ const DNS_OPT_MIN_WIRE_SIZE: usize = DNS_OPT_FIXED_LEN + 4;
 const DEFAULT_JUNK_PACKET_SIZE_MIN: u16 = 50;
 const DEFAULT_JUNK_PACKET_SIZE_MAX: u16 = 1000;
 const MAX_JUNK_PACKET_COUNT: u16 = 128;
-const DEFAULT_UDP_WINDOW: usize = 500;
+pub(crate) const DEFAULT_UDP_WINDOW: usize = 500;
 const MAX_JUNK_PACKET_SIZE: u16 = 1280;
 const MAX_JUNK_PACKET_DELAY_MS: u16 = 200;
 /// Largest datagram that can actually be sent: the IPv4 UDP payload limit,
@@ -1120,17 +1120,18 @@ impl AmneziaConfig {
     /// Explicit ContentPaddingAddition takes precedence, matching upstream.
     pub(crate) fn transport_padding_size(
         &self,
-        packet_size: usize,
+        ip_packet_size: usize,
+        wire_packet_size: usize,
         mtu: usize,
         udp_window: usize,
         rng: &mut impl RngCore,
     ) -> usize {
         if self.content_padding_addition != (0, 0) {
-            return self.content_padding_size(packet_size, mtu, rng);
+            return self.content_padding_size(ip_packet_size, mtu, rng);
         }
         let max_packet_size = mtu.saturating_add(DATA_OVERHEAD_SZ);
         self.random_trailer_len(
-            packet_size,
+            wire_packet_size,
             udp_window.min(max_packet_size),
             max_packet_size,
             rng,
