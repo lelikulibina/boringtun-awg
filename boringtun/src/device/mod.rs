@@ -1654,7 +1654,7 @@ mod ingress_tests {
         // `obfuscated_initiation_demuxes_to_the_initiating_peer`.
         let obf = ObfuscationRanges::default();
 
-        let mut client = Tunn::new_with_amnezia(
+        let mut client = Tunn::new(
             x25519::StaticSecret::random_from_rng(OsRng),
             server_public,
             None,
@@ -1669,7 +1669,6 @@ mod ingress_tests {
             3,
             4,
             4,
-            amnezia.clone(),
         )
         .unwrap();
 
