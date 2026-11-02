@@ -431,7 +431,7 @@ impl Tunn {
                 self.timers.rekey_timeout = Duration::from_secs(
                     self.timers.pick_range(1, REKEY_TIMEOUT.as_secs() as u32) as u64,
                 );
-                self.timers.handshake_attempts = 0;
+                self.timers.select_new_handshake_budget();
                 self.timers.handshake_retry_jitter =
                     Duration::from_millis((OsRng.next_u32() % 334) as u64);
             }
