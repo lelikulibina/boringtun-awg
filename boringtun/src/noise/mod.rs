@@ -89,6 +89,8 @@ pub struct Tunn {
     amnezia: AmneziaConfig,
     /// Tunnel MTU used to cap ContentPaddingAddition.
     mtu: usize,
+    /// Largest authenticated transport datagram observed for this peer.
+    udp_window: usize,
     pending_amnezia_junk: Option<PendingAmneziaJunk>,
     rate_limiter: Arc<RateLimiter>,
 }
@@ -385,6 +387,7 @@ impl Tunn {
             rx_bytes: Default::default(),
             amnezia,
             mtu: 0,
+            udp_window: amnezia::DEFAULT_UDP_WINDOW,
             pending_amnezia_junk: None,
 
             packet_queue: VecDeque::new(),
@@ -509,9 +512,18 @@ impl Tunn {
             // ContentPaddingAddition is applied to the plaintext IP packet before
             // AEAD encryption. Its size is capped by the interface MTU; empty
             // keepalives remain empty and retain their ordinary wire size.
-            let content_padding =
-                self.amnezia
-                    .content_padding_size(src.len(), self.mtu, &mut self.handshake.rng);
+            let mtu = if self.mtu == 0 { usize::MAX } else { self.mtu };
+            let wire_packet_size = src.len()
+                + DATA_OVERHEAD_SZ
+                + self.amnezia.transport_packet_junk_size as usize;
+            self.udp_window = self.udp_window.max(wire_packet_size);
+            let content_padding = self.amnezia.transport_padding_size(
+                src.len(),
+                wire_packet_size,
+                mtu,
+                self.udp_window,
+                &mut self.handshake.rng,
+            );
             if dst.len() < src.len() + content_padding + DATA_OVERHEAD_SZ {
                 return TunnResult::Err(WireGuardError::DestinationBufferTooSmall);
             }
@@ -556,6 +568,8 @@ impl Tunn {
             return self.send_queued_packet(dst);
         }
 
+        let request_datagram_size = datagram.len();
+
         // Header-protected datagrams must be decrypted far enough to recover
         // their type and receiver index before the regular WireGuard parser
         // and rate limiter can inspect them. Without a key, retain the
@@ -584,7 +598,7 @@ impl Tunn {
             Err(TunnResult::WriteToNetwork(cookie)) => {
                 let packet_size = cookie.len();
                 dst[..packet_size].copy_from_slice(cookie);
-                return self.write_to_network(dst, packet_size);
+                return self.write_to_network_bounded(dst, packet_size, request_datagram_size);
             }
             Err(TunnResult::Err(e)) => return TunnResult::Err(e),
             _ => unreachable!(),
@@ -956,10 +970,21 @@ impl Tunn {
     }
 
     fn write_to_network<'a>(&mut self, dst: &'a mut [u8], packet_size: usize) -> TunnResult<'a> {
-        match self.amnezia.prepend_outbound(
+        self.write_to_network_bounded(dst, packet_size, usize::MAX)
+    }
+
+    fn write_to_network_bounded<'a>(
+        &mut self,
+        dst: &'a mut [u8],
+        packet_size: usize,
+        max_datagram_size: usize,
+    ) -> TunnResult<'a> {
+        match self.amnezia.prepend_outbound_with_limits(
             self.handshake.obf,
             dst,
             packet_size,
+            self.udp_window,
+            max_datagram_size,
             &mut self.handshake.rng,
         ) {
             Ok(packet) => TunnResult::WriteToNetwork(packet),
