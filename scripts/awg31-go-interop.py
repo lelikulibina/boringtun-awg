@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """AWG 3.1 bidirectional interoperability matrix: BoringTun <-> amneziawg-go.
 
-Requires Linux, root, iproute2, ping, boringtun-cli built with the device
-feature, and the official amneziawg-go v3 binary. All interfaces and links live
+Requires Linux, root, iproute2, ping, Python `cryptography`, boringtun-cli built
+with the device feature, and the official amneziawg-go v3 binary. All interfaces and links live
 in uniquely named disposable network namespaces; host routes are not changed.
 
 Usage: sudo python3 scripts/awg31-go-interop.py ./target/release/boringtun-cli ./amneziawg-go
