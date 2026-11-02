@@ -289,7 +289,9 @@ pub struct AmneziaConfig {
     pub(crate) keepalive_timeout: (u32, u32),
     pub(crate) max_handshake_attempts: (u32, u32),
     /// Add random trailing bytes to handshake/cookie datagrams and encrypted transport payloads.
-    pub(crate) random_trailers: bool,\n    /// Optional I1-I5 standalone signature packet templates.\n    pub(crate) signature_packets: [Option<SignatureChain>; 5],
+    pub(crate) random_trailers: bool,
+    /// Optional I1-I5 standalone signature packet templates.
+    pub(crate) signature_packets: [Option<SignatureChain>; 5],
     /// Suppress the client-only pre-handshake burst (Jc junk packets and the
     /// protocol imitation sequence) while keeping every other AmneziaWG
     /// behaviour. See [`AmneziaConfig::as_responder`].
@@ -386,7 +388,8 @@ impl AmneziaConfig {
             reject_after_time: (0, 0),
             keepalive_timeout: (0, 0),
             max_handshake_attempts: (0, 0),
-            random_trailers: false,\n            signature_packets: Default::default(),
+            random_trailers: false,
+            signature_packets: Default::default(),
             suppress_pre_handshake: false,
         }
     }
@@ -715,7 +718,9 @@ impl AmneziaConfig {
     /// false for a responder, and for a client with neither Jc nor imitation.
     pub(crate) fn emits_pre_handshake(&self) -> bool {
         !self.suppress_pre_handshake
-            && (self.pre_handshake_junk.is_enabled()\n                || self.has_imitation_sequence()\n                || self.has_signature_packets())
+            && (self.pre_handshake_junk.is_enabled()
+                || self.has_imitation_sequence()
+                || self.has_signature_packets())
     }
 
     /// The configured imitation host, or a generated random one (DNS query name
