@@ -85,7 +85,7 @@ jobs:
   cross-platform-checks:
     strategy:
       matrix:
-        os: [ macos-latest, windows-latest ]
+        os: [ macos-15-intel, windows-latest ]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
