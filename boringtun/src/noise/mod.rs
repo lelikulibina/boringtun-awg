@@ -1488,6 +1488,7 @@ mod tests {
         let (mut my_tun, _their_tun) = create_two_tuns();
         let _init = create_handshake_init(&mut my_tun);
         my_tun.timers.max_handshake_attempts = 0;
+        assert_eq!(my_tun.timers.handshake_attempts, 0);
 
         mock_instant::MockClock::advance(REKEY_TIMEOUT + Duration::from_millis(334));
         let mut dst = [0u8; 2048];
@@ -1495,10 +1496,13 @@ mod tests {
             my_tun.update_timers(&mut dst),
             TunnResult::WriteToNetwork(_)
         ));
+        assert_eq!(my_tun.timers.handshake_attempts, 1);
 
         // The retry budget is not exhausted until the retransmit timer for
-        // the just-sent retry expires; polling immediately must not kill it.
+        // the just-sent retry expires; polling immediately must not kill it
+        // or consume another attempt.
         assert!(matches!(my_tun.update_timers(&mut dst), TunnResult::Done));
+        assert_eq!(my_tun.timers.handshake_attempts, 1);
 
         mock_instant::MockClock::advance(REKEY_TIMEOUT + Duration::from_millis(334));
         assert!(matches!(
