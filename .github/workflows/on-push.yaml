@@ -102,7 +102,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: amnezia-vpn/amneziawg-go
-          ref: master
+          ref: b5928efb6ca19f0153958460c3d141f04abc5c2e
           path: upstream-amneziawg-go
       - name: Build official AmneziaWG Go
         working-directory: upstream-amneziawg-go
