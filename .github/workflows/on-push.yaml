@@ -8,7 +8,7 @@ name: PR Status Checks
 # short-lived branches that merge into it too.
 on:
   push:
-    branches: [ "main", "master", "awg-2.0-extensions" ]
+    branches: [ "main", "master", "awg-2.0-extensions", "feat/amneziawg-3.1-disable-cookies" ]
   pull_request:
     branches: [ "main", "master", "awg-2.0-extensions" ]
 
