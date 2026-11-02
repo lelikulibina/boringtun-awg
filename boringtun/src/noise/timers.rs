@@ -59,10 +59,10 @@ pub struct Timers {
     pub(super) session_timers: [Duration; super::N_SESSIONS],
     /// Deadline for the first authenticated-data-send inactivity timer.
     /// Subsequent data sends do not move it until an authenticated packet arrives.
-    new_handshake_deadline: Option<Duration>,
+    pub(super) new_handshake_deadline: Option<Duration>,
     /// Deadline for the first authenticated-data-receive keepalive timer.
     /// Further data receives while pending request one additional keepalive.
-    send_keepalive_deadline: Option<Duration>,
+    pub(super) send_keepalive_deadline: Option<Duration>,
     need_another_keepalive: bool,
     persistent_keepalive: usize,
     /// Should this timer call reset rr function (if not a shared rr instance)
@@ -265,8 +265,7 @@ impl Tunn {
                     self.timers.keepalive_timeout_max = Duration::from_secs(
                         self.timers.range_max(3, KEEPALIVE_TIMEOUT.as_secs() as u32) as u64,
                     );
-                    let rekey_timeout =
-                        self.timers.pick_range(1, REKEY_TIMEOUT.as_secs() as u32);
+                    let rekey_timeout = self.timers.pick_range(1, REKEY_TIMEOUT.as_secs() as u32);
                     self.timers.new_handshake_timeout = self.timers.keepalive_timeout_max
                         + Duration::from_secs(rekey_timeout as u64);
                     self.timers.new_handshake_jitter =
@@ -286,8 +285,7 @@ impl Tunn {
                             .pick_range(3, KEEPALIVE_TIMEOUT.as_secs() as u32)
                             as u64,
                     );
-                    self.timers.send_keepalive_deadline =
-                        Some(now + self.timers.keepalive_timeout);
+                    self.timers.send_keepalive_deadline = Some(now + self.timers.keepalive_timeout);
                 } else {
                     self.timers.need_another_keepalive = true;
                 }
@@ -517,8 +515,9 @@ impl Tunn {
                         self.timers.send_keepalive_deadline = None;
                         if self.timers.need_another_keepalive {
                             self.timers.need_another_keepalive = false;
-                            let timeout =
-                                self.timers.pick_range(3, KEEPALIVE_TIMEOUT.as_secs() as u32);
+                            let timeout = self
+                                .timers
+                                .pick_range(3, KEEPALIVE_TIMEOUT.as_secs() as u32);
                             keepalive_rearm = Some(Duration::from_secs(timeout as u64));
                         }
                         keepalive_required = true;
@@ -547,9 +546,8 @@ impl Tunn {
             // deadline. Re-arm only after a timer-driven send, matching
             // expiredSendKeepalive; a persistent keepalive must not re-arm it.
             if let Some(timeout) = keepalive_rearm {
-                self.timers.send_keepalive_deadline = Some(
-                    Instant::now().duration_since(self.timers.time_started) + timeout,
-                );
+                self.timers.send_keepalive_deadline =
+                    Some(Instant::now().duration_since(self.timers.time_started) + timeout);
             }
             return result;
         }
