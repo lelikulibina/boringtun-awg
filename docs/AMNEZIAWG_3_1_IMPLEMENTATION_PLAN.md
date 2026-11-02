@@ -23,12 +23,12 @@
 
 ### Этап 1. DisableCookies
 - [x] Добавить `disable_cookies` в конфигурацию с default=false.
-- [x] Не отправлять Cookie Reply при активном rate limiting, если флаг включён.
+- [x] Сверить и реализовать upstream-семантику: при включённом флаге сохранять MAC1-проверку, но обходить under-load MAC2/cookie challenge целиком.
 - [x] Сохранить приём входящих Cookie Reply и старый публичный API rate limiter.
 - [x] Добавить UAPI set/get и unit-тесты.
 - [ ] Получить полный зелёный CI на PR.
 
-**Готово, когда:** обычное поведение без флага не меняется; с флагом handshake-пакеты без валидного MAC2 под нагрузкой отклоняются без Cookie Reply; входящие Cookie Reply продолжают обрабатываться.
+**Готово, когда:** обычное поведение без флага не меняется; с флагом MAC1 продолжает проверяться, но under-load MAC2/cookie challenge отключён (handshake без MAC2 допускается), как в upstream; входящие Cookie Reply продолжают обрабатываться.
 
 ### Этап 2. HeaderProtectionKey (AWG 3.0+, требуется для полного профиля 3.1)
 - [ ] Сверить побайтную реализацию upstream: порядок обработки S-prefix, nonce, шифруемый диапазон для каждого типа пакета, направление XOR при приёме/отправке.
@@ -137,6 +137,7 @@
 ### Header Protection: подтверждённый порядок обработки
 
 - Upstream хранит ключ как 32-байтовый `HeaderCipherKey`; UAPI принимает hex (`header_protection_key`), то есть 64 hex-символа. В пользовательском конфиге может быть base64-представление, но это отдельный слой сериализации.
+- Проверенный upstream HEAD на момент аудита: `b5928efb6ca19f0153958460c3d141f04abc5c2e` (2026-08-28). Этот commit уточняет семантику `DisableCookies`: при флаге отключается весь under-load cookie challenge, а не только отправка Cookie Reply. MAC1 остаётся обязательным; MAC2/rate-limit challenge в under-load обходится. Это отражено в текущей реализации и тесте.
 - Upstream создаёт raw ChaCha20 stream cipher: `chacha20.NewUnauthenticatedCipher(key, salt)`. `salt` — первые 12 байт S-prefix конкретного датаграмма; это не AEAD и не отдельная аутентификация.
 - На отправке сначала формируется полный WireGuard message и его MAC-поля, затем тот же ChaCha20 stream XOR-ится с байтами сообщения от offset 0 до конца защищаемой части. Префикс S остаётся открытым и служит nonce.
 - На приёме cipher создаётся из первых 12 байт префикса. Сначала нулевой 4-байтовый буфер XOR-ится с первыми 4 байтами keystream, чтобы восстановить тип сообщения и сопоставить H1-H4. Затем тем же экземпляром cipher (с уже сдвинутой позицией потока) расшифровываются байты сообщения начиная с offset 4. Для transport дополнительно расшифровывается заголовок до receiver index/counter lookup; для handshake/cookie расшифровывается остальное фиксированное сообщение.
@@ -156,4 +157,5 @@ Upstream точки сверки:
 
 - Semgrep OSS scan: success.
 - Linux: rustfmt, clippy, check_features, tests и integration-tests завершились success на предыдущем SHA `0a00757110660a40fe0a9684cb7fbafafb7f4dfa`.
-- Для SHA документа `02c269f57579cb951785032d5e8a9f9b0e553c00` запущен новый PR workflow; на момент проверки часть Linux jobs ещё выполнялась, macOS jobs были queued. Не считать CI полностью зелёным, пока все jobs последнего SHA не завершатся.
+- Для SHA документа `02c269f57579cb951785032d5e8a9f9b0e553c00` Semgrep прошёл, но PR workflow ещё выполнялся. После последующих исправлений запущен новый CI; не считать CI полностью зелёным, пока все jobs последнего SHA не завершатся.
+- Важное исправление после аудита: прежнее поведение `DisableCookies` (отклонять MAC2-invalid handshake без Cookie Reply) не совпадало с upstream. Исправлено на bypass under-load challenge целиком; тест обновлён.
