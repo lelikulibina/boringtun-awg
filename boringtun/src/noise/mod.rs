@@ -1449,9 +1449,9 @@ mod tests {
     fn receive_side_rekey_uses_reject_minus_min_keepalive_and_rekey_timeout() {
         let config = AmneziaConfig::new(0, 0, 0, 0)
             .with_rekey_after_time(120, 120)
-            .with_rekey_timeout(2, 2)
-            .with_reject_after_time(10, 10)
-            .with_keepalive_timeout(6, 6);
+            .with_rekey_timeout(2, 4)
+            .with_reject_after_time(10, 12)
+            .with_keepalive_timeout(6, 8);
         let (mut initiator, mut responder) = create_two_tuns_with_amnezia(config);
 
         let init = create_handshake_init(&mut initiator);
@@ -1474,9 +1474,16 @@ mod tests {
             TunnResult::WriteToTunnelV4(_, _)
         ));
 
-        // Upstream keyRefreshTimeoutReceiving() is
-        // RejectAfterTime - KeepaliveTimeout.Lo - RekeyTimeout.Lo = 2s.
-        mock_instant::MockClock::advance(Duration::from_millis(1998));
+        // Upstream keyRefreshTimeoutReceiving() selects RejectAfterTime for
+        // this receive and subtracts the configured lower bounds of the other
+        // two ranges. KeepaliveTimeout itself may be a larger random selection.
+        let threshold = initiator
+            .timers
+            .reject_after_time
+            .saturating_sub(Duration::from_secs(6 + 2));
+        assert!((Duration::from_secs(2)..=Duration::from_secs(4)).contains(&threshold));
+
+        mock_instant::MockClock::advance(threshold - Duration::from_millis(1));
         assert!(matches!(
             initiator.update_timers(&mut network),
             TunnResult::Done
