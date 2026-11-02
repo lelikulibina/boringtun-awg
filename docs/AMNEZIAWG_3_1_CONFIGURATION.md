@@ -52,7 +52,7 @@
 sudo python3 scripts/awg31-go-interop.py ./target/release/boringtun-cli ./amneziawg-go
 ```
 
-Скрипт требует Linux, root, `iproute2`, `ping`, Python-пакет `cryptography`, BoringTun с feature `device` и официальный бинарник `amneziawg-go` из ветки модуля `/v3`. Для каждого профиля создаются отдельные сетевые namespace с уникальными именами; хостовые маршруты и интерфейсы не перенастраиваются. Успех профиля означает не только принятие UAPI-конфигурации, но и handshake с последующим двусторонним ICMP-трафиком.
+Скрипт требует Linux, root, `iproute2`, `ping`, Python-пакет `cryptography`, BoringTun с feature `device` и официальный бинарник `amneziawg-go` из модуля `/v3`; CI собирает эталон из upstream commit `b5928efb6ca19f0153958460c3d141f04abc5c2e`, чтобы результаты матрицы были воспроизводимыми. Для каждого профиля создаются отдельные сетевые namespace с уникальными именами; хостовые маршруты и интерфейсы не перенастраиваются. Успех профиля означает не только принятие UAPI-конфигурации, но и handshake с последующим двусторонним ICMP-трафиком.
 
 Матрица сначала проверяет vanilla WireGuard без AWG-параметров и AWG 2.x с H1–H4/S/J, затем HeaderProtectionKey, ContentPaddingAddition, RandomTrailers, DisableCookies, диапазоны таймеров и совместное включение расширений AWG 3.1. Это runnable interoperability harness, а не зафиксированный результат: пока скрипт не запущен с актуальными бинарниками обеих реализаций, считать проверки пройденными нельзя. Профиль DisableCookies проверяет принятие настройки и обычный handshake, но не создаёт искусственную under-load ситуацию для проверки обхода MAC2. Профиль таймеров проверяет UAPI и старт соединения, но не заменяет длительный differential-тест rekey/retry/expiry.
 
