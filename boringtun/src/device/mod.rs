@@ -1661,14 +1661,14 @@ mod ingress_tests {
             None,
             1,
             None,
-            1,
-            1,
-            2,
-            2,
-            3,
-            3,
-            4,
-            4,
+            amnezia.init_packet_junk_size,
+            amnezia.init_packet_junk_size,
+            amnezia.response_packet_junk_size,
+            amnezia.response_packet_junk_size,
+            amnezia.cookie_packet_junk_size,
+            amnezia.cookie_packet_junk_size,
+            amnezia.transport_packet_junk_size,
+            amnezia.transport_packet_junk_size,
         )
         .unwrap();
 
