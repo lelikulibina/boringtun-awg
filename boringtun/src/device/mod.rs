@@ -1606,10 +1606,15 @@ mod ingress_tests {
         .unwrap();
 
         let mut buffer = vec![0u8; MAX_UDP_SIZE];
-        let plaintext_initiation = match client.format_handshake_initiation(&mut buffer, false) {
+        let mut plaintext_initiation = match client.format_handshake_initiation(&mut buffer, false) {
             TunnResult::WriteToNetwork(datagram) => datagram.to_vec(),
             other => panic!("expected an initiation, got {:?}", other),
         };
+        // Fix the S1 nonce so this negative case is deterministic: for key
+        // 0x42 and nonce 00..0b, the decrypted type cannot match H1 = 1.
+        for (i, byte) in plaintext_initiation[..12].iter_mut().enumerate() {
+            *byte = i as u8;
+        }
 
         assert!(
             demux_handshake(
