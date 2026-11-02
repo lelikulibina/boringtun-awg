@@ -184,3 +184,20 @@ Upstream точки сверки:
 - Linux: rustfmt, clippy, check_features, tests и integration-tests завершились success на предыдущем SHA `0a00757110660a40fe0a9684cb7fbafafb7f4dfa`.
 - Для SHA документа `02c269f57579cb951785032d5e8a9f9b0e553c00` Semgrep прошёл, но PR workflow ещё выполнялся. После последующих исправлений запущен новый CI; не считать CI полностью зелёным, пока все jobs последнего SHA не завершатся.
 - Важное исправление после аудита: прежнее поведение `DisableCookies` (отклонять MAC2-invalid handshake без Cookie Reply) не совпадало с upstream. Исправлено на bypass under-load challenge целиком; тест обновлён.
+
+
+### Этап 4: уточнённая upstream-семантика таймеров (аудит 2026-11-02)
+
+Официальные источники: device/timers.go, device/send.go, device/receive.go, device/peer.go, device/constants.go.
+
+- rekey_after_time: выбирается из диапазона при проверке свежести исходящего keypair; порог применяется только к keypair, инициированному локальной стороной.
+- reject_after_time: при проверке входящих аутентифицированных данных выбирается порог обновления ключа; upstream вычитает минимальные keepalive_timeout и rekey_timeout. Для уничтожения key material использует верхнюю границу reject_after_time, умноженную на 3.
+- rekey_timeout: случайное значение используется для retransmit handshake и для inactivity timeout; при расчёте последнего upstream использует максимум keepalive timeout и случайный rekey timeout. При старте peer минимальная граница участвует в начальном handshake pacing.
+- keepalive_timeout: случайное значение для keepalive; нижняя граница участвует в receive-side rekey threshold, верхняя — в inactivity threshold.
+- max_handshake_attempts: значение выбирается при старте peer и после успешного handshake, хранится до следующего handshake; не эквивалентно простому 90-секундному deadline.
+- Повтор handshake в upstream использует rekey_timeout + random(0..333ms). Отдельный RekeyAttemptTime=90s — верхняя граница цикла попыток, но в AmneziaWG число повторов дополнительно ограничивается max_handshake_attempts.
+- Default constants: rekey-after 120s, rekey-timeout 5s, reject-after 180s, keepalive-timeout 10s, max-handshake-attempts 18, jitter 0..333ms.
+
+Архитектурное отличие BoringTun: Tunn::update_timers — polling state machine, тогда как upstream использует независимые peer timers и хранит отдельные счётчики попыток. Простая замена четырёх констант диапазонами даст неправильную точку повторного выбора и неверную семантику max attempts. До реализации необходимо добавить в Timers явное состояние выбранных порогов/счётчика handshake attempts и привязать выбор к событиям (session established, authenticated data sent/received, handshake initiation/retry), сохранив mock-instant поведение. Не менять криптографический state machine и не считать 90s deadline заменой max_handshake_attempts.
+
+Текущий статус этапа 4: аудит upstream завершён; код не менялся. Следующий шаг — спроектировать и реализовать range state в AmneziaConfig/UAPI и Timers, затем добавить детерминированные тесты для выбора значений и переходов состояния. Реализация должна оставаться opt-in и сохранять vanilla WG defaults.
