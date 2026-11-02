@@ -360,6 +360,7 @@ impl Tunn {
         obf: ObfuscationRanges,
         amnezia: AmneziaConfig,
     ) -> Result<Self, String> {
+        amnezia.validate()?;
         let static_public = x25519::PublicKey::from(&static_private);
         let timers = Timers::new(persistent_keepalive, rate_limiter.is_none(), &amnezia);
 
