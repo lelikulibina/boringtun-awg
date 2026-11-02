@@ -6,9 +6,9 @@ use crate::noise::{Tunn, TunnResult};
 use std::mem;
 use std::ops::{Index, IndexMut};
 
-use std::time::Duration;
-use rand_core::{OsRng, RngCore};
 use super::amnezia::AmneziaConfig;
+use rand_core::{OsRng, RngCore};
+use std::time::Duration;
 
 #[cfg(feature = "mock-instant")]
 use mock_instant::Instant;
@@ -72,13 +72,17 @@ pub struct Timers {
     keepalive_timeout: Duration,
     keepalive_timeout_max: Duration,
     new_handshake_timeout: Duration,
-    max_handshake_attempts: u32,
+    pub(super) max_handshake_attempts: u32,
     handshake_attempts: u32,
     handshake_retry_jitter: Duration,
 }
 
 impl Timers {
-    pub(super) fn new(persistent_keepalive: Option<u16>, reset_rr: bool, amnezia: &AmneziaConfig) -> Timers {
+    pub(super) fn new(
+        persistent_keepalive: Option<u16>,
+        reset_rr: bool,
+        amnezia: &AmneziaConfig,
+    ) -> Timers {
         let mut timers = Timers {
             is_initiator: false,
             time_started: Instant::now(),
@@ -88,7 +92,13 @@ impl Timers {
             want_handshake: Default::default(),
             persistent_keepalive: usize::from(persistent_keepalive.unwrap_or(0)),
             should_reset_rr: reset_rr,
-            timer_ranges: [amnezia.rekey_after_time, amnezia.rekey_timeout, amnezia.reject_after_time, amnezia.keepalive_timeout, amnezia.max_handshake_attempts],
+            timer_ranges: [
+                amnezia.rekey_after_time,
+                amnezia.rekey_timeout,
+                amnezia.reject_after_time,
+                amnezia.keepalive_timeout,
+                amnezia.max_handshake_attempts,
+            ],
             rekey_after_time: REKEY_AFTER_TIME,
             rekey_timeout: REKEY_TIMEOUT,
             reject_after_time: REJECT_AFTER_TIME,
@@ -121,24 +131,38 @@ impl Timers {
 
     fn range_min(&self, idx: usize, fallback: u32) -> u32 {
         let (min, max) = self.timer_ranges[idx];
-        if min == 0 && max == 0 { fallback } else { min }
+        if min == 0 && max == 0 {
+            fallback
+        } else {
+            min
+        }
     }
 
     fn range_max(&self, idx: usize, fallback: u32) -> u32 {
         let (min, max) = self.timer_ranges[idx];
-        if min == 0 && max == 0 { fallback } else { max }
+        if min == 0 && max == 0 {
+            fallback
+        } else {
+            max
+        }
     }
 
     fn pick_range(&self, idx: usize, fallback: u32) -> u32 {
         let (min, max) = self.timer_ranges[idx];
-        if min == 0 && max == 0 { return fallback; }
-        if min >= max { return min; }
+        if min == 0 && max == 0 {
+            return fallback;
+        }
+        if min >= max {
+            return min;
+        }
         let width = max - min + 1;
         let zone = u32::MAX - (u32::MAX % width);
         let mut rng = OsRng;
         loop {
             let value = rng.next_u32();
-            if value < zone { return min + value % width; }
+            if value < zone {
+                return min + value % width;
+            }
         }
     }
 }
@@ -180,7 +204,10 @@ mod tests {
         let ranged_timers = Timers::new(None, false, &ranged);
         for _ in 0..256 {
             let selected = ranged_timers.pick_range(1, 5);
-            assert!((2..=5).contains(&selected), "selected {selected} outside inclusive range");
+            assert!(
+                (2..=5).contains(&selected),
+                "selected {selected} outside inclusive range"
+            );
         }
     }
 
@@ -208,20 +235,36 @@ impl Tunn {
                 self.timers.want_keepalive = false;
             }
             TimeLastHandshakeStarted => {
-                self.timers.rekey_timeout = Duration::from_secs(self.timers.pick_range(1, REKEY_TIMEOUT.as_secs() as u32) as u64);
+                self.timers.rekey_timeout = Duration::from_secs(
+                    self.timers.pick_range(1, REKEY_TIMEOUT.as_secs() as u32) as u64,
+                );
                 self.timers.handshake_attempts = 0;
-                self.timers.handshake_retry_jitter = Duration::from_millis((OsRng.next_u32() % 334) as u64);
+                self.timers.handshake_retry_jitter =
+                    Duration::from_millis((OsRng.next_u32() % 334) as u64);
             }
             TimeLastDataPacketSent => {
-                self.timers.rekey_after_time = Duration::from_secs(self.timers.pick_range(0, REKEY_AFTER_TIME.as_secs() as u32) as u64);
-                self.timers.keepalive_timeout_max = Duration::from_secs(self.timers.range_max(3, KEEPALIVE_TIMEOUT.as_secs() as u32) as u64);
+                self.timers.rekey_after_time = Duration::from_secs(
+                    self.timers.pick_range(0, REKEY_AFTER_TIME.as_secs() as u32) as u64,
+                );
+                self.timers.keepalive_timeout_max = Duration::from_secs(
+                    self.timers.range_max(3, KEEPALIVE_TIMEOUT.as_secs() as u32) as u64,
+                );
                 let rekey_timeout = self.timers.pick_range(1, REKEY_TIMEOUT.as_secs() as u32);
-                self.timers.new_handshake_timeout = self.timers.keepalive_timeout_max + Duration::from_secs(rekey_timeout as u64);
+                self.timers.new_handshake_timeout =
+                    self.timers.keepalive_timeout_max + Duration::from_secs(rekey_timeout as u64);
             }
             TimeLastDataPacketReceived => {
-                self.timers.keepalive_timeout = Duration::from_secs(self.timers.pick_range(3, KEEPALIVE_TIMEOUT.as_secs() as u32) as u64);
+                self.timers.keepalive_timeout = Duration::from_secs(
+                    self.timers
+                        .pick_range(3, KEEPALIVE_TIMEOUT.as_secs() as u32)
+                        as u64,
+                );
                 self.timers.keepalive_timeout_max = Duration::from_secs(self.timers.range_max(3, KEEPALIVE_TIMEOUT.as_secs() as u32) as u64);
-                self.timers.reject_after_time = Duration::from_secs(self.timers.pick_range(2, REJECT_AFTER_TIME.as_secs() as u32) as u64);
+                self.timers.reject_after_time = Duration::from_secs(
+                    self.timers
+                        .pick_range(2, REJECT_AFTER_TIME.as_secs() as u32)
+                        as u64,
+                );
             }
             _ => {}
         }
@@ -259,7 +302,9 @@ impl Tunn {
     }
 
     fn update_session_timers(&mut self, time_now: Duration) {
-        let reject_after = Duration::from_secs(self.timers.range_max(2, REJECT_AFTER_TIME.as_secs() as u32) as u64);
+        let reject_after = Duration::from_secs(
+            self.timers.range_max(2, REJECT_AFTER_TIME.as_secs() as u32) as u64,
+        );
         let timers = &mut self.timers;
 
         for (i, t) in timers.session_timers.iter_mut().enumerate() {
@@ -319,7 +364,11 @@ impl Tunn {
 
             // All ephemeral private keys and symmetric session keys are zeroed out after
             // (REJECT_AFTER_TIME * 3) ms if no new keys have been exchanged.
-            if now - session_established >= self.timers.reject_after_time.max(Duration::from_secs(self.timers.range_max(2, REJECT_AFTER_TIME.as_secs() as u32) as u64)) * 3 {
+            if now - session_established
+                >= self.timers.reject_after_time.max(Duration::from_secs(
+                    self.timers.range_max(2, REJECT_AFTER_TIME.as_secs() as u32) as u64,
+                )) * 3
+            {
                 tracing::error!("CONNECTION_EXPIRED(REJECT_AFTER_TIME * 3)");
                 self.handshake.set_expired();
                 self.clear_all();
@@ -328,7 +377,11 @@ impl Tunn {
 
             if let Some(time_init_sent) = self.handshake.timer() {
                 // Handshake Initiation Retransmission
-                let legacy_attempt_deadline = self.timers.timer_ranges.iter().all(|range| *range == (0, 0))
+                let legacy_attempt_deadline = self
+                    .timers
+                    .timer_ranges
+                    .iter()
+                    .all(|range| *range == (0, 0))
                     && now - handshake_started >= REKEY_ATTEMPT_TIME;
                 if legacy_attempt_deadline {
                     // Preserve BoringTun's legacy 90-second timeout when no AWG
@@ -339,7 +392,9 @@ impl Tunn {
                     return TunnResult::Err(WireGuardError::ConnectionExpired);
                 }
 
-                if time_init_sent.elapsed() >= self.timers.rekey_timeout + self.timers.handshake_retry_jitter {
+                if time_init_sent.elapsed()
+                    >= self.timers.rekey_timeout + self.timers.handshake_retry_jitter
+                {
                     // The upstream checks the retry budget when the retransmit
                     // timer expires, not on every polling tick.
                     if self.timers.handshake_attempts > self.timers.max_handshake_attempts {
@@ -352,9 +407,13 @@ impl Tunn {
                     // A handshake initiation is retried after the configured
                     // timeout plus 0..333 ms jitter.
                     tracing::warn!("HANDSHAKE(REKEY_TIMEOUT)");
-                    self.timers.handshake_attempts = self.timers.handshake_attempts.saturating_add(1);
-                    self.timers.rekey_timeout = Duration::from_secs(self.timers.pick_range(1, REKEY_TIMEOUT.as_secs() as u32) as u64);
-                    self.timers.handshake_retry_jitter = Duration::from_millis((OsRng.next_u32() % 334) as u64);
+                    self.timers.handshake_attempts =
+                        self.timers.handshake_attempts.saturating_add(1);
+                    self.timers.rekey_timeout = Duration::from_secs(
+                        self.timers.pick_range(1, REKEY_TIMEOUT.as_secs() as u32) as u64,
+                    );
+                    self.timers.handshake_retry_jitter =
+                        Duration::from_millis((OsRng.next_u32() % 334) as u64);
                     handshake_initiation_required = true;
                 }
             } else {
@@ -377,7 +436,14 @@ impl Tunn {
                     // handshake.
                     if session_established < data_packet_received
                         && now - session_established
-                            >= self.timers.reject_after_time.saturating_sub(Duration::from_secs(self.timers.range_min(3, KEEPALIVE_TIMEOUT.as_secs() as u32) as u64) + Duration::from_secs(self.timers.range_min(1, REKEY_TIMEOUT.as_secs() as u32) as u64))
+                            >= self.timers.reject_after_time.saturating_sub(
+                                Duration::from_secs(
+                                    self.timers.range_min(3, KEEPALIVE_TIMEOUT.as_secs() as u32)
+                                        as u64,
+                                ) + Duration::from_secs(
+                                    self.timers.range_min(1, REKEY_TIMEOUT.as_secs() as u32) as u64,
+                                ),
+                            )
                     {
                         tracing::warn!(
                             "HANDSHAKE(REJECT_AFTER_TIME - KEEPALIVE_TIMEOUT - \
