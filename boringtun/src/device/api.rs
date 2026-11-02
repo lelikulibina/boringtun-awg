@@ -100,6 +100,7 @@ struct AwgParams {
     h3: Option<(u32, u32)>,
     h4: Option<(u32, u32)>,
     disable_cookies: Option<bool>,
+    random_trailers: Option<bool>,
     header_protection_key: Option<[u8; 32]>,
     content_padding_addition: Option<(u16, u16)>,
     rekey_after_time: Option<(u32, u32)>,
@@ -188,6 +189,7 @@ impl AwgParams {
         amnezia.cookie_packet_junk_size = self.s3.unwrap_or(amnezia.cookie_packet_junk_size);
         amnezia.transport_packet_junk_size = self.s4.unwrap_or(amnezia.transport_packet_junk_size);
         amnezia.disable_cookies = self.disable_cookies.unwrap_or(amnezia.disable_cookies);
+        amnezia.random_trailers = self.random_trailers.unwrap_or(amnezia.random_trailers);
         amnezia.header_protection_key = self
             .header_protection_key
             .unwrap_or(amnezia.header_protection_key);
@@ -426,6 +428,9 @@ fn api_get(writer: &mut BufWriter<&UnixStream>, d: &Device) -> i32 {
         }
         if a.disable_cookies {
             writeln!(writer, "disable_cookies=true");
+        }
+        if a.random_trailers {
+            writeln!(writer, "random_trailers=true");
         }
         let (padding_min, padding_max) = a.content_padding_addition;
         if padding_min != 0 || padding_max != 0 {
@@ -695,6 +700,13 @@ fn api_set(reader: &mut BufReader<&UnixStream>, d: &mut LockReadGuard<Device>) -
                                 awg.seen = true;
                             }
                             None => return EINVAL,
+                        },
+                        "random_trailers" => match val.parse::<bool>() {
+                            Ok(value) => {
+                                awg.random_trailers = Some(value);
+                                awg.seen = true;
+                            }
+                            Err(_) => return EINVAL,
                         },
                         "disable_cookies" => match val.parse::<bool>() {
                             Ok(value) => {
@@ -1008,6 +1020,7 @@ mod tests {
         params.reject_after_time = parse_u32_range("150-190");
         params.keepalive_timeout = parse_u32_range("8-12");
         params.max_handshake_attempts = parse_u32_range("10-20");
+        params.random_trailers = Some(true);
         params.seen = true;
         let (_, merged) = params
             .merged(ObfuscationRanges::default(), &current)
@@ -1017,6 +1030,7 @@ mod tests {
         assert_eq!(merged.reject_after_time, (150, 190));
         assert_eq!(merged.keepalive_timeout, (8, 12));
         assert_eq!(merged.max_handshake_attempts, (10, 20));
+        assert!(merged.random_trailers);
 
         let mut invalid = AwgParams::default();
         invalid.rekey_timeout = Some((9, 3));
