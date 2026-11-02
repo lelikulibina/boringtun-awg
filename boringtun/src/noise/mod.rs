@@ -1684,6 +1684,87 @@ mod tests {
     }
 
     #[test]
+    fn disable_cookies_still_accepts_incoming_cookie_replies() {
+        let initiator_secret = x25519::StaticSecret::random_from_rng(OsRng);
+        let initiator_public = x25519::PublicKey::from(&initiator_secret);
+        let responder_secret = x25519::StaticSecret::random_from_rng(OsRng);
+        let responder_public = x25519::PublicKey::from(&responder_secret);
+        let rate_limiter = Arc::new(RateLimiter::new(&responder_public, 0));
+        let initiator_config = AmneziaConfig::new(0, 0, 0, 0).with_disable_cookies(true);
+        let responder_config = AmneziaConfig::new(0, 0, 0, 0);
+
+        let mut initiator = Tunn::new_with_amnezia(
+            initiator_secret,
+            responder_public,
+            None,
+            None,
+            1,
+            None,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            initiator_config,
+        )
+        .unwrap();
+        let mut responder = Tunn::new_with_amnezia(
+            responder_secret,
+            initiator_public,
+            None,
+            None,
+            2,
+            Some(rate_limiter),
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            responder_config,
+        )
+        .unwrap();
+
+        let source = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        let mut network = [0u8; 2048];
+        let init = create_handshake_init(&mut initiator);
+        let cookie = match responder.decapsulate(Some(source), &init, &mut network) {
+            TunnResult::WriteToNetwork(packet) => packet.to_vec(),
+            other => panic!("the cookie-enabled responder must challenge under forced load, got {:?}", other),
+        };
+
+        assert!(matches!(
+            initiator.decapsulate(None, &cookie, &mut network),
+            TunnResult::Done
+        ));
+
+        let authenticated_init = match initiator.format_handshake_initiation(&mut network, true) {
+            TunnResult::WriteToNetwork(packet) => packet.to_vec(),
+            other => panic!(
+                "DisableCookies must not disable receiving Cookie Reply or formatting MAC2, got {:?}",
+                other
+            ),
+        };
+        let response = match responder.decapsulate(Some(source), &authenticated_init, &mut network) {
+            TunnResult::WriteToNetwork(packet) => packet.to_vec(),
+            other => panic!("expected MAC2-authenticated handshake response, got {:?}", other),
+        };
+        let keepalive = parse_handshake_resp(&mut initiator, &response);
+        parse_keepalive(&mut responder, &keepalive);
+
+        assert!(
+            initiator.sessions.iter().any(Option::is_some)
+                && responder.sessions.iter().any(Option::is_some),
+            "an AWG peer with DisableCookies enabled must remain interoperable with a cookie-requiring peer"
+        );
+    }
+
+    #[test]
     fn disable_cookies_composes_with_header_protection_padding_and_random_trailers() {
         let initiator_secret = x25519::StaticSecret::random_from_rng(OsRng);
         let initiator_public = x25519::PublicKey::from(&initiator_secret);
