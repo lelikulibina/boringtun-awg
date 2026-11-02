@@ -117,6 +117,14 @@ jobs:
         run: go build -v -o ../amneziawg-go .
       - name: Run AWG 3.1 bidirectional interoperability matrix
         run: sudo python3 scripts/awg31-go-interop.py ./target/release/boringtun-cli ./amneziawg-go
+      - name: Upload normalized wire captures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: awg31-wire-pcaps
+          path: target/awg31-wire-pcaps/*.pcap
+          if-no-files-found: warn
+          retention-days: 14
 
   integration-tests:
     strategy:

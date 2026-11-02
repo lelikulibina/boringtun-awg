@@ -352,9 +352,13 @@ def run_profile(
     links_created = False
     capture_proc = None
     capture_log = None
-    capture_path = logs / "wire.pcap"
     workdir = tempfile.TemporaryDirectory(prefix="awg31-interop-")
     logs = Path(workdir.name)
+    capture_dir = Path("target/awg31-wire-pcaps")
+    capture_dir.mkdir(parents=True, exist_ok=True)
+    capture_path = capture_dir / (
+        f"{name.replace(' ', '_')}-{role.replace(' ', '_')}.pcap"
+    )
 
     server_iface = bt_iface if bt_is_server else go_iface
     client_iface = go_iface if bt_is_server else bt_iface
