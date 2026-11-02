@@ -1046,7 +1046,16 @@ impl Device {
                         .config
                         .amnezia
                         .decrypt_inbound_with_prefix(obf, raw_datagram);
-                    let datagram = decoded_datagram.as_deref().unwrap_or(raw_datagram);
+                    let datagram = match decoded_datagram.as_deref() {
+                        Some(decoded) => decoded,
+                        None if !d.config.amnezia.header_protection_enabled() => raw_datagram,
+                        // Do not fall back to plaintext classification when a
+                        // Header Protection key is configured. Otherwise a
+                        // correctly tagged but unprotected packet could bypass
+                        // the configured wire policy (especially with broad H
+                        // ranges).
+                        None => continue,
+                    };
                     let packet = match probe_reply::classify(
                         datagram,
                         &d.config.amnezia,
@@ -1479,7 +1488,11 @@ mod ingress_tests {
         // A datagram matching no configured shape is dropped, exactly as the
         // real ingress path does.
         let decoded = amnezia.decrypt_inbound_with_prefix(obf, datagram);
-        let datagram = decoded.as_deref().unwrap_or(datagram);
+        let datagram = match decoded.as_deref() {
+            Some(decoded) => decoded,
+            None if !amnezia.header_protection_enabled() => datagram,
+            None => return None,
+        };
         let stripped = amnezia.strip_inbound(obf, datagram)?;
         let parsed = limiter
             .verify_packet(obf, &mut OsRng, Some(src_addr), stripped, &mut scratch)
@@ -1558,6 +1571,55 @@ mod ingress_tests {
             demuxed,
             *client_public.as_bytes(),
             "must identify the initiating peer"
+        );
+    }
+
+    #[test]
+    fn device_ingress_rejects_plaintext_when_header_protection_is_required() {
+        let server_secret = x25519::StaticSecret::random_from_rng(OsRng);
+        let server_public = x25519::PublicKey::from(&server_secret);
+        let client_secret = x25519::StaticSecret::random_from_rng(OsRng);
+
+        // The sender deliberately has no HP key, but uses the same S-prefix
+        // sizes and H values. A receiver configured with HP must not silently
+        // accept this otherwise-valid, plaintext initiation.
+        let sender_amnezia = AmneziaConfig::new(12, 12, 12, 12);
+        let receiver_amnezia =
+            AmneziaConfig::new(12, 12, 12, 12).with_header_protection_key([0x42; 32]);
+        let mut client = Tunn::new_with_amnezia(
+            client_secret,
+            server_public,
+            None,
+            None,
+            1,
+            None,
+            1,
+            1,
+            2,
+            2,
+            3,
+            3,
+            4,
+            4,
+            sender_amnezia,
+        )
+        .unwrap();
+
+        let mut buffer = vec![0u8; MAX_UDP_SIZE];
+        let plaintext_initiation = match client.format_handshake_initiation(&mut buffer, false) {
+            TunnResult::WriteToNetwork(datagram) => datagram.to_vec(),
+            other => panic!("expected an initiation, got {:?}", other),
+        };
+
+        assert!(
+            demux_handshake(
+                &server_secret,
+                ObfuscationRanges::default(),
+                &receiver_amnezia,
+                &plaintext_initiation,
+            )
+            .is_none(),
+            "configured Header Protection must not fall back to plaintext"
         );
     }
 
