@@ -1722,7 +1722,7 @@ mod tests {
     #[test]
     #[cfg(feature = "mock-instant")]
     fn authenticated_outbound_data_cancels_pending_keepalive_deadline() {
-        let config = AmneziaConfig::new(0, 0, 0, 0).with_keepalive_timeout(3, 3);
+        let config = AmneziaConfig::new(0, 0, 0, 0).with_keepalive_timeout(60, 60);
         let (mut sender, mut receiver) = create_two_tuns_with_amnezia(config);
         let init = create_handshake_init(&mut sender);
         let response = create_handshake_response(&mut receiver, &init);
