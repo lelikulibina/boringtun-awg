@@ -236,6 +236,44 @@ mod tests {
         packet
     }
 
+    const HANDSHAKE_RESPONSE_SZ: usize = 92;
+
+    fn response_with_valid_mac1(limiter: &RateLimiter) -> [u8; HANDSHAKE_RESPONSE_SZ] {
+        let mut packet = [0u8; HANDSHAKE_RESPONSE_SZ];
+        packet[..4].copy_from_slice(&2u32.to_le_bytes());
+        packet[4..8].copy_from_slice(&9u32.to_le_bytes());
+        packet[8..12].copy_from_slice(&7u32.to_le_bytes());
+
+        let mac_offset = HANDSHAKE_RESPONSE_SZ - 32;
+        let mac1 = b2s_keyed_mac_16(&limiter.mac1_key, &packet[..mac_offset]);
+        packet[mac_offset..mac_offset + 16].copy_from_slice(&mac1);
+        packet
+    }
+
+    #[test]
+    fn disable_cookies_bypasses_under_load_for_handshake_responses_too() {
+        let public_key = crate::x25519::PublicKey::from([7u8; 32]);
+        let limiter = RateLimiter::new(&public_key, 0);
+        let packet = response_with_valid_mac1(&limiter);
+        let mut dst = [0u8; 128];
+
+        let result = limiter.verify_packet_with_cookie_policy(
+            ObfuscationRanges::default(),
+            &mut OsRng,
+            None,
+            &packet,
+            &mut dst,
+            true,
+        );
+
+        assert!(matches!(result, Ok(Packet::HandshakeResponse(_))));
+        assert_eq!(
+            limiter.count.load(Ordering::SeqCst),
+            0,
+            "DisableCookies applies to response MAC1 validation without rate-limit accounting"
+        );
+    }
+
     #[test]
     fn disable_cookies_bypasses_under_load_cookie_challenge() {
         let public_key = crate::x25519::PublicKey::from([7u8; 32]);
