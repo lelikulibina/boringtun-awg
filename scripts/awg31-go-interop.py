@@ -303,7 +303,7 @@ def verify_wire_pcap(
     awg_enabled: bool,
     header_protection: bool,
     random_trailers: bool,
-    expect_rekey: bool,
+    expected_handshakes: int,
 ) -> None:
     """Decode captured UDP envelopes and assert normalized wire semantics.
 
@@ -402,7 +402,7 @@ def verify_wire_pcap(
     required = {"client_to_server": (1, 4), "server_to_client": (2, 4)}
     for direction, kinds in required.items():
         for kind in kinds:
-            minimum_count = 4 if expect_rekey and kind in (1, 2) else 1
+            minimum_count = expected_handshakes if kind in (1, 2) else 1
             if counts[direction][kind] < minimum_count:
                 raise RuntimeError(
                     f"pcap missing type-{kind} from {direction}: "
@@ -552,7 +552,7 @@ def run_profile(
             awg_enabled=awg_enabled,
             header_protection="header_protection_key=" in extra,
             random_trailers="random_trailers=true" in extra,
-            expect_rekey=name in ("accelerated rekey", "lost handshake response"),
+            expected_handshakes=(4 if name == "accelerated rekey" else 2 if name == "lost handshake response" else 1),
         )
         print(f"PASS {name} ({role}): handshake + bidirectional ICMP/UDP + normalized pcap")
     except Exception:
