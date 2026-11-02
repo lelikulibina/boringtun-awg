@@ -47,6 +47,14 @@ fn parse_u16_range(val: &str) -> Option<(u16, u16)> {
     (start <= end).then_some((start, end))
 }
 
+fn parse_u32_range(val: &str) -> Option<(u32, u32)> {
+    let (start, end) = match val.split_once('-') {
+        Some((start, end)) => (start.trim().parse().ok()?, end.trim().parse().ok()?),
+        None => { let value: u32 = val.trim().parse().ok()?; (value, value) }
+    };
+    (start <= end).then_some((start, end))
+}
+
 fn parse_tag_range(val: &str) -> Option<(u32, u32)> {
     let (start, end) = match val.split_once('-') {
         Some((start, end)) => (start.trim().parse().ok()?, end.trim().parse().ok()?),
@@ -91,6 +99,11 @@ struct AwgParams {
     disable_cookies: Option<bool>,
     header_protection_key: Option<[u8; 32]>,
     content_padding_addition: Option<(u16, u16)>,
+    rekey_after_time: Option<(u32, u32)>,
+    rekey_timeout: Option<(u32, u32)>,
+    reject_after_time: Option<(u32, u32)>,
+    keepalive_timeout: Option<(u32, u32)>,
+    max_handshake_attempts: Option<(u32, u32)>,
     seen: bool,
 }
 
@@ -178,6 +191,11 @@ impl AwgParams {
         amnezia.content_padding_addition = self
             .content_padding_addition
             .unwrap_or(amnezia.content_padding_addition);
+        amnezia.rekey_after_time = self.rekey_after_time.unwrap_or(amnezia.rekey_after_time);
+        amnezia.rekey_timeout = self.rekey_timeout.unwrap_or(amnezia.rekey_timeout);
+        amnezia.reject_after_time = self.reject_after_time.unwrap_or(amnezia.reject_after_time);
+        amnezia.keepalive_timeout = self.keepalive_timeout.unwrap_or(amnezia.keepalive_timeout);
+        amnezia.max_handshake_attempts = self.max_handshake_attempts.unwrap_or(amnezia.max_handshake_attempts);
         let amnezia = amnezia.with_pre_handshake_junk(
             self.jc.unwrap_or(cur_junk.packet_count),
             self.jmin.unwrap_or(cur_junk.packet_size_min),
@@ -416,6 +434,21 @@ fn api_get(writer: &mut BufWriter<&UnixStream>, d: &Device) -> i32 {
                 );
             }
         }
+        for (key, range) in [
+            ("rekey_after_time", a.rekey_after_time),
+            ("rekey_timeout", a.rekey_timeout),
+            ("reject_after_time", a.reject_after_time),
+            ("keepalive_timeout", a.keepalive_timeout),
+            ("max_handshake_attempts", a.max_handshake_attempts),
+        ] {
+            if range != (0, 0) {
+                if range.0 == range.1 {
+                    writeln!(writer, "{}={}", key, range.0);
+                } else {
+                    writeln!(writer, "{}={}-{}", key, range.0, range.1);
+                }
+            }
+        }
 
         for (key, val) in [
             ("jc", a.pre_handshake_junk.packet_count),
@@ -621,6 +654,26 @@ fn api_set(reader: &mut BufReader<&UnixStream>, d: &mut LockReadGuard<Device>) -
                                 awg.content_padding_addition = Some(range);
                                 awg.seen = true;
                             }
+                            None => return EINVAL,
+                        },
+                        "rekey_after_time" => match parse_u32_range(val) {
+                            Some(range) => { awg.rekey_after_time = Some(range); awg.seen = true; }
+                            None => return EINVAL,
+                        },
+                        "rekey_timeout" => match parse_u32_range(val) {
+                            Some(range) => { awg.rekey_timeout = Some(range); awg.seen = true; }
+                            None => return EINVAL,
+                        },
+                        "reject_after_time" => match parse_u32_range(val) {
+                            Some(range) => { awg.reject_after_time = Some(range); awg.seen = true; }
+                            None => return EINVAL,
+                        },
+                        "keepalive_timeout" => match parse_u32_range(val) {
+                            Some(range) => { awg.keepalive_timeout = Some(range); awg.seen = true; }
+                            None => return EINVAL,
+                        },
+                        "max_handshake_attempts" => match parse_u32_range(val) {
+                            Some(range) => { awg.max_handshake_attempts = Some(range); awg.seen = true; }
                             None => return EINVAL,
                         },
                         "disable_cookies" => match val.parse::<bool>() {
