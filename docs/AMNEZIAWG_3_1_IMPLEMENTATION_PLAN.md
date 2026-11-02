@@ -237,4 +237,12 @@ Upstream точки сверки:
 
 Добавлены mock-clock regressions: раздельное истечение session keys и handshake key material; строгая граница `> upper_bound` для сессии; срок key material ровно `3 × upper_bound`; использование верхней границы настроенного диапазона reject; сброс счётчика попыток и повторная установка фиксированного max-handshake-attempts после успешного handshake.
 
+Дополнительные peer-level regressions после этого аудита:
+- Под искусственной нагрузкой (rate-limit = 0) полный handshake с `DisableCookies` проходит без cookie exchange; повреждённый MAC1 при этом отклоняется. Это проверяет не только rate limiter helper, но и реальный `Tunn::decapsulate` путь.
+- Аутентифицированный входящий data packet отменяет ожидающий inactivity-handshake deadline.
+- Аутентифицированный исходящий data packet отменяет ожидающий keepalive deadline.
+- При проверке отменённых deadlines тесты оставляют запас по keepalive timeout, чтобы отдельно не запускать штатную keepalive отправку.
+- Исправлен тест границы reject: перед проверкой срока жизни session keys он теперь действительно устанавливает handshake и создаёт session. Ранее он проверял пустой набор sessions и давал ложный результат.
+- `handshake_attempts` открыт для родительского тестового модуля через `pub(super)`; внешний API не расширен.
+
 Последний полностью завершённый CI до этих новых тестов: run `41499066051` — `rustfmt`, `check_features`, `integration-tests`, `tests`, `clippy`, `awg31-interoperability` и `all-systems-go` завершились успешно; Semgrep `41499065998` также успешен. Новые regressions добавлены в последующих коммитах и требуют отдельного зелёного CI.
