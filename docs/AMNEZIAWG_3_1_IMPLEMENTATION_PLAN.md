@@ -190,13 +190,14 @@ Upstream точки сверки:
 
 ### Текущая проверка CI для PR #8
 
-Последний проверенный кодовый HEAD: `5251e54ec4d588deeba951a2d4a6c5bc4a0ac33a`.
+Последний проверенный кодовый HEAD: `e11c15e3340b5e73305207f95e7d727d40f7877c`.
 
-- Linux `rustfmt`, `clippy`, `check_features`, `tests`, `integration-tests` и `all-systems-go`: **success**.
-- Semgrep OSS scan: **success**.
-- macOS/Windows не запускались по требованию пользователя.
-- В последнем цикле CI были устранены два замечания: форматирование новых timer regressions и доступ тестов к deadline state; повторный Linux CI прошёл полностью.
-- Следующие проверки должны быть направлены на upstream differential/interoperability, а не на повторение уже зелёных локальных unit/integration suites.
+- PR Status Checks run [41496077388](https://github.com/lelikulibina/boringtun-awg/actions/runs/41496077388): Linux `rustfmt`, `clippy`, `check_features`, `tests`, `integration-tests`, `awg31-interoperability` и `all-systems-go` — **success**.
+- Отдельный Semgrep OSS scan run [41496077499](https://github.com/lelikulibina/boringtun-awg/actions/runs/41496077499): **success**.
+- Job `awg31-interoperability` собрал BoringTun и официальный `amneziawg-go` из закреплённого upstream SHA и успешно выполнил все 16 прогонов: 8 профилей × 2 серверные роли. Сюда входят vanilla WireGuard, AWG 2.x, HeaderProtectionKey, ContentPaddingAddition, RandomTrailers, DisableCookies, randomized timers и их совместная конфигурация.
+- macOS/Windows не запускались.
+- Результат подтверждает успешный handshake и двусторонний ICMP-трафик для перечисленных конфигураций. Он не является проверкой under-load cookie challenge, длительного rekey/retry/expiry или полной эквивалентности всех wire bytes.
+- Следующие проверки должны быть направлены на differential vectors, искусственную нагрузку DisableCookies и таймерный lifecycle, а не на повторение уже зелёных CI suites.
 
 Важное исправление после аудита: прежнее поведение `DisableCookies` (отклонять MAC2-invalid handshake без Cookie Reply) не совпадало с upstream. Исправлено на bypass under-load challenge целиком; MAC1 остаётся обязательным, входящие Cookie Reply поддерживаются.
 
