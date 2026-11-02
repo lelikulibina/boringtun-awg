@@ -1615,7 +1615,7 @@ mod tests {
         // A zero limit forces the responder into the under-load path from the
         // first authenticated initiation.
         let rate_limiter = Arc::new(RateLimiter::new(&responder_public, 0));
-        let config = AmneziaConfig::new(8, 8, 8, 8)
+        let config = AmneziaConfig::new(12, 12, 12, 12)
             .with_disable_cookies(true)
             .with_header_protection_key([0x31; 32])
             .with_content_padding_addition(3, 3)
