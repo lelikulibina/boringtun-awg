@@ -225,3 +225,16 @@ Upstream точки сверки:
 - Добавлена проверка отклонения reversed bounds для каждого из пяти timer-параметров.
 - Добавлены проверки замены диапазонов в уже созданном `Timers` и обновления/отключения persistent keepalive.
 - Эти тесты покрывают выбор диапазонов и конфигурационное состояние, но не моделируют течение времени и реальные повторные handshake. Они должны пройти полный CI на актуальном HEAD; differential peer lifecycle tests остаются отдельной задачей.
+
+### Этап 4: проверки границ reject и повторного handshake (2026-11-02)
+
+Сверка с `device/timers.go` официального `amneziawg-go` на закреплённом SHA `b5928efb6ca19f0153958460c3d141f04abc5c2e` подтверждает следующие правила:
+
+- `keychainExpireTime()` использует верхнюю границу `reject_after_time`; удаление key material происходит через `3 × upper_bound`.
+- Сессионные ключи удаляются после истечения верхней границы `reject_after_time`; в BoringTun polling-проверка выполняется при `time_now - session_time > upper_bound`.
+- `max_handshake_attempts` хранится в peer-состоянии, сбрасывается после успешного handshake и выбирается заново при его завершении.
+- Retry budget проверяется при срабатывании retransmit timeout, а не при каждом вызове polling API.
+
+Добавлены mock-clock regressions: раздельное истечение session keys и handshake key material; строгая граница `> upper_bound` для сессии; срок key material ровно `3 × upper_bound`; использование верхней границы настроенного диапазона reject; сброс счётчика попыток и повторная установка фиксированного max-handshake-attempts после успешного handshake.
+
+Последний полностью завершённый CI до этих новых тестов: run `41499066051` — `rustfmt`, `check_features`, `integration-tests`, `tests`, `clippy`, `awg31-interoperability` и `all-systems-go` завершились успешно; Semgrep `41499065998` также успешен. Новые regressions добавлены в последующих коммитах и требуют отдельного зелёного CI.
