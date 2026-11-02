@@ -10,6 +10,7 @@ Usage: sudo python3 scripts/awg31-go-interop.py ./target/release/boringtun-cli .
 from __future__ import annotations
 
 import os
+import re
 import socket
 import struct
 import subprocess
@@ -68,6 +69,23 @@ PROFILES = [
         "disable_cookies=true\nrekey_after_time=119-120\n"
         "rekey_timeout=5-6\nreject_after_time=179-180\n"
         "keepalive_timeout=9-10\nmax_handshake_attempts=18-19\n",
+        True,
+    ),
+    # CPS I1-I5: recognizable fixed datagrams let the pcap verifier prove
+    # that each configured signature is actually emitted before the WG
+    # initiation, not merely accepted by UAPI.
+    ("CPS I1", "i1=<b 0x41574733312d49312d435053>\n", True),
+    ("CPS I2", "i2=<b 0x41574733312d49322d435053>\n", True),
+    ("CPS I3", "i3=<b 0x41574733312d49332d435053>\n", True),
+    ("CPS I4", "i4=<b 0x41574733312d49342d435053>\n", True),
+    ("CPS I5", "i5=<b 0x41574733312d49352d435053>\n", True),
+    (
+        "CPS I1-I5 combined",
+        "i1=<b 0x41574733312d49312d435053>\n"
+        "i2=<b 0x41574733312d49322d435053>\n"
+        "i3=<b 0x41574733312d49332d435053>\n"
+        "i4=<b 0x41574733312d49342d435053>\n"
+        "i5=<b 0x41574733312d49352d435053>\n",
         True,
     ),
 ]
@@ -228,6 +246,7 @@ def verify_wire_pcap(
     header_protection: bool,
     random_trailers: bool,
     expected_handshakes: int,
+    expected_signatures: list[bytes],
 ) -> None:
     """Decode captured UDP envelopes and assert normalized wire semantics.
 
@@ -262,6 +281,10 @@ def verify_wire_pcap(
     hp_key = bytes.fromhex(HPK) if header_protection else None
     offset = 24
     packets = 0
+    datagram_index = 0
+    seen_signatures: set[bytes] = set()
+    signature_positions: dict[bytes, int] = {}
+    first_handshake_position = None
 
     while offset + 16 <= len(raw):
         _sec, _usec, captured_len, _original_len = struct.unpack_from(
@@ -285,7 +308,12 @@ def verify_wire_pcap(
         if len(payload) < prefix + 4:
             continue
         packets += 1
+        datagram_index += 1
         direction = "server_to_client" if src_port == 51820 else "client_to_server"
+        for signature in expected_signatures:
+            if payload.startswith(signature):
+                seen_signatures.add(signature)
+                signature_positions.setdefault(signature, datagram_index)
         encrypted_tag = payload[prefix:prefix + 4]
         if hp_key is not None:
             if len(payload) < 12:
@@ -320,6 +348,8 @@ def verify_wire_pcap(
                 f"type-{kind} RandomTrailers envelope exceeds 500-byte UDP window: {packet_size}"
             )
         counts[direction][kind] += 1
+        if kind == 1 and first_handshake_position is None:
+            first_handshake_position = datagram_index
 
     if packets == 0:
         raise RuntimeError("pcap contains no UDP tunnel traffic on port 51820")
@@ -332,10 +362,22 @@ def verify_wire_pcap(
                     f"pcap missing type-{kind} from {direction}: "
                     f"observed {counts[direction][kind]}, expected >= {minimum_count}"
                 )
+    missing_signatures = set(expected_signatures) - seen_signatures
+    if missing_signatures:
+        missing_hex = ", ".join(value.hex() for value in sorted(missing_signatures))
+        raise RuntimeError(f"pcap missing configured CPS signature datagrams: {missing_hex}")
+    if expected_signatures and first_handshake_position is not None:
+        last_signature_position = max(signature_positions.values())
+        if last_signature_position >= first_handshake_position:
+            raise RuntimeError(
+                "CPS signature datagrams were not all sent before the first handshake initiation"
+            )
+
     print(
         "PCAP "
         f"client->server={counts['client_to_server']} "
         f"server->client={counts['server_to_client']} "
+        f"signatures={len(seen_signatures)} "
         f"datagrams={packets}"
     )
 
@@ -471,6 +513,10 @@ def run_profile(
             header_protection="header_protection_key=" in extra,
             random_trailers="random_trailers=true" in extra,
             expected_handshakes=(4 if name == "accelerated rekey" else 1),
+            expected_signatures=[
+                bytes.fromhex(value)
+                for value in re.findall(r"i[1-5]=<b 0x([0-9a-fA-F]+)>", extra)
+            ],
         )
         print(f"PASS {name} ({role}): handshake + bidirectional ICMP/UDP + normalized pcap")
     except Exception:
