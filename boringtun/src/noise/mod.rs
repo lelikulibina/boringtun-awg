@@ -1659,7 +1659,10 @@ mod tests {
         .unwrap();
 
         let mut network = [0u8; 4096];
-        let init = create_handshake_init(&mut initiator);
+        let init = match initiator.format_handshake_initiation(&mut network, false) {
+            TunnResult::WriteToNetwork(packet) => packet.to_vec(),
+            other => panic!("combined AWG 3.1 initiator could not format handshake: {:?}", other),
+        };
         let response = match responder.decapsulate(None, &init, &mut network) {
             TunnResult::WriteToNetwork(packet) => packet.to_vec(),
             other => panic!(
