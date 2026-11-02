@@ -532,11 +532,11 @@ def run_profile(
         initial_handshake_time = wait_handshake(server_iface, ns_client, SERVER_TUN)
         if name == "accelerated rekey":
             handshake_time = initial_handshake_time
-            for cycle in range(3):
+            for cycle in range(10):
                 wait_rekey(server_iface, ns_client, SERVER_TUN, handshake_time)
                 handshake_time = last_handshake_time(server_iface)
                 verify_udp_roundtrip(ns_server, ns_client)
-                print(f"REKEY soak cycle {cycle + 1}/3 completed ({role})")
+                print(f"REKEY soak cycle {cycle + 1}/10 completed ({role})")
         elif name == "rekey packet-loss recovery":
             drop_client_egress_during_rekey(ns_client, veth_client)
             wait_rekey(server_iface, ns_client, SERVER_TUN, initial_handshake_time)
@@ -554,7 +554,7 @@ def run_profile(
             awg_enabled=awg_enabled,
             header_protection="header_protection_key=" in extra,
             random_trailers="random_trailers=true" in extra,
-            expected_handshakes=(4 if name == "accelerated rekey" else 2 if name == "rekey packet-loss recovery" else 1),
+            expected_handshakes=(11 if name == "accelerated rekey" else 2 if name == "rekey packet-loss recovery" else 1),
             expected_signatures=[
                 bytes.fromhex(value)
                 for value in re.findall(r"i[1-5]=<b 0x([0-9a-fA-F]+)>", extra)
