@@ -316,7 +316,9 @@ impl Tunn {
 
             if let Some(time_init_sent) = self.handshake.timer() {
                 // Handshake Initiation Retransmission
-                if now - handshake_started >= REKEY_ATTEMPT_TIME || self.timers.handshake_attempts > self.timers.max_handshake_attempts {
+                let legacy_attempt_deadline = self.timers.timer_ranges.iter().all(|range| *range == (0, 0))
+                    && now - handshake_started >= REKEY_ATTEMPT_TIME;
+                if legacy_attempt_deadline || self.timers.handshake_attempts > self.timers.max_handshake_attempts {
                     // After REKEY_ATTEMPT_TIME ms of trying to initiate a new handshake,
                     // the retries give up and cease, and clear all existing packets queued
                     // up to be sent. If a packet is explicitly queued up to be sent, then
