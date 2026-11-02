@@ -84,7 +84,7 @@ impl SignatureChain {
                 // In the upstream sender the source is nil, so <d> and <ds>
                 // contribute zero bytes. <dz N> writes the big-endian source
                 // length, which is therefore N zero bytes.
-                "d" | "ds" => continue,
+                "d" | "ds" => SignatureOperation::ZeroLength(0),
                 "dz" => SignatureOperation::ZeroLength(parse_length(value, name)?),
                 _ => return Err(format!("signature chain contains unknown tag <{}>", name)),
             };

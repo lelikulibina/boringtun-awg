@@ -10,6 +10,7 @@ use super::{
     HANDSHAKE_RESP_SZ,
 };
 use crate::noise::errors::WireGuardError;
+use crate::noise::signature::SignatureChain;
 use chacha20::cipher::{KeyIvInit, StreamCipher};
 use rand_core::RngCore;
 use std::convert::{TryFrom, TryInto};

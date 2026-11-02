@@ -791,6 +791,7 @@ impl Tunn {
             // the Jc random/protocol-shaped junk are both emitted: the sequence
             // first, then `packet_count` junk packets, then the initiation.
             self.pending_amnezia_junk = Some(PendingAmneziaJunk {
+                signature_datagrams,
                 imitation_datagrams,
                 remaining: self.amnezia.pre_handshake_junk.packet_count,
                 last_packet_at: None,
@@ -1876,6 +1877,38 @@ mod tests {
                 _ => unreachable!(),
             }
         }
+    }
+
+    #[test]
+    fn amnezia_i1_i5_signature_packets_precede_imitation_and_junk() {
+        let amnezia = AmneziaConfig::new(0, 0, 0, 0)
+            .with_signature_packet(0, "<b 4931><r 3>")
+            .unwrap()
+            .with_signature_packet(4, "<b 4935>")
+            .unwrap()
+            .with_pre_handshake_junk(1, 28, 100, 0)
+            .with_protocol_imitation(amnezia::AmneziaImitationProtocol::Stun, None);
+        let (mut tun, _peer) = create_two_tuns_with_amnezia(amnezia);
+        let mut dst = vec![0u8; 2048];
+
+        let i1 = unwrap_network_packet(tun.format_handshake_initiation(&mut dst, false));
+        assert_eq!(&i1[..2], b"I1");
+        assert_eq!(i1.len(), 5);
+
+        let i5 = unwrap_network_packet(tun.update_timers(&mut dst));
+        assert_eq!(i5, b"I5");
+
+        // I1-I5 are followed by the configured imitation sequence, then Jc.
+        let stun1 = unwrap_network_packet(tun.update_timers(&mut dst));
+        assert_eq!(&stun1[..2], &[0x00, 0x01]);
+        advance_past_pacing_gate(Duration::from_millis(20));
+        let stun2 = unwrap_network_packet(tun.update_timers(&mut dst));
+        assert_eq!(&stun2[..2], &[0x00, 0x01]);
+
+        let junk = unwrap_network_packet(tun.update_timers(&mut dst));
+        assert!((28..=100).contains(&junk.len()));
+        let init = unwrap_network_packet(tun.update_timers(&mut dst));
+        assert_eq!(init.len(), HANDSHAKE_INIT_SZ);
     }
 
     #[test]

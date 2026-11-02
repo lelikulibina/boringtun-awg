@@ -7,6 +7,7 @@ use super::{AllowedIP, Device, Error, SocketAddr};
 use crate::device::Action;
 use crate::noise::amnezia::AmneziaConfig;
 use crate::noise::handshake::ObfuscationRanges;
+use crate::noise::signature::SignatureChain;
 use crate::serialization::KeyBytes;
 use crate::x25519;
 use hex::{decode as decode_hex, encode as encode_hex};
@@ -906,6 +907,36 @@ mod tests {
         // And the keys the transaction did not mention keep their old values.
         assert_eq!(merged.cookie_packet_junk_size, 1, "s3 untouched");
         assert_eq!(merged.transport_packet_junk_size, 1, "s4 untouched");
+    }
+
+    #[test]
+    fn i1_i5_signature_chains_merge_roundtrip_and_clear_individually() {
+        let current = AmneziaConfig::new(0, 0, 0, 0);
+        let chain = SignatureChain::parse("<b 4142><r 4>").unwrap();
+        let mut params = AwgParams::default();
+        params.set_signature_packet(0, chain.clone());
+        params.set_signature_packet(4, SignatureChain::parse("<b 4935>").unwrap());
+
+        let (_, merged) = params
+            .merged(ObfuscationRanges::default(), &current)
+            .expect("valid I1/I5 chains");
+        assert_eq!(merged.signature_packets[0], chain);
+        assert_eq!(
+            merged.signature_packets[4]
+                .as_ref()
+                .map(SignatureChain::spec),
+            Some("<b 4935>")
+        );
+
+        // A partial update keeps the untouched chain, while an empty I1 clears
+        // only that slot (the same semantics as upstream's nil obfChain).
+        let mut clear = AwgParams::default();
+        clear.set_signature_packet(0, SignatureChain::parse("").unwrap());
+        let (_, cleared) = clear
+            .merged(ObfuscationRanges::default(), &merged)
+            .expect("clearing a signature chain is valid");
+        assert!(cleared.signature_packets[0].is_none());
+        assert!(cleared.signature_packets[4].is_some());
     }
 
     #[test]
