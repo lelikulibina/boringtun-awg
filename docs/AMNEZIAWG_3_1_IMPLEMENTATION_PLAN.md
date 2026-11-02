@@ -369,3 +369,11 @@ Upstream точки сверки:
 - Добавлен mock-clock regression, который не ограничивается проверкой факта отправки нового Handshake Initiation: после достижения `RekeyAfterTime` инициатор и peer проходят полный повторный Noise handshake, handshake timestamp обновляется, а новый transport session подтверждается реальным зашифрованным IPv4-пакетом.
 - Проверка кроссует timer trigger → initiation → response → keepalive/session installation → authenticated data; до этого предыдущий тест подтверждал только отправку initiation в момент deadline.
 - Требуется подтверждение Linux CI на новом HEAD. Это локальный peer-level state-machine regression, а не замена длительного differential-теста с amneziawg-go.
+
+
+### Этап 16: восстановление handshake после потери ответа (2026-11-03)
+
+- Добавлен mock-clock regression: responder принимает первое Handshake Initiation и отправляет корректный Response, который моделируется потерянным в сети.
+- После истечения настроенного RekeyTimeout плюс верхней границы jitter инициатор повторно отправляет новое Initiation; responder принимает повтор, handshake завершается, retry budget сбрасывается, обе стороны устанавливают новые сессии.
+- Проверяется реальная передача IPv4-пакета через восстановленную сессию. Это дополняет проверку исчерпания retry budget: покрываются как успешное восстановление после потери Response, так и окончательный отказ при превышении числа попыток.
+- Требуется подтверждение Linux CI на коммите этапа 16; до завершения CI тест не считается пройденным.
