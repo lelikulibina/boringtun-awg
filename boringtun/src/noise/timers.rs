@@ -186,6 +186,13 @@ impl Timers {
 
         Some(min + (value % width) as u32)
     }
+
+    /// Select a fresh retry budget when starting a new handshake (not a retry).
+    /// Upstream reselects maxHandshakeAttempts on every non-retry initiation.
+    fn select_new_handshake_budget(&mut self) {
+        self.handshake_attempts = 0;
+        self.max_handshake_attempts = self.pick_range(4, 18);
+    }
 }
 
 impl Index<TimerName> for Timers {
@@ -257,6 +264,24 @@ mod tests {
 
         timers.set_persistent_keepalive(Some(10));
         assert_eq!(timers.persistent_keepalive, 10);
+    }
+
+    #[test]
+    fn fresh_handshake_reselects_retry_budget_from_current_timer_range() {
+        let initial = AmneziaConfig::new(0, 0, 0, 0).with_max_handshake_attempts(2, 2);
+        let replacement = AmneziaConfig::new(0, 0, 0, 0).with_max_handshake_attempts(7, 7);
+        let mut timers = Timers::new(None, false, &initial);
+        timers.handshake_attempts = 1;
+        assert_eq!(timers.max_handshake_attempts, 2);
+
+        timers.set_timer_ranges(&replacement);
+        timers.select_new_handshake_budget();
+
+        assert_eq!(timers.handshake_attempts, 0);
+        assert_eq!(
+            timers.max_handshake_attempts, 7,
+            "a fresh non-retry handshake must sample the updated configured budget"
+        );
     }
 
     #[test]
