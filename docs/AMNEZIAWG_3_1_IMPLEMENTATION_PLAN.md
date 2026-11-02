@@ -41,7 +41,7 @@
 - [ ] Добавить upstream differential vectors и проверить interop на реальном amneziawg-go peer. Текущий Rust test проверяет фиксированный IETF ChaCha20 keystream и протокольное правило: handshake полностью, transport только первые 16 байт.
 - [ ] Проверить отсутствие изменения wire bytes при выключенной защите и полную vanilla WG/AWG 2.x регрессию.
 
-**Статус:** реализация ingress/egress и UAPI находится в PR #8. Добавлен детерминированный reference-vector test (key `0x42` × 32, nonce `00..0b`) с проверкой зашифрованного handshake-заголовка и неизменности transport payload; CI для коммита `d536be5f7f685554490f02b7068752179b4524a3` ожидает завершения. Этап не завершён: нужны внешний differential test с официальным Go peer, реальный двусторонний handshake и проверка vanilla WG/AWG 2.x.
+**Статус:** реализация ingress/egress и UAPI находится в PR #8. Добавлен фиксированный ChaCha20 reference-vector test (key `0x42` × 32, nonce `00..0b`) для handshake и transport; он проверяет IETF ChaCha20 keystream и wire layout, но не является differential test с официальным Go peer. В device UDP ingress запрещён plaintext fallback, если HeaderProtectionKey включён; добавлен deterministic negative test на отклонение plaintext initiation. На SHA `6bec7f4b7f65da3f932f736747b3468c39065a46` прошли Linux tests, integration-tests, Clippy и feature checks; rustfmt выявил только два форматирующих отклонения, исправляемых этим коммитом. Этап не завершён: нужны внешний differential test с официальным Go peer, реальный двусторонний handshake и проверка vanilla WG/AWG 2.x.
 
 **Готово, когда:** BoringTun и официальный AWG взаимно устанавливают туннель с одинаковым ключом, неверный ключ/недостаточный S-prefix корректно отклоняется, а vanilla WG и AWG 2.x не меняют поведение.
 
@@ -118,12 +118,13 @@
 ## Последний handoff (2026-11-02)
 
 - Рабочая ветка: `feat/amneziawg-3.1-disable-cookies`, PR #8.
-- Последний CI HEAD: `d536be5f7f685554490f02b7068752179b4524a3` (CI run `41457924674` и Semgrep `41457924557`; на момент обновления queued). Не переносить старые результаты на новый SHA.
+- Последний проверенный CI HEAD перед форматирующим исправлением: `6bec7f4b7f65da3f932f736747b3468c39065a46` (PR CI run `41458206943`: tests, integration-tests, Clippy и check_features — success; rustfmt — failure только на двух новых форматирующих фрагментах. Semgrep run `41458206903` — success). Следующий commit включает оба rustfmt исправления и актуализацию этого handoff; итоговый CI должен быть проверен на новом SHA.
 - Header Protection сейчас частично реализован в `noise/amnezia.rs`, `noise/mod.rs`, `device/api.rs`; зависимость raw ChaCha20 добавлена в `boringtun/Cargo.toml` и lockfile.
 - Upstream receive path: `device/receive.go`. Он сначала строит cipher по `packet[:12]`, восстанавливает type из ChaCha20 keystream, определяет packet kind/padding по H-ranges, затем XOR-ит оставшуюся часть handshake/cookie или только `packet[4:MessageTransportHeaderSize]` для transport. Send path шифрует handshake/cookie целиком, transport header отдельно. Не шифровать transport AEAD payload.
 - Важное исправление уже внесено: transport egress ограничен первыми 16 байтами; payload/tag AEAD остаются нетронутыми.
+- В device UDP ingress при включённом HeaderProtectionKey не допускается fallback к raw plaintext после неудачной расшифровки; такой пакет отбрасывается. Есть детерминированный negative test.
 - В CI workflow оставлены только Ubuntu/Linux jobs; macOS/Windows отключены, Semgrep остаётся отдельным workflow.
-- Не считать этап Header Protection завершённым до differential test vectors и двустороннего теста с upstream. Сверить текущий код по актуальному upstream commit перед продолжением.
+- Не считать этап Header Protection завершённым до differential test vectors, реального двустороннего теста с upstream и vanilla WG/AWG 2.x регрессии. Текущий Rust reference-vector test — не полноценный Go differential test. Сверить текущий код по актуальному upstream commit перед продолжением.
 
 ## Протокол продолжения работы для нового агента
 

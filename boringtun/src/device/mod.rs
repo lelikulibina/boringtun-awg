@@ -1606,7 +1606,8 @@ mod ingress_tests {
         .unwrap();
 
         let mut buffer = vec![0u8; MAX_UDP_SIZE];
-        let mut plaintext_initiation = match client.format_handshake_initiation(&mut buffer, false) {
+        let mut plaintext_initiation = match client.format_handshake_initiation(&mut buffer, false)
+        {
             TunnResult::WriteToNetwork(datagram) => datagram.to_vec(),
             other => panic!("expected an initiation, got {:?}", other),
         };
