@@ -1,6 +1,6 @@
 # Настройка AmneziaWG 3.1 в BoringTun
 
-> **Статус:** экспериментальная реализация в PR [#8](https://github.com/lelikulibina/boringtun-awg/pull/8). Это не заявление о полной совместимости с AmneziaWG 3.1: до неё ещё нужны дифференциальные тесты с официальным `amneziawg-go`, двусторонний handshake и матрица WireGuard/AWG 2.x/AWG 3.1.
+> **Статус:** экспериментальная реализация в PR [#8](https://github.com/lelikulibina/boringtun-awg/pull/8). Это не заявление о полной совместимости с AmneziaWG 3.1: до неё ещё нужны дифференциальные тесты с официальным `amneziawg-go`, двусторонний handshake и матрица WireGuard/AWG 2.0/AWG 3.0/AWG 3.1.
 
 ## Совместимость и безопасные значения
 
