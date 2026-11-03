@@ -58,6 +58,9 @@ pub struct Timers {
     time_started: Instant,
     timers: [Duration; TimerName::Top as usize],
     pub(super) session_timers: [Duration; super::N_SESSIONS],
+    /// Last completed handshake timestamp relative to time_started. Unlike
+    /// session keys, the UAPI keeps this value after key material expires.
+    last_handshake: Option<Duration>,
     /// Deadline for the first authenticated-data-send inactivity timer.
     /// Subsequent data sends do not move it until an authenticated packet arrives.
     pub(super) new_handshake_deadline: Option<Duration>,
@@ -94,6 +97,7 @@ impl Timers {
             time_started: Instant::now(),
             timers: Default::default(),
             session_timers: Default::default(),
+            last_handshake: None,
             new_handshake_deadline: None,
             send_keepalive_deadline: None,
             need_another_keepalive: false,
@@ -579,6 +583,7 @@ impl Tunn {
         session_idx: usize,
     ) {
         self.timer_tick(TimeSessionEstablished);
+        self.timers.last_handshake = Some(self.timers[TimeCurrent]);
         self.timers.session_timers[session_idx % crate::noise::N_SESSIONS] =
             self.timers[TimeCurrent];
         self.timers.is_initiator = is_initiator;
@@ -826,15 +831,9 @@ impl Tunn {
     }
 
     pub fn time_since_last_handshake(&self) -> Option<Duration> {
-        let current_session = self.current;
-        if self.sessions[current_session % super::N_SESSIONS].is_some() {
-            let duration_since_tun_start = Instant::now().duration_since(self.timers.time_started);
-            let duration_since_session_established = self.timers[TimeSessionEstablished];
-
-            Some(duration_since_tun_start - duration_since_session_established)
-        } else {
-            None
-        }
+        let last_handshake = self.timers.last_handshake?;
+        let duration_since_tun_start = Instant::now().duration_since(self.timers.time_started);
+        Some(duration_since_tun_start.saturating_sub(last_handshake))
     }
 
     pub fn persistent_keepalive(&self) -> Option<u16> {
