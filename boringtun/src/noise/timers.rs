@@ -64,7 +64,9 @@ pub struct Timers {
     /// Further data receives while pending request one additional keepalive.
     pub(super) send_keepalive_deadline: Option<Duration>,
     need_another_keepalive: bool,
-    persistent_keepalive: usize,
+    persistent_keepalive_range: (u32, u32),
+    persistent_keepalive_interval: u32,
+    persistent_keepalive_deadline: Option<Duration>,
     /// Should this timer call reset rr function (if not a shared rr instance)
     pub(super) should_reset_rr: bool,
     timer_ranges: [(u32, u32); 5],
@@ -94,7 +96,12 @@ impl Timers {
             new_handshake_deadline: None,
             send_keepalive_deadline: None,
             need_another_keepalive: false,
-            persistent_keepalive: usize::from(persistent_keepalive.unwrap_or(0)),
+            persistent_keepalive_range: {
+                let interval = u32::from(persistent_keepalive.unwrap_or(0));
+                (interval, interval)
+            },
+            persistent_keepalive_interval: u32::from(persistent_keepalive.unwrap_or(0)),
+            persistent_keepalive_deadline: None,
             should_reset_rr: reset_rr,
             timer_ranges: [
                 amnezia.rekey_after_time,
@@ -202,6 +209,30 @@ impl Timers {
         self.handshake_attempts = 0;
         self.max_handshake_attempts = self.pick_range(4, 18);
     }
+
+    fn pick_persistent_keepalive_interval(&self) -> u32 {
+        let (min, max) = self.persistent_keepalive_range;
+        if min >= max {
+            return min;
+        }
+        loop {
+            if let Some(value) = Self::map_range_sample(min, max, OsRng.next_u32()) {
+                return value;
+            }
+        }
+    }
+
+    fn reset_persistent_keepalive(&mut self, now: Duration) {
+        if self.persistent_keepalive_range == (0, 0) {
+            self.persistent_keepalive_interval = 0;
+            self.persistent_keepalive_deadline = None;
+            return;
+        }
+        let interval = self.pick_persistent_keepalive_interval();
+        self.persistent_keepalive_interval = interval;
+        self.persistent_keepalive_deadline =
+            Some(now + Duration::from_secs(u64::from(interval)));
+    }
 }
 
 impl Index<TimerName> for Timers {
@@ -263,16 +294,22 @@ mod tests {
     fn persistent_keepalive_updates_preserve_zero_and_disabled_semantics() {
         let config = AmneziaConfig::new(0, 0, 0, 0);
         let mut timers = Timers::new(Some(25), false, &config);
-        assert_eq!(timers.persistent_keepalive, 25);
+        assert_eq!(timers.persistent_keepalive_range, (25, 25));
+        assert_eq!(timers.persistent_keepalive_interval, 25);
 
         timers.set_persistent_keepalive(Some(0));
-        assert_eq!(timers.persistent_keepalive, 0);
+        assert_eq!(timers.persistent_keepalive_range, (0, 0));
+        assert_eq!(timers.persistent_keepalive_interval, 0);
+        assert_eq!(timers.persistent_keepalive_deadline, None);
 
         timers.set_persistent_keepalive(None);
-        assert_eq!(timers.persistent_keepalive, 0);
+        assert_eq!(timers.persistent_keepalive_range, (0, 0));
+        assert_eq!(timers.persistent_keepalive_interval, 0);
 
         timers.set_persistent_keepalive(Some(10));
-        assert_eq!(timers.persistent_keepalive, 10);
+        assert_eq!(timers.persistent_keepalive_range, (10, 10));
+        assert_eq!(timers.persistent_keepalive_interval, 10);
+        assert!(timers.persistent_keepalive_deadline.is_some());
     }
 
     #[test]
@@ -580,7 +617,7 @@ impl Tunn {
         let handshake_started = self.timers[TimeLastHandshakeStarted];
         let data_packet_received = self.timers[TimeLastDataPacketReceived];
         let data_packet_sent = self.timers[TimeLastDataPacketSent];
-        let persistent_keepalive = self.timers.persistent_keepalive;
+
 
         {
             // Clear cookie after COOKIE_EXPIRATION_TIME
@@ -718,11 +755,14 @@ impl Tunn {
                     }
 
                     // Persistent KEEPALIVE
-                    if persistent_keepalive > 0
-                        && (now - self.timers[TimePersistentKeepalive]
-                            >= Duration::from_secs(persistent_keepalive as _))
+                    if self
+                        .timers
+                        .persistent_keepalive_deadline
+                        .map(|deadline| now >= deadline)
+                        .unwrap_or(false)
                     {
                         tracing::debug!("KEEPALIVE(PERSISTENT_KEEPALIVE)");
+                        self.timers.persistent_keepalive_deadline = None;
                         self.timer_tick(TimePersistentKeepalive);
                         keepalive_required = true;
                     }
@@ -762,13 +802,15 @@ impl Tunn {
     }
 
     pub fn persistent_keepalive(&self) -> Option<u16> {
-        let keepalive = self.timers.persistent_keepalive;
+        u16::try_from(self.timers.persistent_keepalive_interval)
+            .ok()
+            .filter(|interval| *interval > 0)
+    }
 
-        if keepalive > 0 {
-            Some(keepalive as u16)
-        } else {
-            None
-        }
+    /// Return the configured inclusive persistent-keepalive interval range.
+    pub fn persistent_keepalive_range(&self) -> Option<(u32, u32)> {
+        let range = self.timers.persistent_keepalive_range;
+        (range != (0, 0)).then_some(range)
     }
 }
 
@@ -783,9 +825,25 @@ impl Timers {
         ];
     }
 
-    /// Replace the persistent-keepalive interval. `None` (or zero) disables it,
-    /// matching how [`Timers::new`] interprets the same argument.
+    /// Replace the persistent-keepalive interval range. A transition from
+    /// disabled to enabled schedules an immediate keepalive, matching upstream's
+    /// post-configuration pkaOn behavior. Later authenticated packet traversal
+    /// samples a fresh interval from the configured range.
+    pub(super) fn set_persistent_keepalive_range(&mut self, range: (u32, u32)) {
+        let was_disabled = self.persistent_keepalive_range == (0, 0);
+        self.persistent_keepalive_range = range;
+        if range == (0, 0) {
+            self.persistent_keepalive_interval = 0;
+            self.persistent_keepalive_deadline = None;
+        } else if was_disabled {
+            let now = Instant::now().duration_since(self.time_started);
+            self.persistent_keepalive_interval = self.pick_persistent_keepalive_interval();
+            self.persistent_keepalive_deadline = Some(now);
+        }
+    }
+
     pub(super) fn set_persistent_keepalive(&mut self, keepalive: Option<u16>) {
-        self.persistent_keepalive = usize::from(keepalive.unwrap_or(0));
+        let interval = u32::from(keepalive.unwrap_or(0));
+        self.set_persistent_keepalive_range((interval, interval));
     }
 }
