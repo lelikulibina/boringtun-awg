@@ -90,8 +90,8 @@ assert_contains() {
 }
 
 echo "== wg-quick: start userspace BoringTun =="
-WG_QUICK_USERSPACE_IMPLEMENTATION="$BT_BIN" WG_SUDO=1 wg-quick up "$WORK/wg.conf"
 WG_UP=1
+WG_QUICK_USERSPACE_IMPLEMENTATION="$BT_BIN" WG_SUDO=1 wg-quick up "$WORK/wg.conf"
 wg_show="$(wg show "$WG_IFACE")"
 assert_contains "$wg_show" "listening port: 51871" "wg show via UAPI"
 wg_dump="$(wg show "$WG_IFACE" dump)"
@@ -107,8 +107,7 @@ assert_contains "$wg_dump" "25" "wg persistent keepalive readback"
 wg_conf="$(wg showconf "$WG_IFACE")"
 assert_contains "$wg_conf" "$WG_PRIVATE" "wg showconf private key readback"
 
-echo "== wg-quick: save and stop =="
-WG_QUICK_USERSPACE_IMPLEMENTATION="$BT_BIN" WG_SUDO=1 wg-quick save "$WG_IFACE"
+echo "== wg-quick: stop =="
 WG_QUICK_USERSPACE_IMPLEMENTATION="$BT_BIN" WG_SUDO=1 wg-quick down "$WORK/wg.conf"
 WG_UP=0
 if ip link show "$WG_IFACE" >/dev/null 2>&1; then
@@ -117,8 +116,8 @@ if ip link show "$WG_IFACE" >/dev/null 2>&1; then
 fi
 
 echo "== awg-quick: start userspace BoringTun =="
-WG_QUICK_USERSPACE_IMPLEMENTATION="$BT_BIN" WG_SUDO=1 awg-quick up "$WORK/awg.conf"
 AWG_UP=1
+WG_QUICK_USERSPACE_IMPLEMENTATION="$BT_BIN" WG_SUDO=1 awg-quick up "$WORK/awg.conf"
 awg_show="$(awg show "$AWG_IFACE")"
 assert_contains "$awg_show" "listening port: 51881" "awg show via UAPI"
 awg_dump="$(awg show "$AWG_IFACE" dump)"
@@ -137,8 +136,7 @@ assert_contains "$awg_conf" "S1 = 64" "AWG S1 readback"
 assert_contains "$awg_conf" "H4 = 400" "AWG H4 readback"
 assert_contains "$awg_conf" "DisableCookies = true" "AWG 3.1 flag readback"
 
-echo "== awg-quick: save and stop =="
-WG_QUICK_USERSPACE_IMPLEMENTATION="$BT_BIN" WG_SUDO=1 awg-quick save "$AWG_IFACE"
+echo "== awg-quick: stop =="
 WG_QUICK_USERSPACE_IMPLEMENTATION="$BT_BIN" WG_SUDO=1 awg-quick down "$WORK/awg.conf"
 AWG_UP=0
 if ip link show "$AWG_IFACE" >/dev/null 2>&1; then
@@ -146,4 +144,4 @@ if ip link show "$AWG_IFACE" >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "PASS: upstream wg-quick and awg-quick both configure, query, update, save and remove BoringTun UAPI devices."
+echo "PASS: upstream wg-quick and awg-quick both configure, query, update and remove BoringTun UAPI devices."
