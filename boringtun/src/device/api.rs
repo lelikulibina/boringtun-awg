@@ -82,14 +82,8 @@ fn parse_tag_range(val: &str) -> Option<(u32, u32)> {
     if start > end {
         return None;
     }
-    // Reject 0 rather than accepting it silently. `ObfuscationRanges::new`
-    // treats an all-zero range as "unset" and substitutes the vanilla WireGuard
-    // message type for that packet kind, so `h1=0` would quietly disable
-    // obfuscation instead of using tag 0 -- the opposite of what the operator
-    // wrote. Failing the transaction with EINVAL makes that visible.
-    if start == 0 {
-        return None;
-    }
+    // Zero is a valid UAPI tag. The explicit-range constructor below keeps
+    // (0, 0) distinct from the library constructor's "use default" sentinel.
     Some((start, end))
 }
 
@@ -194,7 +188,7 @@ impl AwgParams {
                 .unwrap_or((cur_obf.h4_data.start, cur_obf.h4_data.end)),
         );
 
-        let obf = ObfuscationRanges::new(h1.0, h1.1, h2.0, h2.1, h3.0, h3.1, h4.0, h4.1)
+        let obf = ObfuscationRanges::from_explicit_ranges([h1, h2, h3, h4])
             .map_err(|_| EINVAL)?;
 
         // Start from the current value and overwrite only what this transaction
@@ -1236,17 +1230,20 @@ mod tests {
     }
 
     #[test]
-    fn parse_tag_range_rejects_zero_rather_than_silently_disabling() {
-        // ObfuscationRanges::new treats an all-zero range as "unset" and
-        // substitutes the vanilla WireGuard message type. Accepting h1=0 would
-        // therefore turn obfuscation *off* for that packet kind while reporting
-        // success -- the opposite of what the operator asked for.
-        assert_eq!(parse_tag_range("0"), None);
-        assert_eq!(parse_tag_range("0-0"), None);
-        assert_eq!(parse_tag_range("0-5"), None);
-        // Non-zero starts are unaffected.
+    fn parse_tag_range_accepts_zero_as_a_literal_uapi_tag() {
+        assert_eq!(parse_tag_range("0"), Some((0, 0)));
+        assert_eq!(parse_tag_range("0-0"), Some((0, 0)));
+        assert_eq!(parse_tag_range("0-5"), Some((0, 5)));
         assert_eq!(parse_tag_range("1"), Some((1, 1)));
         assert_eq!(parse_tag_range("1-5"), Some((1, 5)));
+
+        let mut params = AwgParams::default();
+        params.set_header("h1", (0, 0));
+        let (obf, _) = params
+            .merged(ObfuscationRanges::default(), &AmneziaConfig::new(0, 0, 0, 0))
+            .expect("zero is a valid explicit UAPI tag");
+        assert!(obf.matches_h1(0));
+        assert!(!obf.matches_h1(1));
     }
     #[test]
     fn randomized_timer_ranges_are_parsed_merged_and_validated() {
