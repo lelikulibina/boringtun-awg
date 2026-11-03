@@ -658,7 +658,6 @@ impl Tunn {
         let data_packet_received = self.timers[TimeLastDataPacketReceived];
         let data_packet_sent = self.timers[TimeLastDataPacketSent];
 
-
         {
             // Clear cookie after COOKIE_EXPIRATION_TIME
             if self.handshake.has_cookie()
