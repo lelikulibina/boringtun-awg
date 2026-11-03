@@ -324,17 +324,32 @@ impl Device {
 
                 let mut reader = BufReader::new(&api_conn);
                 let mut writer = BufWriter::new(&api_conn);
-                let mut cmd = String::new();
-                if reader.read_line(&mut cmd).is_ok() {
-                    cmd.pop(); // pop the new line character
-                    let status = match cmd.as_ref() {
-                        // Only two commands are legal according to the protocol, get=1 and set=1.
-                        "get=1" => api_get(&mut writer, d),
+                loop {
+                    let mut cmd = String::new();
+                    match reader.read_line(&mut cmd) {
+                        Ok(0) | Err(_) => break,
+                        Ok(_) => {}
+                    }
+                    if cmd.ends_with('\n') { cmd.pop(); }
+                    if cmd.ends_with('\r') { cmd.pop(); }
+                    let status = match cmd.as_str() {
+                        "get=1" => {
+                            let mut terminator = String::new();
+                            match reader.read_line(&mut terminator) {
+                                Ok(n) if n > 0 && terminator == "\n" => api_get(&mut writer, d),
+                                _ => EINVAL,
+                            }
+                        }
                         "set=1" => api_set(&mut reader, d),
-                        _ => EIO,
+                        _ => {
+                            let _ = writeln!(writer, "errno={}\n", EIO);
+                            let _ = writer.flush();
+                            break;
+                        }
                     };
-                    // The protocol requires to return an error code as the response, or zero on success
-                    writeln!(writer, "errno={}\n", status).ok();
+                    if writeln!(writer, "errno={}\n", status).is_err() || writer.flush().is_err() {
+                        break;
+                    }
                 }
                 Action::Continue // Indicates the worker thread should continue as normal
             }),
@@ -354,21 +369,35 @@ impl Device {
 
                 let mut reader = BufReader::new(&io_file);
                 let mut writer = BufWriter::new(&io_file);
-                let mut cmd = String::new();
-                if reader.read_line(&mut cmd).is_ok() {
-                    cmd.pop(); // pop the new line character
-                    let status = match cmd.as_ref() {
-                        // Only two commands are legal according to the protocol, get=1 and set=1.
-                        "get=1" => api_get(&mut writer, d),
+                loop {
+                    let mut cmd = String::new();
+                    match reader.read_line(&mut cmd) {
+                        Ok(0) | Err(_) => {
+                            d.trigger_exit();
+                            return Action::Exit;
+                        }
+                        Ok(_) => {}
+                    }
+                    if cmd.ends_with('\n') { cmd.pop(); }
+                    if cmd.ends_with('\r') { cmd.pop(); }
+                    let status = match cmd.as_str() {
+                        "get=1" => {
+                            let mut terminator = String::new();
+                            match reader.read_line(&mut terminator) {
+                                Ok(n) if n > 0 && terminator == "\n" => api_get(&mut writer, d),
+                                _ => EINVAL,
+                            }
+                        }
                         "set=1" => api_set(&mut reader, d),
-                        _ => EIO,
+                        _ => {
+                            let _ = writeln!(writer, "errno={}\n", EIO);
+                            let _ = writer.flush();
+                            break;
+                        }
                     };
-                    // The protocol requires to return an error code as the response, or zero on success
-                    writeln!(writer, "errno={}\n", status).ok();
-                } else {
-                    // The remote side is likely closed; we should trigger an exit.
-                    d.trigger_exit();
-                    return Action::Exit;
+                    if writeln!(writer, "errno={}\n", status).is_err() || writer.flush().is_err() {
+                        break;
+                    }
                 }
 
                 Action::Continue // Indicates the worker thread should continue as normal
