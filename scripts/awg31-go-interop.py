@@ -149,15 +149,15 @@ QUICK_PROFILES = [PROFILES[index] for index in (0, 1, 11, 12, 15, 21)]
 PERFORMANCE_PROFILES = [PROFILES[index] for index in (0, 1, 6, 7, 8, 9, 10, 15)] + [
     (
         "AWG 2.x J-only",
-        "jc=4\\njmin=50\\njmax=1000\\n",
+        "jc=4\njmin=50\njmax=1000\n",
         True,
         True,
     ),
     (
         "AWG 2.x S-H-only",
-        "s1=120\\ns2=120\\ns3=120\\ns4=120\\n"
-        "h1=169887817\\nh2=390382747\\n"
-        "h3=1033691040\\nh4=1526332224\\n",
+        "s1=120\ns2=120\ns3=120\ns4=120\n"
+        "h1=169887817\nh2=390382747\n"
+        "h3=1033691040\nh4=1526332224\n",
         True,
         True,
     ),
