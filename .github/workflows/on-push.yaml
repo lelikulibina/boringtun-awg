@@ -15,6 +15,13 @@ on:
     branches: [ "main", "master", "awg-2.0-extensions" ]
   pull_request:
     branches: [ "main", "master", "awg-2.0-extensions" ]
+  workflow_dispatch:
+    inputs:
+      full_matrix:
+        description: "Run the extended 44-scenario interoperability matrix"
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   # Aggregate required checks for this repository's PR validation.
@@ -102,7 +109,7 @@ jobs:
   # it needs network namespaces, TUN devices and the external Go reference.
   awg31-interoperability:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v6
       - uses: actions-rs/toolchain@v1
@@ -111,11 +118,11 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version: '1.25'
-          cache: false
+          cache: true
+      - name: Cache Rust build dependencies
+        uses: Swatinem/rust-cache@v2
       - name: Install Linux networking and Python dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y iproute2 iputils-ping tcpdump python3-cryptography
+        run: sudo apt-get install -y iproute2 iputils-ping tcpdump python3-cryptography
       - name: Build BoringTun userspace device
         run: cargo build -p boringtun-cli --release
       - name: Fetch official AmneziaWG Go reference
@@ -128,7 +135,12 @@ jobs:
         working-directory: upstream-amneziawg-go
         run: go build -v -o ../amneziawg-go .
       - name: Run AWG 3.1 bidirectional interoperability matrix
-        run: sudo python3 scripts/awg31-go-interop.py ./target/release/boringtun-cli ./amneziawg-go
+        run: |
+          if [[ "${{ inputs.full_matrix }}" == "true" ]]; then
+            sudo python3 scripts/awg31-go-interop.py ./target/release/boringtun-cli ./amneziawg-go --full
+          else
+            sudo python3 scripts/awg31-go-interop.py ./target/release/boringtun-cli ./amneziawg-go
+          fi
       - name: Upload normalized wire captures
         if: always()
         uses: actions/upload-artifact@v4
