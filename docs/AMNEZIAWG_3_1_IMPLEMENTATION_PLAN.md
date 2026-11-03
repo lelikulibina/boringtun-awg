@@ -4,25 +4,32 @@
 
 ## Снимок актуального состояния — 2026-11-03
 
-Источник истины для текущего статуса — PR [#8](https://github.com/lelikulibina/boringtun-awg/pull/8), ветка `feat/amneziawg-3.1-disable-cookies`, HEAD `115a6c35d59a626e4c1f0f074b652618ff2f7092`. Эталонная реализация закреплена на `amnezia-vpn/amneziawg-go` commit `b5928efb6ca19f0153958460c3d141f04abc5c2e`.
+Источник истины — PR [#8](https://github.com/lelikulibina/boringtun-awg/pull/8), ветка `feat/amneziawg-3.1-disable-cookies`. Эталон закреплён на `amnezia-vpn/amneziawg-go` commit `b5928efb6ca19f0153958460c3d141f04abc5c2e`.
 
-### Подтверждено на этом HEAD
+### Подтверждено до UAPI follow-up
 
 - Linux PR CI [41629784730](https://github.com/lelikulibina/boringtun-awg/actions/runs/41629784730): `rustfmt`, `clippy`, `check_features`, `tests`, `integration-tests`, `awg31-interoperability` и `all-systems-go` — success.
 - Основной тестовый запуск: **277 passed, 0 failed, 9 ignored**; `cargo hack test --each-feature` завершился успешно.
-- AWG Go interoperability: **44/44 сценария** (22 профиля × обе роли сервера), handshake, двусторонние ICMP/UDP и нормализованный PCAP.
-- Packet-loss recovery: `tc` подтвердил потерю одного подходящего H1 rekey datagram в каждой роли; повторный handshake восстановил двусторонний трафик.
+- AWG Go interoperability: **44/44 сценария** (22 профиля × обе роли сервера), включая handshake, двусторонние ICMP/UDP и нормализованный PCAP.
+- Packet-loss recovery: потеря одного соответствующего H1 rekey datagram подтверждена `tc` в каждой роли; повторный handshake восстановил двусторонний трафик.
 - Long lifecycle soak: **120 rekey cycles на каждой роли сервера**, UDP roundtrip после каждого цикла.
 - Semgrep [41629784731](https://github.com/lelikulibina/boringtun-awg/actions/runs/41629784731) — success.
-- Performance workflow [41629778226](https://github.com/lelikulibina/boringtun-awg/actions/runs/41629778226) — success; 4/4 homogeneous endpoint/profile runs и 24 iperf3 measurements. Артефакты описаны в `docs/AMNEZIAWG_PERFORMANCE_TESTING.md`.
+- Performance workflow [41629778226](https://github.com/lelikulibina/boringtun-awg/actions/runs/41629778226) — success; 4/4 homogeneous endpoint/profile runs и 24 iperf3 measurements.
+
+### UAPI follow-up, включённый в PR #8
+
+Из draft PR [#9](https://github.com/lelikulibina/boringtun-awg/pull/9) перенесены и проверены относительно upstream UAPI исправления: правильный `private_key` в `get=1`, абсолютный Unix timestamp handshake, `protocol_version=1`, UAPI uint32 ranges, Go-compatible bool parsing, hostname endpoint resolution, persistent keepalive ranges, EOF/framing, base64 keys, ordered AllowedIP add/remove/replace/update_only и один авторитетный AllowedIPs trie. Последний устраняет stale per-peer ownership и риск source spoofing после переноса префикса.
+
+На исходной ветке UAPI follow-up [CI run 41670671377](https://github.com/lelikulibina/boringtun-awg/actions/runs/41670671377) прошли `check_features`, `tests`, `clippy` и `awg31-interoperability` (44/44). `rustfmt` первоначально выявил только форматирование; соответствующие правки внесены в PR #8. Интеграционный job исходной ветки ещё выполнялся, поэтому окончательным доказательством будет повторный CI на текущем HEAD PR #8.
 
 ### Оставшиеся ограничения
 
 - Полный byte-for-byte differential PCAP corpus с Go не реализован. Текущий verifier проверяет типы, framing, размеры, направления и наличие ожидаемых datagrams, а не равенство каждого байта двух независимых реализаций.
-- Windows job в текущем workflow отключён условием `if: false`; macOS не входит в merge gate. Зелёный CI подтверждает Linux.
-- 120 ускоренных rekey cycles — сильный автоматизированный lifecycle regression, но не многочасовой production soak.
+- Windows job отключён условием `if: false`; macOS не входит в merge gate. Проверенный обязательный CI — Linux.
+- 120 ускоренных rekey cycles — автоматизированный lifecycle regression, но не многочасовой production soak.
+- Для UAPI-паритета интерфейсные поля должны предшествовать первой peer-секции, как в `awg setconf`; создание нового peer требует уже заданного private key. Пересекающиеся H1-H4 и неодинаковые S1-S4 при `random_trailers=true` намеренно отклоняются.
 
-**Вердикт:** функциональная совместимость подтверждена на перечисленных Linux-профилях; полную byte-for-byte и кроссплатформенную совместимость пока не заявлять.
+**Вердикт до финального CI:** функциональная interoperability подтверждена на перечисленных Linux-профилях; исходный PR #8 имел UAPI-несовместимости и source-ownership defect, исправления перенесены. Squash merge в `main` допустим только после зелёных проверок на текущем HEAD.
 
 
 ## Цель и правила совместимости
@@ -108,7 +115,7 @@
 **Статус:** функциональный двусторонний interop с RandomTrailers прошёл в матрице 44/44; issue #185/#186 учтены, небезопасные комбинации S1-S4 отклоняются fail-fast. Не завершён только полный byte-for-byte differential corpus.
 
 ### Этап 6. UAPI, конфигурация и документация
-- [x] Поддержать новые параметры в UAPI set/get, включая сериализацию обоих состояний boolean-флагов; проверить parse/merge и round-trip значений.
+- [x] Поддержать UAPI set/get: private_key, absolute handshake timestamp, protocol_version, uint32 ranges, Go boolean syntax, DNS endpoint, persistent keepalive ranges, ordered AllowedIP operations, update_only/remove/replace, EOF framing и base64 keys; проверить partial merge и round-trip.
 - [x] Добавить fallible `Tunn::try_set_obfuscation`: runtime update сначала проверяет все ограничения, а при ошибке сохраняет прежнюю конфигурацию. Старый `set_obfuscation` API оставлен совместимым и логирует отказ.
 - [x] Документировать формат ключей/диапазонов, согласование настроек сторон, UDP-window/MTU ограничения и обратную совместимость в `docs/AMNEZIAWG_3_1_CONFIGURATION.md`.
 - [x] Добавить ссылку на документацию и оговорку о границах byte-for-byte и cross-platform в README.
@@ -123,10 +130,10 @@
 - [x] Прогнать vanilla WireGuard ↔ BoringTun в обоих направлениях.
 - [x] Прогнать AWG 2.x без новых параметров.
 - [x] Прогнать AWG 3.1 с каждым механизмом отдельно и со всеми вместе (включая packet-loss recovery и lifecycle soak).
-- [x] Выполнить cargo fmt, cargo hack check/test/clippy --each-feature и Linux CI.
+- [ ] Повторно выполнить cargo fmt, cargo hack check/test/clippy --each-feature и Linux CI на текущем HEAD после UAPI follow-up.
 - [ ] Восстановить cross-platform CI: Windows job сейчас отключён через `if: false`, macOS не входит в текущий workflow/merge gate.
 - [x] Прогнать существующие probe/imitation unit tests и Linux integration tests; функциональный upstream interop пройден, byte-for-byte differential остаётся отдельным пунктом.
-- [x] Провести аудит PR, синхронизировать описание и документацию, подтвердить зелёный Linux CI перед squash merge.
+- [ ] Завершить аудит PR, синхронизировать описание и документацию, подтвердить зелёный Linux CI на актуальном HEAD перед squash merge.
 
 **Готово, когда:** вся матрица совместимости пройдена, а документация отражает фактический уровень поддержки.
 
@@ -139,7 +146,7 @@
 | H1-H4 ranges | Реализовано | Проверить режим HPK и RandomTrailers |
 | I1-I5 CPS | Парсинг, генерация и отправка проверены; отдельные I1-I5 и совместный профиль входят в Go interop matrix | Этап 0/6 |
 | DNS/SIP/STUN/QUIC imitation | Реализовано как существующее расширение | Сохранить |
-| DisableCookies | Реализовано в PR #8, Linux CI зелёный | Этап 1 |
+| DisableCookies | Реализовано; MAC1 обязателен, under-load MAC2/cookie/rate-limit gate bypass документирован как DoS trade-off | Этап 1 |
 | HeaderProtectionKey | Двусторонний Go interop и фиксированные ChaCha20 vectors пройдены; полный byte-for-byte corpus остаётся открытым | Этап 2 |
 | ContentPaddingAddition | Config/UAPI, UDP-window clamp, IPv4/IPv6 trimming и двусторонний Go interop пройдены | Этап 3 |
 | Randomized timers | UAPI ranges, sampling, jitter, retry/expiry, accelerated rekey и 120-cycle soak пройдены; точный RNG differential остаётся открытым | Этап 4 |
