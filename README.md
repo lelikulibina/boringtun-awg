@@ -55,7 +55,7 @@ Testing this project has a few requirements:
 
 ### AmneziaWG extensions
 
-This branch contains experimental AmneziaWG extensions. Their configuration, wire-format notes, defaults, and current interoperability limitations are documented in [docs/AMNEZIAWG_3_1_CONFIGURATION.md](docs/AMNEZIAWG_3_1_CONFIGURATION.md). Do not assume full AmneziaWG 3.1 interoperability until the documented upstream differential and bidirectional tests pass.
+This branch contains AmneziaWG 3.1 extensions. The Linux interoperability matrix against the pinned upstream `amneziawg-go` passed 44/44 scenarios, including both server roles, packet-loss recovery, and 120 accelerated rekey cycles per role. The current PCAP verifier checks framing and packet structure, not byte-for-byte equality of every datagram; Windows is disabled and macOS is outside the current merge gate. Configuration, wire-format details, verified results, and remaining limitations are documented in [docs/AMNEZIAWG_3_1_CONFIGURATION.md](docs/AMNEZIAWG_3_1_CONFIGURATION.md).
 
 ## Supported platforms
 
