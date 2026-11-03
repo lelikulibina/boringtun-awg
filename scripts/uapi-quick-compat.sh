@@ -50,6 +50,12 @@ AWG_PEER_PUBLIC="$(awg pubkey < "$WORK/awg-peer-private")"
 mkdir -p "$QUICK_BIN"
 cp -L "$(command -v wg-quick)" "$QUICK_BIN/wg-quick"
 cp -L "$(command -v awg-quick)" "$QUICK_BIN/awg-quick"
+WG_REAL="$(command -v wg)"
+cat > "$QUICK_BIN/wg" <<EOF
+#!/usr/bin/env bash
+exec strace -f -e trace=connect -s 256 -o /tmp/uapi-wg.trace "$WG_REAL" "\$@"
+EOF
+chmod +x "$QUICK_BIN/wg"
 IP_REAL="$(command -v ip)"
 cat > "$QUICK_BIN/ip" <<EOF
 #!/usr/bin/env bash
