@@ -795,7 +795,10 @@ fn api_set(reader: &mut BufReader<&UnixStream>, d: &mut LockReadGuard<Device>) -
                 cmd.clear();
             }
 
-            0
+            match awg.apply(device) {
+                Ok(()) => 0,
+                Err(code) => code,
+            }
         },
     )
     .unwrap_or(EIO)
@@ -934,6 +937,33 @@ fn api_set_peer(
             }
         }
         cmd.clear();
+    }
+
+    // EOF terminates a set operation too, matching IpcSetOperation's Scanner
+    // semantics. Do not silently drop the final peer when the client closes
+    // after its last configuration line instead of sending a blank line.
+    if !(sec.update_only && !d.peers.contains_key(&public_key)) {
+        if let Err(e) = d.update_peer(
+            public_key.clone(),
+            sec.remove,
+            sec.replace_ips,
+            sec.endpoint,
+            sec.allowed_ips.as_slice(),
+            sec.keepalive,
+            sec.preshared_key,
+        ) {
+            tracing::error!(
+                message = "failed to apply peer",
+                peer = encode_hex(public_key.as_bytes()).as_str(),
+                error = ?e
+            );
+            return EIO;
+        }
+        if !sec.remove {
+            for ip in &sec.removed_allowed_ips {
+                d.remove_allowed_ip(&public_key, *ip);
+            }
+        }
     }
     0
 }
