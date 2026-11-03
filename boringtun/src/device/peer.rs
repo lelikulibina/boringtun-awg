@@ -150,9 +150,17 @@ impl Peer {
         self.tunnel.set_preshared_key(preshared_key);
     }
 
-    /// Replace this peer's persistent-keepalive interval, keeping sessions.
-    pub(crate) fn set_persistent_keepalive(&mut self, keepalive: Option<u16>) {
-        self.tunnel.set_persistent_keepalive(keepalive);
+    /// Replace this peer's persistent-keepalive interval range, keeping sessions.
+    pub(crate) fn set_persistent_keepalive_range(
+        &mut self,
+        keepalive: Option<(u32, u32)>,
+    ) {
+        self.tunnel.set_persistent_keepalive_range(keepalive);
+    }
+
+    /// The configured persistent-keepalive range, if enabled.
+    pub fn persistent_keepalive_range(&self) -> Option<(u32, u32)> {
+        self.tunnel.persistent_keepalive_range()
     }
 
     // Deliberately no `is_allowed_ip` / `allowed_ips` here. Which prefixes
