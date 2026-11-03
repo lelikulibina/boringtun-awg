@@ -242,7 +242,9 @@ def wait_rekey(
 
 
 
-def drop_client_egress_during_rekey(\n    client_ns: str, client_link: str, server_ip: str,\n) -> int:
+def drop_client_egress_during_rekey(
+    client_ns: str, client_link: str, server_ip: str,
+) -> int:
     """Drop only the expected AWG H1 rekey datagram and verify its filter counter."""
     # This profile uses S1=120, H1=169887817 (wire bytes 49:48:20:0a),
     # no HeaderProtection and no RandomTrailers. From the IPv4-header start,
