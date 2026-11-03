@@ -26,8 +26,8 @@ AWG_UP=0
 cleanup() {
   local status=$?
   set +e
-  if [[ $AWG_UP -eq 1 ]]; then PATH="$QUICK_BIN:$PATH" WG_QUICK_USERSPACE_IMPLEMENTATION="$BT_LAUNCHER" awg-quick down "$WORK/awgq0.conf"; fi
-  if [[ $WG_UP -eq 1 ]]; then PATH="$QUICK_BIN:$PATH" WG_QUICK_USERSPACE_IMPLEMENTATION="$BT_LAUNCHER" wg-quick down "$WORK/wgq0.conf"; fi
+  if [[ $AWG_UP -eq 1 ]]; then PATH="$QUICK_BIN:$PATH" PATH="$QUICK_BIN:$PATH" WG_QUICK_USERSPACE_IMPLEMENTATION="$BT_LAUNCHER" awg-quick down "$WORK/awgq0.conf"; fi
+  if [[ $WG_UP -eq 1 ]]; then PATH="$QUICK_BIN:$PATH" PATH="$QUICK_BIN:$PATH" WG_QUICK_USERSPACE_IMPLEMENTATION="$BT_LAUNCHER" wg-quick down "$WORK/wgq0.conf"; fi
   rm -rf "$WORK"
   exit "$status"
 }
