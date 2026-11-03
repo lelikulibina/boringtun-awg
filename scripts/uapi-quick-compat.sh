@@ -33,7 +33,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-umask 077
+umask 022
 wg genkey > "$WORK/wg-private"
 wg genkey > "$WORK/wg-peer-private"
 awg genkey > "$WORK/awg-private"
@@ -117,6 +117,7 @@ AllowedIPs = 10.78.0.2/32
 Endpoint = 127.0.0.1:51882
 PersistentKeepalive = 15
 EOF
+chmod 600 "$WORK/"*.conf "$WORK/"*private
 
 assert_boringtun_running() {
   local iface="$1" proc
