@@ -1,6 +1,18 @@
 // Copyright (c) 2019 Cloudflare, Inc. All rights reserved.
 // SPDX-License-Identifier: BSD-3-Clause
 
+//! Таймеры WireGuard и расширяемые временные диапазоны AmneziaWG 3.x.
+//!
+//! Значения по умолчанию сохраняют семантику WireGuard. Ненулевой диапазон из
+//! AmneziaConfig задаёт включительные границы для выбора конкретного значения;
+//! пара (0, 0) означает «использовать стандарт WireGuard», а ноль как нижняя
+//! граница другого диапазона остаётся допустимым значением.
+//!
+//! Сэмплирование выполняется rejection sampling, а не простым `sample % width`:
+//! остаток диапазона 2^32 может смещать вероятности. Jitter и бюджет повторных
+//! handshake должны соответствовать upstream: бюджет выбирается в начале
+//! цикла и не пересчитывается при каждой неудачной попытке.
+
 use super::errors::WireGuardError;
 use crate::noise::{Tunn, TunnResult};
 use std::ops::{Index, IndexMut};
@@ -172,6 +184,9 @@ impl Timers {
     /// Map one uniformly distributed u32 sample into an inclusive range.
     /// A missing result means the sample is in the rejection tail needed to
     /// avoid modulo bias. The u64 width represents the complete u32 domain.
+    // Равномерно отображает 32-битный случайный sample в inclusive [min, max].
+    // Значения из хвоста, не кратного ширине диапазона, отклоняются; иначе
+    // остаток от деления дал бы статистическое смещение.
     fn map_range_sample(min: u32, max: u32, sample: u32) -> Option<u32> {
         if min >= max {
             return Some(min);
@@ -198,6 +213,9 @@ impl Timers {
 
     /// Select a fresh retry budget at peer start and after a successful handshake.
     /// Upstream keeps the selected budget unchanged throughout a handshake attempt cycle.
+    // Лимит повторов выбирается на начало нового handshake-цикла и остаётся
+    // неизменным до его успеха/сброса. Перевыбор на каждой попытке меняет
+    // вероятности завершения и расходится с поведением upstream.
     fn select_new_handshake_budget(&mut self) {
         self.handshake_attempts = 0;
         self.max_handshake_attempts = self.pick_range(4, 18);

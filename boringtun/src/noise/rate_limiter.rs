@@ -1,3 +1,12 @@
+//! Проверка MAC1/MAC2 и защита handshake от перегрузки.
+//!
+//! RateLimiter решает, когда требовать cookie reply от отправителя handshake.
+//! Политика `DisableCookies` отключает именно challenge под нагрузкой, но не
+//! аутентификацию: MAC1 всё равно должен быть корректным. Не превращайте этот
+//! флаг в обход `verify_packet` или проверок MAC1 — иначе можно принимать
+//! неподлинные initiation/response. Cookie reply остаётся включённым по
+//! умолчанию для обычной конфигурации.
+
 use super::handshake::{
     b2s_hash, b2s_keyed_mac_16, b2s_keyed_mac_16_2, b2s_mac_24, ObfuscationRanges,
 };
@@ -167,6 +176,9 @@ impl RateLimiter {
     }
 
     /// Verify a packet with AmneziaWG 3.1 DisableCookies semantics.
+    // DisableCookies отключает только cookie challenge при высокой нагрузке.
+    // MAC1 остаётся обязательным для initiation и response; не превращайте
+    // политику cookie в обход проверки подлинности входящего handshake.
     pub(crate) fn verify_packet_with_cookie_policy<'a, 'b>(
         &self,
         obf: ObfuscationRanges,

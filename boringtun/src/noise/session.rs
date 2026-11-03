@@ -1,6 +1,17 @@
 // Copyright (c) 2019 Cloudflare, Inc. All rights reserved.
 // SPDX-License-Identifier: BSD-3-Clause
 
+//! Ключи и счётчики одной установленной WireGuard-сессии.
+//!
+//! Session шифрует исходящие transport-пакеты и расшифровывает входящие.
+//! Помимо AEAD здесь находится защита от повторного воспроизведения: входящий
+//! counter сначала быстро проверяется, затем отмечается только после успешной
+//! аутентификации. Не переносите отметку counter до проверки AEAD — это позволит
+//! поддельной датаграмме вытеснить допустимый пакет из окна replay-защиты.
+//!
+//! AmneziaWG ContentPaddingAddition меняет длину открытого содержимого внутри
+//! AEAD, но после расшифрования наружу должен вернуться исходный IP-пакет.
+
 use super::{handshake::ObfuscationRanges, PacketData};
 use crate::noise::errors::WireGuardError;
 use parking_lot::Mutex;
@@ -194,6 +205,9 @@ impl Session {
     /// src - an IP packet from the interface
     /// dst - pre-allocated space to hold the encapsulating UDP packet to send over the network
     /// returns the size of the formatted packet
+    // Дополнительный padding добавляется к plaintext до AEAD, поэтому он
+    // аутентифицируется вместе с IP-пакетом. На принимающей стороне padding
+    // удаляется только после успешного открытия AEAD.
     pub(super) fn format_packet_data<'a>(
         &self,
         obf: ObfuscationRanges,
@@ -243,6 +257,9 @@ impl Session {
     /// dst - pre-allocated space to hold the encapsulated IP packet, to send to the interface
     ///       dst will always take less space than src
     /// return the size of the encapsulated packet on success
+    // Replay counter нельзя окончательно отмечать до успешной AEAD-проверки:
+    // иначе поддельная датаграмма с большим counter сможет вытеснить из окна
+    // последующие корректные пакеты.
     pub(super) fn receive_packet_data<'a>(
         &self,
         packet: PacketData,

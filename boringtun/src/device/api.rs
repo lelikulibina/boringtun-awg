@@ -1,6 +1,20 @@
 // Copyright (c) 2019 Cloudflare, Inc. All rights reserved.
 // SPDX-License-Identifier: BSD-3-Clause
 
+//! Русское руководство по UAPI AmneziaWG для сопровождающих.
+//!
+//! Этот файл связывает userspace-устройство BoringTun с инструментами `wg` и
+//! `awg` через текстовый Unix-сокетный UAPI. Важные правила реализации:
+//! - один запрос `set=1` сначала полностью разбирается и накапливается в
+//!   `AwgParams`, затем проверяется как единая конфигурация и только после
+//!   этого применяется; это не позволяет временно создать пересекающиеся H1-H4;
+//! - отсутствующие ключи означают «оставить текущее значение», а не сбросить его;
+//! - `get=1` сериализует значения в формате, который ожидают wg/awg-tools;
+//! - сокет публикуется в обоих каталогах, но обслуживается одним listener.
+//! При добавлении нового UAPI-параметра обновляйте парсер, merge, get/set и
+//! соответствующие round-trip/ошибочные тесты. Не меняйте семантику частичного
+//! set: она важна для сохранения параметров, которых нет в UAPI.
+
 use super::dev_lock::LockReadGuard;
 use super::drop_privileges::get_saved_ids;
 use super::{AllowedIP, Device, Error, SocketAddr};
@@ -168,6 +182,9 @@ impl AwgParams {
     /// testing is that protocol imitation *survives* — it has no UAPI key, so it
     /// can only arrive via `DeviceConfig` at startup, and rebuilding rather than
     /// merging here would make any `awg setconf` silently switch camouflage off.
+    // ВАЖНО: это merge, а не замена конфигурации. UAPI часто присылает только
+    // несколько изменённых ключей; все остальные параметры, включая imitation,
+    // должны пережить транзакцию. Проверяем собранную конфигурацию до commit.
     fn merged(
         &self,
         cur_obf: ObfuscationRanges,
@@ -576,6 +593,8 @@ fn api_get(writer: &mut BufWriter<&UnixStream>, d: &Device) -> i32 {
     0
 }
 
+// Разбирает одну UAPI-транзакцию целиком. Ошибка любого поля должна отменить
+// применение всего набора: частично обновлённое состояние здесь недопустимо.
 fn api_set(reader: &mut BufReader<&UnixStream>, d: &mut LockReadGuard<Device>) -> i32 {
     d.try_writeable(
         |device| device.trigger_yield(),

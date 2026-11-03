@@ -1,6 +1,18 @@
 // Copyright (c) 2019 Cloudflare, Inc. All rights reserved.
 // SPDX-License-Identifier: BSD-3-Clause
 
+//! Noise handshake, WireGuard message tags и AmneziaWG H1-H4.
+//!
+//! Этот модуль отвечает за криптографические состояния handshake, MAC1/MAC2,
+//! cookie reply и классификацию handshake-датаграмм. `ObfuscationRanges`
+//! задаёт диапазоны H1-H4: входящий пакет должен быть распознан до поиска peer,
+//! поэтому диапазоны согласованы на уровне Device и не должны пересекаться.
+//!
+//! При изменении wire-формата сохраняйте совместимость с обычными типами
+//! WireGuard при конфигурации по умолчанию. HeaderProtection обрабатывается
+//! до чтения защищённого типа; любые изменения смещений проверяйте тестовыми
+//! векторами и реальным обменом с закреплённой версией amneziawg-go.
+
 use super::{
     HandshakeInit, HandshakeResponse, PacketCookieReply, COOKIE_REPLY, DATA, HANDSHAKE_INIT,
     HANDSHAKE_RESP,
@@ -374,6 +386,9 @@ impl TagRange {
 /// * H3 – cookie reply
 /// * H4 – data
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
+// H1-H4 — не просто косметические значения: по ним Device определяет тип
+// пакета ещё до выбора peer. Поэтому диапазоны должны быть ненулевыми,
+// упорядоченными и попарно непересекающимися.
 pub struct ObfuscationRanges {
     pub(crate) h1_init: TagRange,
     pub(crate) h2_resp: TagRange,
@@ -529,6 +544,9 @@ pub struct HalfHandshake {
     pub peer_static_public: [u8; 32],
 }
 
+// Вызывается после предварительной классификации H1 на уровне Device.
+// Разбор сохраняет обычные требования WireGuard к длине и MAC; AWG меняет
+// внешнее обрамление пакета, но не отменяет аутентификацию Noise-сообщения.
 pub fn parse_handshake_anon(
     static_private: &x25519::StaticSecret,
     static_public: &x25519::PublicKey,

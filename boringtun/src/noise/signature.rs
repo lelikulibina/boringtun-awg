@@ -1,6 +1,13 @@
 // Copyright (c) 2019 Cloudflare, Inc. All rights reserved.
 // SPDX-License-Identifier: BSD-3-Clause
 
+//! I1-I5: парсер грамматики signature chain и генератор UDP-датаграмм.
+//! Цепочки конфигурируются через UAPI, сохраняются в AmneziaConfig и
+//! отправляются перед обычной последовательностью handshake/имитации.
+//! Этот модуль не интерпретирует назначение байтов — он точно материализует
+//! операции, заданные оператором и совместимые с upstream.
+// SPDX-License-Identifier: BSD-3-Clause
+
 //! AmneziaWG I1-I5 pre-handshake signature packet chains.
 //!
 //! This implements the subset of upstream's obfuscation chain that is used to

@@ -1,6 +1,14 @@
 // Copyright (c) 2019 Cloudflare, Inc. All rights reserved.
 // SPDX-License-Identifier: BSD-3-Clause
 
+//! Интеграционные проверки userspace Device и его UAPI.
+//!
+//! Тесты здесь поднимают реальные сетевые интерфейсы/контейнеры и проверяют
+//! поведение на границе процесса, поэтому они дороже unit-тестов и требуют
+//! Linux/macOS-окружения с соответствующими привилегиями. При добавлении AWG
+//! регрессии предпочтительнее сначала покрыть чистую логику unit-тестом, а
+//! сюда добавлять только сценарий, для которого важны сокет, интерфейс или peer.
+
 // This module contains some integration tests for boringtun
 // Those tests require docker and sudo privileges to run
 #[cfg(all(test, not(target_os = "macos")))]

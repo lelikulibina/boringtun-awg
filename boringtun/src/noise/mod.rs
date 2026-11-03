@@ -1,6 +1,20 @@
 // Copyright (c) 2019 Cloudflare, Inc. All rights reserved.
 // SPDX-License-Identifier: BSD-3-Clause
 
+//! Основной автомат одного WireGuard/AmneziaWG-туннеля.
+//!
+//! `Tunn` соединяет handshake, cookie/rate limiting, сессии, очереди пакетов,
+//! таймеры и AmneziaWG framing. `encapsulate` преобразует исходящий IP-пакет
+//! в UDP payload (или сообщает, что сначала нужен handshake); `decapsulate`
+//! принимает сетевую датаграмму, проверяет её и возвращает IP-пакет, ответ для
+//! сети либо сигнал о необходимости таймера.
+//!
+//! Важный инвариант: конфигурационные обновления сначала проверяются целиком,
+//! затем применяются без ненужного сброса действующих сессий. При изменении
+//! таймеров/сессий учитывайте обе роли handshake: инициатор запускает send-side
+//! rekey, responder не должен самовольно инициировать его только из-за истечения
+//! того же интервала. Регрессионные тесты ниже моделируют эти переходы.
+
 pub mod amnezia;
 pub mod errors;
 pub mod handshake;
@@ -440,6 +454,9 @@ impl Tunn {
     ///
     /// Validate all framing and timer constraints before changing the live
     /// tunnel. On failure the previous configuration remains active.
+    // Fallible runtime API: сначала валидируем всю новую пару obfuscation/config,
+    // и только затем меняем состояние. При Err старые настройки и активные
+    // сессии должны остаться пригодными для передачи данных.
     pub fn try_set_obfuscation(
         &mut self,
         obf: ObfuscationRanges,
@@ -629,6 +646,9 @@ impl Tunn {
         self.handle_verified_packet_with_datagram_size(packet, dst, 0)
     }
 
+    // Пакет уже прошёл криптографическую проверку. Исходный размер датаграммы
+    // нужен AWG framing для корректного обучения UDP-window; неподтверждённый
+    // или отброшенный пакет не должен влиять на этот предел.
     pub(crate) fn handle_verified_packet_with_datagram_size<'a>(
         &mut self,
         packet: Packet,
@@ -835,6 +855,9 @@ impl Tunn {
         }
     }
 
+    // Отложенные I1-I5 / imitation / Jc-пакеты выдаются поэтапно: вызывающий
+    // код может передать маленький dst. При нехватке места подготовленные байты
+    // и позиция очереди должны сохраняться, иначе появятся потери или дубли.
     fn advance_amnezia_junk<'a>(&mut self, dst: &'a mut [u8]) -> TunnResult<'a> {
         let Some(pending) = self.pending_amnezia_junk.as_ref() else {
             return TunnResult::Done;

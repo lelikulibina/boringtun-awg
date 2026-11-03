@@ -1,6 +1,13 @@
 // Copyright (c) 2019 Cloudflare, Inc. All rights reserved.
 // SPDX-License-Identifier: BSD-3-Clause
 
+//! Состояние одного удалённого peer на уровне Device.
+//!
+//! Здесь хранятся endpoint/UDP-соединение, PSK, индекс и объект `noise::Tunn`.
+//! Сетевой endpoint отделён в `RwLock`, потому что roaming может менять адрес
+//! peer одновременно с работой event loop. Таймеры протокола принадлежат Tunn;
+//! методы Peer лишь передают ему события и поддерживают транспортную обвязку.
+
 use parking_lot::RwLock;
 use socket2::{Domain, Protocol, Type};
 
@@ -68,6 +75,9 @@ impl Peer {
         }
     }
 
+    // Передаём события активности в таймерный автомат Tunn. Не дублируйте
+    // правила rekey/keepalive здесь: единственный источник протокольной
+    // семантики находится в noise::timers.
     pub fn update_timers<'a>(&mut self, dst: &'a mut [u8]) -> TunnResult<'a> {
         self.tunnel.update_timers(dst)
     }

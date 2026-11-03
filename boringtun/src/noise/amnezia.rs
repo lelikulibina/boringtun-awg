@@ -1,6 +1,24 @@
 // Copyright (c) 2024 BoringTun contributors. All rights reserved.
 // SPDX-License-Identifier: BSD-3-Clause
 
+//! Формирование и разбор AmneziaWG-обёртки вокруг сообщений WireGuard.
+//!
+//! Здесь сосредоточены конфигурация AWG 2.x/3.x и преобразования UDP payload:
+//! junk до handshake, H1-H4, S1-S4, HeaderProtection, ContentPaddingAddition,
+//! RandomTrailers и имитация сторонних протоколов. Внешняя обёртка не заменяет
+//! Noise/AEAD: после снятия префиксов и случайных хвостов исходное сообщение
+//! проходит обычную проверку WireGuard.
+//!
+//! Порядок операций на проводе критичен. При разборе сначала нужно определить
+//! допустимую форму и смещение H-тега, при необходимости снять HeaderProtection,
+//! проверить тип, затем удалить junk/trailer. При отправке padding транспорта
+//! должен попасть внутрь AEAD, а внешний trailer — после формирования
+//! зашифрованного пакета. Сверяйте изменения с upstream и pcap-тестами.
+//!
+//! Конфигурация валидируется до применения: ошибки размеров, диапазонов или
+//! несовместимых RandomTrailers-настроек должны возвращаться при настройке,
+//! а не проявляться как тихое отбрасывание пакетов в рабочем туннеле.
+
 // For `conforming_initiation` only, and gated exactly as it is: its caller is
 // `device::probe_reply`, which does not exist without the `device` feature.
 #[cfg(all(test, feature = "device"))]
@@ -599,6 +617,9 @@ impl AmneziaConfig {
     /// four-byte type field. Since ObfuscationRanges rejects overlapping H1-H4
     /// ranges, a transport tag selected from H4 cannot match H1-H3. This is a
     /// deterministic framing constraint, not a probabilistic width heuristic.
+    // RandomTrailers меняет границы UDP-датаграммы. Проверка выполняется при
+    // конфигурировании, чтобы несовместимые S/H диапазоны не приводили позже
+    // к неоднозначной классификации входящих пакетов.
     pub(crate) fn validate_random_trailers(&self, _obf: ObfuscationRanges) -> Result<(), String> {
         if self.random_trailers {
             let s = self.init_packet_junk_size;
@@ -860,6 +881,9 @@ impl AmneziaConfig {
     /// distinct fixed sizes. With every S at zero these tests reduce to the
     /// same (tag, length) pairs `Tunn::parse_incoming_packet` applies, so
     /// plain WireGuard is unaffected.
+    // Снимает внешнюю AWG-обёртку с принятой датаграммы. Сначала определяется
+    // допустимое смещение H-тега (с учётом S-prefix и HeaderProtection), затем
+    // проверяется тип и удаляются служебные байты. Порядок этих шагов — часть wire format.
     pub(crate) fn strip_inbound<'a>(
         &self,
         obf: ObfuscationRanges,
@@ -1043,6 +1067,12 @@ impl AmneziaConfig {
     ///
     /// Not gated: [`Self::validate`] calls it on every build, because a
     /// configuration this shape is refused rather than merely warned about.
+    // Cookie Reply может быть больше запроса. Эти границы используются для
+    // проверки amplification risk до включения S3; не ослабляйте их, ориентируясь
+    // только на типичный размер handshake.
+    // Оценивает возможное отношение размера Cookie Reply к инициирующему
+    // запросу. S3 нельзя разрешать только по среднему размеру: проверяется
+    // худший допустимый вариант, чтобы не превратить handshake в усилитель трафика.
     fn cookie_amplification_bounds(&self) -> Vec<(&'static str, usize, usize)> {
         let reply = COOKIE_REPLY_SZ + self.cookie_packet_junk_size as usize;
         let mut bounds: Vec<(&'static str, usize, usize)> = [
@@ -1081,6 +1111,9 @@ impl AmneziaConfig {
         Some((label, request, reply))
     }
 
+    // Обратная операция к strip_inbound: добавляет junk/prefix и формирует
+    // trailer с учётом доступной ёмкости dst. Запись за пределы UDP-буфера
+    // недопустима даже если выбранная случайная длина формально валидна.
     pub(crate) fn prepend_outbound<'a>(
         &self,
         obf: ObfuscationRanges,
@@ -1178,6 +1211,9 @@ impl AmneziaConfig {
 
     /// Random trailer length follows upstream's exclusive UDP-window upper bound:
     /// fastrandn(udp_window - packet_size).
+    // Выбирает длину хвоста по правилам upstream и ограничивает её UDP-window,
+    // MTU и фактической ёмкостью назначения. При изменении границ обновляйте
+    // тесты на inclusive/exclusive semantics и все ограничения одновременно.
     pub(crate) fn random_trailer_len(
         &self,
         packet_size: usize,

@@ -26,6 +26,11 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 
+# Сценарий запускает две реализации в отдельных netns и проверяет не только
+# факт handshake, но и полезный двусторонний трафик/структуру UDP на проводе.
+# Изменяя профиль, держите конфигурацию UAPI, ожидаемый pcap и проверяемые
+# направления согласованными: успешный ping сам по себе не доказывает wire-совместимость.
+PORT = 51820
 PORT = 51820
 SERVER_LINK, CLIENT_LINK = "10.55.0.1", "10.55.0.2"
 SERVER_TUN, CLIENT_TUN = "10.77.0.1", "10.77.0.2"
@@ -43,6 +48,10 @@ h4=1526332224
 """
 HPK = "42" * 32
 
+# Каждый элемент: (имя сценария, дополнительные UAPI-параметры, AWG включён).
+# Профили разделяют функции по отдельности и в комбинациях, чтобы сбой можно
+# было локализовать, а не только обнаружить в максимальной конфигурации.
+PROFILES = [
 PROFILES = [
     ("vanilla WireGuard baseline", "", False),
     ("AWG 2.x baseline", "", True),
@@ -138,6 +147,9 @@ PROFILES = [
 ]
 
 
+# Единая точка запуска системных команд. По умолчанию stdout/stderr
+# подавляются, чтобы логи CI не разрастались; capture=True используется там,
+# где результат команды является частью проверки.
 def run(*args: str, check: bool = True, capture: bool = False) -> str:
     result = subprocess.run(
         args, check=check, text=True,
@@ -147,6 +159,9 @@ def run(*args: str, check: bool = True, capture: bool = False) -> str:
     return result.stdout.strip() if capture else ""
 
 
+# UAPI-сокеты создаются в host /var/run, а не внутри network namespace.
+# Ищем оба стандартных пути (WireGuard и AmneziaWG), отправляем текстовую
+# транзакцию и ждём завершающую пустую строку ответа.
 def uapi(iface: str, request: str) -> str:
     paths = (f"/var/run/amneziawg/{iface}.sock",
              f"/var/run/wireguard/{iface}.sock")
@@ -296,6 +311,9 @@ def drop_client_egress_during_rekey(
     return dropped
 
 
+# Проверка именно полезной UDP-нагрузки в обе стороны через зашифрованный
+# туннель. ICMP/ping не заменяет её: отдельный UDP сокет подтверждает, что
+# произвольный payload проходит после handshake и после rekey.
 def verify_udp_roundtrip(server_ns: str, client_ns: str) -> None:
     """Verify an actual bidirectional UDP payload through the encrypted tunnel."""
     server_code = (
@@ -571,6 +589,9 @@ def verify_iperf3(
     )
     print(f"IPERF3-RESULTS: {result_path} ({len(measurements)} measurements)")
 
+# Анализирует Ethernet/IPv4/UDP pcap без сравнения случайных Noise-байтов.
+# Сравниваются нормализованные свойства протокола: типы, направление,
+# минимальные/точные размеры envelope, trailer и порядок I1-I5.
 def verify_wire_pcap(
     pcap_path: Path,
     *,
@@ -728,6 +749,10 @@ def verify_wire_pcap(
     )
 
 
+# Один изолированный прогон профиля. Функция отвечает за полный жизненный
+# цикл: netns/veth → процессы → UAPI → handshake/трафик → pcap → cleanup.
+# Все ресурсы создаются внутри try и освобождаются в finally, включая случаи
+# падения бинарника или проверки; не выносите очистку из этого блока.
 def run_profile(
     bt: str, go: str, name: str, extra: str,
     awg_enabled: bool, bt_is_server: bool, performance: bool = False,
@@ -951,6 +976,10 @@ def run_profile(
             run("ip", "link", "del", veth_server, check=False)
         workdir.cleanup()
 
+# CLI проверяет окружение и затем запускает либо correctness/interoperability
+# матрицу в обеих ролях, либо отдельный performance-режим на однородных парах.
+# Performance намеренно не смешан с cross-implementation interop: иначе
+# скорость отражала бы одновременно datapath и цену межреализационных различий.
 def main() -> int:
     if os.geteuid() != 0:
         print("Run as root (creates disposable network namespaces).", file=sys.stderr)
