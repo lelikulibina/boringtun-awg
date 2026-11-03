@@ -345,6 +345,53 @@ impl AmneziaPreHandshakeJunk {
         }
     }
 
+    /// Fallible constructor for control-plane input. Unlike the legacy
+    /// convenience constructor, this never silently disables an excessive Jc
+    /// value or substitutes packet sizes for an invalid range.
+    pub(crate) fn try_new(
+        packet_count: u16,
+        packet_size_min: u16,
+        packet_size_max: u16,
+        delay_ms: u16,
+    ) -> Result<Self, String> {
+        if packet_count > MAX_JUNK_PACKET_COUNT {
+            return Err(format!(
+                "Jc {} exceeds the safe maximum {}",
+                packet_count, MAX_JUNK_PACKET_COUNT
+            ));
+        }
+
+        let (packet_size_min, packet_size_max) = if packet_count == 0 {
+            (packet_size_min, packet_size_max)
+        } else if packet_size_min == 0 && packet_size_max == 0 {
+            (DEFAULT_JUNK_PACKET_SIZE_MIN, DEFAULT_JUNK_PACKET_SIZE_MAX)
+        } else if packet_size_min > 0
+            && packet_size_min <= packet_size_max
+            && packet_size_max <= MAX_JUNK_PACKET_SIZE
+        {
+            (packet_size_min, packet_size_max)
+        } else {
+            return Err(format!(
+                "invalid Jmin/Jmax range {}-{} (maximum packet size {})",
+                packet_size_min, packet_size_max, MAX_JUNK_PACKET_SIZE
+            ));
+        };
+
+        if delay_ms > MAX_JUNK_PACKET_DELAY_MS {
+            return Err(format!(
+                "junk packet delay {} exceeds the safe maximum {}",
+                delay_ms, MAX_JUNK_PACKET_DELAY_MS
+            ));
+        }
+
+        Ok(Self {
+            packet_count,
+            packet_size_min,
+            packet_size_max,
+            packet_delay_ms: delay_ms,
+        })
+    }
+
     pub fn is_enabled(&self) -> bool {
         self.packet_count > 0
     }
@@ -533,6 +580,22 @@ impl AmneziaConfig {
         self.pre_handshake_junk =
             AmneziaPreHandshakeJunk::new(packet_count, packet_size_min, packet_size_max, delay_ms);
         self
+    }
+
+    pub(crate) fn try_with_pre_handshake_junk(
+        mut self,
+        packet_count: u16,
+        packet_size_min: u16,
+        packet_size_max: u16,
+        delay_ms: u16,
+    ) -> Result<Self, String> {
+        self.pre_handshake_junk = AmneziaPreHandshakeJunk::try_new(
+            packet_count,
+            packet_size_min,
+            packet_size_max,
+            delay_ms,
+        )?;
+        Ok(self)
     }
 
     pub fn with_protocol_imitation(
