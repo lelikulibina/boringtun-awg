@@ -6,30 +6,36 @@ Run workflow**. It does not participate in the required PR status checks.
 
 The workflow builds this BoringTun fork and the pinned upstream
 `amneziawg-go`, then creates isolated Linux network namespaces and measures
-the encrypted tunnel with iperf3.
+the encrypted tunnel with iperf3. It measures homogeneous pairs separately:
+`amneziawg-go` client ↔ `amneziawg-go` server and `boringtun-awg` client ↔
+`boringtun-awg` server. This avoids conflating datapath performance with
+cross-implementation interoperability.
 
 ## Scenarios
 
 - Vanilla WireGuard baseline.
 - AWG 3.1 with HeaderProtectionKey, ContentPaddingAddition,
   RandomTrailers, DisableCookies and randomized timers.
-- Both server roles: BoringTun server and amneziawg-go server.
+- Homogeneous endpoint pairs: amneziawg-go ↔ amneziawg-go and BoringTun ↔ BoringTun.
+- Vanilla WireGuard and AWG 3.1 profiles for each homogeneous pair.
 - Both traffic directions.
 - TCP with one stream and four parallel streams.
 - UDP at a fixed offered rate of 100 Mbit/s.
 
-Each measurement runs for 8 seconds. JSON reports include receiver throughput,
+Each measurement runs for 8 seconds; the workflow produces 24 measurements (2 implementations × 2 profiles × 2 directions × 3 traffic modes). JSON reports include receiver throughput,
 received byte count, TCP retransmissions, and UDP packet loss where reported.
 Reports and the matching packet captures are uploaded as the
 `awg31-iperf3-performance` artifact.
 
 ## Interpreting results
 
-Compare the vanilla and AWG 3.1 numbers from the same workflow run. GitHub-hosted
+Compare both the implementations (Go vs BoringTun) and the overhead of AWG 3.1 against vanilla WireGuard within each implementation, using results from the same workflow run. GitHub-hosted
 runner load and virtualization make absolute throughput noisy; these results
 are comparative diagnostics, not a stable hardware performance guarantee.
 For meaningful release comparisons, repeat the workflow on the same dedicated
 runner and compare medians across several runs.
 
 The benchmark is intentionally separate from mandatory PR CI: throughput is
-environment-dependent and should not make correctness checks flaky.
+environment-dependent and should not make correctness checks flaky. It runs
+manually from Actions or automatically when the benchmark workflow, harness,
+or this document changes on the feature branch.
