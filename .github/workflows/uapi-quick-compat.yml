@@ -35,7 +35,7 @@ jobs:
       - name: Build BoringTun CLI
         run: cargo build --locked --release -p boringtun-cli
       - name: Verify original quick scripts and UAPI round trips
-        run: sudo bash scripts/uapi-quick-compat.sh "$PWD/target/release/boringtun"
+        run: sudo bash scripts/uapi-quick-compat.sh "$PWD/target/release/boringtun-cli"
       - name: Collect diagnostics on failure
         if: failure()
         run: |
