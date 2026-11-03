@@ -1001,9 +1001,10 @@ fn api_set_peer(
                         Err(_) => return EINVAL,
                     }
                 }
-                "protocol_version" => match val.parse::<u32>() {
-                    Ok(1) => {} // Only version 1 is legal
-                    _ => return EINVAL,
+                "protocol_version" => {
+                    if val != "1" {
+                        return EINVAL;
+                    }
                 },
                 _ => return EINVAL,
             }
