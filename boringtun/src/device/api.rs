@@ -545,6 +545,7 @@ impl Device {
 
 #[allow(unused_must_use)]
 fn api_get(writer: &mut BufWriter<&UnixStream>, d: &Device) -> i32 {
+    let mut output = String::new();
     // get command requires an empty line, but there is no reason to be religious about it
     if let Some(ref k) = d.key_pair {
         // The UAPI get operation must return the private key so showconf/setconf
@@ -552,16 +553,16 @@ fn api_get(writer: &mut BufWriter<&UnixStream>, d: &Device) -> i32 {
         // (all-zero) private key rather than serializing it.
         let private_key = k.0.to_bytes();
         if private_key.iter().any(|byte| *byte != 0) {
-            writeln!(writer, "private_key={}", encode_hex(private_key));
+            writeln!(output, "private_key={}", encode_hex(private_key));
         }
     }
 
     if d.listen_port != 0 {
-        writeln!(writer, "listen_port={}", d.listen_port);
+        writeln!(output, "listen_port={}", d.listen_port);
     }
 
     if let Some(fwmark) = d.fwmark.filter(|mark| *mark != 0) {
-        writeln!(writer, "fwmark={}", fwmark);
+        writeln!(output, "fwmark={}", fwmark);
     }
 
     // AmneziaWG interface parameters, emitted only when they differ from plain
@@ -577,17 +578,17 @@ fn api_get(writer: &mut BufWriter<&UnixStream>, d: &Device) -> i32 {
                 encode_hex(&a.header_protection_key)
             );
         }
-        writeln!(writer, "disable_cookies={}", if a.disable_cookies { 1 } else { 0 });
-        writeln!(writer, "random_trailers={}", if a.random_trailers { 1 } else { 0 });
+        writeln!(output, "disable_cookies={}", if a.disable_cookies { 1 } else { 0 });
+        writeln!(output, "random_trailers={}", if a.random_trailers { 1 } else { 0 });
         for (index, chain) in a.signature_packets.iter().enumerate() {
             if let Some(chain) = chain {
-                writeln!(writer, "i{}={}", index + 1, chain.spec());
+                writeln!(output, "i{}={}", index + 1, chain.spec());
             }
         }
         let (padding_min, padding_max) = a.content_padding_addition;
         if padding_min != 0 || padding_max != 0 {
             if padding_min == padding_max {
-                writeln!(writer, "content_padding_addition={}", padding_min);
+                writeln!(output, "content_padding_addition={}", padding_min);
             } else {
                 writeln!(
                     writer,
@@ -605,9 +606,9 @@ fn api_get(writer: &mut BufWriter<&UnixStream>, d: &Device) -> i32 {
         ] {
             if range != (0, 0) {
                 if range.0 == range.1 {
-                    writeln!(writer, "{}={}", key, range.0);
+                    writeln!(output, "{}={}", key, range.0);
                 } else {
-                    writeln!(writer, "{}={}-{}", key, range.0, range.1);
+                    writeln!(output, "{}={}-{}", key, range.0, range.1);
                 }
             }
         }
@@ -622,7 +623,7 @@ fn api_get(writer: &mut BufWriter<&UnixStream>, d: &Device) -> i32 {
             ("s4", a.transport_packet_junk_size),
         ] {
             if val != 0 {
-                writeln!(writer, "{}={}", key, val);
+                writeln!(output, "{}={}", key, val);
             }
         }
 
@@ -636,9 +637,9 @@ fn api_get(writer: &mut BufWriter<&UnixStream>, d: &Device) -> i32 {
         ] {
             if range != def {
                 if range.start == range.end {
-                    writeln!(writer, "{}={}", key, range.start);
+                    writeln!(output, "{}={}", key, range.start);
                 } else {
-                    writeln!(writer, "{}={}-{}", key, range.start, range.end);
+                    writeln!(output, "{}={}-{}", key, range.start, range.end);
                 }
             }
         }
@@ -659,7 +660,7 @@ fn api_get(writer: &mut BufWriter<&UnixStream>, d: &Device) -> i32 {
 
     for (k, peer) in d.peers.iter() {
         let p = peer.lock();
-        writeln!(writer, "public_key={}", encode_hex(k.as_bytes()));
+        writeln!(output, "public_key={}", encode_hex(k.as_bytes()));
 
         let zero_psk = [0u8; 32];
         writeln!(
@@ -667,11 +668,11 @@ fn api_get(writer: &mut BufWriter<&UnixStream>, d: &Device) -> i32 {
             "preshared_key={}",
             encode_hex(p.preshared_key().unwrap_or(&zero_psk))
         );
-        writeln!(writer, "protocol_version=1");
+        writeln!(output, "protocol_version=1");
 
         if let Some((min, max)) = p.persistent_keepalive_range() {
             if min == max {
-                writeln!(writer, "persistent_keepalive_interval={}", min);
+                writeln!(output, "persistent_keepalive_interval={}", min);
             } else {
                 writeln!(
                     writer,
@@ -682,14 +683,14 @@ fn api_get(writer: &mut BufWriter<&UnixStream>, d: &Device) -> i32 {
         }
 
         if let Some(ref addr) = p.endpoint().addr {
-            writeln!(writer, "endpoint={}", addr);
+            writeln!(output, "endpoint={}", addr);
         }
 
         for (ip, cidr) in prefixes_by_peer
             .get(&(Arc::as_ptr(peer) as usize))
             .map_or(&[][..], Vec::as_slice)
         {
-            writeln!(writer, "allowed_ip={}/{}", ip, cidr);
+            writeln!(output, "allowed_ip={}/{}", ip, cidr);
         }
 
         // `last_handshake_time_*` is an absolute wall-clock timestamp in the
@@ -702,7 +703,7 @@ fn api_get(writer: &mut BufWriter<&UnixStream>, d: &Device) -> i32 {
         if let Some(elapsed) = p.time_since_last_handshake() {
             if let Ok(now) = SystemTime::now().duration_since(UNIX_EPOCH) {
                 let handshake_at = now.saturating_sub(elapsed);
-                writeln!(writer, "last_handshake_time_sec={}", handshake_at.as_secs());
+                writeln!(output, "last_handshake_time_sec={}", handshake_at.as_secs());
                 writeln!(
                     writer,
                     "last_handshake_time_nsec={}",
@@ -710,16 +711,16 @@ fn api_get(writer: &mut BufWriter<&UnixStream>, d: &Device) -> i32 {
                 );
             }
         } else {
-            writeln!(writer, "last_handshake_time_sec=0");
-            writeln!(writer, "last_handshake_time_nsec=0");
+            writeln!(output, "last_handshake_time_sec=0");
+            writeln!(output, "last_handshake_time_nsec=0");
         }
 
         let (_, tx_bytes, rx_bytes, ..) = p.tunnel.stats();
 
-        writeln!(writer, "rx_bytes={}", rx_bytes);
-        writeln!(writer, "tx_bytes={}", tx_bytes);
+        writeln!(output, "rx_bytes={}", rx_bytes);
+        writeln!(output, "tx_bytes={}", tx_bytes);
     }
-    0
+    writer.write_all(output.as_bytes()).map(|_| 0).unwrap_or(EIO)
 }
 
 fn api_set(reader: &mut BufReader<&UnixStream>, d: &mut LockReadGuard<Device>) -> i32 {
