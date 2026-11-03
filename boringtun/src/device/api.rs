@@ -256,16 +256,86 @@ impl AwgParams {
 /// single assignment. They were previously six separate locals declared outside
 /// the parse loop, of which only `allowed_ips` was reset between sections — so
 /// every other attribute leaked into the next peer.
+#[derive(Copy, Clone)]
+enum AllowedIpOperation {
+    Replace,
+    Add(AllowedIP),
+    Remove(AllowedIP),
+}
+
 #[derive(Default)]
 struct PeerSection {
     remove: bool,
-    replace_ips: bool,
     endpoint: Option<SocketAddr>,
     keepalive: Option<u16>,
     preshared_key: Option<[u8; 32]>,
-    allowed_ips: Vec<AllowedIP>,
-    removed_allowed_ips: Vec<AllowedIP>,
+    allowed_ip_operations: Vec<AllowedIpOperation>,
     update_only: bool,
+}
+
+fn resolved_allowed_ips(
+    device: &Device,
+    public_key: &x25519::PublicKey,
+    section: &PeerSection,
+) -> Vec<AllowedIP> {
+    let mut prefixes: Vec<AllowedIP> = device
+        .peers
+        .get(public_key)
+        .map(|peer| {
+            device
+                .peer_allowed_ips(peer)
+                .into_iter()
+                .map(|(addr, cidr)| AllowedIP { addr, cidr })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    for operation in &section.allowed_ip_operations {
+        match *operation {
+            AllowedIpOperation::Replace => prefixes.clear(),
+            AllowedIpOperation::Add(prefix) => {
+                prefixes.retain(|existing| *existing != prefix);
+                prefixes.push(prefix);
+            }
+            AllowedIpOperation::Remove(prefix) => {
+                prefixes.retain(|existing| *existing != prefix);
+            }
+        }
+    }
+
+    prefixes
+}
+
+fn commit_peer_section(
+    device: &mut Device,
+    public_key: &x25519::PublicKey,
+    section: &PeerSection,
+) -> i32 {
+    if section.update_only && !device.peers.contains_key(public_key) {
+        return 0;
+    }
+
+    let allowed_ips = resolved_allowed_ips(device, public_key, section);
+    let replace_ips = !section.allowed_ip_operations.is_empty();
+
+    if let Err(error) = device.update_peer(
+        public_key.clone(),
+        section.remove,
+        replace_ips,
+        section.endpoint,
+        &allowed_ips,
+        section.keepalive,
+        section.preshared_key,
+    ) {
+        tracing::error!(
+            message = "failed to apply peer",
+            peer = encode_hex(public_key.as_bytes()).as_str(),
+            error = ?error
+        );
+        return EIO;
+    }
+
+    0
 }
 
 fn create_sock_dir(dir: &str) {
@@ -837,30 +907,7 @@ fn api_set_peer(
         if cmd.ends_with('\n') { cmd.pop(); }
         if cmd.ends_with('\r') { cmd.pop(); }
         if cmd.is_empty() {
-            if !(sec.update_only && !d.peers.contains_key(&public_key)) {
-                if let Err(e) = d.update_peer(
-                    public_key.clone(),
-                    sec.remove,
-                    sec.replace_ips,
-                    sec.endpoint,
-                    sec.allowed_ips.as_slice(),
-                    sec.keepalive,
-                    sec.preshared_key,
-                ) {
-                    tracing::error!(
-                        message = "failed to apply peer",
-                        peer = encode_hex(public_key.as_bytes()).as_str(),
-                        error = ?e
-                    );
-                    return EIO;
-                }
-                if !sec.remove {
-                    for ip in &sec.removed_allowed_ips {
-                        d.remove_allowed_ip(&public_key, *ip);
-                    }
-                }
-            }
-            return 0; // Done
+            return commit_peer_section(d, &public_key, &sec);
         }
         {
             let parsed_cmd: Vec<&str> = cmd.splitn(2, '=').collect();
@@ -898,7 +945,7 @@ fn api_set_peer(
                     if val != "true" {
                         return EINVAL;
                     }
-                    sec.replace_ips = true;
+                    sec.allowed_ip_operations.push(AllowedIpOperation::Replace);
                 },
                 "allowed_ip" => {
                     let (remove, value) = match val.strip_prefix('-') {
@@ -906,8 +953,8 @@ fn api_set_peer(
                         None => (false, val),
                     };
                     match value.parse::<AllowedIP>() {
-                        Ok(ip) if remove => sec.removed_allowed_ips.push(ip),
-                        Ok(ip) => sec.allowed_ips.push(ip),
+                        Ok(ip) if remove => sec.allowed_ip_operations.push(AllowedIpOperation::Remove(ip)),
+                        Ok(ip) => sec.allowed_ip_operations.push(AllowedIpOperation::Add(ip)),
                         Err(_) => return EINVAL,
                     }
                 }
@@ -919,28 +966,9 @@ fn api_set_peer(
                 },
                 "public_key" => {
                     // Indicates a new peer section. Commit changes for current peer, and continue to next peer
-                    if !(sec.update_only && !d.peers.contains_key(&public_key)) {
-                        if let Err(e) = d.update_peer(
-                            public_key.clone(),
-                            sec.remove,
-                            sec.replace_ips,
-                            sec.endpoint,
-                            sec.allowed_ips.as_slice(),
-                            sec.keepalive,
-                            sec.preshared_key,
-                        ) {
-                            tracing::error!(
-                                message = "failed to apply peer",
-                                peer = encode_hex(public_key.as_bytes()).as_str(),
-                                error = ?e
-                            );
-                            return EIO;
-                        }
-                        if !sec.remove {
-                            for ip in &sec.removed_allowed_ips {
-                                d.remove_allowed_ip(&public_key, *ip);
-                            }
-                        }
+                    let status = commit_peer_section(d, &public_key, &sec);
+                    if status != 0 {
+                        return status;
                     }
                     // Each `[Peer]` block is independent, matching the kernel's
                     // nested-attribute model. Reset every attribute, not just
@@ -965,30 +993,7 @@ fn api_set_peer(
     // EOF terminates a set operation too, matching IpcSetOperation's Scanner
     // semantics. Do not silently drop the final peer when the client closes
     // after its last configuration line instead of sending a blank line.
-    if !(sec.update_only && !d.peers.contains_key(&public_key)) {
-        if let Err(e) = d.update_peer(
-            public_key.clone(),
-            sec.remove,
-            sec.replace_ips,
-            sec.endpoint,
-            sec.allowed_ips.as_slice(),
-            sec.keepalive,
-            sec.preshared_key,
-        ) {
-            tracing::error!(
-                message = "failed to apply peer",
-                peer = encode_hex(public_key.as_bytes()).as_str(),
-                error = ?e
-            );
-            return EIO;
-        }
-        if !sec.remove {
-            for ip in &sec.removed_allowed_ips {
-                d.remove_allowed_ip(&public_key, *ip);
-            }
-        }
-    }
-    0
+    commit_peer_section(d, &public_key, &sec)
 }
 
 #[cfg(test)]
