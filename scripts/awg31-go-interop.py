@@ -5,12 +5,14 @@ Requires Linux, root, iproute2, ping, Python `cryptography`, boringtun-cli built
 with the device feature, and the official amneziawg-go v3 binary. All interfaces and links live
 in uniquely named disposable network namespaces; host routes are not changed.
 
-Usage: sudo python3 scripts/awg31-go-interop.py ./target/release/boringtun-cli ./amneziawg-go
+Usage: sudo python3 scripts/awg31-go-interop.py ./target/release/boringtun-cli ./amneziawg-go [--performance]
 """
 from __future__ import annotations
 
+import json
 import os
 import re
+import shutil
 import socket
 import struct
 import subprocess
@@ -472,6 +474,103 @@ def verify_bulk_data_transfer(
 
 
 
+
+def verify_iperf3(
+    server_ns: str, client_ns: str, output_dir: Path, scenario: str,
+    duration: int = 8,
+) -> None:
+    """Measure TCP/UDP throughput in both directions through the encrypted tunnel."""
+    if shutil.which("iperf3") is None:
+        raise RuntimeError("iperf3 is required; install the iperf3 package")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    measurements = []
+    tests = (
+        ("tcp-1-stream", []),
+        ("tcp-4-streams", ["-P", "4"]),
+        ("udp-100-mbit", ["-u", "-b", "100M"]),
+    )
+    directions = (
+        ("client-to-server", client_ns, server_ns, SERVER_TUN),
+        ("server-to-client", server_ns, client_ns, CLIENT_TUN),
+    )
+    port = 39003
+
+    for direction, sender_ns, receiver_ns, receiver_ip in directions:
+        for test_name, extra_args in tests:
+            server = subprocess.Popen(
+                [
+                    "ip", "netns", "exec", receiver_ns, "iperf3",
+                    "-s", "-1", "-p", str(port), "-J",
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            try:
+                time.sleep(0.3)
+                if server.poll() is not None:
+                    stdout, stderr = server.communicate()
+                    raise RuntimeError(
+                        f"iperf3 server exited early: {stderr.strip() or stdout.strip()}"
+                    )
+                client_output = run(
+                    "ip", "netns", "exec", sender_ns, "iperf3",
+                    "-c", receiver_ip, "-p", str(port),
+                    "-t", str(duration), "-J", *extra_args, capture=True,
+                )
+                server_stdout, server_stderr = server.communicate(
+                    timeout=duration + 15
+                )
+                if server.returncode != 0:
+                    raise RuntimeError(
+                        f"iperf3 server failed: {server_stderr.strip() or server_stdout.strip()}"
+                    )
+                report = json.loads(client_output)
+                end = report.get("end", {})
+                received = end.get("sum_received") or end.get("sum") or {}
+                sent = end.get("sum_sent") or end.get("sum") or {}
+                bits_per_second = received.get("bits_per_second")
+                if bits_per_second is None:
+                    raise RuntimeError(
+                        f"iperf3 report has no receiver throughput: {client_output[-2000:]}"
+                    )
+                item = {
+                    "scenario": scenario,
+                    "direction": direction,
+                    "test": test_name,
+                    "duration_seconds": duration,
+                    "bytes_received": received.get("bytes"),
+                    "bits_per_second": bits_per_second,
+                    "throughput_mbps": bits_per_second / 1_000_000,
+                    "tcp_retransmits": sent.get("retransmits"),
+                    "udp_lost_percent": received.get("lost_percent"),
+                    "udp_lost_packets": received.get("lost_packets"),
+                    "udp_packets": received.get("packets"),
+                }
+                measurements.append(item)
+                print(
+                    f"IPERF3 {scenario} {direction} {test_name}: "
+                    f"{item['throughput_mbps']:.2f} Mbit/s "
+                    f"retransmits={item['tcp_retransmits']} "
+                    f"udp_loss={item['udp_lost_percent']}"
+                )
+            finally:
+                if server.poll() is None:
+                    server.terminate()
+                    try:
+                        server.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        server.kill()
+                        server.wait()
+
+    safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", scenario)
+    result_path = output_dir / f"{safe_name}.json"
+    result_path.write_text(
+        json.dumps(measurements, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    print(f"IPERF3-RESULTS: {result_path} ({len(measurements)} measurements)")
+
 def verify_wire_pcap(
     pcap_path: Path,
     *,
@@ -631,7 +730,7 @@ def verify_wire_pcap(
 
 def run_profile(
     bt: str, go: str, name: str, extra: str,
-    awg_enabled: bool, bt_is_server: bool,
+    awg_enabled: bool, bt_is_server: bool, performance: bool = False,
 ) -> None:
     token = uuid.uuid4().hex[:10]
     ns_server, ns_client = f"awg31s{token}", f"awg31c{token}"
@@ -739,7 +838,13 @@ def run_profile(
         ns(ns_client, "ip", "link", "set", client_iface, "up", "mtu", "1420")
         ns(ns_client, "ip", "route", "add", f"{SERVER_TUN}/32", "dev", client_iface)
         initial_handshake_time = wait_handshake(server_iface, ns_client, SERVER_TUN)
-        if name in ("accelerated rekey", "long peer lifecycle soak"):
+        if performance:
+            verify_iperf3(
+                ns_server, ns_client, Path("target/awg31-performance"),
+                f"{name}-{role}",
+            )
+            verify_udp_roundtrip(ns_server, ns_client)
+        elif name in ("accelerated rekey", "long peer lifecycle soak"):
             handshake_time = initial_handshake_time
             cycle_count = 120 if name == "long peer lifecycle soak" else 30
             for cycle in range(cycle_count):
@@ -838,21 +943,29 @@ def main() -> int:
     if os.geteuid() != 0:
         print("Run as root (creates disposable network namespaces).", file=sys.stderr)
         return 2
-    if len(sys.argv) != 3:
+    performance = len(sys.argv) == 4 and sys.argv[3] == "--performance"
+    if len(sys.argv) != (4 if performance else 3):
         print(__doc__.split("Usage:", 1)[1].strip(), file=sys.stderr)
         return 2
-    bt, go = (str(Path(p).resolve()) for p in sys.argv[1:])
+    bt, go = (str(Path(p).resolve()) for p in sys.argv[1:3])
+    if performance and shutil.which("iperf3") is None:
+        print("iperf3 is required for --performance mode", file=sys.stderr)
+        return 2
     for binary in (bt, go):
         if not os.path.isfile(binary) or not os.access(binary, os.X_OK):
             print(f"not an executable file: {binary}", file=sys.stderr)
             return 2
     failures = 0
     total = 0
-    for name, extra, awg_enabled in PROFILES:
+    profiles = [PROFILES[0], PROFILES[5]] if performance else PROFILES
+    for name, extra, awg_enabled in profiles:
         for bt_is_server in (True, False):
             total += 1
             try:
-                run_profile(bt, go, name, extra, awg_enabled, bt_is_server)
+                run_profile(
+                    bt, go, name, extra, awg_enabled, bt_is_server,
+                    performance=performance,
+                )
             except Exception as error:
                 failures += 1
                 role = "BoringTun server" if bt_is_server else "amneziawg-go server"
