@@ -12,17 +12,34 @@
 |---|---|---|
 | `disable_cookies` | `true` / `false` | `false`. При `true` MAC1 по-прежнему проверяется, но under-load MAC2/cookie challenge и связанный handshake rate-limit gate обходятся. Входящие Cookie Reply продолжают приниматься. |
 | `header_protection_key` | 64 hex-символа (32 байта) | Нулевой ключ выключает защиту. Один и тот же ключ и S-настройки нужны на обоих концах. |
-| `content_padding_addition` | `uint16`: `N` или `MIN-MAX` | Inclusive диапазон нулевого дополнения transport plaintext перед AEAD. `0`/не задано — выключено. |
+| `content_padding_addition` | `uint32`: `N` или `MIN-MAX` | Inclusive диапазон нулевого дополнения transport plaintext перед AEAD. `0`/не задано — выключено. |
 | `random_trailers` | `true` / `false` | `false`. Случайный внешний trailer для handshake/cookie и нулевое дополнение transport внутри AEAD. |
-| `rekey_after_time` | секунды, `uint16`: `N` или `MIN-MAX` | `120` секунд, если не задано. |
-| `rekey_timeout` | секунды, `uint16`: `N` или `MIN-MAX` | `5` секунд, если не задано. |
-| `reject_after_time` | секунды, `uint16`: `N` или `MIN-MAX` | `180` секунд, если не задано. |
-| `keepalive_timeout` | секунды, `uint16`: `N` или `MIN-MAX` | `10` секунд, если не задано. |
-| `max_handshake_attempts` | `N` или `MIN-MAX` | `18`, если не задано. |
+| `rekey_after_time` | секунды, `uint32`: `N` или `MIN-MAX` | `120` секунд, если не задано. |
+| `rekey_timeout` | секунды, `uint32`: `N` или `MIN-MAX` | `5` секунд, если не задано. |
+| `reject_after_time` | секунды, `uint32`: `N` или `MIN-MAX` | `180` секунд, если не задано. |
+| `keepalive_timeout` | секунды, `uint32`: `N` или `MIN-MAX` | `10` секунд, если не задано. |
+| `max_handshake_attempts` | `uint32`: `N` или `MIN-MAX` | `18`, если не задано. |
 
 Диапазоны включают обе границы. Обратный диапазон отклоняется. Частичный UAPI `set=1` объединяется с текущей конфигурацией и не должен сбрасывать неуказанные AWG-поля.
 
 Существующие `Jc/Jmin/Jmax`, `S1-S4`, `H1-H4` и `I1-I5` сохраняются. Формат имитационных пакетов и DNS/SIP/STUN/QUIC imitation не заменяется новыми параметрами.
+
+## UAPI: set/get и совместимость
+
+UAPI сверяется с `device/uapi.go` закреплённой версии `amneziawg-go`.
+
+- Диапазоны `H1-H4`, `content_padding_addition`, таймеров и `persistent_keepalive_interval` читаются как unsigned `uint32`; обе границы включены. `H1-H4` допускают явный ноль при `set=1`; пересекающиеся диапазоны отклоняются, чтобы классификация пакетов оставалась однозначной.
+- Boolean-поля принимают варианты Go `strconv.ParseBool`: `1/0`, `t/f`, `T/F`, `true/false`, `True/False`, `TRUE/FALSE`.
+- Ключи private/public/PSK принимаются в hex и base64; разбор разделяет строку только по первому `=`, поэтому завершающий base64 padding не теряется.
+- `endpoint` принимает числовой SocketAddr и hostname с портом; hostname разрешается через системный resolver.
+- `allowed_ip=PREFIX` добавляет префикс, `allowed_ip=-PREFIX` удаляет точный префикс только у текущего владельца, `replace_allowed_ips=true` удаляет все префиксы peer. Операции применяются в исходном порядке, а не группируются по типу.
+- Поддерживаются `remove=true`, `update_only=true`, `replace_peers=true` и `protocol_version=1`. Неизвестные поля и некорректные значения возвращают UAPI error.
+- `persistent_keepalive_interval` поддерживает `N` и inclusive `MIN-MAX`. При включении таймер ставит немедленный keepalive; после аутентифицированного traversal следующий интервал выбирается заново из диапазона.
+- `get=1` возвращает `private_key` (не `own_public_key`), peer `preshared_key`, `protocol_version`, endpoint, AllowedIPs, диапазон persistent keepalive, counters и `last_handshake_time_sec/nsec` как абсолютное Unix-время. Для default H1-H4 возвращаются стандартные ненулевые message-type tags; нулевые optional fields опускаются, boolean flags сериализуются в обоих состояниях.
+- `set=1` корректно завершает последнюю строку по EOF, не требует дополнительного пустого terminator для фиксации последнего peer и сохраняет base64-значения с `=` внутри. AWG-параметры валидируются как единый набор; частичный update сохраняет неуказанные параметры.
+- AllowedIPs хранятся в одном авторитетном routing trie. Проверка исходного адреса peer, выдача конфигурации и удаление префикса используют один источник истины. Это устраняет рассинхронизацию старой per-peer копии и риск source spoofing после переноса префикса другому peer.
+
+**Ограничения UAPI-паритета:** интерфейсные поля следует располагать до первого `public_key`, как это делает штатный `awg setconf`; после начала peer-секций parser ожидает только peer-поля. Создание нового peer требует уже заданного private key интерфейса. Пересекающиеся H1-H4 и неодинаковые S1-S4 при `random_trailers=true` намеренно отклоняются, хотя upstream может принять часть таких конфигураций без проверки. Для `Jc/Jmin/Jmax` дополнительно действуют безопасные лимиты размера и количества junk-пакетов.
 
 ## Header Protection
 
