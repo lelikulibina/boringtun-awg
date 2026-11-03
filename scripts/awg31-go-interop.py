@@ -277,7 +277,7 @@ def drop_client_egress_during_rekey(
                 "ip", "netns", "exec", client_ns, "tc", "-s", "filter",
                 "show", "dev", client_link, "parent", "1:", capture=True,
             )
-            match = re.search(r"dropped (\\d+)", stats)
+            match = re.search(r"dropped (\d+)", stats)
             dropped = int(match.group(1)) if match else 0
             if dropped > 0:
                 break
