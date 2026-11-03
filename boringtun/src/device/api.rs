@@ -433,8 +433,9 @@ fn api_get(writer: &mut BufWriter<&UnixStream>, d: &Device) -> i32 {
         writeln!(writer, "fwmark={}", fwmark);
     }
 
-    // AmneziaWG interface parameters, emitted only when they differ from plain
-    // WireGuard so a vanilla device's output is byte-identical to before.
+    // AmneziaWG interface parameters. Numeric/range fields are omitted at their
+    // defaults; boolean flags are always emitted in both states so get/set
+    // round-trips can explicitly clear a previously enabled option.
     // Sizes are `%u`; magic headers use the kernel's `mh_genspec` convention --
     // a bare value when the range is degenerate, `start-end` otherwise.
     {
