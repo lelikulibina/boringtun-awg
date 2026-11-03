@@ -581,7 +581,7 @@ fn api_get(writer: &mut BufWriter<&UnixStream>, d: &Device) -> i32 {
         let a = &d.config.amnezia;
         if a.header_protection_enabled() {
             writeln!(
-                writer,
+                output,
                 "header_protection_key={}",
                 encode_hex(&a.header_protection_key)
             );
@@ -599,7 +599,7 @@ fn api_get(writer: &mut BufWriter<&UnixStream>, d: &Device) -> i32 {
                 writeln!(output, "content_padding_addition={}", padding_min);
             } else {
                 writeln!(
-                    writer,
+                    output,
                     "content_padding_addition={}-{}",
                     padding_min, padding_max
                 );
@@ -672,7 +672,7 @@ fn api_get(writer: &mut BufWriter<&UnixStream>, d: &Device) -> i32 {
 
         let zero_psk = [0u8; 32];
         writeln!(
-            writer,
+            output,
             "preshared_key={}",
             encode_hex(p.preshared_key().unwrap_or(&zero_psk))
         );
@@ -683,7 +683,7 @@ fn api_get(writer: &mut BufWriter<&UnixStream>, d: &Device) -> i32 {
                 writeln!(output, "persistent_keepalive_interval={}", min);
             } else {
                 writeln!(
-                    writer,
+                    output,
                     "persistent_keepalive_interval={}-{}",
                     min, max
                 );
@@ -713,7 +713,7 @@ fn api_get(writer: &mut BufWriter<&UnixStream>, d: &Device) -> i32 {
                 let handshake_at = now.saturating_sub(elapsed);
                 writeln!(output, "last_handshake_time_sec={}", handshake_at.as_secs());
                 writeln!(
-                    writer,
+                    output,
                     "last_handshake_time_nsec={}",
                     handshake_at.subsec_nanos()
                 );
