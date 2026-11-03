@@ -1,6 +1,6 @@
 # Настройка AmneziaWG 3.1 в BoringTun
 
-> **Статус:** экспериментальная реализация в PR [#8](https://github.com/lelikulibina/boringtun-awg/pull/8). Это не заявление о полной совместимости с AmneziaWG 3.1: до неё ещё нужны дифференциальные тесты с официальным `amneziawg-go`, двусторонний handshake и матрица WireGuard/AWG 2.0/AWG 3.0/AWG 3.1.
+> **Проверено 2026-11-03:** PR [#8](https://github.com/lelikulibina/boringtun-awg/pull/8), ветка `feat/amneziawg-3.1-disable-cookies`, HEAD `115a6c35d59a626e4c1f0f074b652618ff2f7092`. На этом HEAD Linux CI, Semgrep и двусторонняя матрица с официальным `amneziawg-go` завершились успешно. Матрица: **44/44 сценария**, включая packet-loss recovery и 120 циклов rekey в каждой роли сервера. Это подтверждает функциональную interoperability на проверенных профилях, но не полное побайтовое равенство всех wire datagrams. Windows job пропущен, macOS не входит в текущий merge gate.
 
 ## Совместимость и безопасные значения
 
@@ -53,15 +53,28 @@
 sudo python3 scripts/awg31-go-interop.py ./target/release/boringtun-cli ./amneziawg-go
 ```
 
-Скрипт требует Linux, root, `iproute2`, `ping`, Python-пакет `cryptography`, BoringTun с feature `device` и официальный бинарник `amneziawg-go` из модуля `/v3`; CI собирает эталон из upstream commit `b5928efb6ca19f0153958460c3d141f04abc5c2e`, чтобы результаты матрицы были воспроизводимыми. Каждый профиль запускается в двух ролях: BoringTun-сервер ↔ amneziawg-go-клиент и amneziawg-go-сервер ↔ BoringTun-клиент. Для каждого прогона создаются отдельные сетевые namespace с уникальными именами; хостовые маршруты и интерфейсы не перенастраиваются. Успех означает не только принятие UAPI-конфигурации, но и handshake с последующим двусторонним ICMP-трафиком.
+Скрипт требует Linux, root, `iproute2`, `ping`, `tcpdump`, Python-пакет `cryptography`, BoringTun с feature `device` и официальный бинарник `amneziawg-go` из модуля `/v3`. CI собирает эталон из upstream commit `b5928efb6ca19f0153958460c3d141f04abc5c2e`. Каждый профиль запускается в двух ролях: BoringTun-сервер ↔ amneziawg-go-клиент и amneziawg-go-сервер ↔ BoringTun-клиент. Для каждого прогона создаются отдельные сетевые namespace с уникальными именами; хостовые маршруты и интерфейсы не перенастраиваются.
 
-Матрица отдельно проверяет 1 MiB двусторонней передачи для vanilla WireGuard, AWG 2.0, AWG 3.0 и AWG 3.1. Профиль AWG 3.0 включает HeaderProtectionKey, ContentPaddingAddition и диапазоны таймеров; AWG 3.1 добавляет RandomTrailers и DisableCookies поверх профиля 3.0. CPS I1–I5 проверяются отдельными сценариями, поскольку цепочки сигнатур не являются заменой транспортных расширений AWG 3.0. В CI run [41496077388](https://github.com/lelikulibina/boringtun-awg/actions/runs/41496077388) матрица завершилась успешно на кодовом HEAD `e11c15e3340b5e73305207f95e7d727d40f7877c`: все 8 профилей прошли в обеих ролях (16/16), включая vanilla WireGuard и AWG 2.x. Для каждого профиля подтверждены UAPI-настройка, handshake и двусторонний ICMP-трафик. Это не заменяет отдельные тесты под искусственной under-load нагрузкой для DisableCookies и длительный differential-тест rekey/retry/expiry.
+### Результаты на текущем HEAD
 
-## Что ещё не подтверждено
+На HEAD `115a6c35d59a626e4c1f0f074b652618ff2f7092` завершились успешно:
 
-1. Differential wire-vector tests с официальным Go peer для Header Protection, RandomTrailers, cookie replies и H1-H4.
-2. Реальный двусторонний handshake BoringTun ↔ amneziawg-go с HP и RandomTrailers.
-3. Регрессии vanilla WireGuard и AWG 2.x, а также комбинации всех новых параметров.
-4. Полная проверка жизненного цикла таймеров и количества handshake retries против upstream.
+- [PR Status Checks, run 41629784730](https://github.com/lelikulibina/boringtun-awg/actions/runs/41629784730): `rustfmt`, `clippy`, `check_features`, `tests`, `integration-tests`, `awg31-interoperability` и `all-systems-go` — success.
+- Основной тестовый запуск: **277 passed, 0 failed, 9 ignored**; матрица `cargo hack test --each-feature` прошла.
+- AWG 3.1 interoperability: **44/44 passed, 0 failed** (22 профиля × обе роли сервера). Для профилей проверяются handshake, двусторонние ICMP/UDP и нормализованный PCAP.
+- Сценарий packet-loss recovery: `tc` подтвердил потерю одного совпавшего с фильтром H1 rekey datagram в каждой роли; после retransmit handshake и двусторонний UDP-трафик восстановились.
+- Long peer lifecycle soak: **120/120 rekey cycles в каждой роли сервера**; после каждого цикла harness проверил UDP roundtrip.
+- [Semgrep, run 41629784731](https://github.com/lelikulibina/boringtun-awg/actions/runs/41629784731) — success.
+- [PCAP artifacts](https://github.com/lelikulibina/boringtun-awg/actions/runs/41629784730) сохранены в GitHub Actions.
 
-Пока эти проверки не завершены, не следует маркировать эту ветку как полностью совместимую с AmneziaWG 3.1.
+Матрица включает vanilla WireGuard, AWG 2.0, AWG 3.0, AWG 3.1, отдельные расширения, совместный профиль, CPS I1–I5, accelerated rekey, packet-loss recovery и длительный ускоренный lifecycle soak. В AWG 3.0-профилях проверяются HeaderProtectionKey, ContentPaddingAddition и таймеры; AWG 3.1 добавляет RandomTrailers и DisableCookies.
+
+**Граница доказательства:** текущий PCAP verifier декодирует типы сообщений и проверяет направление, framing, длины, наличие ожидаемых datagrams и порядок CPS signatures. Он не сравнивает каждый байт независимых PCAP с эталонным Go-процессом. Поэтому 44/44 — это успешные функциональные interoperability-сценарии, а не заявление о полном byte-for-byte wire equivalence.
+
+### Оставшиеся ограничения
+
+1. Нет полного byte-for-byte differential corpus для всех типов пакетов, вариантов Header Protection, RandomTrailers, Cookie Reply и H1–H4. Имеются отдельные фиксированные known-answer vectors для ChaCha20, MAC1/MAC2 и XChaCha20-Poly1305 Cookie Reply, но это не заменяет полную побайтовую матрицу.
+2. В текущем workflow Windows job явно отключён, а macOS job не входит в merge gate. Следовательно, текущий зелёный CI подтверждает Linux, а не все поддерживаемые платформы.
+3. 120 ускоренных циклов rekey на каждую роль — это длительный автоматизированный lifecycle regression, но не многочасовой production soak под реальной нагрузкой.
+
+До закрытия этих ограничений корректно заявлять функциональную совместимость на проверенных профилях Linux, но не полную сертифицированную совместимость со всеми вариантами AmneziaWG 3.1.
