@@ -151,12 +151,14 @@ PERFORMANCE_PROFILES = [PROFILES[index] for index in (0, 1, 6, 7, 8, 9, 10, 15)]
         "AWG 2.x J-only",
         "jc=4\\njmin=50\\njmax=1000\\n",
         True,
+        True,
     ),
     (
         "AWG 2.x S-H-only",
         "s1=120\\ns2=120\\ns3=120\\ns4=120\\n"
         "h1=169887817\\nh2=390382747\\n"
         "h3=1033691040\\nh4=1526332224\\n",
+        True,
         True,
     ),
 ]
@@ -754,6 +756,7 @@ def run_profile(
     awg_enabled: bool, bt_is_server: bool, performance: bool = False,
     same_implementation: str | None = None,
     extended_matrix: bool = False,
+    exact_awg_config: bool = False,
 ) -> None:
     token = uuid.uuid4().hex[:10]
     ns_server, ns_client = f"awg31s{token}", f"awg31c{token}"
@@ -862,7 +865,7 @@ def run_profile(
         wait_socket(server_iface, server_proc)
         wait_socket(client_iface, client_proc)
 
-        awg = (S_AND_H if awg_enabled else "") + extra
+        awg = extra if exact_awg_config else (S_AND_H if awg_enabled else "") + extra
         set_peer(server_iface, server_private, client_public, "none",
                  f"{CLIENT_TUN}/32", awg)
         set_peer(client_iface, client_private, server_public,
@@ -1010,12 +1013,15 @@ def main() -> int:
         # Isolate individual extensions instead of comparing only the full
         # bundle with vanilla. Homogeneous pairs isolate each datapath.
         for implementation in ("amneziawg-go", "boringtun"):
-            for name, extra, awg_enabled in PERFORMANCE_PROFILES:
+            for profile in PERFORMANCE_PROFILES:
+                name, extra, awg_enabled = profile[:3]
+                exact_awg_config = len(profile) == 4 and profile[3]
                 total += 1
                 try:
                     run_profile(
                         bt, go, name, extra, awg_enabled, True,
                         performance=True, same_implementation=implementation,
+                        exact_awg_config=exact_awg_config,
                     )
                 except Exception as error:
                     failures += 1
