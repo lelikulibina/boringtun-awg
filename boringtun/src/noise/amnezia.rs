@@ -280,7 +280,7 @@ pub struct AmneziaConfig {
     pub(crate) header_protection_key: [u8; 32],
     /// Inclusive range of extra zero bytes appended to the encrypted IP payload.
     /// `(0, 0)` disables ContentPaddingAddition.
-    pub(crate) content_padding_addition: (u16, u16),
+    pub(crate) content_padding_addition: (u32, u32),
     /// Inclusive timer ranges in seconds; (0, 0) preserves WireGuard defaults.
     pub(crate) rekey_after_time: (u32, u32),
     pub(crate) rekey_timeout: (u32, u32),
@@ -416,6 +416,12 @@ impl AmneziaConfig {
     /// Set the inclusive ContentPaddingAddition range in bytes.
     /// Use `(0, 0)` to disable additional content padding.
     pub fn with_content_padding_addition(mut self, min: u16, max: u16) -> Self {
+        self.content_padding_addition = (u32::from(min), u32::from(max));
+        self
+    }
+
+    /// Set the full UAPI uint32 ContentPaddingAddition range.
+    pub(crate) fn with_content_padding_addition_u32(mut self, min: u32, max: u32) -> Self {
         self.content_padding_addition = (min, max);
         self
     }
@@ -504,16 +510,17 @@ impl AmneziaConfig {
 
     /// Map one u32 draw to the inclusive CPA range without modulo bias.
     /// None denotes a draw in the rejection tail.
-    fn map_content_padding_sample(min: u16, max: u16, sample: u32) -> Option<usize> {
+    fn map_content_padding_sample(min: u32, max: u32, sample: u32) -> Option<usize> {
         if min > max {
             return None;
         }
-        let width = max as u32 - min as u32 + 1;
-        let zone = u32::MAX - (u32::MAX % width);
-        if sample >= zone {
+        let width = u64::from(max) - u64::from(min) + 1;
+        let zone = (1u64 << 32) / width * width;
+        let value = u64::from(sample);
+        if value >= zone {
             return None;
         }
-        Some(min as usize + (sample % width) as usize)
+        Some((u64::from(min) + value % width) as usize)
     }
 
     pub fn with_pre_handshake_junk(
@@ -2062,10 +2069,10 @@ mod tests {
 
     #[test]
     fn content_padding_range_mapper_is_inclusive_and_rejects_modulo_bias_tail() {
-        let min = 7u16;
-        let max = 16u16;
-        let width = u32::from(max) - u32::from(min) + 1;
-        let zone = u32::MAX - (u32::MAX % width);
+        let min = 7u32;
+        let max = 16u32;
+        let width = u64::from(max) - u64::from(min) + 1;
+        let zone = (1u64 << 32) / width * width;
 
         assert_eq!(
             AmneziaConfig::map_content_padding_sample(min, max, 0),
@@ -2082,16 +2089,15 @@ mod tests {
             "the first value in the modulo-bias tail must be rejected"
         );
         assert_eq!(
-            AmneziaConfig::map_content_padding_sample(0, u16::MAX, 0),
+            AmneziaConfig::map_content_padding_sample(0, u32::MAX, 0),
             Some(0),
-            "the full u16 CPA range must not overflow"
+            "the full u32 CPA range must not overflow"
         );
-        let full_width = u32::from(u16::MAX) + 1;
-        let full_zone = u32::MAX - (u32::MAX % full_width);
+        let full_zone = 1u64 << 32;
         assert_eq!(
-            AmneziaConfig::map_content_padding_sample(0, u16::MAX, full_zone - 1),
-            Some(u16::MAX as usize),
-            "the final accepted full-range sample must reach the maximum"
+            AmneziaConfig::map_content_padding_sample(0, u32::MAX, (full_zone - 1) as u32),
+            Some(u32::MAX as usize),
+            "the final full-range sample must reach the maximum"
         );
         assert_eq!(
             AmneziaConfig::map_content_padding_sample(9, 9, 0),
