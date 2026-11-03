@@ -17,6 +17,7 @@ done
 
 WORK="$(mktemp -d)"
 QUICK_BIN="$WORK/quick-bin"
+BT_LAUNCHER="$QUICK_BIN/boringtun-launcher"
 WG_IFACE="wgq0"
 AWG_IFACE="awgq0"
 WG_UP=0
@@ -25,8 +26,8 @@ AWG_UP=0
 cleanup() {
   local status=$?
   set +e
-  if [[ $AWG_UP -eq 1 ]]; then PATH="$QUICK_BIN:$PATH" WG_QUICK_USERSPACE_IMPLEMENTATION="$BT_BIN" WG_SUDO=true awg-quick down "$WORK/awgq0.conf"; fi
-  if [[ $WG_UP -eq 1 ]]; then PATH="$QUICK_BIN:$PATH" WG_QUICK_USERSPACE_IMPLEMENTATION="$BT_BIN" WG_SUDO=true wg-quick down "$WORK/wgq0.conf"; fi
+  if [[ $AWG_UP -eq 1 ]]; then PATH="$QUICK_BIN:$PATH" WG_QUICK_USERSPACE_IMPLEMENTATION="$BT_LAUNCHER" awg-quick down "$WORK/awgq0.conf"; fi
+  if [[ $WG_UP -eq 1 ]]; then PATH="$QUICK_BIN:$PATH" WG_QUICK_USERSPACE_IMPLEMENTATION="$BT_LAUNCHER" wg-quick down "$WORK/wgq0.conf"; fi
   rm -rf "$WORK"
   exit "$status"
 }
@@ -72,6 +73,11 @@ fi
 exec "$IP_REAL" "\${args[@]}"
 EOF
 chmod +x "$QUICK_BIN/ip"
+cat > "$BT_LAUNCHER" <<EOF
+#!/usr/bin/env bash
+exec "$BT_BIN" --disable-drop-privileges "\$@"
+EOF
+chmod +x "$BT_LAUNCHER"
 
 cat > "$WORK/wgq0.conf" <<EOF
 [Interface]
@@ -139,7 +145,7 @@ assert_contains() {
 
 echo "== wg-quick: start userspace BoringTun =="
 WG_UP=1
-PATH="$QUICK_BIN:$PATH" WG_QUICK_USERSPACE_IMPLEMENTATION="$BT_BIN" WG_SUDO=true wg-quick up "$WORK/wgq0.conf"
+PATH="$QUICK_BIN:$PATH" WG_QUICK_USERSPACE_IMPLEMENTATION="$BT_LAUNCHER" wg-quick up "$WORK/wgq0.conf"
 assert_boringtun_running "$WG_IFACE"
 wg_show="$(wg show "$WG_IFACE")"
 assert_contains "$wg_show" "listening port: 51871" "wg show via UAPI"
@@ -157,7 +163,7 @@ wg_conf="$(wg showconf "$WG_IFACE")"
 assert_contains "$wg_conf" "$WG_PRIVATE" "wg showconf private key readback"
 
 echo "== wg-quick: stop =="
-WG_QUICK_USERSPACE_IMPLEMENTATION="$BT_BIN" WG_SUDO=true wg-quick down "$WORK/wgq0.conf"
+WG_QUICK_USERSPACE_IMPLEMENTATION="$BT_LAUNCHER" wg-quick down "$WORK/wgq0.conf"
 WG_UP=0
 if ip link show "$WG_IFACE" >/dev/null 2>&1; then
   echo "FAIL: wg-quick down left $WG_IFACE present" >&2
@@ -166,7 +172,7 @@ fi
 
 echo "== awg-quick: start userspace BoringTun =="
 AWG_UP=1
-PATH="$QUICK_BIN:$PATH" WG_QUICK_USERSPACE_IMPLEMENTATION="$BT_BIN" WG_SUDO=true awg-quick up "$WORK/awgq0.conf"
+PATH="$QUICK_BIN:$PATH" WG_QUICK_USERSPACE_IMPLEMENTATION="$BT_LAUNCHER" awg-quick up "$WORK/awgq0.conf"
 assert_boringtun_running "$AWG_IFACE"
 awg_show="$(awg show "$AWG_IFACE")"
 assert_contains "$awg_show" "listening port: 51881" "awg show via UAPI"
@@ -187,7 +193,7 @@ assert_contains "$awg_conf" "H4 = 400" "AWG H4 readback"
 assert_contains "$awg_conf" "DisableCookies = true" "AWG 3.1 flag readback"
 
 echo "== awg-quick: stop =="
-WG_QUICK_USERSPACE_IMPLEMENTATION="$BT_BIN" WG_SUDO=true awg-quick down "$WORK/awgq0.conf"
+WG_QUICK_USERSPACE_IMPLEMENTATION="$BT_LAUNCHER" awg-quick down "$WORK/awgq0.conf"
 AWG_UP=0
 if ip link show "$AWG_IFACE" >/dev/null 2>&1; then
   echo "FAIL: awg-quick down left $AWG_IFACE present" >&2
