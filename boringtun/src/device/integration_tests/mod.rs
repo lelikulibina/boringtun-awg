@@ -179,9 +179,12 @@ mod tests {
         fn connect(&self) -> std::net::TcpStream {
             let http_addr = SocketAddr::new(self.allowed_ips[0].ip, 80);
             for _i in 0..5 {
-                let res = std::net::TcpStream::connect(http_addr);
+                let res = std::net::TcpStream::connect_timeout(
+                    &http_addr,
+                    std::time::Duration::from_secs(5),
+                );
                 if let Err(err) = res {
-                    println!("failed to connect: {:?}", err);
+                    println!("failed to connect to {http_addr}: {:?}", err);
                     std::thread::sleep(std::time::Duration::from_millis(100));
                     continue;
                 }
@@ -252,6 +255,31 @@ mod tests {
 
             response
         }
+    }
+
+    // UAPI connections remain open for multiple operations. Read exactly one
+    // response through its errno terminator instead of waiting for socket EOF.
+    fn read_uapi_response(socket: UnixStream) -> String {
+        let _ = socket.set_read_timeout(Some(std::time::Duration::from_secs(10)));
+        let mut reader = BufReader::new(socket);
+        let mut response = String::new();
+        loop {
+            let mut line = String::new();
+            match reader.read_line(&mut line) {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {}
+            }
+            let done = line == "\n"
+                && response
+                    .lines()
+                    .last()
+                    .is_some_and(|previous| previous.starts_with("errno="));
+            response.push_str(&line);
+            if done {
+                break;
+            }
+        }
+        response
     }
 
     impl WGHandle {
@@ -406,9 +434,7 @@ mod tests {
             let mut socket = UnixStream::connect(path).unwrap();
             write!(socket, "get=1\n\n").unwrap();
 
-            let mut ret = String::new();
-            socket.read_to_string(&mut ret).unwrap();
-            ret
+            read_uapi_response(socket)
         }
 
         /// Issue a set command on the interface
@@ -417,9 +443,7 @@ mod tests {
             let mut socket = UnixStream::connect(path).unwrap();
             write!(socket, "set=1\n{}\n\n", setting).unwrap();
 
-            let mut ret = String::new();
-            socket.read_to_string(&mut ret).unwrap();
-            ret
+            read_uapi_response(socket)
         }
 
         /// Assign a listen_port to the interface
@@ -482,22 +506,37 @@ mod tests {
     fn test_wireguard_set() {
         let port = next_port();
         let private_key = StaticSecret::random_from_rng(OsRng);
-        let own_public_key = PublicKey::from(&private_key);
+        let private_key_bytes = private_key.to_bytes();
 
         let wg = WGHandle::init("192.0.2.0".parse().unwrap(), "::2".parse().unwrap());
-        assert!(wg.wg_get().ends_with("errno=0\n\n"));
+        let initial_response = wg.wg_get();
+        assert!(
+            initial_response.ends_with("errno=0\n\n"),
+            "unexpected initial UAPI get response: {initial_response:?}"
+        );
         assert_eq!(wg.wg_set_port(port), "errno=0\n\n");
         assert_eq!(wg.wg_set_key(private_key), "errno=0\n\n");
 
-        // Check that the response matches what we expect
-        assert_eq!(
-            wg.wg_get(),
-            format!(
-                "own_public_key={}\nlisten_port={}\nerrno=0\n\n",
-                encode(own_public_key.as_bytes()),
-                port
-            )
-        );
+        // UAPI get follows the upstream WireGuard/AmneziaWG format: private
+        // key (not own_public_key), numeric booleans and explicit default H1-H4.
+        let response = wg.wg_get();
+        let expected = [
+            format!("private_key={}", encode(private_key_bytes)),
+            format!("listen_port={}", port),
+            "disable_cookies=0".to_string(),
+            "random_trailers=0".to_string(),
+            "h1=1".to_string(),
+            "h2=2".to_string(),
+            "h3=3".to_string(),
+            "h4=4".to_string(),
+        ];
+        for line in expected {
+            assert!(
+                response.lines().any(|actual| actual == line),
+                "missing UAPI line {line:?} in response:\n{response}"
+            );
+        }
+        assert!(response.ends_with("errno=0\n\n"));
 
         let peer_key = StaticSecret::random_from_rng(OsRng);
         let peer_pub_key = PublicKey::from(&peer_key);
@@ -518,29 +557,28 @@ mod tests {
             "errno=0\n\n"
         );
 
-        // Check that the response matches what we expect
-        assert_eq!(
-            wg.wg_get(),
-            format!(
-                "own_public_key={}\n\
-                 listen_port={}\n\
-                 public_key={}\n\
-                 endpoint={}\n\
-                 allowed_ip={}/{}\n\
-                 allowed_ip={}/{}\n\
-                 rx_bytes=0\n\
-                 tx_bytes=0\n\
-                 errno=0\n\n",
-                encode(own_public_key.as_bytes()),
-                port,
-                encode(peer_pub_key.as_bytes()),
-                endpoint,
-                allowed_ips[0].ip,
-                allowed_ips[0].cidr,
-                allowed_ips[1].ip,
-                allowed_ips[1].cidr
-            )
-        );
+        // Peer get fields are checked independently of their output order.
+        let response = wg.wg_get();
+        let expected = [
+            format!("private_key={}", encode(private_key_bytes)),
+            format!("public_key={}", encode(peer_pub_key.as_bytes())),
+            format!("preshared_key={}", encode([0u8; 32])),
+            "protocol_version=1".to_string(),
+            format!("endpoint={}", endpoint),
+            format!("allowed_ip={}/{}", allowed_ips[0].ip, allowed_ips[0].cidr),
+            format!("allowed_ip={}/{}", allowed_ips[1].ip, allowed_ips[1].cidr),
+            "last_handshake_time_sec=0".to_string(),
+            "last_handshake_time_nsec=0".to_string(),
+            "rx_bytes=0".to_string(),
+            "tx_bytes=0".to_string(),
+        ];
+        for line in expected {
+            assert!(
+                response.lines().any(|actual| actual == line),
+                "missing UAPI line {line:?} in response:\n{response}"
+            );
+        }
+        assert!(response.ends_with("errno=0\n\n"));
     }
 
     /// Test if wireguard can handle simple ipv4 connections, don't use a connected socket

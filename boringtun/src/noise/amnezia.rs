@@ -10,6 +10,8 @@ use super::{
     HANDSHAKE_RESP_SZ,
 };
 use crate::noise::errors::WireGuardError;
+use crate::noise::signature::SignatureChain;
+use chacha20::cipher::{KeyIvInit, StreamCipher};
 use rand_core::RngCore;
 use std::convert::{TryFrom, TryInto};
 use std::time::Duration;
@@ -19,6 +21,7 @@ const DNS_OPT_MIN_WIRE_SIZE: usize = DNS_OPT_FIXED_LEN + 4;
 const DEFAULT_JUNK_PACKET_SIZE_MIN: u16 = 50;
 const DEFAULT_JUNK_PACKET_SIZE_MAX: u16 = 1000;
 const MAX_JUNK_PACKET_COUNT: u16 = 128;
+pub(crate) const DEFAULT_UDP_WINDOW: usize = 500;
 const MAX_JUNK_PACKET_SIZE: u16 = 1280;
 const MAX_JUNK_PACKET_DELAY_MS: u16 = 200;
 /// Largest datagram that can actually be sent: the IPv4 UDP payload limit,
@@ -34,10 +37,11 @@ const MAX_JUNK_PACKET_DELAY_MS: u16 = 200;
 /// front is not a parity break: nothing that *functions* on the kernel module
 /// is refused on size grounds here.
 ///
-/// That is a claim about size only. [`AmneziaConfig::validate`] also refuses a
-/// configuration whose cookie replies would amplify, and that one *is* a
-/// deliberate parity break — the kernel accepts those and runs them. The
-/// argument for it is at the check.
+/// That is a claim about size only. [`AmneziaConfig::validate`] refuses a
+/// configuration whose enabled under-load cookie replies would amplify; this
+/// guard is skipped when DisableCookies prevents those replies. The kernel
+/// accepts amplifying configurations, so the guard is a deliberate parity
+/// break when cookie replies are enabled. The argument for it is at the check.
 const MAX_SENDABLE_DATAGRAM: usize = 65535 - 20 - 8;
 const DNS_JUNK_SIZE_MIN: usize = 50;
 const DNS_JUNK_SIZE_MAX: usize = 200;
@@ -268,6 +272,25 @@ pub struct AmneziaConfig {
     pub(crate) transport_packet_junk_size: u16,
     pub(crate) pre_handshake_junk: AmneziaPreHandshakeJunk,
     pub(crate) imitation: AmneziaImitation,
+    /// Disable the under-load MAC2/cookie challenge (upstream AWG semantics).
+    /// MAC1 validation and incoming Cookie Reply handling remain enabled.
+    pub(crate) disable_cookies: bool,
+    /// 32-byte raw ChaCha20 key for AmneziaWG 3.1 header protection.
+    /// An all-zero key disables header protection, matching upstream.
+    pub(crate) header_protection_key: [u8; 32],
+    /// Inclusive range of extra zero bytes appended to the encrypted IP payload.
+    /// `(0, 0)` disables ContentPaddingAddition.
+    pub(crate) content_padding_addition: (u32, u32),
+    /// Inclusive timer ranges in seconds; (0, 0) preserves WireGuard defaults.
+    pub(crate) rekey_after_time: (u32, u32),
+    pub(crate) rekey_timeout: (u32, u32),
+    pub(crate) reject_after_time: (u32, u32),
+    pub(crate) keepalive_timeout: (u32, u32),
+    pub(crate) max_handshake_attempts: (u32, u32),
+    /// Add random trailing bytes to handshake/cookie datagrams and encrypted transport payloads.
+    pub(crate) random_trailers: bool,
+    /// Optional I1-I5 standalone signature packet templates.
+    pub(crate) signature_packets: [Option<SignatureChain>; 5],
     /// Suppress the client-only pre-handshake burst (Jc junk packets and the
     /// protocol imitation sequence) while keeping every other AmneziaWG
     /// behaviour. See [`AmneziaConfig::as_responder`].
@@ -322,6 +345,53 @@ impl AmneziaPreHandshakeJunk {
         }
     }
 
+    /// Fallible constructor for control-plane input. Unlike the legacy
+    /// convenience constructor, this never silently disables an excessive Jc
+    /// value or substitutes packet sizes for an invalid range.
+    pub(crate) fn try_new(
+        packet_count: u16,
+        packet_size_min: u16,
+        packet_size_max: u16,
+        delay_ms: u16,
+    ) -> Result<Self, String> {
+        if packet_count > MAX_JUNK_PACKET_COUNT {
+            return Err(format!(
+                "Jc {} exceeds the safe maximum {}",
+                packet_count, MAX_JUNK_PACKET_COUNT
+            ));
+        }
+
+        let (packet_size_min, packet_size_max) = if packet_count == 0 {
+            (packet_size_min, packet_size_max)
+        } else if packet_size_min == 0 && packet_size_max == 0 {
+            (DEFAULT_JUNK_PACKET_SIZE_MIN, DEFAULT_JUNK_PACKET_SIZE_MAX)
+        } else if packet_size_min > 0
+            && packet_size_min <= packet_size_max
+            && packet_size_max <= MAX_JUNK_PACKET_SIZE
+        {
+            (packet_size_min, packet_size_max)
+        } else {
+            return Err(format!(
+                "invalid Jmin/Jmax range {}-{} (maximum packet size {})",
+                packet_size_min, packet_size_max, MAX_JUNK_PACKET_SIZE
+            ));
+        };
+
+        if delay_ms > MAX_JUNK_PACKET_DELAY_MS {
+            return Err(format!(
+                "junk packet delay {} exceeds the safe maximum {}",
+                delay_ms, MAX_JUNK_PACKET_DELAY_MS
+            ));
+        }
+
+        Ok(Self {
+            packet_count,
+            packet_size_min,
+            packet_size_max,
+            packet_delay_ms: delay_ms,
+        })
+    }
+
     pub fn is_enabled(&self) -> bool {
         self.packet_count > 0
     }
@@ -356,8 +426,148 @@ impl AmneziaConfig {
             transport_packet_junk_size: s4,
             pre_handshake_junk: AmneziaPreHandshakeJunk::default(),
             imitation: AmneziaImitation::default(),
+            disable_cookies: false,
+            header_protection_key: [0u8; 32],
+            content_padding_addition: (0, 0),
+            rekey_after_time: (0, 0),
+            rekey_timeout: (0, 0),
+            reject_after_time: (0, 0),
+            keepalive_timeout: (0, 0),
+            max_handshake_attempts: (0, 0),
+            random_trailers: false,
+            signature_packets: Default::default(),
             suppress_pre_handshake: false,
         }
+    }
+
+    /// Disable the under-load cookie challenge, matching AmneziaWG 3.1.
+    /// When enabled, MAC1 is still verified, but the under-load MAC2/rate-limit
+    /// challenge is bypassed and no Cookie Reply is sent. Incoming Cookie Reply
+    /// packets remain supported.
+    pub fn with_disable_cookies(mut self, disabled: bool) -> Self {
+        self.disable_cookies = disabled;
+        self
+    }
+
+    /// Enable AmneziaWG 3.1 header protection with a 32-byte ChaCha20 key.
+    /// Passing an all-zero key disables protection, as in amneziawg-go.
+    pub fn with_header_protection_key(mut self, key: [u8; 32]) -> Self {
+        self.header_protection_key = key;
+        self
+    }
+
+    pub(crate) fn header_protection_enabled(&self) -> bool {
+        self.header_protection_key != [0u8; 32]
+    }
+
+    /// Set the inclusive ContentPaddingAddition range in bytes.
+    /// Use `(0, 0)` to disable additional content padding.
+    pub fn with_content_padding_addition(mut self, min: u16, max: u16) -> Self {
+        self.content_padding_addition = (u32::from(min), u32::from(max));
+        self
+    }
+
+    /// Set the full UAPI uint32 ContentPaddingAddition range.
+    pub(crate) fn with_content_padding_addition_u32(mut self, min: u32, max: u32) -> Self {
+        self.content_padding_addition = (min, max);
+        self
+    }
+
+    /// Configure one AmneziaWG I1-I5 signature chain (index 0..=4).
+    /// An empty/no-tag specification clears that slot.
+    pub fn with_signature_packet(mut self, index: usize, spec: &str) -> Result<Self, String> {
+        let slot = self
+            .signature_packets
+            .get_mut(index)
+            .ok_or_else(|| "signature packet index must be in 0..=4".to_owned())?;
+        *slot = SignatureChain::parse(spec)?;
+        Ok(self)
+    }
+
+    /// Generate configured I1-I5 datagrams in slot order.
+    pub(crate) fn pre_handshake_signature_datagrams(
+        &self,
+        rng: &mut impl RngCore,
+    ) -> std::collections::VecDeque<Vec<u8>> {
+        self.signature_packets
+            .iter()
+            .filter_map(|chain| chain.as_ref().map(|chain| chain.emit(rng)))
+            .collect()
+    }
+
+    pub(crate) fn has_signature_packets(&self) -> bool {
+        self.signature_packets.iter().any(Option::is_some)
+    }
+
+    /// Enable AmneziaWG RandomTrailers. Transport padding is encrypted; handshake
+    /// and cookie trailers are appended after the fixed-size WireGuard message.
+    pub fn with_random_trailers(mut self, enabled: bool) -> Self {
+        self.random_trailers = enabled;
+        self
+    }
+
+    /// Configure inclusive AmneziaWG timer ranges (seconds). `(0, 0)` keeps the WireGuard default.
+    pub fn with_rekey_after_time(mut self, min: u32, max: u32) -> Self {
+        self.rekey_after_time = (min, max);
+        self
+    }
+
+    pub fn with_rekey_timeout(mut self, min: u32, max: u32) -> Self {
+        self.rekey_timeout = (min, max);
+        self
+    }
+
+    pub fn with_reject_after_time(mut self, min: u32, max: u32) -> Self {
+        self.reject_after_time = (min, max);
+        self
+    }
+
+    pub fn with_keepalive_timeout(mut self, min: u32, max: u32) -> Self {
+        self.keepalive_timeout = (min, max);
+        self
+    }
+
+    pub fn with_max_handshake_attempts(mut self, min: u32, max: u32) -> Self {
+        self.max_handshake_attempts = (min, max);
+        self
+    }
+
+    /// Select a random ContentPaddingAddition value and clamp it to the
+    /// remaining peer UDP window, matching upstream's randomPaddingAddition.
+    /// Empty keepalives and packets that already fill the window are not padded.
+    pub(crate) fn content_padding_size(
+        &self,
+        packet_size: usize,
+        wire_packet_size: usize,
+        udp_window: usize,
+        rng: &mut impl RngCore,
+    ) -> usize {
+        let (min, max) = self.content_padding_addition;
+        let available = udp_window.saturating_sub(wire_packet_size);
+        if (min == 0 && max == 0) || min > max || packet_size == 0 || available == 0 {
+            return 0;
+        }
+        let selected = loop {
+            if let Some(value) = Self::map_content_padding_sample(min, max, rng.next_u32()) {
+                break value;
+            }
+        };
+        selected.min(available)
+    }
+
+    /// Map one u32 draw to the inclusive CPA range without modulo bias.
+    /// None denotes a draw in the rejection tail.
+    fn map_content_padding_sample(min: u32, max: u32, sample: u32) -> Option<usize> {
+        if min > max {
+            return None;
+        }
+        let width = u64::from(max) - u64::from(min) + 1;
+        let zone = (1u64 << 32) / width * width;
+        let value = u64::from(sample);
+        if value >= zone {
+            return None;
+        }
+        Some((u64::from(min) + value % width) as usize)
     }
 
     pub fn with_pre_handshake_junk(
@@ -370,6 +580,22 @@ impl AmneziaConfig {
         self.pre_handshake_junk =
             AmneziaPreHandshakeJunk::new(packet_count, packet_size_min, packet_size_max, delay_ms);
         self
+    }
+
+    pub(crate) fn try_with_pre_handshake_junk(
+        mut self,
+        packet_count: u16,
+        packet_size_min: u16,
+        packet_size_max: u16,
+        delay_ms: u16,
+    ) -> Result<Self, String> {
+        self.pre_handshake_junk = AmneziaPreHandshakeJunk::try_new(
+            packet_count,
+            packet_size_min,
+            packet_size_max,
+            delay_ms,
+        )?;
+        Ok(self)
     }
 
     pub fn with_protocol_imitation(
@@ -419,7 +645,57 @@ impl AmneziaConfig {
     /// this genuinely refuses a configuration the kernel module runs. It is
     /// intentional, and argued at the check rather than here, so that "every
     /// working kernel configuration is accepted" is not read as covering it.
+    pub(crate) fn validate_timer_ranges(&self) -> Result<(), String> {
+        for (name, (min, max)) in [
+            ("rekey_after_time", self.rekey_after_time),
+            ("rekey_timeout", self.rekey_timeout),
+            ("reject_after_time", self.reject_after_time),
+            ("keepalive_timeout", self.keepalive_timeout),
+            ("max_handshake_attempts", self.max_handshake_attempts),
+        ] {
+            if min > max {
+                return Err(format!("{} minimum {} exceeds maximum {}", name, min, max));
+            }
+        }
+        Ok(())
+    }
+
+    /// RandomTrailers makes handshake lengths variable. With different
+    /// S-prefix lengths, a transport packet can be examined at the wrong
+    /// offset by an earlier handshake classifier and be silently discarded
+    /// before its transport AEAD is tried (upstream amneziawg-go#186).
+    ///
+    /// Requiring one common S offset makes every classifier inspect the same
+    /// four-byte type field. Since ObfuscationRanges rejects overlapping H1-H4
+    /// ranges, a transport tag selected from H4 cannot match H1-H3. This is a
+    /// deterministic framing constraint, not a probabilistic width heuristic.
+    pub(crate) fn validate_random_trailers(&self, _obf: ObfuscationRanges) -> Result<(), String> {
+        if self.random_trailers {
+            let s = self.init_packet_junk_size;
+            if self.response_packet_junk_size != s
+                || self.cookie_packet_junk_size != s
+                || self.transport_packet_junk_size != s
+            {
+                return Err(format!(
+                    "RandomTrailers requires S1 = S2 = S3 = S4 (all currently must equal {}); different offsets can misclassify and silently drop transport packets",
+                    s
+                ));
+            }
+        }
+        Ok(())
+    }
+
     pub fn validate(&self) -> Result<(), String> {
+        let (padding_min, padding_max) = self.content_padding_addition;
+        if padding_min > padding_max {
+            return Err(format!(
+                "ContentPaddingAddition minimum {} exceeds maximum {}",
+                padding_min, padding_max
+            ));
+        }
+
+        self.validate_timer_ranges()?;
+
         for (label, junk, base) in [
             ("S1", self.init_packet_junk_size, HANDSHAKE_INIT_SZ),
             ("S2", self.response_packet_junk_size, HANDSHAKE_RESP_SZ),
@@ -431,6 +707,24 @@ impl AmneziaConfig {
                     "{} is too large: {} junk bytes + {} packet bytes exceed the {}-byte maximum datagram",
                     label, junk, base, MAX_SENDABLE_DATAGRAM
                 ));
+            }
+        }
+
+        // Header Protection uses the first 12 bytes of each S-prefix as its
+        // ChaCha20 nonce. Upstream requires every packet class to carry one.
+        if self.header_protection_enabled() {
+            for (label, junk) in [
+                ("S1", self.init_packet_junk_size),
+                ("S2", self.response_packet_junk_size),
+                ("S3", self.cookie_packet_junk_size),
+                ("S4", self.transport_packet_junk_size),
+            ] {
+                if junk < 12 {
+                    return Err(format!(
+                        "{} must be at least 12 bytes when Header Protection is enabled",
+                        label
+                    ));
+                }
             }
         }
 
@@ -451,29 +745,34 @@ impl AmneziaConfig {
         // "raise" side therefore names every violated bound, not just the
         // binding one: at S1=100, S2=0, S3=185 both are violated, and raising
         // S2 alone still leaves the initiation a byte short.
-        let bounds = self.cookie_amplification_bounds();
-        if let Some(&(which, request, _)) = bounds.first() {
-            let reply = COOKIE_REPLY_SZ + self.cookie_packet_junk_size as usize;
-            let raise = bounds
-                .iter()
-                .map(|&(label, _, min_junk)| format!("{} to at least {}", label, min_junk))
-                .collect::<Vec<_>>()
-                .join(" and ");
-            return Err(format!(
-                "S3 = {} makes a cookie reply {} bytes, larger than the {}-byte packet that provokes it ({} = {}); the reply would be suppressed and handshakes would fail under load. Lower S3 to at most {}, or raise {}.",
-                self.cookie_packet_junk_size,
-                reply,
-                request,
-                which,
-                request
-                    - if which == "S1" {
-                        HANDSHAKE_INIT_SZ
-                    } else {
-                        HANDSHAKE_RESP_SZ
-                    },
-                request - COOKIE_REPLY_SZ,
-                raise
-            ));
+        // DisableCookies bypasses the only path that emits an under-load
+        // Cookie Reply. In that mode the reply-size amplification constraint
+        // is irrelevant; incoming Cookie Replies remain supported.
+        if !self.disable_cookies {
+            let bounds = self.cookie_amplification_bounds();
+            if let Some(&(which, request, _)) = bounds.first() {
+                let reply = COOKIE_REPLY_SZ + self.cookie_packet_junk_size as usize;
+                let raise = bounds
+                    .iter()
+                    .map(|&(label, _, min_junk)| format!("{} to at least {}", label, min_junk))
+                    .collect::<Vec<_>>()
+                    .join(" and ");
+                return Err(format!(
+                    "S3 = {} makes a cookie reply {} bytes, larger than the {}-byte packet that provokes it ({} = {}); the reply would be suppressed and handshakes would fail under load. Lower S3 to at most {}, or raise {}.",
+                    self.cookie_packet_junk_size,
+                    reply,
+                    request,
+                    which,
+                    request
+                        - if which == "S1" {
+                            HANDSHAKE_INIT_SZ
+                        } else {
+                            HANDSHAKE_RESP_SZ
+                        },
+                    request - COOKIE_REPLY_SZ,
+                    raise
+                ));
+            }
         }
 
         Ok(())
@@ -510,7 +809,9 @@ impl AmneziaConfig {
     /// false for a responder, and for a client with neither Jc nor imitation.
     pub(crate) fn emits_pre_handshake(&self) -> bool {
         !self.suppress_pre_handshake
-            && (self.pre_handshake_junk.is_enabled() || self.has_imitation_sequence())
+            && (self.pre_handshake_junk.is_enabled()
+                || self.has_imitation_sequence()
+                || self.has_signature_packets())
     }
 
     /// The configured imitation host, or a generated random one (DNS query name
@@ -599,7 +900,8 @@ impl AmneziaConfig {
         base_size: usize,
     ) -> bool {
         let junk_size = self.inbound_junk_size(kind);
-        if packet.len() != junk_size + base_size {
+        let minimum_size = junk_size.saturating_add(base_size);
+        if packet.len() < minimum_size || (!self.random_trailers && packet.len() != minimum_size) {
             return false;
         }
         Self::read_tag(packet, junk_size)
@@ -639,7 +941,8 @@ impl AmneziaConfig {
             (PacketKind::CookieReply, COOKIE_REPLY_SZ),
         ] {
             if self.inbound_kind_at_offset(obf, packet, kind, base) {
-                return Some(&packet[self.inbound_junk_size(kind)..]);
+                let junk = self.inbound_junk_size(kind);
+                return Some(&packet[junk..junk + base]);
             }
         }
 
@@ -653,6 +956,80 @@ impl AmneziaConfig {
                 .unwrap_or(false)
         {
             return Some(&packet[junk..]);
+        }
+
+        None
+    }
+
+    /// Decode an inbound packet protected by the AWG 3.1 ChaCha20 header
+    /// cipher. The first 12 bytes of the packet are the nonce and remain clear.
+    /// The first four encrypted bytes are recovered first so the matching H
+    /// range can identify the packet kind; the same cipher stream then
+    /// continues at byte four, exactly as in amneziawg-go.
+    pub(crate) fn decrypt_inbound(&self, obf: ObfuscationRanges, packet: &[u8]) -> Option<Vec<u8>> {
+        let decoded = self.decrypt_inbound_with_prefix(obf, packet)?;
+        self.strip_inbound(obf, &decoded).map(<[u8]>::to_vec)
+    }
+
+    /// Decrypt a Header Protection packet while retaining its S-prefix.
+    ///
+    /// The device-level anonymous UDP path must classify the S/H framing
+    /// before it knows which peer owns the packet. Returning the prefix here
+    /// lets that path run the same S/H classifier on the recovered type,
+    /// while the connected-peer path uses decrypt_inbound above.
+    pub(crate) fn decrypt_inbound_with_prefix(
+        &self,
+        obf: ObfuscationRanges,
+        packet: &[u8],
+    ) -> Option<Vec<u8>> {
+        if !self.header_protection_enabled() {
+            return None;
+        }
+
+        for (kind, base_size) in [
+            (PacketKind::HandshakeInit, HANDSHAKE_INIT_SZ),
+            (PacketKind::HandshakeResponse, HANDSHAKE_RESP_SZ),
+            (PacketKind::CookieReply, COOKIE_REPLY_SZ),
+            (PacketKind::TransportData, DATA_OVERHEAD_SZ),
+        ] {
+            let prefix_size = self.inbound_junk_size(kind);
+            if prefix_size < 12 {
+                continue;
+            }
+
+            let minimum_size = prefix_size.checked_add(base_size)?;
+            let is_transport = kind == PacketKind::TransportData;
+            if packet.len() < minimum_size
+                || (!is_transport && !self.random_trailers && packet.len() != minimum_size)
+            {
+                continue;
+            }
+
+            let nonce: &[u8] = packet.get(..12)?;
+            let mut cipher =
+                chacha20::ChaCha20::new_from_slices(&self.header_protection_key, nonce).ok()?;
+
+            let encrypted_type = packet.get(prefix_size..prefix_size + 4)?;
+            let mut message_type = [0u8; 4];
+            cipher.apply_keystream(&mut message_type);
+            for (byte, encrypted) in message_type.iter_mut().zip(encrypted_type) {
+                *byte ^= encrypted;
+            }
+
+            let tag = u32::from_le_bytes(message_type);
+            if !Self::tag_matches(obf, kind, tag) {
+                continue;
+            }
+
+            let mut decoded = packet.to_vec();
+            decoded[prefix_size..prefix_size + 4].copy_from_slice(&message_type);
+            // Handshake and cookie messages are fixed-size and fully protected.
+            // For transport, only type + receiver index + counter (16 bytes)
+            // are header-protected; the payload remains AEAD ciphertext.
+            let protected_header_len = if is_transport { 16 } else { base_size };
+            cipher
+                .apply_keystream(&mut decoded[prefix_size + 4..prefix_size + protected_header_len]);
+            return Some(decoded);
         }
 
         None
@@ -781,6 +1158,30 @@ impl AmneziaConfig {
         packet_size: usize,
         rng: &mut impl RngCore,
     ) -> Result<&'a mut [u8], WireGuardError> {
+        self.prepend_outbound_with_limits(
+            obf,
+            buffer,
+            packet_size,
+            DEFAULT_UDP_WINDOW,
+            usize::MAX,
+            rng,
+        )
+    }
+
+    /// Apply S-prefix, Header Protection and optional RandomTrailers.
+    ///
+    /// udp_window is the peer's learned maximum datagram size. max_datagram_size
+    /// is normally unbounded, but cookie replies pass the triggering request's
+    /// size so random trailers can never turn a cookie into an amplifier.
+    pub(crate) fn prepend_outbound_with_limits<'a>(
+        &self,
+        obf: ObfuscationRanges,
+        buffer: &'a mut [u8],
+        packet_size: usize,
+        udp_window: usize,
+        max_datagram_size: usize,
+        rng: &mut impl RngCore,
+    ) -> Result<&'a mut [u8], WireGuardError> {
         let packet = buffer
             .get(..packet_size)
             .ok_or(WireGuardError::DestinationBufferTooSmall)?;
@@ -789,20 +1190,96 @@ impl AmneziaConfig {
         };
 
         let junk_size = self.outbound_junk_size(kind);
-        if junk_size == 0 {
-            return Ok(&mut buffer[..packet_size]);
+        if self.header_protection_enabled() && junk_size < 12 {
+            return Err(WireGuardError::InvalidPacket);
         }
 
-        let new_size = packet_size
+        let prefixed_size = packet_size
             .checked_add(junk_size)
+            .ok_or(WireGuardError::DestinationBufferTooSmall)?;
+        // Never let optional trailers turn an otherwise sendable packet into
+        // DestinationBufferTooSmall. The caller's actual output slice is the
+        // final bound, alongside UDP's protocol maximum and any cookie request
+        // bound supplied by the caller.
+        let trailer_limit = max_datagram_size
+            .min(buffer.len())
+            .min(MAX_SENDABLE_DATAGRAM);
+        let trailer_len = if self.random_trailers && kind != PacketKind::TransportData {
+            self.random_trailer_len(prefixed_size, udp_window, trailer_limit, rng)
+        } else {
+            0
+        };
+        let new_size = prefixed_size
+            .checked_add(trailer_len)
             .ok_or(WireGuardError::DestinationBufferTooSmall)?;
         if buffer.len() < new_size {
             return Err(WireGuardError::DestinationBufferTooSmall);
         }
 
-        buffer.copy_within(0..packet_size, junk_size);
-        self.fill_outbound_junk(&mut buffer[..junk_size], packet_size, rng);
+        if junk_size > 0 {
+            buffer.copy_within(0..packet_size, junk_size);
+            self.fill_outbound_junk(&mut buffer[..junk_size], packet_size, rng);
+        }
+
+        if self.header_protection_enabled() {
+            let nonce: [u8; 12] = buffer[..12]
+                .try_into()
+                .map_err(|_| WireGuardError::InvalidPacket)?;
+            let mut cipher =
+                chacha20::ChaCha20::new_from_slices(&self.header_protection_key, &nonce)
+                    .map_err(|_| WireGuardError::InvalidPacket)?;
+            // Handshake messages protect the complete fixed-size message.
+            // Transport packets protect only type + receiver index + counter;
+            // the AEAD ciphertext and authentication tag must remain untouched.
+            let protected_len = if kind == PacketKind::TransportData {
+                16
+            } else {
+                packet_size
+            };
+            cipher.apply_keystream(&mut buffer[junk_size..junk_size + protected_len]);
+        }
+
+        if trailer_len > 0 {
+            rng.fill_bytes(&mut buffer[prefixed_size..new_size]);
+        }
+
         Ok(&mut buffer[..new_size])
+    }
+
+    /// Random trailer length follows upstream's exclusive UDP-window upper bound:
+    /// fastrandn(udp_window - packet_size).
+    pub(crate) fn random_trailer_len(
+        &self,
+        packet_size: usize,
+        udp_window: usize,
+        max_datagram_size: usize,
+        rng: &mut impl RngCore,
+    ) -> usize {
+        if !self.random_trailers {
+            return 0;
+        }
+        let available = udp_window
+            .saturating_sub(packet_size)
+            .min(max_datagram_size.saturating_sub(packet_size));
+        if available == 0 {
+            return 0;
+        }
+        random_usize_inclusive(0, available - 1, rng)
+    }
+
+    /// Transport RandomTrailers are zero padding inside the AEAD plaintext.
+    /// Explicit ContentPaddingAddition takes precedence, matching upstream.
+    pub(crate) fn transport_padding_size(
+        &self,
+        ip_packet_size: usize,
+        wire_packet_size: usize,
+        udp_window: usize,
+        rng: &mut impl RngCore,
+    ) -> usize {
+        if self.content_padding_addition != (0, 0) {
+            return self.content_padding_size(ip_packet_size, wire_packet_size, udp_window, rng);
+        }
+        self.random_trailer_len(wire_packet_size, udp_window, MAX_SENDABLE_DATAGRAM, rng)
     }
 
     pub fn fill_pre_handshake_junk<'a>(
@@ -1456,6 +1933,277 @@ mod tests {
         cfg.prepend_outbound(obf, &mut buffer, packet_size, &mut rng)
             .unwrap()
             .to_vec()
+    }
+
+    #[test]
+    fn random_trailers_require_equal_s_prefixes_with_disjoint_h_ranges() {
+        // This profile reproduces the structural ambiguity in upstream issue
+        // #186: the transport type at S4 can be re-read as a control tag at S2.
+        let obf = ObfuscationRanges::new(
+            405_138_553,
+            456_138_212,
+            680_931_238,
+            1_038_459_501,
+            1_114_423_399,
+            1_432_068_193,
+            1_500_000_000,
+            1_500_000_000,
+        )
+        .expect("all H ranges are disjoint");
+
+        let unequal = AmneziaConfig::new(97, 41, 133, 24).with_random_trailers(true);
+        let error = unequal
+            .validate_random_trailers(obf)
+            .expect_err("different offsets can misclassify valid transport packets");
+        assert!(error.contains("S1 = S2 = S3 = S4"));
+        assert!(error.contains("RandomTrailers"));
+
+        let equal = AmneziaConfig::new(24, 24, 24, 24).with_random_trailers(true);
+        equal
+            .validate_random_trailers(obf)
+            .expect("equal offsets plus disjoint H ranges make classification unambiguous");
+    }
+
+    #[test]
+    fn equal_s_prefixes_keep_transport_tags_out_of_handshake_classifiers() {
+        let obf = ObfuscationRanges::new(
+            405_138_553,
+            456_138_212,
+            680_931_238,
+            1_038_459_501,
+            1_114_423_399,
+            1_432_068_193,
+            1_500_000_000,
+            1_500_000_000,
+        )
+        .expect("all H ranges are disjoint");
+        let cfg = AmneziaConfig::new(24, 24, 24, 24).with_random_trailers(true);
+        let transport_tag = 1_500_000_000u32;
+        let response_tag = 700_000_000u32;
+        let mut packet = vec![0u8; 376];
+        packet[24..28].copy_from_slice(&transport_tag.to_le_bytes());
+        // This is where an unequal S2=41 classifier would look and falsely
+        // see a valid H2 response tag. Equal S values never inspect this offset.
+        packet[41..45].copy_from_slice(&response_tag.to_le_bytes());
+
+        let stripped = cfg
+            .strip_inbound(obf, &packet)
+            .expect("transport must be classified using the common S offset");
+        assert_eq!(&stripped[..4], &transport_tag.to_le_bytes());
+    }
+
+    #[test]
+    fn random_trailers_are_clamped_to_destination_capacity() {
+        let cfg = AmneziaConfig::new(12, 12, 12, 12).with_random_trailers(true);
+        let mut rng = ChaCha8Rng::seed_from_u64(0xCAFE);
+        let mut buffer = vec![0u8; HANDSHAKE_INIT_SZ + 12 + 10];
+        write_tag(&mut buffer, HANDSHAKE_INIT);
+        let wire = cfg
+            .prepend_outbound(
+                ObfuscationRanges::default(),
+                &mut buffer,
+                HANDSHAKE_INIT_SZ,
+                &mut rng,
+            )
+            .expect("optional trailer must be shortened to fit the caller's buffer");
+        assert!(wire.len() <= HANDSHAKE_INIT_SZ + 12 + 10);
+        assert!(wire.len() >= HANDSHAKE_INIT_SZ + 12);
+    }
+
+    #[test]
+    fn random_trailers_roundtrip_handshake_and_cookie_packets() {
+        let obf = ObfuscationRanges::default();
+        for (tag, base_size) in [
+            (HANDSHAKE_INIT, HANDSHAKE_INIT_SZ),
+            (HANDSHAKE_RESP, HANDSHAKE_RESP_SZ),
+            (COOKIE_REPLY, COOKIE_REPLY_SZ),
+        ] {
+            let cfg = AmneziaConfig::new(12, 12, 12, 12).with_random_trailers(true);
+            let mut rng = ChaCha8Rng::seed_from_u64(0xA11CE);
+            let mut buffer = vec![0u8; DEFAULT_UDP_WINDOW];
+            write_tag(&mut buffer, tag);
+            buffer[4] = 0x42;
+
+            let wire = cfg
+                .prepend_outbound(obf, &mut buffer, base_size, &mut rng)
+                .expect("packet fits")
+                .to_vec();
+            assert!(wire.len() > base_size + expected_junk(&cfg, tag));
+            assert!(wire.len() < DEFAULT_UDP_WINDOW);
+
+            let recovered = cfg.strip_inbound(obf, &wire).expect("trailer is accepted");
+            assert_eq!(recovered.len(), base_size);
+            assert_eq!(recovered[4], 0x42);
+        }
+    }
+
+    #[test]
+    fn cookie_random_trailer_is_bounded_by_triggering_request() {
+        let cfg = AmneziaConfig::new(12, 12, 12, 12).with_random_trailers(true);
+        let mut rng = ChaCha8Rng::seed_from_u64(0xC001);
+        let mut buffer = vec![0u8; 512];
+        write_tag(&mut buffer, COOKIE_REPLY);
+        let wire = cfg
+            .prepend_outbound_with_limits(
+                ObfuscationRanges::default(),
+                &mut buffer,
+                COOKIE_REPLY_SZ,
+                DEFAULT_UDP_WINDOW,
+                92,
+                &mut rng,
+            )
+            .expect("bounded cookie reply fits")
+            .to_vec();
+        assert!(wire.len() <= 92);
+        assert_eq!(
+            cfg.strip_inbound(ObfuscationRanges::default(), &wire)
+                .expect("cookie with trailer is accepted")
+                .len(),
+            COOKIE_REPLY_SZ
+        );
+    }
+
+    #[test]
+    fn random_trailer_matches_upstream_exclusive_window_and_all_limits() {
+        let cfg = AmneziaConfig::new(0, 0, 0, 0).with_random_trailers(true);
+        let mut rng = ChaCha8Rng::seed_from_u64(0x7A11);
+
+        // Upstream fastrandn(udpWindow - packetSize) selects [0, space),
+        // not an inclusive endpoint. Exercise the exact upper bound and
+        // intersecting request, UDP-window and output-buffer limits.
+        for _ in 0..4096 {
+            let trailer = cfg.random_trailer_len(80, 500, 120, &mut rng);
+            assert!(trailer < 40, "request limit must cap the exclusive range");
+            assert!(80 + trailer <= 120);
+            assert!(80 + trailer <= 500);
+
+            let trailer = cfg.random_trailer_len(80, 100, 500, &mut rng);
+            assert!(trailer < 20, "peer UDP window must cap the exclusive range");
+
+            let trailer = cfg.random_trailer_len(80, 500, 500, &mut rng);
+            assert!(trailer < 420, "default peer window is exclusive");
+        }
+
+        assert_eq!(
+            cfg.random_trailer_len(80, 80, 500, &mut rng),
+            0,
+            "no room in peer window means no trailer"
+        );
+        assert_eq!(
+            cfg.random_trailer_len(80, 500, 80, &mut rng),
+            0,
+            "no room in caller datagram limit means no trailer"
+        );
+        assert_eq!(
+            AmneziaConfig::new(0, 0, 0, 0).random_trailer_len(80, 500, 120, &mut rng),
+            0,
+            "disabled RandomTrailers must not consume space"
+        );
+    }
+
+    #[test]
+    fn random_transport_padding_respects_content_padding_precedence_and_mtu() {
+        let mut rng = ChaCha8Rng::seed_from_u64(0xBEEF);
+        let random = AmneziaConfig::new(0, 0, 0, 0).with_random_trailers(true);
+        let packet_size = 80;
+        let padding = random.transport_padding_size(
+            packet_size - DATA_OVERHEAD_SZ,
+            packet_size,
+            500,
+            &mut rng,
+        );
+        assert!(padding < 500 - packet_size);
+        assert!(packet_size + padding <= 500);
+
+        let explicit = AmneziaConfig::new(0, 0, 0, 0)
+            .with_random_trailers(true)
+            .with_content_padding_addition(7, 7);
+        assert_eq!(
+            explicit.transport_padding_size(
+                packet_size - DATA_OVERHEAD_SZ,
+                packet_size,
+                500,
+                &mut rng,
+            ),
+            7,
+            "ContentPaddingAddition takes precedence over RandomTrailers"
+        );
+    }
+
+    #[test]
+    fn content_padding_range_mapper_is_inclusive_and_rejects_modulo_bias_tail() {
+        let min = 7u32;
+        let max = 16u32;
+        let width = u64::from(max) - u64::from(min) + 1;
+        let zone = (1u64 << 32) / width * width;
+
+        assert_eq!(
+            AmneziaConfig::map_content_padding_sample(min, max, 0),
+            Some(7)
+        );
+        assert_eq!(
+            AmneziaConfig::map_content_padding_sample(min, max, (zone - 1) as u32),
+            Some(16),
+            "the last accepted sample must map to the inclusive maximum"
+        );
+        assert_eq!(
+            AmneziaConfig::map_content_padding_sample(min, max, zone as u32),
+            None,
+            "the first value in the modulo-bias tail must be rejected"
+        );
+        assert_eq!(
+            AmneziaConfig::map_content_padding_sample(0, u32::MAX, 0),
+            Some(0),
+            "the full u32 CPA range must not overflow"
+        );
+        let full_zone = 1u64 << 32;
+        assert_eq!(
+            AmneziaConfig::map_content_padding_sample(0, u32::MAX, (full_zone - 1) as u32),
+            Some(u32::MAX as usize),
+            "the final full-range sample must reach the maximum"
+        );
+        assert_eq!(
+            AmneziaConfig::map_content_padding_sample(9, 9, 0),
+            Some(9),
+            "singleton ranges must remain deterministic"
+        );
+        assert_eq!(AmneziaConfig::map_content_padding_sample(10, 9, 0), None);
+    }
+
+    #[test]
+    fn content_padding_addition_is_inclusive_and_clamped_to_udp_window() {
+        let mut rng = ChaCha8Rng::seed_from_u64(0xC0FFEE);
+        let ranged = AmneziaConfig::new(0, 0, 0, 0).with_content_padding_addition(4, 12);
+
+        for _ in 0..256 {
+            let padding = ranged.content_padding_size(100, 132, 500, &mut rng);
+            assert!(
+                (4..=12).contains(&padding),
+                "selected ContentPaddingAddition {padding} outside inclusive range 4..=12"
+            );
+        }
+
+        let fixed_max = AmneziaConfig::new(0, 0, 0, 0).with_content_padding_addition(12, 12);
+        assert_eq!(
+            fixed_max.content_padding_size(100, 132, 500, &mut rng),
+            12,
+            "the configured maximum is inclusive"
+        );
+        assert_eq!(
+            ranged.content_padding_size(100, 495, 500, &mut rng),
+            5,
+            "padding is clamped to the remaining UDP window"
+        );
+        assert_eq!(
+            ranged.content_padding_size(100, 500, 500, &mut rng),
+            0,
+            "a full UDP window leaves no room for padding"
+        );
+        assert_eq!(
+            ranged.content_padding_size(0, 32, 500, &mut rng),
+            0,
+            "empty keepalives must not receive content padding"
+        );
     }
 
     fn expected_junk(cfg: &AmneziaConfig, tag: u32) -> usize {
@@ -2182,6 +2930,18 @@ mod tests {
     }
 
     #[test]
+    fn uapi_pre_handshake_junk_validation_rejects_silent_clamping() {
+        assert!(AmneziaPreHandshakeJunk::try_new(MAX_JUNK_PACKET_COUNT + 1, 0, 0, 0).is_err());
+        assert!(AmneziaPreHandshakeJunk::try_new(1, 0, 10, 0).is_err());
+        assert!(AmneziaPreHandshakeJunk::try_new(1, 1, MAX_JUNK_PACKET_SIZE + 1, 0).is_err());
+
+        let valid = AmneziaPreHandshakeJunk::try_new(1, 0, 0, 0).unwrap();
+        assert_eq!(valid.packet_count, 1);
+        assert_eq!(valid.packet_size_min, DEFAULT_JUNK_PACKET_SIZE_MIN);
+        assert_eq!(valid.packet_size_max, DEFAULT_JUNK_PACKET_SIZE_MAX);
+    }
+
+    #[test]
     fn pre_handshake_junk_rejects_zero_min_packet_size() {
         let cfg = AmneziaConfig::new(0, 0, 0, 0).with_pre_handshake_junk(1, 0, 10, 0);
 
@@ -2256,8 +3016,8 @@ mod tests {
         );
     }
 
-    /// `validate` refuses a configuration whose cookie replies would amplify,
-    /// on both packet kinds and at the boundary.
+    /// `validate` refuses an amplifying configuration when under-load cookie
+    /// replies are enabled, on both packet kinds and at the boundary.
     ///
     /// This is deliberately stricter than the AmneziaWG kernel module, which
     /// accepts these combinations. The trade is stated in `validate`: a config
@@ -2309,6 +3069,13 @@ mod tests {
         AmneziaConfig::new(120, 130, 110, 80)
             .validate()
             .expect("scripts/awg-interop-poc.sh must still be a legal config");
+
+        // DisableCookies emits no under-load Cookie Reply, so the otherwise
+        // amplifying S3 combination is safe and must remain configurable.
+        AmneziaConfig::new(100, 156, 185, 0)
+            .with_disable_cookies(true)
+            .validate()
+            .expect("DisableCookies must not be blocked by an unused reply-size constraint");
 
         // As must the default: vanilla WireGuard has no S values at all.
         AmneziaConfig::default()
@@ -2460,5 +3227,278 @@ mod tests {
                 );
             }
         }
+    }
+    #[test]
+    fn header_protection_round_trips_all_packet_kinds() {
+        use rand_core::OsRng;
+
+        let obf = ObfuscationRanges::default();
+        let cfg = AmneziaConfig::new(12, 12, 12, 12).with_header_protection_key([0x42; 32]);
+        cfg.validate()
+            .expect("12-byte prefixes satisfy HP requirements");
+
+        for (tag, size) in [
+            (1u32, HANDSHAKE_INIT_SZ),
+            (2u32, HANDSHAKE_RESP_SZ),
+            (3u32, COOKIE_REPLY_SZ),
+            (4u32, DATA_OVERHEAD_SZ),
+        ] {
+            let mut original = vec![0u8; size];
+            original[..4].copy_from_slice(&tag.to_le_bytes());
+            // Receiver index and counter are part of the protected transport
+            // header; give them non-zero values so the test covers those bytes.
+            if tag == 4 {
+                original[4..8].copy_from_slice(&0x1234_5678u32.to_le_bytes());
+                original[8..16].copy_from_slice(&0x0102_0304_0506_0708u64.to_le_bytes());
+            }
+
+            let mut buffer = vec![0u8; size + 12];
+            buffer[..size].copy_from_slice(&original);
+            let protected = cfg
+                .prepend_outbound(obf, &mut buffer, size, &mut OsRng)
+                .expect("outbound protection succeeds")
+                .to_vec();
+
+            assert_eq!(protected.len(), size + 12);
+            assert_ne!(&protected[12..16], &original[..4]);
+
+            let decoded = cfg
+                .decrypt_inbound(obf, &protected)
+                .expect("inbound protection recognizes the packet");
+            assert_eq!(decoded, original, "packet type {} round-trips", tag);
+        }
+    }
+
+    #[test]
+    fn header_protection_roundtrips_handshake_with_random_trailer() {
+        let obf = ObfuscationRanges::default();
+        let cfg = AmneziaConfig::new(12, 12, 12, 12)
+            .with_header_protection_key([0x42; 32])
+            .with_random_trailers(true);
+        let mut original = vec![0u8; HANDSHAKE_INIT_SZ];
+        original[..4].copy_from_slice(&HANDSHAKE_INIT.to_le_bytes());
+        for (i, byte) in original[4..].iter_mut().enumerate() {
+            *byte = (i as u8).wrapping_mul(3).wrapping_add(1);
+        }
+
+        let mut buffer = vec![0u8; DEFAULT_UDP_WINDOW];
+        buffer[..HANDSHAKE_INIT_SZ].copy_from_slice(&original);
+        let mut rng = ChaCha8Rng::seed_from_u64(0xA31);
+        let wire = cfg
+            .prepend_outbound(obf, &mut buffer, HANDSHAKE_INIT_SZ, &mut rng)
+            .expect("header protection and trailer fit")
+            .to_vec();
+        assert!(wire.len() > HANDSHAKE_INIT_SZ + 12);
+
+        assert_eq!(
+            cfg.decrypt_inbound(obf, &wire).as_deref(),
+            Some(original.as_slice()),
+            "header protection must ignore the random trailer after decoding"
+        );
+    }
+
+    /// Fixed vector matching the upstream AWG construction:
+    /// ChaCha20(key, S-prefix[0..12]) XORs the full handshake message,
+    /// while transport protects only its 16-byte header.
+    #[test]
+    fn header_protection_matches_awg_chacha20_wire_vector() {
+        let obf = ObfuscationRanges::default();
+        let key = [0x42; 32];
+        let cfg = AmneziaConfig::new(12, 12, 12, 12).with_header_protection_key(key);
+        let nonce: [u8; 12] = core::array::from_fn(|i| i as u8);
+
+        let mut initiation = vec![0u8; HANDSHAKE_INIT_SZ];
+        initiation[..4].copy_from_slice(&HANDSHAKE_INIT.to_le_bytes());
+        for (i, byte) in initiation[4..].iter_mut().enumerate() {
+            *byte = (i as u8).wrapping_mul(7).wrapping_add(3);
+        }
+
+        let mut reference_ciphertext = initiation.clone();
+        let mut cipher = chacha20::ChaCha20::new_from_slices(&key, &nonce).unwrap();
+        cipher.apply_keystream(&mut reference_ciphertext);
+        assert_eq!(
+            &reference_ciphertext[..16],
+            &[
+                0x37, 0x3e, 0xe1, 0x64, 0x3b, 0x55, 0x38, 0xdf, 0xc8, 0xed, 0x8e, 0xe4, 0xc6, 0x72,
+                0xbd, 0x58,
+            ],
+            "ChaCha20 stream must match the IETF/upstream AWG vector"
+        );
+
+        let mut datagram = nonce.to_vec();
+        datagram.extend_from_slice(&reference_ciphertext);
+        assert_eq!(
+            cfg.decrypt_inbound(obf, &datagram).as_deref(),
+            Some(initiation.as_slice()),
+            "a datagram encrypted by the reference AWG construction must decode"
+        );
+
+        for (tag, size, expected_prefix) in [
+            (
+                2u32,
+                HANDSHAKE_RESP_SZ,
+                [
+                    0x34, 0x3e, 0xe1, 0x64, 0x3b, 0x55, 0x38, 0xdf, 0xc8, 0xed, 0x8e, 0xe4, 0xc6,
+                    0x72, 0xbd, 0x58,
+                ],
+            ),
+            (
+                3u32,
+                COOKIE_REPLY_SZ,
+                [
+                    0x35, 0x3e, 0xe1, 0x64, 0x3b, 0x55, 0x38, 0xdf, 0xc8, 0xed, 0x8e, 0xe4, 0xc6,
+                    0x72, 0xbd, 0x58,
+                ],
+            ),
+        ] {
+            let mut message = vec![0u8; size];
+            message[..4].copy_from_slice(&tag.to_le_bytes());
+            for (i, byte) in message[4..].iter_mut().enumerate() {
+                *byte = (i as u8).wrapping_mul(7).wrapping_add(3);
+            }
+
+            let mut ciphertext = message.clone();
+            let mut cipher = chacha20::ChaCha20::new_from_slices(&key, &nonce).unwrap();
+            cipher.apply_keystream(&mut ciphertext);
+            assert_eq!(
+                &ciphertext[..16],
+                &expected_prefix,
+                "upstream ChaCha20 header-protection vector for message type {tag}"
+            );
+
+            let mut datagram = nonce.to_vec();
+            datagram.extend_from_slice(&ciphertext);
+            assert_eq!(
+                cfg.decrypt_inbound(obf, &datagram).as_deref(),
+                Some(message.as_slice()),
+                "upstream-protected message type {tag} must decode"
+            );
+        }
+
+        let mut transport = vec![0u8; DATA_OVERHEAD_SZ + 32];
+        transport[..4].copy_from_slice(&DATA.to_le_bytes());
+        transport[4..8].copy_from_slice(&0x1234_5678u32.to_le_bytes());
+        transport[8..16].copy_from_slice(&0x0102_0304_0506_0708u64.to_le_bytes());
+        for (i, byte) in transport[16..].iter_mut().enumerate() {
+            *byte = (i as u8).wrapping_mul(11).wrapping_add(9);
+        }
+        let payload = transport[16..].to_vec();
+        let mut transport_ciphertext = transport.clone();
+        let mut cipher = chacha20::ChaCha20::new_from_slices(&key, &nonce).unwrap();
+        cipher.apply_keystream(&mut transport_ciphertext[..16]);
+        assert_eq!(
+            &transport_ciphertext[..16],
+            &[
+                0x32, 0x3e, 0xe1, 0x64, 0x40, 0x09, 0x1d, 0xd5, 0xdf, 0xcc, 0xa5, 0xd5, 0xf9, 0x33,
+                0xf6, 0x09,
+            ],
+            "upstream transport vector protects type, receiver index, and counter"
+        );
+        assert_eq!(
+            &transport_ciphertext[16..],
+            payload.as_slice(),
+            "transport AEAD ciphertext must remain byte-for-byte untouched"
+        );
+
+        let mut datagram = nonce.to_vec();
+        datagram.extend_from_slice(&transport_ciphertext);
+        assert_eq!(
+            cfg.decrypt_inbound(obf, &datagram).as_deref(),
+            Some(transport.as_slice()),
+            "transport decoding must recover its 16-byte header and preserve payload"
+        );
+    }
+
+    #[test]
+    fn outbound_header_protection_matches_reference_for_every_packet_kind() {
+        let obf = ObfuscationRanges::default();
+        let key = [0x42; 32];
+        let cfg = AmneziaConfig::new(12, 12, 12, 12).with_header_protection_key(key);
+
+        for (tag, size) in [
+            (HANDSHAKE_INIT, HANDSHAKE_INIT_SZ),
+            (HANDSHAKE_RESP, HANDSHAKE_RESP_SZ),
+            (COOKIE_REPLY, COOKIE_REPLY_SZ),
+            (DATA, DATA_OVERHEAD_SZ + 48),
+        ] {
+            let mut original = vec![0u8; size];
+            write_tag(&mut original, tag);
+            for (i, byte) in original[4..].iter_mut().enumerate() {
+                *byte = (i as u8).wrapping_mul(13).wrapping_add(tag as u8);
+            }
+
+            let mut buffer = vec![0u8; 12 + size + 64];
+            buffer[..size].copy_from_slice(&original);
+            let mut rng = ChaCha8Rng::seed_from_u64(u64::from(tag) + 0xA31);
+            let wire = cfg
+                .prepend_outbound(obf, &mut buffer, size, &mut rng)
+                .expect("outbound header protection must succeed")
+                .to_vec();
+
+            assert_eq!(wire.len(), 12 + size);
+            let nonce = &wire[..12];
+            let protected_len = if tag == DATA { 16 } else { size };
+            let mut reference = original;
+            let mut cipher = chacha20::ChaCha20::new_from_slices(&key, nonce).unwrap();
+            cipher.apply_keystream(&mut reference[..protected_len]);
+
+            assert_eq!(
+                &wire[12..],
+                reference.as_slice(),
+                "outbound type {tag} must match upstream ChaCha20 protection byte-for-byte"
+            );
+            if tag == DATA {
+                assert_eq!(
+                    &wire[12 + 16..],
+                    &reference[16..],
+                    "transport AEAD ciphertext and tag must remain untouched"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn header_protection_classifies_custom_h1_through_h4_tags() {
+        let obf = ObfuscationRanges::new(11, 11, 22, 22, 33, 33, 44, 44).unwrap();
+        let cfg = AmneziaConfig::new(12, 12, 12, 12).with_header_protection_key([0x24; 32]);
+
+        for (tag, size) in [
+            (11u32, HANDSHAKE_INIT_SZ),
+            (22u32, HANDSHAKE_RESP_SZ),
+            (33u32, COOKIE_REPLY_SZ),
+            (44u32, DATA_OVERHEAD_SZ + 8),
+        ] {
+            let mut original = vec![0u8; size];
+            write_tag(&mut original, tag);
+            original[4..].fill(tag as u8);
+
+            let mut buffer = vec![0u8; 12 + size];
+            buffer[..size].copy_from_slice(&original);
+            let mut rng = ChaCha8Rng::seed_from_u64(u64::from(tag));
+            let wire = cfg
+                .prepend_outbound(obf, &mut buffer, size, &mut rng)
+                .expect("custom H1-H4 packet must be classified")
+                .to_vec();
+
+            assert_eq!(
+                cfg.decrypt_inbound(obf, &wire).as_deref(),
+                Some(original.as_slice()),
+                "custom H tag {tag} must survive header protection"
+            );
+        }
+    }
+
+    #[test]
+    fn header_protection_requires_all_s_prefixes_to_be_at_least_12() {
+        let cfg = AmneziaConfig::new(12, 12, 12, 11).with_header_protection_key([0x24; 32]);
+        let error = cfg.validate().expect_err("S4 is too short for the nonce");
+        assert!(error.contains("S4"));
+        assert!(error.contains("12"));
+    }
+
+    #[test]
+    fn header_protection_is_disabled_by_an_all_zero_key() {
+        let cfg = AmneziaConfig::new(0, 0, 0, 0);
+        assert!(!cfg.header_protection_enabled());
     }
 }

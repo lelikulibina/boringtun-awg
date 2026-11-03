@@ -53,6 +53,10 @@ Testing this project has a few requirements:
 - `sudo`: required to create tunnels. When you run `cargo test` you'll be prompted for your password.
 - Docker: you can install it [here](https://www.docker.com/get-started). If you are on Ubuntu/Debian you can run `apt-get install docker.io`.
 
+### AmneziaWG extensions
+
+This branch contains AmneziaWG 3.1 extensions. The Linux interoperability matrix against the pinned upstream `amneziawg-go` passed 44/44 scenarios, including both server roles, packet-loss recovery, and 120 accelerated rekey cycles per role. The current PCAP verifier checks framing and packet structure, not byte-for-byte equality of every datagram; Windows is disabled and macOS is outside the current merge gate. Configuration, wire-format details, verified results, and remaining limitations are documented in [docs/AMNEZIAWG_3_1_CONFIGURATION.md](docs/AMNEZIAWG_3_1_CONFIGURATION.md).
+
 ## Supported platforms
 
 Target triple                 |Binary|Library|

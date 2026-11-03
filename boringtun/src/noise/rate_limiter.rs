@@ -153,7 +153,8 @@ impl RateLimiter {
         Ok(&mut dst[..super::COOKIE_REPLY_SZ])
     }
 
-    /// Verify the MAC fields on the datagram, and apply rate limiting if needed
+    /// Verify MAC fields and apply standard WireGuard cookie rate limiting.
+    /// This compatibility entry point preserves the original public API.
     pub fn verify_packet<'a, 'b>(
         &self,
         obf: ObfuscationRanges,
@@ -161,6 +162,19 @@ impl RateLimiter {
         src_addr: Option<IpAddr>,
         src: &'a [u8],
         dst: &'b mut [u8],
+    ) -> Result<Packet<'a>, TunnResult<'b>> {
+        self.verify_packet_with_cookie_policy(obf, rng, src_addr, src, dst, false)
+    }
+
+    /// Verify a packet with AmneziaWG 3.1 DisableCookies semantics.
+    pub(crate) fn verify_packet_with_cookie_policy<'a, 'b>(
+        &self,
+        obf: ObfuscationRanges,
+        rng: &mut impl RngCore,
+        src_addr: Option<IpAddr>,
+        src: &'a [u8],
+        dst: &'b mut [u8],
+        disable_cookies: bool,
     ) -> Result<Packet<'a>, TunnResult<'b>> {
         let packet = Tunn::parse_incoming_packet(obf, src)?;
 
@@ -176,7 +190,11 @@ impl RateLimiter {
                 return Err(TunnResult::Err(WireGuardError::InvalidMac));
             }
 
-            if self.is_under_load() {
+            // Upstream AmneziaWG semantics: DisableCookies disables the whole
+            // under-load cookie challenge, not just transmission of Cookie Reply.
+            // MAC1 is still mandatory; when disabled, MAC2/rate-limit checks are
+            // skipped so a peer can complete the handshake without a cookie.
+            if !disable_cookies && self.is_under_load() {
                 let addr = match src_addr {
                     None => return Err(TunnResult::Err(WireGuardError::UnderLoad)),
                     Some(addr) => addr,
@@ -196,5 +214,262 @@ impl RateLimiter {
         }
 
         Ok(packet)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rand_core::OsRng;
+
+    const HANDSHAKE_INIT_SZ: usize = 148;
+
+    fn initiation_with_valid_mac1(limiter: &RateLimiter) -> [u8; HANDSHAKE_INIT_SZ] {
+        let mut packet = [0u8; HANDSHAKE_INIT_SZ];
+        packet[..4].copy_from_slice(&1u32.to_le_bytes());
+        packet[4..8].copy_from_slice(&7u32.to_le_bytes());
+
+        let mac_offset = HANDSHAKE_INIT_SZ - 32;
+        let mac1 = b2s_keyed_mac_16(&limiter.mac1_key, &packet[..mac_offset]);
+        packet[mac_offset..mac_offset + 16].copy_from_slice(&mac1);
+        // Leave MAC2 zeroed: it is invalid for the selected source address.
+        packet
+    }
+
+    const HANDSHAKE_RESPONSE_SZ: usize = 92;
+
+    fn response_with_valid_mac1(limiter: &RateLimiter) -> [u8; HANDSHAKE_RESPONSE_SZ] {
+        let mut packet = [0u8; HANDSHAKE_RESPONSE_SZ];
+        packet[..4].copy_from_slice(&2u32.to_le_bytes());
+        packet[4..8].copy_from_slice(&9u32.to_le_bytes());
+        packet[8..12].copy_from_slice(&7u32.to_le_bytes());
+
+        let mac_offset = HANDSHAKE_RESPONSE_SZ - 32;
+        let mac1 = b2s_keyed_mac_16(&limiter.mac1_key, &packet[..mac_offset]);
+        packet[mac_offset..mac_offset + 16].copy_from_slice(&mac1);
+        packet
+    }
+
+    #[test]
+    fn disable_cookies_bypasses_under_load_for_handshake_responses_too() {
+        let public_key = crate::x25519::PublicKey::from([7u8; 32]);
+        let limiter = RateLimiter::new(&public_key, 0);
+        let packet = response_with_valid_mac1(&limiter);
+        let mut dst = [0u8; 128];
+
+        let result = limiter.verify_packet_with_cookie_policy(
+            ObfuscationRanges::default(),
+            &mut OsRng,
+            None,
+            &packet,
+            &mut dst,
+            true,
+        );
+
+        assert!(matches!(result, Ok(Packet::HandshakeResponse(_))));
+        assert_eq!(
+            limiter.count.load(Ordering::SeqCst),
+            0,
+            "DisableCookies applies to response MAC1 validation without rate-limit accounting"
+        );
+    }
+
+    #[test]
+    fn disable_cookies_still_rejects_invalid_response_mac1() {
+        let public_key = crate::x25519::PublicKey::from([7u8; 32]);
+        let limiter = RateLimiter::new(&public_key, 0);
+        let mut packet = response_with_valid_mac1(&limiter);
+        let mac_offset = HANDSHAKE_RESPONSE_SZ - 32;
+        packet[mac_offset] ^= 0x80;
+        let mut dst = [0u8; 128];
+
+        let result = limiter.verify_packet_with_cookie_policy(
+            ObfuscationRanges::default(),
+            &mut OsRng,
+            None,
+            &packet,
+            &mut dst,
+            true,
+        );
+
+        assert!(matches!(
+            result,
+            Err(TunnResult::Err(WireGuardError::InvalidMac))
+        ));
+    }
+
+    #[test]
+    fn disable_cookies_bypasses_under_load_cookie_challenge() {
+        let public_key = crate::x25519::PublicKey::from([7u8; 32]);
+        let limiter = RateLimiter::new(&public_key, 0);
+        let packet = initiation_with_valid_mac1(&limiter);
+        let mut dst = [0u8; 128];
+
+        // With cookies disabled, an authenticated MAC1 is sufficient even
+        // when the caller has no source address from which a cookie could be
+        // derived. This is the behavior the UAPI switch promises.
+        let result = limiter.verify_packet_with_cookie_policy(
+            ObfuscationRanges::default(),
+            &mut OsRng,
+            None,
+            &packet,
+            &mut dst,
+            true,
+        );
+
+        assert!(matches!(result, Ok(Packet::HandshakeInit(_))));
+        assert_eq!(
+            limiter.count.load(Ordering::SeqCst),
+            0,
+            "DisableCookies skips the under-load counter as well as the cookie challenge"
+        );
+    }
+
+    #[test]
+    fn disable_cookies_accepts_invalid_mac2_under_load_with_source_address() {
+        let public_key = crate::x25519::PublicKey::from([7u8; 32]);
+        let limiter = RateLimiter::new(&public_key, 0);
+        let packet = initiation_with_valid_mac1(&limiter);
+        let mut dst = [0u8; 128];
+
+        let result = limiter.verify_packet_with_cookie_policy(
+            ObfuscationRanges::default(),
+            &mut OsRng,
+            Some(IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)),
+            &packet,
+            &mut dst,
+            true,
+        );
+
+        assert!(matches!(result, Ok(Packet::HandshakeInit(_))));
+        assert_eq!(
+            limiter.count.load(Ordering::SeqCst),
+            0,
+            "DisableCookies must bypass MAC2 validation and under-load accounting"
+        );
+    }
+
+    #[test]
+    fn disable_cookies_does_not_disable_mac1_authentication() {
+        let public_key = crate::x25519::PublicKey::from([7u8; 32]);
+        let limiter = RateLimiter::new(&public_key, 0);
+        let mut packet = initiation_with_valid_mac1(&limiter);
+        let mac_offset = HANDSHAKE_INIT_SZ - 32;
+        packet[mac_offset] ^= 0x80;
+        let mut dst = [0u8; 128];
+
+        let result = limiter.verify_packet_with_cookie_policy(
+            ObfuscationRanges::default(),
+            &mut OsRng,
+            None,
+            &packet,
+            &mut dst,
+            true,
+        );
+
+        assert!(matches!(
+            result,
+            Err(TunnResult::Err(WireGuardError::InvalidMac))
+        ));
+    }
+
+    #[test]
+    fn default_cookie_policy_still_rejects_under_load_without_source_address() {
+        let public_key = crate::x25519::PublicKey::from([7u8; 32]);
+        let limiter = RateLimiter::new(&public_key, 0);
+        let packet = initiation_with_valid_mac1(&limiter);
+        let mut dst = [0u8; 128];
+
+        let result = limiter.verify_packet(
+            ObfuscationRanges::default(),
+            &mut OsRng,
+            None,
+            &packet,
+            &mut dst,
+        );
+
+        assert!(matches!(
+            result,
+            Err(TunnResult::Err(WireGuardError::UnderLoad))
+        ));
+    }
+
+    #[test]
+    fn valid_mac2_is_accepted_under_load() {
+        let public_key = crate::x25519::PublicKey::from([7u8; 32]);
+        let limiter = RateLimiter::new(&public_key, 0);
+        let mut packet = initiation_with_valid_mac1(&limiter);
+        let source = IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
+        let mac_offset = HANDSHAKE_INIT_SZ - 32;
+        let (message, macs) = packet.split_at_mut(mac_offset);
+        let (mac1, mac2) = macs.split_at_mut(16);
+        let cookie = limiter.current_cookie(source);
+        let expected_mac2 = b2s_keyed_mac_16_2(&cookie, message, mac1);
+        mac2.copy_from_slice(&expected_mac2);
+
+        let mut dst = [0u8; 128];
+        let result = limiter.verify_packet(
+            ObfuscationRanges::default(),
+            &mut OsRng,
+            Some(source),
+            &packet,
+            &mut dst,
+        );
+
+        assert!(matches!(result, Ok(Packet::HandshakeInit(_))));
+        assert_eq!(limiter.count.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn cookie_reply_matches_xchacha20_poly1305_known_answer_vector() {
+        // Independent fixture: keyed BLAKE2s-192 nonce derivation and
+        // XChaCha20-Poly1305 (RFC 8439 AEAD construction with HChaCha20).
+        let now = Instant::now();
+        let limiter = RateLimiter {
+            nonce_key: [0x11; 32],
+            secret_key: [0x22; 16],
+            start_time: now,
+            nonce_ctr: AtomicU64::new(0),
+            mac1_key: [0x55; 32],
+            cookie_key: [0x22; 32].into(),
+            limit: 0,
+            count: AtomicU64::new(0),
+            last_reset: Mutex::new(now),
+        };
+        let obf = ObfuscationRanges::new(10, 10, 20, 20, 30, 30, 40, 40).unwrap();
+        let cookie = [0x44; 16];
+        let mac1 = [0x33; 16];
+        let mut dst = [0u8; super::super::COOKIE_REPLY_SZ];
+
+        let packet = limiter
+            .format_cookie_reply(obf, &mut OsRng, 0x1122_3344, cookie, &mac1, &mut dst)
+            .unwrap();
+
+        let expected: [u8; super::super::COOKIE_REPLY_SZ] = [
+            0x1e, 0x00, 0x00, 0x00, 0x44, 0x33, 0x22, 0x11, 0x6d, 0x2f, 0xe2, 0x5e, 0x44, 0x44,
+            0xa1, 0xed, 0x82, 0x29, 0xd5, 0x43, 0xad, 0xaa, 0x51, 0xe0, 0x6e, 0x02, 0x3b, 0x34,
+            0x85, 0x2b, 0x2d, 0xeb, 0x7c, 0xbc, 0xcb, 0xc8, 0x1d, 0xa7, 0xaf, 0x11, 0xdb, 0x34,
+            0x51, 0xa5, 0xaf, 0x1a, 0x8e, 0xf6, 0xc2, 0xb4, 0x26, 0xa0, 0x88, 0x6b, 0x6a, 0x1b,
+            0xbd, 0xd4, 0x15, 0x8c, 0x1d, 0x72, 0x79, 0xd2,
+        ];
+        assert_eq!(packet, expected);
+    }
+
+    #[test]
+    fn cookie_replies_remain_enabled_by_default() {
+        let public_key = crate::x25519::PublicKey::from([7u8; 32]);
+        let limiter = RateLimiter::new(&public_key, 0);
+        let packet = initiation_with_valid_mac1(&limiter);
+        let mut dst = [0u8; 128];
+
+        let result = limiter.verify_packet(
+            ObfuscationRanges::default(),
+            &mut OsRng,
+            Some(IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)),
+            &packet,
+            &mut dst,
+        );
+
+        assert!(matches!(result, Err(TunnResult::WriteToNetwork(_))));
     }
 }

@@ -470,6 +470,50 @@ impl ObfuscationRanges {
         })
     }
 
+    /// Construct explicit UAPI tag ranges without treating (0, 0) as
+    /// "use the WireGuard default". The Go UAPI stores zero as a valid tag.
+    pub(crate) fn from_explicit_ranges(ranges: [(u32, u32); 4]) -> Result<Self, String> {
+        let names = ["H1", "H2", "H3", "H4"];
+        let mut parsed = [TagRange { start: 0, end: 0 }; 4];
+
+        for (index, (start, end)) in ranges.iter().copied().enumerate() {
+            if start > end {
+                return Err(format!(
+                    "Invalid {} range: start ({start}) > end ({end})",
+                    names[index]
+                ));
+            }
+            parsed[index] = TagRange { start, end };
+        }
+
+        for i in 0..parsed.len() {
+            for j in (i + 1)..parsed.len() {
+                if parsed[i].overlaps(&parsed[j]) {
+                    let overlap_start = parsed[i].start.max(parsed[j].start);
+                    let overlap_end = parsed[i].end.min(parsed[j].end);
+                    return Err(format!(
+                        "{} [{}..{}] overlaps {} [{}..{}] at {}..{}",
+                        names[i],
+                        parsed[i].start,
+                        parsed[i].end,
+                        names[j],
+                        parsed[j].start,
+                        parsed[j].end,
+                        overlap_start,
+                        overlap_end
+                    ));
+                }
+            }
+        }
+
+        Ok(Self {
+            h1_init: parsed[0],
+            h2_resp: parsed[1],
+            h3_cookie: parsed[2],
+            h4_data: parsed[3],
+        })
+    }
+
     pub fn matches_h1(&self, v: u32) -> bool {
         self.h1_init.contains(v)
     }
@@ -1210,5 +1254,133 @@ mod constant_time_tests {
             );
         }
         assert!(constant_time_eq(&mac, &mac));
+    }
+}
+
+#[cfg(test)]
+mod wire_vector_tests {
+    use super::{
+        b2s_hash, b2s_keyed_mac_16, b2s_keyed_mac_16_2, Handshake, ObfuscationRanges,
+        PacketCookieReply, LABEL_COOKIE, LABEL_MAC1,
+    };
+    use crate::x25519;
+
+    #[test]
+    fn cookie_reply_xchacha20_poly1305_matches_upstream_known_answer() {
+        let peer_secret = x25519::StaticSecret::from(core::array::from_fn(|i| i as u8));
+        let peer_public = x25519::PublicKey::from(&peer_secret);
+        let static_secret = x25519::StaticSecret::from([0xA5; 32]);
+        let static_public = x25519::PublicKey::from(&static_secret);
+        let local_index = 0x1122_3344;
+        let nonce: [u8; 24] = core::array::from_fn(|i| i as u8);
+        let encrypted_cookie = [
+            0x45, 0x99, 0xe0, 0x55, 0xab, 0xaa, 0xb8, 0x98, 0xf9, 0x04, 0xa3, 0xd7, 0x26, 0xac,
+            0xa2, 0x54, 0x33, 0x0a, 0xff, 0xa5, 0xc4, 0xd0, 0x44, 0xc8, 0x90, 0xa8, 0x0c, 0x28,
+            0xc1, 0x97, 0x76, 0xdd,
+        ];
+        let expected_cookie = [
+            0x02, 0x09, 0x10, 0x17, 0x1e, 0x25, 0x2c, 0x33, 0x3a, 0x41, 0x48, 0x4f, 0x56, 0x5d,
+            0x64, 0x6b,
+        ];
+        let mac1 = [
+            0xef, 0xf9, 0xb7, 0x1a, 0x78, 0x68, 0x28, 0x70, 0xe0, 0x4e, 0x01, 0xb2, 0x7b, 0x69,
+            0x5a, 0x74,
+        ];
+
+        let mut handshake = Handshake::new(
+            static_secret,
+            static_public,
+            peer_public,
+            local_index,
+            None,
+            ObfuscationRanges::default(),
+        )
+        .expect("fixed test handshake must initialize");
+        handshake.cookies.last_mac1 = Some(mac1);
+        handshake.cookies.index = local_index;
+
+        handshake
+            .receive_cookie_reply(PacketCookieReply {
+                receiver_idx: local_index,
+                nonce: &nonce,
+                encrypted_cookie: &encrypted_cookie,
+            })
+            .expect("upstream XChaCha20-Poly1305 cookie reply must decrypt");
+        assert_eq!(handshake.cookies.write_cookie, Some(expected_cookie));
+
+        // The cookie reply is authenticated against the exact last MAC1.
+        handshake.cookies.write_cookie = None;
+        handshake.cookies.last_mac1 = Some([0u8; 16]);
+        assert!(
+            handshake
+                .receive_cookie_reply(PacketCookieReply {
+                    receiver_idx: local_index,
+                    nonce: &nonce,
+                    encrypted_cookie: &encrypted_cookie,
+                })
+                .is_err(),
+            "a reply with a different MAC1 AAD must fail authentication"
+        );
+        assert_eq!(handshake.cookies.write_cookie, None);
+    }
+
+    /// Fixed BLAKE2s-128 known answers using the same construction as
+    /// amneziawg-go's CookieGenerator.AddMacs and CookieChecker.CheckMAC2.
+    /// Inputs are fixed so this detects changes to labels, key derivation,
+    /// truncation size, and whether MAC2 covers the preceding MAC1.
+    #[test]
+    fn mac1_and_mac2_match_upstream_blake2s_vectors() {
+        let peer_public: [u8; 32] = core::array::from_fn(|i| i as u8);
+        let mac1_key = b2s_hash(LABEL_MAC1, &peer_public);
+        assert_eq!(
+            mac1_key,
+            [
+                0x4f, 0xb2, 0x52, 0x7a, 0xc9, 0x56, 0x00, 0x15, 0x53, 0xdc, 0x1a, 0xd9, 0xb5, 0x51,
+                0x71, 0xb7, 0xd9, 0xda, 0xa3, 0xde, 0x1c, 0xdb, 0xcd, 0x71, 0x45, 0x18, 0x30, 0x17,
+                0x0c, 0x7e, 0x6c, 0xac,
+            ]
+        );
+
+        let message: Vec<u8> = (0..116)
+            .map(|i| (i as u8).wrapping_mul(3).wrapping_add(7))
+            .collect();
+        let mac1 = b2s_keyed_mac_16(&mac1_key, &message);
+        assert_eq!(
+            mac1,
+            [
+                0xef, 0xf9, 0xb7, 0x1a, 0x78, 0x68, 0x28, 0x70, 0xe0, 0x4e, 0x01, 0xb2, 0x7b, 0x69,
+                0x5a, 0x74,
+            ]
+        );
+
+        let cookie_encryption_key = b2s_hash(LABEL_COOKIE, &peer_public);
+        assert_eq!(
+            cookie_encryption_key,
+            [
+                0x3d, 0xd5, 0x86, 0x9c, 0x52, 0x02, 0xe4, 0x51, 0x46, 0x93, 0x6d, 0x16, 0x44, 0xf7,
+                0x6f, 0xf6, 0x97, 0x06, 0x16, 0x61, 0xc1, 0x81, 0xf3, 0xfd, 0x45, 0x0e, 0xae, 0x43,
+                0x93, 0x2e, 0xac, 0xec,
+            ]
+        );
+
+        let secret: [u8; 32] = core::array::from_fn(|i| (i as u8).wrapping_mul(5).wrapping_add(1));
+        let source = [192, 168, 13, 37, 10, 10, 10];
+        let cookie = b2s_keyed_mac_16(&secret, &source);
+        assert_eq!(
+            cookie,
+            [
+                0x0f, 0x4d, 0x68, 0x09, 0xaa, 0xef, 0x56, 0x18, 0xef, 0x63, 0xa0, 0x17, 0x7b, 0x1a,
+                0x99, 0x98,
+            ]
+        );
+
+        let mac2 = b2s_keyed_mac_16_2(&cookie, &message, &mac1);
+        assert_eq!(
+            mac2,
+            [
+                0x9d, 0xf1, 0x4d, 0xf7, 0xa5, 0x69, 0x44, 0x48, 0x46, 0x6e, 0x2e, 0x77, 0xd8, 0x5c,
+                0x04, 0x34,
+            ]
+        );
     }
 }

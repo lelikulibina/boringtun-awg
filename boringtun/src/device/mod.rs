@@ -494,13 +494,32 @@ impl Device {
         index_prefixes(&self.peers_by_ip, peer)
     }
 
+    fn remove_peer_allowed_ips(&mut self, peer: &Arc<Mutex<Peer>>) {
+        self.peers_by_ip
+            .remove(&|owner: &Arc<Mutex<Peer>>| Arc::ptr_eq(owner, peer));
+    }
+
+    fn add_peer_allowed_ip(&mut self, peer: &Arc<Mutex<Peer>>, allowed_ip: AllowedIP) {
+        self.peers_by_ip
+            .insert(allowed_ip.addr, allowed_ip.cidr as u32, Arc::clone(peer));
+    }
+
+    fn remove_peer_allowed_ip(&mut self, peer: &Arc<Mutex<Peer>>, allowed_ip: AllowedIP) {
+        self.peers_by_ip
+            .remove_exact(allowed_ip.addr, allowed_ip.cidr as u32, &|owner: &Arc<
+                Mutex<Peer>,
+            >| {
+                Arc::ptr_eq(owner, peer)
+            });
+    }
+
     fn merge_peer(
         &mut self,
         peer: &Arc<Mutex<Peer>>,
         replace_ips: bool,
         endpoint: Option<SocketAddr>,
         allowed_ips: &[AllowedIP],
-        keepalive: Option<u16>,
+        keepalive: Option<(u32, u32)>,
         preshared_key: Option<[u8; 32]>,
     ) {
         {
@@ -510,7 +529,7 @@ impl Device {
                 p.set_endpoint(addr);
             }
             if keepalive.is_some() {
-                p.set_persistent_keepalive(keepalive);
+                p.set_persistent_keepalive_range(keepalive);
             }
             if preshared_key.is_some() {
                 p.set_preshared_key(preshared_key);
@@ -550,7 +569,7 @@ impl Device {
         replace_ips: bool,
         endpoint: Option<SocketAddr>,
         allowed_ips: &[AllowedIP],
-        keepalive: Option<u16>,
+        keepalive: Option<(u32, u32)>,
         preshared_key: Option<[u8; 32]>,
     ) -> Result<(), Error> {
         if remove {
@@ -596,11 +615,11 @@ impl Device {
         // accepted, so its error was unreachable -- and asserting an
         // unreachable error with `expect` turns any future gap in that
         // reasoning into a dead daemon.
-        let tunn = Tunn::new_with_obfuscation(
+        let mut tunn = Tunn::new_with_obfuscation(
             device_key_pair.0.clone(),
             pub_key,
             preshared_key,
-            keepalive,
+            None,
             next_index,
             None,
             self.config.obf,
@@ -616,7 +635,10 @@ impl Device {
         )
         .map_err(Error::PeerSetup)?;
 
-        let peer = Peer::new(tunn, next_index, endpoint, preshared_key);
+        let mut peer = Peer::new(tunn, next_index, endpoint, preshared_key);
+        if let Some(range) = keepalive {
+            peer.set_persistent_keepalive_range(Some(range));
+        }
 
         let peer = Arc::new(Mutex::new(peer));
         self.peers.insert(pub_key, Arc::clone(&peer));
@@ -1036,8 +1058,28 @@ impl Device {
                     // fails. The order lives inside `classify` rather than here
                     // so it can be tested; see its doc for why getting it
                     // backwards makes the server answer its own clients.
+                    // Reverse Header Protection before the shared S/H
+                    // classifier and peer demultiplexer inspect the packet.
+                    // Keep the S-prefix intact so classify can preserve the
+                    // established probe-vs-WireGuard ordering and strip it
+                    // only after the recovered H tag has matched.
+                    let raw_datagram = &t.src_buf[..packet_len];
+                    let decoded_datagram = d
+                        .config
+                        .amnezia
+                        .decrypt_inbound_with_prefix(obf, raw_datagram);
+                    let datagram = match decoded_datagram.as_deref() {
+                        Some(decoded) => decoded,
+                        None if !d.config.amnezia.header_protection_enabled() => raw_datagram,
+                        // Do not fall back to plaintext classification when a
+                        // Header Protection key is configured. Otherwise a
+                        // correctly tagged but unprotected packet could bypass
+                        // the configured wire policy (especially with broad H
+                        // ranges).
+                        None => continue,
+                    };
                     let packet = match probe_reply::classify(
-                        &t.src_buf[..packet_len],
+                        datagram,
                         &d.config.amnezia,
                         obf,
                         from,
@@ -1057,12 +1099,13 @@ impl Device {
                     // unpadded packet, so verifying the padded datagram fails
                     // the check. It mirrors the kernel module, which strips at
                     // device level before peer lookup.
-                    let parsed_packet = match rate_limiter.verify_packet(
+                    let parsed_packet = match rate_limiter.verify_packet_with_cookie_policy(
                         obf,
                         &mut OsRng,
                         Some(from.ip()),
                         packet,
                         &mut t.dst_buf,
+                        d.config.amnezia.disable_cookies,
                     ) {
                         Ok(packet) => packet,
                         Err(TunnResult::WriteToNetwork(cookie)) => {
@@ -1081,10 +1124,12 @@ impl Device {
                                     // does not know about S3. Re-prefix it in
                                     // place before sending, or the peer will
                                     // reject it.
-                                    if let Ok(out) = d.config.amnezia.prepend_outbound(
+                                    if let Ok(out) = d.config.amnezia.prepend_outbound_with_limits(
                                         obf,
                                         &mut t.dst_buf,
                                         cookie_len,
+                                        crate::noise::amnezia::DEFAULT_UDP_WINDOW,
+                                        packet_len,
                                         &mut t.junk_rng,
                                     ) {
                                         let _: Result<_, _> = udp.send_to(out, &addr);
@@ -1134,10 +1179,11 @@ impl Device {
 
                     // We found a peer, use it to decapsulate the message+
                     let mut flush = false; // Are there packets to send from the queue?
-                    match p
-                        .tunnel
-                        .handle_verified_packet(parsed_packet, &mut t.dst_buf[..])
-                    {
+                    match p.tunnel.handle_verified_packet_with_datagram_size(
+                        parsed_packet,
+                        &mut t.dst_buf[..],
+                        packet_len,
+                    ) {
                         TunnResult::Done => {}
                         TunnResult::Err(_) => continue,
                         TunnResult::WriteToNetwork(packet) => {
@@ -1466,6 +1512,12 @@ mod ingress_tests {
 
         // A datagram matching no configured shape is dropped, exactly as the
         // real ingress path does.
+        let decoded = amnezia.decrypt_inbound_with_prefix(obf, datagram);
+        let datagram = match decoded.as_deref() {
+            Some(decoded) => decoded,
+            None if !amnezia.header_protection_enabled() => datagram,
+            None => return None,
+        };
         let stripped = amnezia.strip_inbound(obf, datagram)?;
         let parsed = limiter
             .verify_packet(obf, &mut OsRng, Some(src_addr), stripped, &mut scratch)
@@ -1497,7 +1549,7 @@ mod ingress_tests {
             342871004, 442871003, 542871004, 642871003, 742871004, 842871003, 942871004, 1042871003,
         )
         .unwrap();
-        let amnezia = AmneziaConfig::new(37, 121, 88, 64);
+        let amnezia = AmneziaConfig::new(37, 121, 88, 64).with_header_protection_key([0x37; 32]);
 
         let mut client = Tunn::new_with_amnezia(
             client_secret,
@@ -1526,8 +1578,11 @@ mod ingress_tests {
 
         // S1 = 37 bytes of junk ahead of the 148-byte initiation.
         assert_eq!(datagram.len(), 37 + 148, "S1 prefix present on the wire");
+        let decoded = amnezia
+            .decrypt_inbound_with_prefix(obf, &datagram)
+            .expect("device ingress must recover the protected H1 tag");
         let mut tag_bytes = [0u8; 4];
-        tag_bytes.copy_from_slice(&datagram[37..41]);
+        tag_bytes.copy_from_slice(&decoded[37..41]);
         let tag = u32::from_le_bytes(tag_bytes);
         assert!(
             (342871004..=442871003).contains(&tag),
@@ -1541,6 +1596,61 @@ mod ingress_tests {
             demuxed,
             *client_public.as_bytes(),
             "must identify the initiating peer"
+        );
+    }
+
+    #[test]
+    fn device_ingress_rejects_plaintext_when_header_protection_is_required() {
+        let server_secret = x25519::StaticSecret::random_from_rng(OsRng);
+        let server_public = x25519::PublicKey::from(&server_secret);
+        let client_secret = x25519::StaticSecret::random_from_rng(OsRng);
+
+        // The sender deliberately has no HP key, but uses the same S-prefix
+        // sizes and H values. A receiver configured with HP must not silently
+        // accept this otherwise-valid, plaintext initiation.
+        let sender_amnezia = AmneziaConfig::new(12, 12, 12, 12);
+        let receiver_amnezia =
+            AmneziaConfig::new(12, 12, 12, 12).with_header_protection_key([0x42; 32]);
+        let mut client = Tunn::new_with_amnezia(
+            client_secret,
+            server_public,
+            None,
+            None,
+            1,
+            None,
+            1,
+            1,
+            2,
+            2,
+            3,
+            3,
+            4,
+            4,
+            sender_amnezia,
+        )
+        .unwrap();
+
+        let mut buffer = vec![0u8; MAX_UDP_SIZE];
+        let mut plaintext_initiation = match client.format_handshake_initiation(&mut buffer, false)
+        {
+            TunnResult::WriteToNetwork(datagram) => datagram.to_vec(),
+            other => panic!("expected an initiation, got {:?}", other),
+        };
+        // Fix the S1 nonce so this negative case is deterministic: for key
+        // 0x42 and nonce 00..0b, the decrypted type cannot match H1 = 1.
+        for (i, byte) in plaintext_initiation[..12].iter_mut().enumerate() {
+            *byte = i as u8;
+        }
+
+        assert!(
+            demux_handshake(
+                &server_secret,
+                ObfuscationRanges::default(),
+                &receiver_amnezia,
+                &plaintext_initiation,
+            )
+            .is_none(),
+            "configured Header Protection must not fall back to plaintext"
         );
     }
 
@@ -1566,7 +1676,7 @@ mod ingress_tests {
         // `obfuscated_initiation_demuxes_to_the_initiating_peer`.
         let obf = ObfuscationRanges::default();
 
-        let mut client = Tunn::new_with_amnezia(
+        let mut client = Tunn::new(
             x25519::StaticSecret::random_from_rng(OsRng),
             server_public,
             None,
@@ -1581,15 +1691,20 @@ mod ingress_tests {
             3,
             4,
             4,
-            amnezia.clone(),
         )
         .unwrap();
 
         let mut buf = vec![0u8; MAX_UDP_SIZE];
-        let datagram = match client.format_handshake_initiation(&mut buf, false) {
+        let raw_datagram = match client.format_handshake_initiation(&mut buf, false) {
             TunnResult::WriteToNetwork(d) => d.to_vec(),
             other => panic!("expected an initiation, got {:?}", other),
         };
+        // Tunn::new creates the vanilla H-tagged handshake. The device-level
+        // ingress path strips the configured S1 prefix before MAC validation,
+        // so model that prefix explicitly here; using S1-S4 as H-tag values
+        // would produce a different (and invalid) wire format.
+        let mut datagram = vec![0u8; amnezia.init_packet_junk_size as usize];
+        datagram.extend_from_slice(&raw_datagram);
 
         let limiter = RateLimiter::new(&server_public, HANDSHAKE_RATE_LIMIT);
         let stripped = amnezia
