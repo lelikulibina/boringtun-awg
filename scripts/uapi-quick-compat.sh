@@ -52,13 +52,21 @@ cp -L "$(command -v awg-quick)" "$QUICK_BIN/awg-quick"
 IP_REAL="$(command -v ip)"
 cat > "$QUICK_BIN/ip" <<EOF
 #!/usr/bin/env bash
-if [[ "\$1" == link && "\$2" == add && "\$3" == "$WG_IFACE" && "\$4" == type && "\$5" == wireguard ]]; then
-  echo "uapi test: force wg-quick userspace fallback" >&2
-  exit 1
-fi
-if [[ "\$1" == link && "\$2" == add && "\$3" == "$AWG_IFACE" && "\$4" == type && "\$5" == amneziawg ]]; then
-  echo "uapi test: force awg-quick userspace fallback" >&2
-  exit 1
+if [[ "\$1" == link && "\$2" == add ]]; then
+  shift 2
+  [[ "\$1" == dev ]] && shift
+  iface="\$1"
+  shift
+  [[ "\$1" == type ]] && shift
+  kind="\$1"
+  if [[ "\$iface" == "$WG_IFACE" && "\$kind" == wireguard ]]; then
+    echo "uapi test: force wg-quick userspace fallback" >&2
+    exit 1
+  fi
+  if [[ "\$iface" == "$AWG_IFACE" && "\$kind" == amneziawg ]]; then
+    echo "uapi test: force awg-quick userspace fallback" >&2
+    exit 1
+  fi
 fi
 exec "$IP_REAL" "\$@"
 EOF
