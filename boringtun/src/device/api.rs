@@ -14,7 +14,7 @@ use hex::{decode as decode_hex, encode as encode_hex};
 use libc::*;
 use std::collections::HashMap;
 use std::fs::{create_dir, remove_file};
-use std::io::{BufRead, BufReader, BufWriter, Write};
+use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::net::{IpAddr, ToSocketAddrs};
 use std::os::unix::io::{AsRawFd, FromRawFd};
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -429,10 +429,14 @@ impl Device {
                     // Scanner lines inside set=1, CRLF is not accepted here.
                     let status = match cmd.as_str() {
                         "get=1" => {
-                            let mut terminator = String::new();
-                            match reader.read_line(&mut terminator) {
-                                Ok(n) if n > 0 && terminator == "\n" => api_get(&mut writer, d),
-                                _ => EINVAL,
+                            // Upstream consumes exactly one byte after get=1.
+                            // A CRLF terminator is invalid and leaves the LF to
+                            // be interpreted as the next operation.
+                            let mut terminator = [0u8; 1];
+                            match reader.read_exact(&mut terminator) {
+                                Ok(()) if terminator[0] == b'\n' => api_get(&mut writer, d),
+                                Ok(()) => EINVAL,
+                                Err(_) => break,
                             }
                         }
                         "set=1" => api_set(&mut reader, d),
@@ -480,10 +484,14 @@ impl Device {
                     // Scanner lines inside set=1, CRLF is not accepted here.
                     let status = match cmd.as_str() {
                         "get=1" => {
-                            let mut terminator = String::new();
-                            match reader.read_line(&mut terminator) {
-                                Ok(n) if n > 0 && terminator == "\n" => api_get(&mut writer, d),
-                                _ => EINVAL,
+                            // Upstream consumes exactly one byte after get=1.
+                            // A CRLF terminator is invalid and leaves the LF to
+                            // be interpreted as the next operation.
+                            let mut terminator = [0u8; 1];
+                            match reader.read_exact(&mut terminator) {
+                                Ok(()) if terminator[0] == b'\n' => api_get(&mut writer, d),
+                                Ok(()) => EINVAL,
+                                Err(_) => break,
                             }
                         }
                         "set=1" => api_set(&mut reader, d),
