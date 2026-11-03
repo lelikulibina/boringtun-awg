@@ -242,7 +242,7 @@ def wait_rekey(
 
 
 
-def drop_client_egress_during_rekey(client_ns: str, client_link: str) -> int:
+def drop_client_egress_during_rekey(\n    client_ns: str, client_link: str, server_ip: str,\n) -> int:
     """Drop only the expected AWG H1 rekey datagram and verify its filter counter."""
     # This profile uses S1=120, H1=169887817 (wire bytes 49:48:20:0a),
     # no HeaderProtection and no RandomTrailers. From the IPv4-header start,
@@ -259,9 +259,17 @@ def drop_client_egress_during_rekey(client_ns: str, client_link: str) -> int:
             "match", "u32", "0x4948200a", "0xffffffff", "at", "148",
             "action", "drop",
         )
-        # RekeyAfterTime=2s makes the original initiator emit H1 during this
-        # three-second filter window. Other tunnel packets continue to pass.
-        time.sleep(3.0)
+        # The send-side rekey timer is lazy: without outbound traffic, the
+        # peer need not emit H1 when RekeyAfterTime expires. Keep the tunnel
+        # active while the filter is installed so both client implementations
+        # exercise the same rekey trigger.
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline:
+            run(
+                "ip", "netns", "exec", client_ns, "ping", "-c1", "-W1",
+                server_ip, check=False,
+            )
+            time.sleep(0.1)
         stats = run(
             "ip", "netns", "exec", client_ns, "tc", "-s", "filter", "show",
             "dev", client_link, "parent", "1:", capture=True,
@@ -741,7 +749,7 @@ def run_profile(
             )
             verify_udp_roundtrip(ns_server, ns_client)
         elif name == "rekey packet-loss recovery":
-            drop_client_egress_during_rekey(ns_client, veth_client)
+            drop_client_egress_during_rekey(ns_client, veth_client, SERVER_TUN)
             wait_rekey(server_iface, ns_client, SERVER_TUN, initial_handshake_time)
             verify_udp_roundtrip(ns_server, ns_client)
         else:
