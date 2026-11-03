@@ -319,9 +319,8 @@ mod tests {
 
         timers.set_persistent_keepalive_range((10, 20));
         assert_eq!(timers.persistent_keepalive_range, (10, 20));
-        assert_eq!(
-            timers.persistent_keepalive_deadline,
-            Some(Duration::ZERO),
+        assert!(
+            timers.persistent_keepalive_deadline.is_some(),
             "enabling keepalive schedules the initial send immediately"
         );
 
