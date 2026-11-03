@@ -3,6 +3,7 @@
 
 use super::errors::WireGuardError;
 use crate::noise::{Tunn, TunnResult};
+use std::convert::TryFrom;
 use std::ops::{Index, IndexMut};
 
 use super::amnezia::AmneziaConfig;
