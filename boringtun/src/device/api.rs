@@ -13,6 +13,7 @@ use crate::x25519;
 use hex::{decode as decode_hex, encode as encode_hex};
 use libc::*;
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::fs::{create_dir, remove_file};
 use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::net::{IpAddr, ToSocketAddrs};
