@@ -74,7 +74,7 @@ sudo python3 scripts/awg31-go-interop.py ./target/release/boringtun-cli ./amnezi
 
 Скрипт требует Linux, root, `iproute2`, `ping`, `tcpdump`, Python-пакет `cryptography`, BoringTun с feature `device` и официальный бинарник `amneziawg-go` из модуля `/v3`. CI собирает эталон из upstream commit `b5928efb6ca19f0153958460c3d141f04abc5c2e`. Каждый профиль запускается в двух ролях: BoringTun-сервер ↔ amneziawg-go-клиент и amneziawg-go-сервер ↔ BoringTun-клиент. Для каждого прогона создаются отдельные сетевые namespace с уникальными именами; хостовые маршруты и интерфейсы не перенастраиваются.
 
-### Результаты на текущем HEAD
+### Историческая базовая проверка (до UAPI follow-up)
 
 На исходном кодовом HEAD `115a6c35d59a626e4c1f0f074b652618ff2f7092` завершились успешно:
 
@@ -92,7 +92,13 @@ sudo python3 scripts/awg31-go-interop.py ./target/release/boringtun-cli ./amnezi
 
 ### Дополнительная проверка UAPI follow-up
 
-UAPI-исправления перенесены из draft PR #9 в PR #8: `private_key` вместо `own_public_key` в `get=1`, абсолютное Unix-время handshake, `protocol_version=1`, uint32 ranges, Go-compatible bool parsing, DNS endpoints, base64 keys, persistent keepalive ranges, EOF/framing, ordered AllowedIP add/remove/replace/update_only и owner-checked routing trie. На исходной follow-up ветке CI run [41670671377](https://github.com/lelikulibina/boringtun-awg/actions/runs/41670671377) прошли `check_features`, `tests`, `clippy` и AWG interoperability 44/44; rustfmt замечания устранены при переносе в PR #8. Финальные проверки должны выполняться на актуальном HEAD PR #8.
+UAPI-исправления перенесены из draft PR #9 в PR #8: `private_key` вместо `own_public_key` в `get=1`, абсолютное Unix-время handshake, `protocol_version=1`, uint32 ranges, Go-compatible bool parsing, DNS endpoints, base64 keys, persistent keepalive ranges, EOF/framing, ordered AllowedIP add/remove/replace/update_only и owner-checked routing trie. На исходной follow-up ветке CI run [41670671377](https://github.com/lelikulibina/boringtun-awg/actions/runs/41670671377) прошли `check_features`, `tests`, `clippy` и AWG interoperability 44/44; rustfmt замечания устранены при переносе в PR #8.
+
+### Финальная проверка PR #8
+
+Итоговый HEAD `25dcf432296f8f3cc52d76c889b60e8d5087d0b9` проверен полным Linux PR CI: [run 41684331967](https://github.com/lelikulibina/boringtun-awg/actions/runs/41684331967) — success. Успешны `rustfmt`, `clippy`, `check_features`, `tests`, `integration-tests` (9/9), `awg31-interoperability` (**44/44**) и `all-systems-go`. В матрице 22 профиля проверяются в обеих ролях сервера; она включает vanilla WireGuard, AWG 2.x, AWG 3.0/3.1, одиночные и комбинированные расширения, CPS I1-I5, ускоренный rekey, восстановление после потери пакета и lifecycle soak. [Semgrep run 41684332036](https://github.com/lelikulibina/boringtun-awg/actions/runs/41684332036) также завершился успешно.
+
+Это подтверждает функциональную совместимость на проверенных Linux-сценариях. Это не полная сертификация всех конфигураций и платформ: PCAP verifier не сравнивает каждый байт с Go, Windows job пропущен, macOS не входит в обязательный merge gate, а 120 rekey cycles не заменяют многочасовой production soak.
 
 ### Оставшиеся ограничения
 
