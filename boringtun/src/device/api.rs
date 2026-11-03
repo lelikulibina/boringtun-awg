@@ -1325,13 +1325,12 @@ mod tests {
             vec![a],
             "remove followed by add must leave the prefix installed"
         );
-        assert!(
+        assert_eq!(
             apply_allowed_ip_operations(
                 vec![a],
                 &[AllowedIpOperation::Add(b), AllowedIpOperation::Remove(b)]
-            )
-            .iter()
-            .all(|prefix| *prefix == a),
+            ),
+            vec![a],
             "add followed by remove must not leave the new prefix installed"
         );
         assert_eq!(
