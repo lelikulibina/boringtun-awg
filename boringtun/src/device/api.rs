@@ -824,7 +824,7 @@ fn api_set_peer(
         if cmd.is_empty() {
             if !(sec.update_only && !d.peers.contains_key(&public_key)) {
                 if let Err(e) = d.update_peer(
-                    public_key,
+                    public_key.clone(),
                     sec.remove,
                     sec.replace_ips,
                     sec.endpoint,
@@ -841,7 +841,7 @@ fn api_set_peer(
                 }
                 if !sec.remove {
                     for ip in &sec.removed_allowed_ips {
-                        d.remove_allowed_ip(public_key, *ip);
+                        d.remove_allowed_ip(&public_key, *ip);
                     }
                 }
             }
@@ -895,7 +895,7 @@ fn api_set_peer(
                     // Indicates a new peer section. Commit changes for current peer, and continue to next peer
                     if !(sec.update_only && !d.peers.contains_key(&public_key)) {
                         if let Err(e) = d.update_peer(
-                            public_key,
+                            public_key.clone(),
                             sec.remove,
                             sec.replace_ips,
                             sec.endpoint,
@@ -912,7 +912,7 @@ fn api_set_peer(
                         }
                         if !sec.remove {
                             for ip in &sec.removed_allowed_ips {
-                                d.remove_allowed_ip(public_key, *ip);
+                                d.remove_allowed_ip(&public_key, *ip);
                             }
                         }
                     }
