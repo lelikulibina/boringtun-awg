@@ -56,6 +56,17 @@ impl<D> AllowedIps<D> {
         self.ips.retain(|_, v| !predicate(v));
     }
 
+    /// Remove one exact prefix only when it is currently owned by data matching
+    /// the supplied predicate. This mirrors amneziawg-go's AllowedIPs.Remove.
+    pub fn remove_exact(&mut self, key: IpAddr, cidr: u32, predicate: &dyn Fn(&D) -> bool) {
+        let target = IpNetwork::new_truncate(key, cidr as u8).expect("cidr is valid length");
+        self.ips.retain(|network, data| {
+            !(network.network_address() == target.network_address()
+                && network.netmask() == target.netmask()
+                && predicate(data))
+        });
+    }
+
     pub fn iter(&self) -> Iter<D> {
         Iter(
             self.ips
@@ -110,6 +121,42 @@ mod tests {
         );
         assert_eq!(map.find(IpAddr::from([553, 0, 0, 1, 0, 0, 0, 1])), None);
         assert_eq!(map.find(IpAddr::from([45, 25, 15, 1])), Some(&'6'));
+    }
+
+    #[test]
+    fn remove_exact_matches_prefix_and_current_owner() {
+        let prefix = IpAddr::from([192, 0, 2, 0]);
+        let mut map: AllowedIps<char> = AllowedIps::new();
+
+        map.insert(prefix, 24, 'b');
+        map.remove_exact(prefix, 24, &|owner| *owner == 'a');
+        assert_eq!(map.find(IpAddr::from([192, 0, 2, 1])), Some(&'b'));
+
+        // Inserting the same prefix transfers ownership. Removing it as the
+        // new owner must delete it entirely, not restore the previous owner.
+        map.insert(prefix, 24, 'a');
+        map.remove_exact(prefix, 24, &|owner| *owner == 'a');
+        assert_eq!(map.find(IpAddr::from([192, 0, 2, 1])), None);
+    }
+
+    #[test]
+    fn replace_and_add_allowed_ip_operations_are_sequential() {
+        let first = IpAddr::from([192, 0, 2, 1]);
+        let second = IpAddr::from([198, 51, 100, 1]);
+        let third = IpAddr::from([203, 0, 113, 1]);
+        let mut map: AllowedIps<char> = AllowedIps::new();
+
+        map.insert(first, 32, 'a');
+        map.insert(second, 32, 'a');
+
+        // replace_allowed_ips removes all entries owned by this peer at the
+        // point where the UAPI line appears; a later add survives.
+        map.remove(&|owner| *owner == 'a');
+        map.insert(third, 32, 'a');
+
+        assert_eq!(map.find(first), None);
+        assert_eq!(map.find(second), None);
+        assert_eq!(map.find(third), Some(&'a'));
     }
 
     #[test]
