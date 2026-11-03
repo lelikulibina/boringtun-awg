@@ -39,9 +39,8 @@ const AWG_SOCK_DIR: &str = "/var/run/amneziawg/";
 /// range, which is exactly how the kernel module's `mh_genspec` treats it, so
 /// existing single-value configs map across unchanged.
 fn parse_u32_range(val: &str) -> Option<(u32, u32)> {
-    // AmneziaWG's UintRange is a packed pair of uint32 values. In particular,
-    // timer ranges are not limited to u16: values through u32::MAX are valid
-    // at the UAPI parsing layer, subject to the timer's own validation.
+    // AmneziaWG's UintRange is a pair of uint32 values. Timer, keepalive and
+    // content-padding ranges therefore accept values through u32::MAX.
     let (start, end): (u32, u32) = match val.split_once('-') {
         Some((start, end)) => (start.trim().parse().ok()?, end.trim().parse().ok()?),
         None => {
@@ -714,8 +713,8 @@ fn api_set(reader: &mut BufReader<&UnixStream>, d: &mut LockReadGuard<Device>) -
             device.cancel_yield();
 
             let mut cmd = String::new();
-            // AmneziaWG keys are validated as a set (`ObfuscationRanges::new`
-            // rejects overlapping H ranges), so they are accumulated across the
+            // AmneziaWG keys are validated as a set (the explicit range
+            // constructor rejects overlapping H ranges), so they are accumulated across the
             // transaction and applied at whichever exit point comes first --
             // including before delegating to a peer section, since peers
             // snapshot the device's settings when they are created.
