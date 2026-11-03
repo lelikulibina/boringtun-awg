@@ -44,25 +44,30 @@ HPK = "42" * 32
 PROFILES = [
     ("vanilla WireGuard baseline", "", False),
     ("AWG 2.x baseline", "", True),
-    # Version-focused 1 MiB integrity transfers. AWG 3.0 is represented
-    # by the AWG 2.x framing plus the I1-I5 initiation signatures; AWG 3.1
-    # adds the 3.1 transport/handshake obfuscation extensions.
+    # Version-focused 1 MiB integrity transfers. AWG 3.0 adds header
+    # protection, content padding and randomized protocol timers; AWG 3.1
+    # adds RandomTrailers and DisableCookies on top of those 3.0 features.
+    # CPS I1-I5 are tested independently below because they are not a 3.0-only
+    # feature and must not be used as a substitute for the 3.0 transport tests.
     ("bulk data integrity — WireGuard", "", False),
     ("bulk data integrity — AWG 2.0", "", True),
     (
         "bulk data integrity — AWG 3.0",
-        "i1=<b 0x41574733312d49312d435053>\n"
-        "i2=<b 0x41574733312d49322d435053>\n"
-        "i3=<b 0x41574733312d49332d435053>\n"
-        "i4=<b 0x41574733312d49342d435053>\n"
-        "i5=<b 0x41574733312d49352d435053>\n",
+        f"header_protection_key={HPK}\n"
+        "content_padding_addition=16-64\n"
+        "rekey_after_time=119-120\nrekey_timeout=5-6\n"
+        "reject_after_time=179-180\nkeepalive_timeout=9-10\n"
+        "max_handshake_attempts=18-19\n",
         True,
     ),
     (
         "bulk data integrity — AWG 3.1",
         f"header_protection_key={HPK}\n"
         "content_padding_addition=16-64\nrandom_trailers=true\n"
-        "disable_cookies=true\n",
+        "disable_cookies=true\n"
+        "rekey_after_time=119-120\nrekey_timeout=5-6\n"
+        "reject_after_time=179-180\nkeepalive_timeout=9-10\n"
+        "max_handshake_attempts=18-19\n",
         True,
     ),
     ("HeaderProtectionKey", f"header_protection_key={HPK}\n", True),
