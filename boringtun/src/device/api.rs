@@ -13,9 +13,10 @@ use crate::x25519;
 use hex::{decode as decode_hex, encode as encode_hex};
 use libc::*;
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::fs::{create_dir, remove_file};
-use std::io::{BufRead, BufReader, BufWriter, Write};
-use std::net::IpAddr;
+use std::io::{BufRead, BufReader, BufWriter, Read, Write};
+use std::net::{IpAddr, ToSocketAddrs};
 use std::os::unix::io::{AsRawFd, FromRawFd};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::atomic::Ordering;
@@ -37,29 +38,25 @@ const AWG_SOCK_DIR: &str = "/var/run/amneziawg/";
 /// inclusive range (`"342871004-442871003"`). A bare value is a degenerate
 /// range, which is exactly how the kernel module's `mh_genspec` treats it, so
 /// existing single-value configs map across unchanged.
-fn parse_u16_range(val: &str) -> Option<(u16, u16)> {
-    let (start, end) = match val.split_once('-') {
+fn parse_u32_range(val: &str) -> Option<(u32, u32)> {
+    // AmneziaWG's UintRange is a pair of uint32 values. Timer, keepalive and
+    // content-padding ranges therefore accept values through u32::MAX.
+    let (start, end): (u32, u32) = match val.split_once('-') {
         Some((start, end)) => (start.trim().parse().ok()?, end.trim().parse().ok()?),
         None => {
-            let value: u16 = val.trim().parse().ok()?;
+            let value: u32 = val.trim().parse().ok()?;
             (value, value)
         }
     };
     (start <= end).then_some((start, end))
 }
 
-fn parse_u32_range(val: &str) -> Option<(u32, u32)> {
-    // Upstream AmneziaWG exposes all 3.x timer ranges as UintRange values
-    // backed by uint16. Keep the internal timer representation u32 (Duration
-    // arithmetic uses it), but reject values the reference UAPI cannot accept.
-    let (start, end): (u16, u16) = match val.split_once('-') {
-        Some((start, end)) => (start.trim().parse().ok()?, end.trim().parse().ok()?),
-        None => {
-            let value: u16 = val.trim().parse().ok()?;
-            (value, value)
-        }
-    };
-    (start <= end).then_some((u32::from(start), u32::from(end)))
+fn parse_uapi_bool(val: &str) -> Option<bool> {
+    match val {
+        "1" | "t" | "T" | "TRUE" | "true" | "True" => Some(true),
+        "0" | "f" | "F" | "FALSE" | "false" | "False" => Some(false),
+        _ => None,
+    }
 }
 
 fn parse_tag_range(val: &str) -> Option<(u32, u32)> {
@@ -73,21 +70,15 @@ fn parse_tag_range(val: &str) -> Option<(u32, u32)> {
     if start > end {
         return None;
     }
-    // Reject 0 rather than accepting it silently. `ObfuscationRanges::new`
-    // treats an all-zero range as "unset" and substitutes the vanilla WireGuard
-    // message type for that packet kind, so `h1=0` would quietly disable
-    // obfuscation instead of using tag 0 -- the opposite of what the operator
-    // wrote. Failing the transaction with EINVAL makes that visible.
-    if start == 0 {
-        return None;
-    }
+    // Zero is a valid UAPI tag. The explicit-range constructor below keeps
+    // (0, 0) distinct from the library constructor's "use default" sentinel.
     Some((start, end))
 }
 
 /// AmneziaWG values accumulated over one `set=1` transaction.
 ///
-/// They cannot be applied one at a time: `ObfuscationRanges::new` validates all
-/// four header ranges together and rejects overlaps, so a partially-applied set
+/// They cannot be applied one at a time: the explicit UAPI range constructor
+/// validates all four header ranges together and rejects overlaps, so a partially-applied set
 /// could transiently fail validation on a configuration that is valid as a
 /// whole. Anything left `None` keeps the device's current value.
 #[derive(Default)]
@@ -107,7 +98,7 @@ struct AwgParams {
     random_trailers: Option<bool>,
     signature_packets: [Option<Option<SignatureChain>>; 5],
     header_protection_key: Option<[u8; 32]>,
-    content_padding_addition: Option<(u16, u16)>,
+    content_padding_addition: Option<(u32, u32)>,
     rekey_after_time: Option<(u32, u32)>,
     rekey_timeout: Option<(u32, u32)>,
     reject_after_time: Option<(u32, u32)>,
@@ -185,8 +176,7 @@ impl AwgParams {
                 .unwrap_or((cur_obf.h4_data.start, cur_obf.h4_data.end)),
         );
 
-        let obf = ObfuscationRanges::new(h1.0, h1.1, h2.0, h2.1, h3.0, h3.1, h4.0, h4.1)
-            .map_err(|_| EINVAL)?;
+        let obf = ObfuscationRanges::from_explicit_ranges([h1, h2, h3, h4]).map_err(|_| EINVAL)?;
 
         // Start from the current value and overwrite only what this transaction
         // carried. Rebuilding with `AmneziaConfig::new` would discard the
@@ -208,9 +198,10 @@ impl AwgParams {
         amnezia.header_protection_key = self
             .header_protection_key
             .unwrap_or(amnezia.header_protection_key);
-        amnezia.content_padding_addition = self
+        let (padding_min, padding_max) = self
             .content_padding_addition
             .unwrap_or(amnezia.content_padding_addition);
+        amnezia = amnezia.with_content_padding_addition_u32(padding_min, padding_max);
         amnezia.rekey_after_time = self.rekey_after_time.unwrap_or(amnezia.rekey_after_time);
         amnezia.rekey_timeout = self.rekey_timeout.unwrap_or(amnezia.rekey_timeout);
         amnezia.reject_after_time = self.reject_after_time.unwrap_or(amnezia.reject_after_time);
@@ -218,12 +209,20 @@ impl AwgParams {
         amnezia.max_handshake_attempts = self
             .max_handshake_attempts
             .unwrap_or(amnezia.max_handshake_attempts);
-        let amnezia = amnezia.with_pre_handshake_junk(
-            self.jc.unwrap_or(cur_junk.packet_count),
-            self.jmin.unwrap_or(cur_junk.packet_size_min),
-            self.jmax.unwrap_or(cur_junk.packet_size_max),
-            cur_junk.packet_delay_ms,
-        );
+        let amnezia = amnezia
+            .try_with_pre_handshake_junk(
+                self.jc.unwrap_or(cur_junk.packet_count),
+                self.jmin.unwrap_or(cur_junk.packet_size_min),
+                self.jmax.unwrap_or(cur_junk.packet_size_max),
+                cur_junk.packet_delay_ms,
+            )
+            .map_err(|error| {
+                tracing::error!(
+                    message = "rejecting AmneziaWG pre-handshake junk parameters",
+                    error = %error
+                );
+                EINVAL
+            })?;
 
         // Reject sizes that could never emit a valid datagram, before anything
         // is committed. Without this, an oversized S value is accepted here and
@@ -248,14 +247,82 @@ impl AwgParams {
 /// single assignment. They were previously six separate locals declared outside
 /// the parse loop, of which only `allowed_ips` was reset between sections — so
 /// every other attribute leaked into the next peer.
+#[derive(Copy, Clone)]
+enum AllowedIpOperation {
+    Replace,
+    Add(AllowedIP),
+    Remove(AllowedIP),
+}
+
 #[derive(Default)]
 struct PeerSection {
     remove: bool,
-    replace_ips: bool,
     endpoint: Option<SocketAddr>,
-    keepalive: Option<u16>,
+    keepalive: Option<(u32, u32)>,
     preshared_key: Option<[u8; 32]>,
-    allowed_ips: Vec<AllowedIP>,
+    allowed_ip_operations: Vec<AllowedIpOperation>,
+    update_only: bool,
+}
+
+fn commit_peer_section(
+    device: &mut Device,
+    public_key: &x25519::PublicKey,
+    section: &PeerSection,
+) -> i32 {
+    // Upstream treats the device's own public key as a dummy peer and ignores
+    // its settings. Before a private key is configured, the corresponding
+    // identity is all-zero and the all-zero peer key is ignored as well.
+    let is_device_key = match device.key_pair.as_ref() {
+        Some((_, own_public_key)) => own_public_key.as_bytes() == public_key.as_bytes(),
+        None => public_key.as_bytes().iter().all(|byte| *byte == 0),
+    };
+    if is_device_key {
+        return 0;
+    }
+
+    if section.update_only && !device.peers.contains_key(public_key) {
+        return 0;
+    }
+
+    // Create/update the peer first, then apply AllowedIP operations in the
+    // exact order received. In particular, add-then-remove must also remove a
+    // prefix that was originally owned by another peer.
+    if let Err(error) = device.update_peer(
+        public_key.clone(),
+        section.remove,
+        false,
+        section.endpoint,
+        &[],
+        section.keepalive,
+        section.preshared_key,
+    ) {
+        tracing::error!(
+            message = "failed to apply peer",
+            peer = encode_hex(public_key.as_bytes()).as_str(),
+            error = ?error
+        );
+        // Upstream maps peer creation/update failures to IPCErrorInvalid.
+        return EINVAL;
+    }
+
+    if section.remove {
+        return 0;
+    }
+
+    let peer = match device.peers.get(public_key).cloned() {
+        Some(peer) => peer,
+        None => return EINVAL,
+    };
+
+    for operation in &section.allowed_ip_operations {
+        match *operation {
+            AllowedIpOperation::Replace => device.remove_peer_allowed_ips(&peer),
+            AllowedIpOperation::Add(prefix) => device.add_peer_allowed_ip(&peer, prefix),
+            AllowedIpOperation::Remove(prefix) => device.remove_peer_allowed_ip(&peer, prefix),
+        }
+    }
+
+    0
 }
 
 fn create_sock_dir(dir: &str) {
@@ -324,17 +391,39 @@ impl Device {
 
                 let mut reader = BufReader::new(&api_conn);
                 let mut writer = BufWriter::new(&api_conn);
-                let mut cmd = String::new();
-                if reader.read_line(&mut cmd).is_ok() {
-                    cmd.pop(); // pop the new line character
-                    let status = match cmd.as_ref() {
-                        // Only two commands are legal according to the protocol, get=1 and set=1.
-                        "get=1" => api_get(&mut writer, d),
+                loop {
+                    let mut cmd = String::new();
+                    match reader.read_line(&mut cmd) {
+                        Ok(0) | Err(_) => break,
+                        Ok(_) => {}
+                    }
+                    // ReadString in upstream requires a complete operation line.
+                    if !cmd.ends_with('\n') {
+                        break;
+                    }
+                    cmd.pop();
+                    // IpcHandle compares the operation line literally; unlike
+                    // Scanner lines inside set=1, CRLF is not accepted here.
+                    let status = match cmd.as_str() {
+                        "get=1" => {
+                            // Upstream consumes exactly one byte after get=1.
+                            // A CRLF terminator is invalid and leaves the LF to
+                            // be interpreted as the next operation.
+                            let mut terminator = [0u8; 1];
+                            match reader.read_exact(&mut terminator) {
+                                Ok(()) if terminator[0] == b'\n' => api_get(&mut writer, d),
+                                Ok(()) => EINVAL,
+                                Err(_) => break,
+                            }
+                        }
                         "set=1" => api_set(&mut reader, d),
-                        _ => EIO,
+                        // Match upstream IpcHandle: an unknown operation closes
+                        // the connection without an errno response.
+                        _ => break,
                     };
-                    // The protocol requires to return an error code as the response, or zero on success
-                    writeln!(writer, "errno={}\n", status).ok();
+                    if writeln!(writer, "errno={}\n", status).is_err() || writer.flush().is_err() {
+                        break;
+                    }
                 }
                 Action::Continue // Indicates the worker thread should continue as normal
             }),
@@ -354,21 +443,48 @@ impl Device {
 
                 let mut reader = BufReader::new(&io_file);
                 let mut writer = BufWriter::new(&io_file);
-                let mut cmd = String::new();
-                if reader.read_line(&mut cmd).is_ok() {
-                    cmd.pop(); // pop the new line character
-                    let status = match cmd.as_ref() {
-                        // Only two commands are legal according to the protocol, get=1 and set=1.
-                        "get=1" => api_get(&mut writer, d),
+                loop {
+                    let mut cmd = String::new();
+                    match reader.read_line(&mut cmd) {
+                        Ok(0) | Err(_) => {
+                            d.trigger_exit();
+                            return Action::Exit;
+                        }
+                        Ok(_) => {}
+                    }
+                    // ReadString in upstream requires a complete operation line.
+                    if !cmd.ends_with('\n') {
+                        break;
+                    }
+                    cmd.pop();
+                    // IpcHandle compares the operation line literally; unlike
+                    // Scanner lines inside set=1, CRLF is not accepted here.
+                    let status = match cmd.as_str() {
+                        "get=1" => {
+                            // Upstream consumes exactly one byte after get=1.
+                            // A CRLF terminator is invalid and leaves the LF to
+                            // be interpreted as the next operation.
+                            let mut terminator = [0u8; 1];
+                            match reader.read_exact(&mut terminator) {
+                                Ok(()) if terminator[0] == b'\n' => api_get(&mut writer, d),
+                                Ok(()) => EINVAL,
+                                Err(_) => {
+                                    d.trigger_exit();
+                                    return Action::Exit;
+                                }
+                            }
+                        }
                         "set=1" => api_set(&mut reader, d),
-                        _ => EIO,
+                        // Match upstream IpcHandle: an unknown operation closes
+                        // the connection without an errno response.
+                        _ => {
+                            d.trigger_exit();
+                            return Action::Exit;
+                        }
                     };
-                    // The protocol requires to return an error code as the response, or zero on success
-                    writeln!(writer, "errno={}\n", status).ok();
-                } else {
-                    // The remote side is likely closed; we should trigger an exit.
-                    d.trigger_exit();
-                    return Action::Exit;
+                    if writeln!(writer, "errno={}\n", status).is_err() || writer.flush().is_err() {
+                        break;
+                    }
                 }
 
                 Action::Continue // Indicates the worker thread should continue as normal
@@ -420,47 +536,61 @@ impl Device {
 
 #[allow(unused_must_use)]
 fn api_get(writer: &mut BufWriter<&UnixStream>, d: &Device) -> i32 {
+    let mut output = String::new();
     // get command requires an empty line, but there is no reason to be religious about it
     if let Some(ref k) = d.key_pair {
-        writeln!(writer, "own_public_key={}", encode_hex(k.1.as_bytes()));
+        // The UAPI get operation must return the private key so showconf/setconf
+        // can round-trip the interface configuration. Upstream omits an unset
+        // (all-zero) private key rather than serializing it.
+        let private_key = k.0.to_bytes();
+        if private_key.iter().any(|byte| *byte != 0) {
+            writeln!(output, "private_key={}", encode_hex(private_key));
+        }
     }
 
     if d.listen_port != 0 {
-        writeln!(writer, "listen_port={}", d.listen_port);
+        writeln!(output, "listen_port={}", d.listen_port);
     }
 
-    if let Some(fwmark) = d.fwmark {
-        writeln!(writer, "fwmark={}", fwmark);
+    if let Some(fwmark) = d.fwmark.filter(|mark| *mark != 0) {
+        writeln!(output, "fwmark={}", fwmark);
     }
 
-    // AmneziaWG interface parameters. Numeric/range fields are omitted at their
-    // defaults; boolean flags are always emitted in both states so get/set
-    // round-trips can explicitly clear a previously enabled option.
-    // Sizes are `%u`; magic headers use the kernel's `mh_genspec` convention --
-    // a bare value when the range is degenerate, `start-end` otherwise.
+    // AmneziaWG interface parameters. Upstream emits every non-zero H1-H4
+    // range, including default message-type tags (1, 2, 3, 4). Zero-valued
+    // optional sizes and keys remain omitted; boolean flags are emitted in
+    // both states so get/set round-trips can clear an enabled option.
     {
         let a = &d.config.amnezia;
         if a.header_protection_enabled() {
             writeln!(
-                writer,
+                output,
                 "header_protection_key={}",
                 encode_hex(&a.header_protection_key)
             );
         }
-        writeln!(writer, "disable_cookies={}", a.disable_cookies);
-        writeln!(writer, "random_trailers={}", a.random_trailers);
+        writeln!(
+            output,
+            "disable_cookies={}",
+            if a.disable_cookies { 1 } else { 0 }
+        );
+        writeln!(
+            output,
+            "random_trailers={}",
+            if a.random_trailers { 1 } else { 0 }
+        );
         for (index, chain) in a.signature_packets.iter().enumerate() {
             if let Some(chain) = chain {
-                writeln!(writer, "i{}={}", index + 1, chain.spec());
+                writeln!(output, "i{}={}", index + 1, chain.spec());
             }
         }
         let (padding_min, padding_max) = a.content_padding_addition;
         if padding_min != 0 || padding_max != 0 {
             if padding_min == padding_max {
-                writeln!(writer, "content_padding_addition={}", padding_min);
+                writeln!(output, "content_padding_addition={}", padding_min);
             } else {
                 writeln!(
-                    writer,
+                    output,
                     "content_padding_addition={}-{}",
                     padding_min, padding_max
                 );
@@ -475,9 +605,9 @@ fn api_get(writer: &mut BufWriter<&UnixStream>, d: &Device) -> i32 {
         ] {
             if range != (0, 0) {
                 if range.0 == range.1 {
-                    writeln!(writer, "{}={}", key, range.0);
+                    writeln!(output, "{}={}", key, range.0);
                 } else {
-                    writeln!(writer, "{}={}-{}", key, range.0, range.1);
+                    writeln!(output, "{}={}-{}", key, range.0, range.1);
                 }
             }
         }
@@ -492,23 +622,22 @@ fn api_get(writer: &mut BufWriter<&UnixStream>, d: &Device) -> i32 {
             ("s4", a.transport_packet_junk_size),
         ] {
             if val != 0 {
-                writeln!(writer, "{}={}", key, val);
+                writeln!(output, "{}={}", key, val);
             }
         }
 
         let obf = d.config.obf;
-        let default = ObfuscationRanges::default();
-        for (key, range, def) in [
-            ("h1", obf.h1_init, default.h1_init),
-            ("h2", obf.h2_resp, default.h2_resp),
-            ("h3", obf.h3_cookie, default.h3_cookie),
-            ("h4", obf.h4_data, default.h4_data),
+        for (key, range) in [
+            ("h1", obf.h1_init),
+            ("h2", obf.h2_resp),
+            ("h3", obf.h3_cookie),
+            ("h4", obf.h4_data),
         ] {
-            if range != def {
+            if range.start != 0 || range.end != 0 {
                 if range.start == range.end {
-                    writeln!(writer, "{}={}", key, range.start);
+                    writeln!(output, "{}={}", key, range.start);
                 } else {
-                    writeln!(writer, "{}={}-{}", key, range.start, range.end);
+                    writeln!(output, "{}={}-{}", key, range.start, range.end);
                 }
             }
         }
@@ -529,25 +658,33 @@ fn api_get(writer: &mut BufWriter<&UnixStream>, d: &Device) -> i32 {
 
     for (k, peer) in d.peers.iter() {
         let p = peer.lock();
-        writeln!(writer, "public_key={}", encode_hex(k.as_bytes()));
+        writeln!(output, "public_key={}", encode_hex(k.as_bytes()));
 
-        if let Some(ref key) = p.preshared_key() {
-            writeln!(writer, "preshared_key={}", encode_hex(key));
-        }
+        let zero_psk = [0u8; 32];
+        writeln!(
+            output,
+            "preshared_key={}",
+            encode_hex(p.preshared_key().unwrap_or(&zero_psk))
+        );
+        writeln!(output, "protocol_version=1");
 
-        if let Some(keepalive) = p.persistent_keepalive() {
-            writeln!(writer, "persistent_keepalive_interval={}", keepalive);
+        if let Some((min, max)) = p.persistent_keepalive_range() {
+            if min == max {
+                writeln!(output, "persistent_keepalive_interval={}", min);
+            } else {
+                writeln!(output, "persistent_keepalive_interval={}-{}", min, max);
+            }
         }
 
         if let Some(ref addr) = p.endpoint().addr {
-            writeln!(writer, "endpoint={}", addr);
+            writeln!(output, "endpoint={}", addr);
         }
 
         for (ip, cidr) in prefixes_by_peer
             .get(&(Arc::as_ptr(peer) as usize))
             .map_or(&[][..], Vec::as_slice)
         {
-            writeln!(writer, "allowed_ip={}/{}", ip, cidr);
+            writeln!(output, "allowed_ip={}/{}", ip, cidr);
         }
 
         // `last_handshake_time_*` is an absolute wall-clock timestamp in the
@@ -560,21 +697,27 @@ fn api_get(writer: &mut BufWriter<&UnixStream>, d: &Device) -> i32 {
         if let Some(elapsed) = p.time_since_last_handshake() {
             if let Ok(now) = SystemTime::now().duration_since(UNIX_EPOCH) {
                 let handshake_at = now.saturating_sub(elapsed);
-                writeln!(writer, "last_handshake_time_sec={}", handshake_at.as_secs());
+                writeln!(output, "last_handshake_time_sec={}", handshake_at.as_secs());
                 writeln!(
-                    writer,
+                    output,
                     "last_handshake_time_nsec={}",
                     handshake_at.subsec_nanos()
                 );
             }
+        } else {
+            writeln!(output, "last_handshake_time_sec=0");
+            writeln!(output, "last_handshake_time_nsec=0");
         }
 
         let (_, tx_bytes, rx_bytes, ..) = p.tunnel.stats();
 
-        writeln!(writer, "rx_bytes={}", rx_bytes);
-        writeln!(writer, "tx_bytes={}", tx_bytes);
+        writeln!(output, "rx_bytes={}", rx_bytes);
+        writeln!(output, "tx_bytes={}", tx_bytes);
     }
-    0
+    writer
+        .write_all(output.as_bytes())
+        .map(|_| 0)
+        .unwrap_or(EIO)
 }
 
 fn api_set(reader: &mut BufReader<&UnixStream>, d: &mut LockReadGuard<Device>) -> i32 {
@@ -584,15 +727,28 @@ fn api_set(reader: &mut BufReader<&UnixStream>, d: &mut LockReadGuard<Device>) -
             device.cancel_yield();
 
             let mut cmd = String::new();
-            // AmneziaWG keys are validated as a set (`ObfuscationRanges::new`
-            // rejects overlapping H ranges), so they are accumulated across the
+            // AmneziaWG keys are validated as a set (the explicit range
+            // constructor rejects overlapping H ranges), so they are accumulated across the
             // transaction and applied at whichever exit point comes first --
             // including before delegating to a peer section, since peers
             // snapshot the device's settings when they are created.
             let mut awg = AwgParams::default();
 
-            while reader.read_line(&mut cmd).is_ok() {
-                cmd.pop(); // remove newline if any
+            loop {
+                cmd.clear();
+                let bytes_read = match reader.read_line(&mut cmd) {
+                    Ok(n) => n,
+                    Err(_) => return EIO,
+                };
+                if bytes_read == 0 {
+                    break;
+                }
+                if cmd.ends_with('\n') {
+                    cmd.pop();
+                }
+                if cmd.ends_with('\r') {
+                    cmd.pop();
+                }
                 if cmd.is_empty() {
                     match awg.apply(device) {
                         Ok(()) => return 0, // Done
@@ -638,24 +794,34 @@ fn api_set(reader: &mut BufReader<&UnixStream>, d: &mut LockReadGuard<Device>) -
                             },
                             Err(_) => return EINVAL,
                         },
-                        "replace_peers" => match val.parse::<bool>() {
-                            Ok(true) => device.clear_peers(),
-                            Ok(false) => {}
-                            Err(_) => return EINVAL,
-                        },
+                        "replace_peers" => {
+                            if val != "true" {
+                                return EINVAL;
+                            }
+                            device.clear_peers();
+                        }
                         "public_key" => match val.parse::<KeyBytes>() {
                             // Indicates a new peer section
                             Ok(key_bytes) => {
-                                // Apply before the first peer is built: peers
-                                // snapshot the device's AmneziaWG settings.
+                                // Peers snapshot interface-wide AmneziaWG settings
+                                // when they are created, so apply them before parsing
+                                // peer sections. If peer parsing fails, restore the old
+                                // device settings: upstream merges device parameters only
+                                // after the complete set operation has been scanned.
+                                let previous_obf = device.config.obf;
+                                let previous_amnezia = device.config.amnezia.clone();
                                 if let Err(code) = awg.apply(device) {
                                     return code;
                                 }
-                                return api_set_peer(
+                                let status = api_set_peer(
                                     reader,
                                     device,
                                     x25519::PublicKey::from(key_bytes.0),
                                 );
+                                if status != 0 {
+                                    device.set_obfuscation(previous_obf, previous_amnezia);
+                                }
+                                return status;
                             }
                             Err(_) => return EINVAL,
                         },
@@ -681,7 +847,7 @@ fn api_set(reader: &mut BufReader<&UnixStream>, d: &mut LockReadGuard<Device>) -
                             }
                             _ => return EINVAL,
                         },
-                        "content_padding_addition" => match parse_u16_range(val) {
+                        "content_padding_addition" => match parse_u32_range(val) {
                             Some(range) => {
                                 awg.content_padding_addition = Some(range);
                                 awg.seen = true;
@@ -730,19 +896,19 @@ fn api_set(reader: &mut BufReader<&UnixStream>, d: &mut LockReadGuard<Device>) -
                                 Err(_) => return EINVAL,
                             }
                         }
-                        "random_trailers" => match val.parse::<bool>() {
-                            Ok(value) => {
+                        "random_trailers" => match parse_uapi_bool(val) {
+                            Some(value) => {
                                 awg.random_trailers = Some(value);
                                 awg.seen = true;
                             }
-                            Err(_) => return EINVAL,
+                            None => return EINVAL,
                         },
-                        "disable_cookies" => match val.parse::<bool>() {
-                            Ok(value) => {
+                        "disable_cookies" => match parse_uapi_bool(val) {
+                            Some(value) => {
                                 awg.disable_cookies = Some(value);
                                 awg.seen = true;
                             }
-                            Err(_) => return EINVAL,
+                            None => return EINVAL,
                         },
                         _ => return EINVAL,
                     }
@@ -750,7 +916,10 @@ fn api_set(reader: &mut BufReader<&UnixStream>, d: &mut LockReadGuard<Device>) -
                 cmd.clear();
             }
 
-            0
+            match awg.apply(device) {
+                Ok(()) => 0,
+                Err(code) => code,
+            }
         },
     )
     .unwrap_or(EIO)
@@ -765,26 +934,23 @@ fn api_set_peer(
 
     let mut public_key = pub_key;
     let mut sec = PeerSection::default();
-    while reader.read_line(&mut cmd).is_ok() {
-        cmd.pop(); // remove newline if any
+    loop {
+        cmd.clear();
+        let bytes_read = match reader.read_line(&mut cmd) {
+            Ok(n) => n,
+            Err(_) => return EIO,
+        };
+        if bytes_read == 0 {
+            break;
+        }
+        if cmd.ends_with('\n') {
+            cmd.pop();
+        }
+        if cmd.ends_with('\r') {
+            cmd.pop();
+        }
         if cmd.is_empty() {
-            if let Err(e) = d.update_peer(
-                public_key,
-                sec.remove,
-                sec.replace_ips,
-                sec.endpoint,
-                sec.allowed_ips.as_slice(),
-                sec.keepalive,
-                sec.preshared_key,
-            ) {
-                tracing::error!(
-                    message = "failed to apply peer",
-                    peer = encode_hex(public_key.as_bytes()).as_str(),
-                    error = ?e
-                );
-                return EIO;
-            }
-            return 0; // Done
+            return commit_peer_section(d, &public_key, &sec);
         }
         {
             let parsed_cmd: Vec<&str> = cmd.splitn(2, '=').collect();
@@ -793,49 +959,62 @@ fn api_set_peer(
             }
             let (key, val) = (parsed_cmd[0], parsed_cmd[1]);
             match key {
-                "remove" => match val.parse::<bool>() {
-                    Ok(true) => sec.remove = true,
-                    Ok(false) => sec.remove = false,
-                    Err(_) => return EINVAL,
-                },
+                "remove" => {
+                    if val != "true" {
+                        return EINVAL;
+                    }
+                    sec.remove = true;
+                }
                 "preshared_key" => match val.parse::<KeyBytes>() {
                     Ok(key_bytes) => sec.preshared_key = Some(key_bytes.0),
                     Err(_) => return EINVAL,
                 },
-                "endpoint" => match val.parse::<SocketAddr>() {
-                    Ok(addr) => sec.endpoint = Some(addr),
-                    Err(_) => return EINVAL,
+                "endpoint" => {
+                    // WireGuard UAPI accepts both numeric socket addresses and
+                    // hostnames. Resolve hostnames like the Go Bind.ParseEndpoint.
+                    let endpoint = val
+                        .parse::<SocketAddr>()
+                        .ok()
+                        .or_else(|| val.to_socket_addrs().ok()?.next());
+                    match endpoint {
+                        Some(addr) => sec.endpoint = Some(addr),
+                        None => return EINVAL,
+                    }
+                }
+                "persistent_keepalive_interval" => match parse_u32_range(val) {
+                    Some(range) => sec.keepalive = Some(range),
+                    None => return EINVAL,
                 },
-                "persistent_keepalive_interval" => match val.parse::<u16>() {
-                    Ok(interval) => sec.keepalive = Some(interval),
-                    Err(_) => return EINVAL,
-                },
-                "replace_allowed_ips" => match val.parse::<bool>() {
-                    Ok(true) => sec.replace_ips = true,
-                    Ok(false) => sec.replace_ips = false,
-                    Err(_) => return EINVAL,
-                },
-                "allowed_ip" => match val.parse::<AllowedIP>() {
-                    Ok(ip) => sec.allowed_ips.push(ip),
-                    Err(_) => return EINVAL,
-                },
+                "replace_allowed_ips" => {
+                    if val != "true" {
+                        return EINVAL;
+                    }
+                    sec.allowed_ip_operations.push(AllowedIpOperation::Replace);
+                }
+                "allowed_ip" => {
+                    let (remove, value) = match val.strip_prefix('-') {
+                        Some(value) => (true, value),
+                        None => (false, val),
+                    };
+                    match value.parse::<AllowedIP>() {
+                        Ok(ip) if remove => sec
+                            .allowed_ip_operations
+                            .push(AllowedIpOperation::Remove(ip)),
+                        Ok(ip) => sec.allowed_ip_operations.push(AllowedIpOperation::Add(ip)),
+                        Err(_) => return EINVAL,
+                    }
+                }
+                "update_only" => {
+                    if val != "true" {
+                        return EINVAL;
+                    }
+                    sec.update_only = true;
+                }
                 "public_key" => {
                     // Indicates a new peer section. Commit changes for current peer, and continue to next peer
-                    if let Err(e) = d.update_peer(
-                        public_key,
-                        sec.remove,
-                        sec.replace_ips,
-                        sec.endpoint,
-                        sec.allowed_ips.as_slice(),
-                        sec.keepalive,
-                        sec.preshared_key,
-                    ) {
-                        tracing::error!(
-                            message = "failed to apply peer",
-                            peer = encode_hex(public_key.as_bytes()).as_str(),
-                            error = ?e
-                        );
-                        return EIO;
+                    let status = commit_peer_section(d, &public_key, &sec);
+                    if status != 0 {
+                        return status;
                     }
                     // Each `[Peer]` block is independent, matching the kernel's
                     // nested-attribute model. Reset every attribute, not just
@@ -847,16 +1026,21 @@ fn api_set_peer(
                         Err(_) => return EINVAL,
                     }
                 }
-                "protocol_version" => match val.parse::<u32>() {
-                    Ok(1) => {} // Only version 1 is legal
-                    _ => return EINVAL,
-                },
+                "protocol_version" => {
+                    if val != "1" {
+                        return EINVAL;
+                    }
+                }
                 _ => return EINVAL,
             }
         }
         cmd.clear();
     }
-    0
+
+    // EOF terminates a set operation too, matching IpcSetOperation's Scanner
+    // semantics. Do not silently drop the final peer when the client closes
+    // after its last configuration line instead of sending a blank line.
+    commit_peer_section(d, &public_key, &sec)
 }
 
 #[cfg(test)]
@@ -1049,17 +1233,23 @@ mod tests {
     }
 
     #[test]
-    fn parse_tag_range_rejects_zero_rather_than_silently_disabling() {
-        // ObfuscationRanges::new treats an all-zero range as "unset" and
-        // substitutes the vanilla WireGuard message type. Accepting h1=0 would
-        // therefore turn obfuscation *off* for that packet kind while reporting
-        // success -- the opposite of what the operator asked for.
-        assert_eq!(parse_tag_range("0"), None);
-        assert_eq!(parse_tag_range("0-0"), None);
-        assert_eq!(parse_tag_range("0-5"), None);
-        // Non-zero starts are unaffected.
+    fn parse_tag_range_accepts_zero_as_a_literal_uapi_tag() {
+        assert_eq!(parse_tag_range("0"), Some((0, 0)));
+        assert_eq!(parse_tag_range("0-0"), Some((0, 0)));
+        assert_eq!(parse_tag_range("0-5"), Some((0, 5)));
         assert_eq!(parse_tag_range("1"), Some((1, 1)));
         assert_eq!(parse_tag_range("1-5"), Some((1, 5)));
+
+        let mut params = AwgParams::default();
+        params.set_header("h1", (0, 0));
+        let (obf, _) = params
+            .merged(
+                ObfuscationRanges::default(),
+                &AmneziaConfig::new(0, 0, 0, 0),
+            )
+            .expect("zero is a valid explicit UAPI tag");
+        assert!(obf.matches_h1(0));
+        assert!(!obf.matches_h1(1));
     }
     #[test]
     fn randomized_timer_ranges_are_parsed_merged_and_validated() {
@@ -1070,9 +1260,10 @@ mod tests {
         assert_eq!(parse_u32_range("65535-65535"), Some((65535, 65535)));
         assert_eq!(
             parse_u32_range("65536"),
-            None,
-            "upstream timer ranges are uint16"
+            Some((65536, 65536)),
+            "upstream UintRange is uint32, not uint16"
         );
+        assert_eq!(parse_u32_range("4294967295"), Some((u32::MAX, u32::MAX)));
         assert_eq!(parse_u32_range("4294967296"), None);
 
         let current = AmneziaConfig::new(0, 0, 0, 0);
@@ -1158,15 +1349,50 @@ mod tests {
     }
 
     #[test]
+    fn uapi_u32_ranges_match_upstream_uint_range_width() {
+        assert_eq!(parse_u32_range("0"), Some((0, 0)));
+        assert_eq!(parse_u32_range("65536"), Some((65536, 65536)));
+        assert_eq!(
+            parse_u32_range("4294967294-4294967295"),
+            Some((u32::MAX - 1, u32::MAX))
+        );
+        assert_eq!(parse_u32_range("10-9"), None);
+        assert_eq!(parse_u32_range("4294967296"), None);
+    }
+
+    #[test]
+    fn allowed_ip_prefixes_are_canonicalized_before_uapi_operations() {
+        let host_bits: AllowedIP = "192.0.2.99/24".parse().unwrap();
+        let network: AllowedIP = "192.0.2.0/24".parse().unwrap();
+        assert_eq!(host_bits, network);
+        assert_eq!(host_bits.addr, IpAddr::from([192, 0, 2, 0]));
+    }
+
+    #[test]
+    fn uapi_boolean_parser_matches_go_strconv_parse_bool() {
+        for value in ["1", "t", "T", "TRUE", "true", "True"] {
+            assert_eq!(parse_uapi_bool(value), Some(true), "{}", value);
+        }
+        for value in ["0", "f", "F", "FALSE", "false", "False"] {
+            assert_eq!(parse_uapi_bool(value), Some(false), "{}", value);
+        }
+        for value in ["", "yes", "no", "2", "on", "off"] {
+            assert_eq!(parse_uapi_bool(value), None, "{}", value);
+        }
+    }
+
+    #[test]
     fn content_padding_addition_range_is_parsed_and_merged() {
-        assert_eq!(parse_u16_range("24"), Some((24, 24)));
-        assert_eq!(parse_u16_range("0-64"), Some((0, 64)));
-        assert_eq!(parse_u16_range("65-64"), None);
-        assert_eq!(parse_u16_range("-1"), None);
+        assert_eq!(parse_u32_range("24"), Some((24, 24)));
+        assert_eq!(parse_u32_range("0-64"), Some((0, 64)));
+        assert_eq!(parse_u32_range("65536-70000"), Some((65536, 70000)));
+        assert_eq!(parse_u32_range("4294967295"), Some((u32::MAX, u32::MAX)));
+        assert_eq!(parse_u32_range("65-64"), None);
+        assert_eq!(parse_u32_range("-1"), None);
 
         let current = AmneziaConfig::new(0, 0, 0, 0);
         let mut params = AwgParams::default();
-        params.content_padding_addition = parse_u16_range("8-32");
+        params.content_padding_addition = parse_u32_range("8-32");
         params.seen = true;
         let (_, merged) = params
             .merged(ObfuscationRanges::default(), &current)
