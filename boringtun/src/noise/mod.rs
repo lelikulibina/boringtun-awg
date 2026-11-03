@@ -463,6 +463,13 @@ impl Tunn {
         self.timers.set_persistent_keepalive(keepalive);
     }
 
+    /// Set an inclusive persistent-keepalive interval range in seconds.
+    /// None or (0, 0) disables persistent keepalive.
+    pub fn set_persistent_keepalive_range(&mut self, range: Option<(u32, u32)>) {
+        self.timers
+            .set_persistent_keepalive_range(range.unwrap_or((0, 0)));
+    }
+
     /// Reset the peer's learned UDP datagram window after endpoint roaming.
     pub(crate) fn reset_udp_window(&mut self) {
         self.udp_window = amnezia::DEFAULT_UDP_WINDOW;
@@ -2803,6 +2810,19 @@ mod tests {
         // None disables it, matching how Timers::new reads the same argument.
         my_tun.set_persistent_keepalive(None);
         assert_eq!(my_tun.persistent_keepalive(), None);
+    }
+
+    #[test]
+    fn last_handshake_timestamp_survives_session_key_expiry() {
+        let (mut my_tun, _their_tun) = create_two_tuns_and_handshake();
+        assert!(my_tun.time_since_last_handshake().is_some());
+
+        // Key material can expire while the UAPI's last-handshake timestamp
+        // remains available, as it does in amneziawg-go.
+        for session in &mut my_tun.sessions {
+            *session = None;
+        }
+        assert!(my_tun.time_since_last_handshake().is_some());
     }
 
     #[test]
