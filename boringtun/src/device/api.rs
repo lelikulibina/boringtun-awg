@@ -1358,14 +1358,19 @@ mod tests {
 
     #[test]
     fn content_padding_addition_range_is_parsed_and_merged() {
-        assert_eq!(parse_u16_range("24"), Some((24, 24)));
-        assert_eq!(parse_u16_range("0-64"), Some((0, 64)));
-        assert_eq!(parse_u16_range("65-64"), None);
-        assert_eq!(parse_u16_range("-1"), None);
+        assert_eq!(parse_u32_range("24"), Some((24, 24)));
+        assert_eq!(parse_u32_range("0-64"), Some((0, 64)));
+        assert_eq!(parse_u32_range("65536-70000"), Some((65536, 70000)));
+        assert_eq!(
+            parse_u32_range("4294967295"),
+            Some((u32::MAX, u32::MAX))
+        );
+        assert_eq!(parse_u32_range("65-64"), None);
+        assert_eq!(parse_u32_range("-1"), None);
 
         let current = AmneziaConfig::new(0, 0, 0, 0);
         let mut params = AwgParams::default();
-        params.content_padding_addition = parse_u16_range("8-32");
+        params.content_padding_addition = parse_u32_range("8-32");
         params.seen = true;
         let (_, merged) = params
             .merged(ObfuscationRanges::default(), &current)
