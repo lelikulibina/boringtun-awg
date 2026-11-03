@@ -267,7 +267,7 @@ enum AllowedIpOperation {
 struct PeerSection {
     remove: bool,
     endpoint: Option<SocketAddr>,
-    keepalive: Option<u16>,
+    keepalive: Option<(u32, u32)>,
     preshared_key: Option<[u8; 32]>,
     allowed_ip_operations: Vec<AllowedIpOperation>,
     update_only: bool,
@@ -665,8 +665,16 @@ fn api_get(writer: &mut BufWriter<&UnixStream>, d: &Device) -> i32 {
         );
         writeln!(writer, "protocol_version=1");
 
-        if let Some(keepalive) = p.persistent_keepalive() {
-            writeln!(writer, "persistent_keepalive_interval={}", keepalive);
+        if let Some((min, max)) = p.persistent_keepalive_range() {
+            if min == max {
+                writeln!(writer, "persistent_keepalive_interval={}", min);
+            } else {
+                writeln!(
+                    writer,
+                    "persistent_keepalive_interval={}-{}",
+                    min, max
+                );
+            }
         }
 
         if let Some(ref addr) = p.endpoint().addr {
@@ -953,9 +961,9 @@ fn api_set_peer(
                         None => return EINVAL,
                     }
                 },
-                "persistent_keepalive_interval" => match val.parse::<u16>() {
-                    Ok(interval) => sec.keepalive = Some(interval),
-                    Err(_) => return EINVAL,
+                "persistent_keepalive_interval" => match parse_u32_range(val) {
+                    Some(range) => sec.keepalive = Some(range),
+                    None => return EINVAL,
                 },
                 "replace_allowed_ips" => {
                     if val != "true" {
