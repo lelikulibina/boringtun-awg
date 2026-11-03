@@ -2813,6 +2813,19 @@ mod tests {
     }
 
     #[test]
+    fn last_handshake_timestamp_survives_session_key_expiry() {
+        let (mut my_tun, _their_tun) = create_two_tuns_and_handshake();
+        assert!(my_tun.time_since_last_handshake().is_some());
+
+        // Key material can expire while the UAPI's last-handshake timestamp
+        // remains available, as it does in amneziawg-go.
+        for session in &mut my_tun.sessions {
+            *session = None;
+        }
+        assert!(my_tun.time_since_last_handshake().is_some());
+    }
+
+    #[test]
     fn set_preshared_key_discards_sessions_only_when_it_actually_changes() {
         let (mut my_tun, _their_tun) = create_two_tuns_and_handshake();
         assert!(
