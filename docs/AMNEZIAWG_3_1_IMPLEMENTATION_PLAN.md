@@ -132,18 +132,18 @@
 
 ## Матрица параметров
 
-| Возможность | Состояние на старте плана | Целевой этап |
+| Возможность | Текущий статус | Целевой этап |
 |---|---|---|
 | Jc/Jmin/Jmax | Реализовано | Сохранить, регресс-тесты |
 | S1-S4 | Реализовано | Расширить требованиями HPK/MTU |
 | H1-H4 ranges | Реализовано | Проверить режим HPK и RandomTrailers |
-| I1-I5 CPS | UAPI принимает, но фактическая отправка не подтверждена; аудит обязателен | Отдельная проверка в этапе 0/6 |
+| I1-I5 CPS | Парсинг, генерация и отправка проверены; отдельные I1-I5 и совместный профиль входят в Go interop matrix | Этап 0/6 |
 | DNS/SIP/STUN/QUIC imitation | Реализовано как существующее расширение | Сохранить |
 | DisableCookies | Реализовано в PR #8, Linux CI зелёный | Этап 1 |
-| HeaderProtectionKey | Реализовано в Rust/UAPI; Go differential и полноценный двусторонний interop не выполнены | Этап 2 |
-| ContentPaddingAddition | Реализовано в текущем PR: config/UAPI, peer-UDP-window-bounded transport padding и receive trimming; IPv4/IPv6 boundary/receive-trimming tests; IPv4 keepalive test | Этап 3 |
-| Randomized timers | Реализованы диапазоны UAPI/config, случайный выбор порогов, jitter и retry budget; differential interop ещё не выполнен | Этап 4 |
-| RandomTrailers | Реализованы handshake/cookie trailers и transport AEAD padding, UAPI flag off by default; differential interop ещё не выполнен | Этап 5 |
+| HeaderProtectionKey | Двусторонний Go interop и фиксированные ChaCha20 vectors пройдены; полный byte-for-byte corpus остаётся открытым | Этап 2 |
+| ContentPaddingAddition | Config/UAPI, UDP-window clamp, IPv4/IPv6 trimming и двусторонний Go interop пройдены | Этап 3 |
+| Randomized timers | UAPI ranges, sampling, jitter, retry/expiry, accelerated rekey и 120-cycle soak пройдены; точный RNG differential остаётся открытым | Этап 4 |
+| RandomTrailers | Handshake/cookie trailers, transport AEAD padding, S1-S4 guard и двусторонний Go interop пройдены; полный byte-for-byte corpus открыт | Этап 5 |
 
 ## Точки входа в код
 
