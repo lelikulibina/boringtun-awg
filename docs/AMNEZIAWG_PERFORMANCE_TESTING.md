@@ -26,30 +26,32 @@ Workflow собирает BoringTun и закреплённую версию о�
 - TCP: один поток, 5 секунд для каждого направления.
 - UDP: целевые 100 Mbit/s для baseline и полного профиля, 5 секунд.
 
-Текущая матрица содержит 10 профилей и 48 iperf3 measurements: 40 TCP + 8 UDP. Run 41709590826 проверял предыдущие 8 профилей (40 измерений); в следующем запуске добавлены J-only и S/H-only legacy controls. Четырёхпоточный TCP удалён из диагностического smoke-benchmark: сначала нужно локализовать эффект отдельных расширений на базовом одном потоке. JSON-отчёты содержат throughput приёмника, байты, TCP retransmissions и UDP packet loss. В benchmark-режиме PCAP вообще не записывается: wire/PCAP проверяется отдельной interoperability-матрицей. Поэтому artifact содержит только компактные JSON-отчёты.
+Текущая матрица содержит 10 профилей и 48 iperf3 measurements: 40 TCP + 8 UDP. Run 41716049376 завершил все 20 профильных прогонов (10 профилей × обе реализации/роли) успешно. Четырёхпоточный TCP удалён из диагностического benchmark: сначала нужно локализовать эффект отдельных расширений на базовом одном потоке. JSON-отчёты содержат throughput приёмника, байты, TCP retransmissions и UDP packet loss. В benchmark-режиме PCAP вообще не записывается: wire/PCAP проверяется отдельной interoperability-матрицей. Поэтому artifact содержит только компактные JSON-отчёты.
 
 ## Изолированный benchmark: результаты и выводы
 
-[Run 41709590826](https://github.com/lelikulibina/boringtun-awg/actions/runs/41709590826) завершился успешно: **16/16 профильных прогонов**, 32 TCP + 8 UDP измерений. В нём проверены vanilla, AWG 2.x baseline, четыре отдельных расширения AWG 3.1, randomized timers и полный AWG 3.1. Artifact — **8 013 байт**, только JSON; PCAP в benchmark-режиме не создаётся.
+[Run 41716049376](https://github.com/lelikulibina/boringtun-awg/actions/runs/41716049376) завершился успешно: **20/20 профильных прогонов**, 40 TCP и 8 UDP измерений. Полный benchmark job занял около 5 минут; это отдельная диагностическая задача, не PR merge gate. Artifact содержит только JSON и занимает **9 882 байта**; PCAP с iperf3 datapath не создаётся.
 
 Результаты TCP (Mbit/s, client→server / server→client):
 
 | Профиль | amneziawg-go | BoringTun |
 |---|---:|---:|
-| Vanilla WireGuard | 4 066 / 4 349 | 600 / 563 |
-| AWG 2.x baseline | 14,47 / 10,48 | 374 / 375 |
-| HeaderProtectionKey | 23,69 / 6,08 | 387 / 386 |
-| ContentPaddingAddition | 13,84 / 26,41 | 391 / 393 |
-| RandomTrailers | 7,13 / 5,87 | 371 / 387 |
-| DisableCookies | 6,50 / 9,85 | 390 / 395 |
-| Только randomized timers | 11,11 / 10,69 | 369 / 365 |
-| Все расширения AWG 3.1 | 14,26 / 10,69 | 362 / 361 |
+| Vanilla WireGuard | 4 079 / 4 442 | 603 / 602 |
+| AWG 2.x baseline | 9,22 / 9,85 | 398 / 383 |
+| AWG 2.x J-only | 4 318 / 4 259 | 602 / 598 |
+| AWG 2.x S/H-only | 9,22 / 13,84 | 399 / 386 |
+| HeaderProtectionKey | 12,37 / 19,29 | 390 / 388 |
+| ContentPaddingAddition | 13,84 / 13,21 | 395 / 398 |
+| RandomTrailers | 10,06 / 12,37 | 392 / 392 |
+| DisableCookies | 11,11 / 15,09 | 397 / 394 |
+| Только randomized timers | 5,24 / 14,47 | 372 / 373 |
+| Все расширения AWG 3.1 | 10,48 / 12,37 | 368 / 358 |
 
-UDP 100 Mbit/s прошёл без потерь в vanilla и полном AWG 3.1 профилях обеих реализаций.
+**Причина upstream Go TCP-регрессии локализована в S/H-параметрах AWG 2.x, а не в J-параметрах или отдельных расширениях AWG 3.1.** J-only профиль с Jc/Jmin/Jmax сохраняет почти vanilla throughput: 4,26–4,32 Gbit/s. S/H-only профиль с S1–S4/H1–H4 воспроизводит падение до 9–14 Mbit/s — практически тот же результат, что и полный AWG 2.x baseline. Следовательно, общий источник деградации — обработка S/H packet-length и header-marker obfuscation в upstream Go datapath. Нельзя приписывать её HeaderProtectionKey, ContentPaddingAddition, RandomTrailers или DisableCookies: каждый из них лишь работает поверх уже деградирующего legacy S/H path.
 
-**Вывод по контрольному профилю:** upstream Go уже падает до 10–14 Mbit/s на AWG 2.x baseline без расширений 3.1, против 4,1–4,35 Gbit/s vanilla. Каждый отдельный параметр 3.1 даёт сопоставимый порядок величины (примерно 6–26 Mbit/s), а randomized timers alone — около 11 Mbit/s. Это указывает на общий legacy AWG datapath/configuration, а не на отдельную новую функцию 3.1. Однако AWG 2.x baseline объединяет Jc/Jmin/Jmax и S1-S4/H1-H4; чтобы точно локализовать причину, следующий запуск добавляет раздельные J-only и S/H-only профили.
+У BoringTun разница иная: J-only остаётся на уровне vanilla (около 598–602 Mbit/s), а S/H-only и AWG 2.x дают 383–399 Mbit/s. Полный AWG 3.1 профиль даёт 358–368 Mbit/s. Это умеренное снижение относительно vanilla, а не аналогичная катастрофическая деградация Go.
 
-BoringTun на том же runner показывает 374–375 Mbit/s для AWG 2.x и 361–395 Mbit/s для профилей AWG 3.1 против 563–600 Mbit/s vanilla. Это умеренное снижение, а не катастрофическая деградация upstream Go. Результаты — короткие измерения на GitHub-hosted runner, не гарантия абсолютной производительности.
+UDP 100 Mbit/s в vanilla и полном AWG 3.1 профиле обеих реализаций показал 99,99 Mbit/s и 0% потерь. Результаты — короткие 5-секундные измерения на GitHub-hosted runner, а не гарантия абсолютной производительности; TCP retransmissions в BoringTun высоки и заметны даже в vanilla, поэтому абсолютные throughput числа следует сравнивать только внутри одного запуска.
 
 ## Исторический baseline
 
@@ -78,4 +80,4 @@ Benchmark намеренно отделён от обязательного PR C
 
 ## Текущий статус расследования
 
-Диагностический workflow дополнен AWG 2.x control, timers-only, J-only и S/H-only профилями. Текущая версия — 10 профилей, 48 iperf3 измерений. Запускать через **Actions → AWG Performance Benchmarks → Run workflow**; результаты сравнивать внутри одного запуска и в обоих направлениях.
+Диагностический workflow включает AWG 2.x control, timers-only, J-only и S/H-only профили. Текущая версия — 10 профилей, 48 iperf3 измерений. Последний прогон 41716049376 завершился 20/20. Запускать через **Actions → AWG Performance Benchmarks → Run workflow**; результаты сравнивать внутри одного запуска и в обоих направлениях.
