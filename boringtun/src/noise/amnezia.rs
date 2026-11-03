@@ -37,10 +37,11 @@ const MAX_JUNK_PACKET_DELAY_MS: u16 = 200;
 /// front is not a parity break: nothing that *functions* on the kernel module
 /// is refused on size grounds here.
 ///
-/// That is a claim about size only. [`AmneziaConfig::validate`] also refuses a
-/// configuration whose cookie replies would amplify, and that one *is* a
-/// deliberate parity break — the kernel accepts those and runs them. The
-/// argument for it is at the check.
+/// That is a claim about size only. [`AmneziaConfig::validate`] refuses a
+/// configuration whose enabled under-load cookie replies would amplify; this
+/// guard is skipped when DisableCookies prevents those replies. The kernel
+/// accepts amplifying configurations, so the guard is a deliberate parity
+/// break when cookie replies are enabled. The argument for it is at the check.
 const MAX_SENDABLE_DATAGRAM: usize = 65535 - 20 - 8;
 const DNS_JUNK_SIZE_MIN: usize = 50;
 const DNS_JUNK_SIZE_MAX: usize = 200;
@@ -2934,8 +2935,8 @@ mod tests {
         );
     }
 
-    /// `validate` refuses a configuration whose cookie replies would amplify,
-    /// on both packet kinds and at the boundary.
+    /// `validate` refuses an amplifying configuration when under-load cookie
+    /// replies are enabled, on both packet kinds and at the boundary.
     ///
     /// This is deliberately stricter than the AmneziaWG kernel module, which
     /// accepts these combinations. The trade is stated in `validate`: a config
