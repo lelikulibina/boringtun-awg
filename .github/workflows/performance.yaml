@@ -2,6 +2,13 @@ name: AWG Performance Benchmarks
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - feat/amneziawg-3.1-disable-cookies
+    paths:
+      - .github/workflows/performance.yaml
+      - scripts/awg31-go-interop.py
+      - docs/AMNEZIAWG_PERFORMANCE_TESTING.md
 
 permissions:
   contents: read
