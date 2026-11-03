@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - main
+      - fix/awg31-ci-runtime-and-throughput
     paths:
       - .github/workflows/performance.yaml
       - scripts/awg31-go-interop.py
