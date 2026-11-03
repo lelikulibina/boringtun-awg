@@ -463,6 +463,7 @@ def verify_wire_pcap(
     header_protection: bool,
     random_trailers: bool,
     expected_handshakes: int,
+    expected_initiations: int | None = None,
     expected_signatures: list[bytes],
 ) -> None:
     """Decode captured UDP envelopes and assert normalized wire semantics.
@@ -579,7 +580,11 @@ def verify_wire_pcap(
     required = {"client_to_server": (1, 4), "server_to_client": (2, 4)}
     for direction, kinds in required.items():
         for kind in kinds:
-            minimum_count = expected_handshakes if kind in (1, 2) else 1
+            minimum_count = (
+                expected_initiations
+                if kind == 1 and expected_initiations is not None
+                else expected_handshakes if kind in (1, 2) else 1
+            )
             if counts[direction][kind] < minimum_count:
                 raise RuntimeError(
                     f"pcap missing type-{kind} from {direction}: "
@@ -755,6 +760,14 @@ def run_profile(
                 else 31 if name == "accelerated rekey"
                 else 2 if name == "rekey packet-loss recovery"
                 else 1
+            ),
+            expected_initiations=(
+                3 if name == "rekey packet-loss recovery"
+                else (
+                    121 if name == "long peer lifecycle soak"
+                    else 31 if name == "accelerated rekey"
+                    else 1
+                )
             ),
             expected_signatures=[
                 bytes.fromhex(value)
