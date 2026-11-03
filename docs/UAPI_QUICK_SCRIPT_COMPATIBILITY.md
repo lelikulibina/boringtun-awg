@@ -5,7 +5,7 @@ Run on Linux as root with `/dev/net/tun`, `wg`, `wg-quick`, `awg`, and
 
 ```sh
 cargo build --release -p boringtun-cli
-sudo bash scripts/uapi-quick-compat.sh "$PWD/target/release/boringtun"
+sudo bash scripts/uapi-quick-compat.sh "$PWD/target/release/boringtun-cli"
 ```
 
 The test deliberately invokes the distribution/upstream quick scripts rather
