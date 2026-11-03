@@ -1,12 +1,19 @@
 # AWG tunnel performance benchmarks
 
-The `AWG Performance Benchmarks` GitHub Actions workflow is a manual,
-non-blocking benchmark. Run it from **Actions → AWG Performance Benchmarks →
-Run workflow**. It does not participate in the required PR status checks.
+The `AWG Performance Benchmarks` GitHub Actions workflow is a non-blocking
+benchmark. It can be started from **Actions → AWG Performance Benchmarks →
+Run workflow**, and also runs when its workflow, harness, or this document
+changes on the feature branch. It does not participate in required PR status
+checks.
 
 The workflow builds this BoringTun fork and the pinned upstream
 `amneziawg-go`, then creates isolated Linux network namespaces and measures
-the encrypted tunnel with iperf3. It measures homogeneous pairs separately:
+the encrypted tunnel with iperf3. Each endpoint receives a distinct interface
+name even when both endpoints use the same implementation: Linux WireGuard
+UAPI sockets are created under the host's `/var/run` filesystem and are not
+isolated by network namespaces. Reusing an interface name across namespaces
+causes a socket collision and prevents the second endpoint from starting.
+The harness measures homogeneous pairs separately:
 `amneziawg-go` client ↔ `amneziawg-go` server and `boringtun-awg` client ↔
 `boringtun-awg` server. This avoids conflating datapath performance with
 cross-implementation interoperability.
