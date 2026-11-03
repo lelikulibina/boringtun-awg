@@ -463,6 +463,13 @@ impl Tunn {
         self.timers.set_persistent_keepalive(keepalive);
     }
 
+    /// Set an inclusive persistent-keepalive interval range in seconds.
+    /// None or (0, 0) disables persistent keepalive.
+    pub fn set_persistent_keepalive_range(&mut self, range: Option<(u32, u32)>) {
+        self.timers
+            .set_persistent_keepalive_range(range.unwrap_or((0, 0)));
+    }
+
     /// Reset the peer's learned UDP datagram window after endpoint roaming.
     pub(crate) fn reset_udp_window(&mut self) {
         self.udp_window = amnezia::DEFAULT_UDP_WINDOW;
