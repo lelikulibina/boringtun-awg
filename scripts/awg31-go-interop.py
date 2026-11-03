@@ -806,7 +806,7 @@ def run_profile(
                 stderr=subprocess.STDOUT,
             )
             time.sleep(0.2)
-        if capture_proc.poll() is not None:
+        if capture_proc is not None and capture_proc.poll() is not None:
             raise RuntimeError("tcpdump exited before the interop scenario started")
 
         def keypair() -> tuple[str, str]:
