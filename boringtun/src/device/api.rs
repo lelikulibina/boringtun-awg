@@ -578,10 +578,10 @@ fn api_get(writer: &mut BufWriter<&UnixStream>, d: &Device) -> i32 {
         writeln!(output, "fwmark={}", fwmark);
     }
 
-    // AmneziaWG interface parameters, emitted only when they differ from plain
-    // WireGuard so a vanilla device's output is byte-identical to before.
-    // Sizes are `%u`; magic headers use the kernel's `mh_genspec` convention --
-    // a bare value when the range is degenerate, `start-end` otherwise.
+    // AmneziaWG interface parameters. Upstream always serializes H1-H4,
+    // including their default message-type ranges (1, 2, 3, 4); zero-valued
+    // optional sizes and keys remain omitted. Magic headers use the kernel's
+    // mh_genspec convention: a bare value for a singleton, start-end otherwise.
     {
         let a = &d.config.amnezia;
         if a.header_protection_enabled() {
@@ -641,14 +641,13 @@ fn api_get(writer: &mut BufWriter<&UnixStream>, d: &Device) -> i32 {
         }
 
         let obf = d.config.obf;
-        let default = ObfuscationRanges::default();
-        for (key, range, def) in [
-            ("h1", obf.h1_init, default.h1_init),
-            ("h2", obf.h2_resp, default.h2_resp),
-            ("h3", obf.h3_cookie, default.h3_cookie),
-            ("h4", obf.h4_data, default.h4_data),
+        for (key, range) in [
+            ("h1", obf.h1_init),
+            ("h2", obf.h2_resp),
+            ("h3", obf.h3_cookie),
+            ("h4", obf.h4_data),
         ] {
-            if range != def {
+            if range.start != 0 || range.end != 0 {
                 if range.start == range.end {
                     writeln!(output, "{}={}", key, range.start);
                 } else {
