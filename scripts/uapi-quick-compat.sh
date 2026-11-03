@@ -228,7 +228,7 @@ wg_conf="$(PATH="$QUICK_BIN:$PATH" wg showconf "$WG_IFACE")"
 assert_contains "$wg_conf" "$WG_PRIVATE" "wg showconf private key readback"
 
 echo "== wg-quick: stop =="
-WG_QUICK_USERSPACE_IMPLEMENTATION="$BT_LAUNCHER" wg-quick down "$WORK/wgq0.conf"
+PATH="$QUICK_BIN:$PATH" WG_QUICK_USERSPACE_IMPLEMENTATION="$BT_LAUNCHER" wg-quick down "$WORK/wgq0.conf"
 WG_UP=0
 if ip link show "$WG_IFACE" >/dev/null 2>&1; then
   echo "FAIL: wg-quick down left $WG_IFACE present" >&2
@@ -257,7 +257,7 @@ assert_contains "$awg_conf" "H4 = 400" "AWG H4 readback"
 assert_contains "$awg_conf" "DisableCookies = true" "AWG 3.1 flag readback"
 
 echo "== awg-quick: stop =="
-WG_QUICK_USERSPACE_IMPLEMENTATION="$BT_LAUNCHER" awg-quick down "$WORK/awgq0.conf"
+PATH="$QUICK_BIN:$PATH" WG_QUICK_USERSPACE_IMPLEMENTATION="$BT_LAUNCHER" awg-quick down "$WORK/awgq0.conf"
 AWG_UP=0
 if ip link show "$AWG_IFACE" >/dev/null 2>&1; then
   echo "FAIL: awg-quick down left $AWG_IFACE present" >&2
