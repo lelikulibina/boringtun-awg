@@ -2,13 +2,15 @@
 
 > **Проверено 2026-11-03:** PR [#8](https://github.com/lelikulibina/boringtun-awg/pull/8), ветка `feat/amneziawg-3.1-disable-cookies`, HEAD `115a6c35d59a626e4c1f0f074b652618ff2f7092`. На этом HEAD Linux CI, Semgrep и двусторонняя матрица с официальным `amneziawg-go` завершились успешно. Матрица: **44/44 сценария**, включая packet-loss recovery и 120 циклов rekey в каждой роли сервера. Это подтверждает функциональную interoperability на проверенных профилях, но не полное побайтовое равенство всех wire datagrams. Windows job пропущен, macOS не входит в текущий merge gate.
 
+> **Предупреждение о безопасности:** `disable_cookies=true` — не просто запрет отправки Cookie Reply. Как и в upstream, при этом обходится весь under-load gate: MAC1 остаётся обязательным, но проверка MAC2 и handshake rate limiting не выполняются. Это снижает защиту от CPU-exhaustion/DoS при потоке handshake-пакетов. Включайте параметр только осознанно и учитывайте риск на публично доступном endpoint.
+
 ## Совместимость и безопасные значения
 
 Все новые параметры выключены или имеют WireGuard-совместимые значения по умолчанию. Если AWG-параметры не заданы, обычный WireGuard-путь сохраняется. Параметры, влияющие на wire format, должны быть согласованы на обеих сторонах туннеля.
 
 | UAPI-параметр | Формат | Значение по умолчанию / смысл |
 |---|---|---|
-| `disable_cookies` | `true` / `false` | `false`. При `true` MAC1 по-прежнему проверяется, но under-load MAC2/cookie challenge обходится. Входящие Cookie Reply продолжают приниматься. |
+| `disable_cookies` | `true` / `false` | `false`. При `true` MAC1 по-прежнему проверяется, но under-load MAC2/cookie challenge и связанный handshake rate-limit gate обходятся. Входящие Cookie Reply продолжают приниматься. |
 | `header_protection_key` | 64 hex-символа (32 байта) | Нулевой ключ выключает защиту. Один и тот же ключ и S-настройки нужны на обоих концах. |
 | `content_padding_addition` | `uint16`: `N` или `MIN-MAX` | Inclusive диапазон нулевого дополнения transport plaintext перед AEAD. `0`/не задано — выключено. |
 | `random_trailers` | `true` / `false` | `false`. Случайный внешний trailer для handshake/cookie и нулевое дополнение transport внутри AEAD. |
