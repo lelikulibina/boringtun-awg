@@ -49,17 +49,17 @@ fn parse_u16_range(val: &str) -> Option<(u16, u16)> {
 }
 
 fn parse_u32_range(val: &str) -> Option<(u32, u32)> {
-    // Upstream AmneziaWG exposes all 3.x timer ranges as UintRange values
-    // backed by uint16. Keep the internal timer representation u32 (Duration
-    // arithmetic uses it), but reject values the reference UAPI cannot accept.
-    let (start, end): (u16, u16) = match val.split_once('-') {
+    // AmneziaWG's UintRange is a packed pair of uint32 values. In particular,
+    // timer ranges are not limited to u16: values through u32::MAX are valid
+    // at the UAPI parsing layer, subject to the timer's own validation.
+    let (start, end): (u32, u32) = match val.split_once('-') {
         Some((start, end)) => (start.trim().parse().ok()?, end.trim().parse().ok()?),
         None => {
-            let value: u16 = val.trim().parse().ok()?;
+            let value: u32 = val.trim().parse().ok()?;
             (value, value)
         }
     };
-    (start <= end).then_some((u32::from(start), u32::from(end)))
+    (start <= end).then_some((start, end))
 }
 
 fn parse_uapi_bool(val: &str) -> Option<bool> {
@@ -1287,6 +1287,18 @@ mod tests {
         assert_eq!(partial_merged.rekey_after_time, (100, 140));
         assert_eq!(partial_merged.rekey_timeout, (3, 7));
         assert_eq!(partial_merged.reject_after_time, (150, 190));
+    }
+
+    #[test]
+    fn uapi_u32_ranges_match_upstream_uint_range_width() {
+        assert_eq!(parse_u32_range("0"), Some((0, 0)));
+        assert_eq!(parse_u32_range("65536"), Some((65536, 65536)));
+        assert_eq!(
+            parse_u32_range("4294967294-4294967295"),
+            Some((u32::MAX - 1, u32::MAX))
+        );
+        assert_eq!(parse_u32_range("10-9"), None);
+        assert_eq!(parse_u32_range("4294967296"), None);
     }
 
     #[test]
