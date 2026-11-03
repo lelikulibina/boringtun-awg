@@ -313,6 +313,32 @@ mod tests {
     }
 
     #[test]
+    fn persistent_keepalive_range_is_sampled_and_rearmed_on_traversal() {
+        let config = AmneziaConfig::new(0, 0, 0, 0);
+        let mut timers = Timers::new(None, false, &config);
+
+        timers.set_persistent_keepalive_range((10, 20));
+        assert_eq!(timers.persistent_keepalive_range, (10, 20));
+        assert_eq!(
+            timers.persistent_keepalive_deadline,
+            Some(Duration::ZERO),
+            "enabling keepalive schedules the initial send immediately"
+        );
+
+        let now = Duration::from_secs(42);
+        timers.reset_persistent_keepalive(now);
+        assert!((10..=20).contains(&timers.persistent_keepalive_interval));
+        assert_eq!(
+            timers.persistent_keepalive_deadline,
+            Some(now + Duration::from_secs(u64::from(timers.persistent_keepalive_interval)))
+        );
+
+        timers.set_persistent_keepalive_range((0, 0));
+        assert_eq!(timers.persistent_keepalive_range, (0, 0));
+        assert_eq!(timers.persistent_keepalive_deadline, None);
+    }
+
+    #[test]
     fn random_jitter_respects_the_inclusive_333_millisecond_limit() {
         assert_eq!(Timers::map_range_sample(0, 333, 0), Some(0));
         assert_eq!(Timers::map_range_sample(0, 333, 333), Some(333));
