@@ -102,7 +102,9 @@ impl Timers {
                 (interval, interval)
             },
             persistent_keepalive_interval: u32::from(persistent_keepalive.unwrap_or(0)),
-            persistent_keepalive_deadline: None,
+            persistent_keepalive_deadline: persistent_keepalive
+                .filter(|interval| *interval > 0)
+                .map(|interval| Duration::from_secs(u64::from(interval))),
             should_reset_rr: reset_rr,
             timer_ranges: [
                 amnezia.rekey_after_time,
@@ -297,6 +299,10 @@ mod tests {
         let mut timers = Timers::new(Some(25), false, &config);
         assert_eq!(timers.persistent_keepalive_range, (25, 25));
         assert_eq!(timers.persistent_keepalive_interval, 25);
+        assert_eq!(
+            timers.persistent_keepalive_deadline,
+            Some(Duration::from_secs(25))
+        );
 
         timers.set_persistent_keepalive(Some(0));
         assert_eq!(timers.persistent_keepalive_range, (0, 0));
