@@ -297,6 +297,10 @@ fn resolved_allowed_ips(
     public_key: &x25519::PublicKey,
     section: &PeerSection,
 ) -> Vec<AllowedIP> {
+    if section.allowed_ip_operations.is_empty() {
+        return Vec::new();
+    }
+
     let existing: Vec<AllowedIP> = device
         .peers
         .get(public_key)
