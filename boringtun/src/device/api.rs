@@ -1223,8 +1223,12 @@ mod tests {
         assert_eq!(parse_u32_range("65535-65535"), Some((65535, 65535)));
         assert_eq!(
             parse_u32_range("65536"),
-            None,
-            "upstream timer ranges are uint16"
+            Some((65536, 65536)),
+            "upstream UintRange is uint32, not uint16"
+        );
+        assert_eq!(
+            parse_u32_range("4294967295"),
+            Some((u32::MAX, u32::MAX))
         );
         assert_eq!(parse_u32_range("4294967296"), None);
 
