@@ -47,8 +47,24 @@ AWG_PEER_PUBLIC="$(awg pubkey < "$WORK/awg-peer-private")"
 # ship an AppArmor profile named "wg" that denies access to UAPI sockets.
 # Run only the test clients unconfined; do not disable AppArmor system-wide.
 mkdir -p "$QUICK_BIN"
-cp -L "$(command -v wg-quick)" "$QUICK_BIN/wg-quick"
-cp -L "$(command -v awg-quick)" "$QUICK_BIN/awg-quick"
+cp -L "$(command -v wg-quick)" "$QUICK_BIN/wg-quick.real"
+cp -L "$(command -v awg-quick)" "$QUICK_BIN/awg-quick.real"
+cat > "$QUICK_BIN/wg-quick" <<EOF
+#!/usr/bin/env bash
+if command -v aa-exec >/dev/null 2>&1 && [[ -r /sys/kernel/security/apparmor/profiles ]]; then
+  exec aa-exec -p unconfined -- "$QUICK_BIN/wg-quick.real" "\$@"
+fi
+exec "$QUICK_BIN/wg-quick.real" "\$@"
+EOF
+chmod +x "$QUICK_BIN/wg-quick"
+cat > "$QUICK_BIN/awg-quick" <<EOF
+#!/usr/bin/env bash
+if command -v aa-exec >/dev/null 2>&1 && [[ -r /sys/kernel/security/apparmor/profiles ]]; then
+  exec aa-exec -p unconfined -- "$QUICK_BIN/awg-quick.real" "\$@"
+fi
+exec "$QUICK_BIN/awg-quick.real" "\$@"
+EOF
+chmod +x "$QUICK_BIN/awg-quick"
 WG_REAL="$(command -v wg)"
 cat > "$QUICK_BIN/wg" <<EOF
 #!/usr/bin/env bash
