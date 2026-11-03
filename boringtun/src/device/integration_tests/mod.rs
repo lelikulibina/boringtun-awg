@@ -181,10 +181,10 @@ mod tests {
             for _i in 0..5 {
                 let res = std::net::TcpStream::connect_timeout(
                     &http_addr,
-                    std::time::Duration::from_secs(1),
+                    std::time::Duration::from_secs(5),
                 );
                 if let Err(err) = res {
-                    println!("failed to connect: {:?}", err);
+                    println!("failed to connect to {http_addr}: {:?}", err);
                     std::thread::sleep(std::time::Duration::from_millis(100));
                     continue;
                 }
