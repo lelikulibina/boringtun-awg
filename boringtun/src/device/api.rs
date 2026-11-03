@@ -38,17 +38,6 @@ const AWG_SOCK_DIR: &str = "/var/run/amneziawg/";
 /// inclusive range (`"342871004-442871003"`). A bare value is a degenerate
 /// range, which is exactly how the kernel module's `mh_genspec` treats it, so
 /// existing single-value configs map across unchanged.
-fn parse_u16_range(val: &str) -> Option<(u16, u16)> {
-    let (start, end) = match val.split_once('-') {
-        Some((start, end)) => (start.trim().parse().ok()?, end.trim().parse().ok()?),
-        None => {
-            let value: u16 = val.trim().parse().ok()?;
-            (value, value)
-        }
-    };
-    (start <= end).then_some((start, end))
-}
-
 fn parse_u32_range(val: &str) -> Option<(u32, u32)> {
     // AmneziaWG's UintRange is a packed pair of uint32 values. In particular,
     // timer ranges are not limited to u16: values through u32::MAX are valid
@@ -110,7 +99,7 @@ struct AwgParams {
     random_trailers: Option<bool>,
     signature_packets: [Option<Option<SignatureChain>>; 5],
     header_protection_key: Option<[u8; 32]>,
-    content_padding_addition: Option<(u16, u16)>,
+    content_padding_addition: Option<(u32, u32)>,
     rekey_after_time: Option<(u32, u32)>,
     rekey_timeout: Option<(u32, u32)>,
     reject_after_time: Option<(u32, u32)>,
@@ -211,9 +200,10 @@ impl AwgParams {
         amnezia.header_protection_key = self
             .header_protection_key
             .unwrap_or(amnezia.header_protection_key);
-        amnezia.content_padding_addition = self
+        let (padding_min, padding_max) = self
             .content_padding_addition
             .unwrap_or(amnezia.content_padding_addition);
+        amnezia = amnezia.with_content_padding_addition_u32(padding_min, padding_max);
         amnezia.rekey_after_time = self.rekey_after_time.unwrap_or(amnezia.rekey_after_time);
         amnezia.rekey_timeout = self.rekey_timeout.unwrap_or(amnezia.rekey_timeout);
         amnezia.reject_after_time = self.reject_after_time.unwrap_or(amnezia.reject_after_time);
@@ -863,7 +853,7 @@ fn api_set(reader: &mut BufReader<&UnixStream>, d: &mut LockReadGuard<Device>) -
                             }
                             _ => return EINVAL,
                         },
-                        "content_padding_addition" => match parse_u16_range(val) {
+                        "content_padding_addition" => match parse_u32_range(val) {
                             Some(range) => {
                                 awg.content_padding_addition = Some(range);
                                 awg.seen = true;
