@@ -257,6 +257,7 @@ mod tests {
     // UAPI connections remain open for multiple operations. Read exactly one
     // response through its errno terminator instead of waiting for socket EOF.
     fn read_uapi_response(socket: UnixStream) -> String {
+        let _ = socket.set_read_timeout(Some(std::time::Duration::from_secs(10)));
         let mut reader = BufReader::new(socket);
         let mut response = String::new();
         loop {
