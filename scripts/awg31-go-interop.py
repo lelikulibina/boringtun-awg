@@ -70,6 +70,11 @@ PROFILES = [
         True,
     ),
     (
+        "bulk data integrity",
+        "",
+        True,
+    ),
+    (
         "long peer lifecycle soak",
         "rekey_after_time=2-2\nrekey_timeout=2-2\n"
         "reject_after_time=30-30\nkeepalive_timeout=2-2\n"
@@ -275,6 +280,134 @@ def verify_udp_roundtrip(server_ns: str, client_ns: str) -> None:
 
 
 
+
+BULK_TRANSFER_HELPER = r"""
+import hashlib
+import socket
+import struct
+import sys
+import time
+
+mode, address, port, total_size, block_size = sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4]), int(sys.argv[5])
+
+def recv_exact(conn, length):
+    chunks = []
+    remaining = length
+    while remaining:
+        part = conn.recv(min(remaining, 1024 * 1024))
+        if not part:
+            raise RuntimeError(f"unexpected EOF with {remaining} bytes remaining")
+        chunks.append(part)
+        remaining -= len(part)
+    return b"".join(chunks)
+
+if mode == "recv":
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    listener.bind((address, port))
+    listener.listen(1)
+    listener.settimeout(180)
+    conn, _ = listener.accept()
+    listener.close()
+    with conn:
+        conn.settimeout(180)
+        digest = hashlib.sha256()
+        blocks = total = 0
+        while total < total_size:
+            header = recv_exact(conn, 8)
+            sequence = struct.unpack("!Q", header)[0]
+            expected_sequence = blocks
+            if sequence != expected_sequence:
+                raise RuntimeError(f"block sequence mismatch: got {sequence}, expected {expected_sequence}")
+            length = min(block_size, total_size - total)
+            payload = recv_exact(conn, length)
+            expected_byte = bytes([sequence % 251])
+            if payload != expected_byte * length:
+                raise RuntimeError(f"payload corruption in block {sequence}")
+            digest.update(payload)
+            total += length
+            blocks += 1
+        result = digest.digest()
+        conn.sendall(struct.pack("!Q", total) + result)
+        print(f"BULK-RECEIVE bytes={total} blocks={blocks} sha256={digest.hexdigest()}", flush=True)
+elif mode == "send":
+    conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    conn.settimeout(180)
+    deadline = time.monotonic() + 15
+    while True:
+        try:
+            conn.connect((address, port))
+            break
+        except OSError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.1)
+    with conn:
+        digest = hashlib.sha256()
+        blocks = total = 0
+        while total < total_size:
+            length = min(block_size, total_size - total)
+            payload = bytes([blocks % 251]) * length
+            conn.sendall(struct.pack("!Q", blocks) + payload)
+            digest.update(payload)
+            total += length
+            blocks += 1
+        ack = recv_exact(conn, 40)
+        received_total = struct.unpack("!Q", ack[:8])[0]
+        received_digest = ack[8:]
+        if received_total != total:
+            raise RuntimeError(f"receiver byte count mismatch: {received_total} != {total}")
+        if received_digest != digest.digest():
+            raise RuntimeError("receiver SHA-256 does not match sender SHA-256")
+        print(f"BULK-SEND bytes={total} blocks={blocks} sha256={digest.hexdigest()} ACK=verified", flush=True)
+else:
+    raise RuntimeError(f"unknown mode: {mode}")
+"""
+
+
+def verify_bulk_data_transfer(
+    server_ns: str, client_ns: str, helper_path: Path,
+    total_size: int = 64 * 1024 * 1024,
+    block_size: int = 64 * 1024,
+) -> None:
+    """Transfer and verify a large TCP stream in both tunnel directions."""
+    helper_path.write_text(BULK_TRANSFER_HELPER, encoding="utf-8")
+    scenarios = (
+        ("client->server", client_ns, server_ns, SERVER_TUN),
+        ("server->client", server_ns, client_ns, CLIENT_TUN),
+    )
+    for direction, sender_ns, receiver_ns, receiver_ip in scenarios:
+        receiver = subprocess.Popen(
+            [
+                "ip", "netns", "exec", receiver_ns, "python3", str(helper_path),
+                "recv", receiver_ip, "39002", str(total_size), str(block_size),
+            ],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        try:
+            sender_output = run(
+                "ip", "netns", "exec", sender_ns, "python3", str(helper_path),
+                "send", receiver_ip, "39002", str(total_size), str(block_size),
+                capture=True,
+            )
+            receiver_stdout, receiver_stderr = receiver.communicate(timeout=190)
+            if receiver.returncode != 0:
+                raise RuntimeError(
+                    f"{direction} receiver failed: {receiver_stderr.strip() or receiver_stdout.strip()}"
+                )
+            print(f"BULK {direction}: {sender_output}")
+            print(f"BULK {direction}: {receiver_stdout.strip()}")
+        finally:
+            if receiver.poll() is None:
+                receiver.terminate()
+                try:
+                    receiver.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    receiver.kill()
+                    receiver.wait()
+
+
+
 def verify_wire_pcap(
     pcap_path: Path,
     *,
@@ -477,7 +610,7 @@ def run_profile(
         capture_proc = subprocess.Popen(
             [
                 "ip", "netns", "exec", ns_server, "tcpdump", "-U", "-n",
-                "-i", veth_server, "-w", str(capture_path), "udp port 51820",
+                "-i", veth_server, "-s", "320", "-w", str(capture_path), "udp port 51820",
             ],
             stdout=capture_log,
             stderr=subprocess.STDOUT,
@@ -547,6 +680,11 @@ def run_profile(
                 print(
                     f"REKEY soak cycle {cycle + 1}/{cycle_count} completed ({role})"
                 )
+        elif name == "bulk data integrity":
+            verify_bulk_data_transfer(
+                ns_server, ns_client, logs / "bulk-transfer.py"
+            )
+            verify_udp_roundtrip(ns_server, ns_client)
         elif name == "rekey packet-loss recovery":
             drop_client_egress_during_rekey(ns_client, veth_client)
             wait_rekey(server_iface, ns_client, SERVER_TUN, initial_handshake_time)
