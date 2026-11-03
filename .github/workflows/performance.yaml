@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - feat/amneziawg-3.1-disable-cookies
+      - bench/max-throughput
     paths:
       - .github/workflows/performance.yaml
       - scripts/awg31-go-interop.py
@@ -20,9 +21,9 @@ concurrency:
 
 jobs:
   iperf3:
-    name: WireGuard vs AWG 3.1 throughput
+    name: Maximum TCP/UDP throughput and tunnel CPU
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v6
       - uses: actions-rs/toolchain@v1
@@ -47,7 +48,7 @@ jobs:
       - name: Build official AmneziaWG Go
         working-directory: upstream-amneziawg-go
         run: go build -v -o ../amneziawg-go .
-      - name: Run bidirectional iperf3 benchmarks
+      - name: Run maximum-throughput iperf3 benchmarks
         run: sudo python3 scripts/awg31-go-interop.py ./target/release/boringtun-cli ./amneziawg-go --performance
       - name: Upload benchmark reports and packet captures
         if: always()

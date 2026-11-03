@@ -475,20 +475,129 @@ def verify_bulk_data_transfer(
 
 
 
+def _process_cpu_ticks(pids: tuple[int, ...]) -> dict[int, int]:
+    """Return user+system CPU ticks for the tracked tunnel processes."""
+    result = {}
+    for pid in pids:
+        try:
+            stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+            fields = stat[stat.rfind(")") + 2:].split()
+            result[pid] = int(fields[11]) + int(fields[12])
+        except (FileNotFoundError, ProcessLookupError, ValueError, IndexError):
+            result[pid] = 0
+    return result
+
+
+def _run_iperf_trial(
+    receiver_ns: str, sender_ns: str, receiver_ip: str, port: int,
+    duration: int, extra_args: list[str], tunnel_pids: tuple[int, ...],
+    scenario: str, direction: str, test_name: str,
+) -> dict:
+    server = subprocess.Popen(
+        [
+            "ip", "netns", "exec", receiver_ns, "iperf3",
+            "-s", "-1", "-p", str(port), "-J",
+        ],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    try:
+        time.sleep(0.3)
+        if server.poll() is not None:
+            stdout, stderr = server.communicate()
+            raise RuntimeError(
+                f"iperf3 server exited early: {stderr.strip() or stdout.strip()}"
+            )
+        cpu_before = _process_cpu_ticks(tunnel_pids)
+        wall_start = time.monotonic()
+        client = subprocess.Popen(
+            [
+                "ip", "netns", "exec", sender_ns, "iperf3",
+                "-c", receiver_ip, "-p", str(port),
+                "-t", str(duration), "-J", *extra_args,
+            ],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        try:
+            client_output, client_error = client.communicate(timeout=duration + 20)
+        except subprocess.TimeoutExpired:
+            client.kill()
+            client_output, client_error = client.communicate()
+            raise RuntimeError(
+                f"iperf3 client timed out: {client_error.strip() or client_output[-1000:]}"
+            )
+        wall_seconds = max(time.monotonic() - wall_start, 0.001)
+        cpu_after = _process_cpu_ticks(tunnel_pids)
+        if client.returncode != 0:
+            raise RuntimeError(
+                f"iperf3 client failed: {client_error.strip() or client_output[-2000:]}"
+            )
+        server_stdout, server_stderr = server.communicate(timeout=duration + 20)
+        if server.returncode != 0:
+            raise RuntimeError(
+                f"iperf3 server failed: {server_stderr.strip() or server_stdout.strip()}"
+            )
+
+        report = json.loads(client_output)
+        end = report.get("end", {})
+        received = end.get("sum_received") or end.get("sum") or {}
+        sent = end.get("sum_sent") or end.get("sum") or {}
+        bits_per_second = received.get("bits_per_second")
+        if bits_per_second is None:
+            raise RuntimeError(
+                f"iperf3 report has no receiver throughput: {client_output[-2000:]}"
+            )
+        hz = os.sysconf("SC_CLK_TCK")
+        process_cpu = {
+            str(pid): max(0, cpu_after.get(pid, 0) - cpu_before.get(pid, 0)) / hz
+            for pid in tunnel_pids
+        }
+        cpu_seconds = sum(process_cpu.values())
+        cpu_cores = cpu_seconds / wall_seconds
+        offered = None
+        if "-b" in extra_args:
+            raw_rate = extra_args[extra_args.index("-b") + 1]
+            multiplier = 1000 if raw_rate.endswith("G") else 1
+            offered = float(raw_rate[:-1]) * multiplier
+        return {
+            "scenario": scenario,
+            "direction": direction,
+            "test": test_name,
+            "duration_seconds": duration,
+            "bytes_received": received.get("bytes"),
+            "bits_per_second": bits_per_second,
+            "throughput_mbps": bits_per_second / 1_000_000,
+            "tcp_retransmits": sent.get("retransmits"),
+            "udp_lost_percent": received.get("lost_percent"),
+            "udp_lost_packets": received.get("lost_packets"),
+            "udp_packets": received.get("packets"),
+            "offered_mbps": offered,
+            "wall_seconds": wall_seconds,
+            "tunnel_cpu_seconds": cpu_seconds,
+            "tunnel_cpu_cores": cpu_cores,
+            "tunnel_cpu_percent_one_core": cpu_cores * 100,
+            "tunnel_cpu_percent_host": cpu_cores / max(os.cpu_count() or 1, 1) * 100,
+            "tunnel_process_cpu_seconds": process_cpu,
+        }
+    finally:
+        if server.poll() is None:
+            server.terminate()
+            try:
+                server.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                server.kill()
+                server.wait()
+
+
 def verify_iperf3(
     server_ns: str, client_ns: str, output_dir: Path, scenario: str,
-    duration: int = 8,
+    tunnel_pids: tuple[int, ...], tcp_duration: int = 10,
+    udp_duration: int = 4,
 ) -> None:
-    """Measure TCP/UDP throughput in both directions through the encrypted tunnel."""
+    """Find TCP maxima and the UDP receive ceiling in both tunnel directions."""
     if shutil.which("iperf3") is None:
         raise RuntimeError("iperf3 is required; install the iperf3 package")
     output_dir.mkdir(parents=True, exist_ok=True)
     measurements = []
-    tests = (
-        ("tcp-1-stream", []),
-        ("tcp-4-streams", ["-P", "4"]),
-        ("udp-100-mbit", ["-u", "-b", "100M"]),
-    )
     directions = (
         ("client-to-server", client_ns, server_ns, SERVER_TUN),
         ("server-to-client", server_ns, client_ns, CLIENT_TUN),
@@ -496,72 +605,116 @@ def verify_iperf3(
     port = 39003
 
     for direction, sender_ns, receiver_ns, receiver_ip in directions:
-        for test_name, extra_args in tests:
-            server = subprocess.Popen(
-                [
-                    "ip", "netns", "exec", receiver_ns, "iperf3",
-                    "-s", "-1", "-p", str(port), "-J",
-                ],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
+        for streams in (1, 4, 8, 16):
+            item = _run_iperf_trial(
+                receiver_ns=receiver_ns, sender_ns=sender_ns,
+                receiver_ip=receiver_ip, port=port, duration=tcp_duration,
+                extra_args=["-P", str(streams)], tunnel_pids=tunnel_pids,
+                scenario=scenario, direction=direction,
+                test_name=f"tcp-{streams}-stream{'s' if streams != 1 else ''}",
             )
-            try:
-                time.sleep(0.3)
-                if server.poll() is not None:
-                    stdout, stderr = server.communicate()
-                    raise RuntimeError(
-                        f"iperf3 server exited early: {stderr.strip() or stdout.strip()}"
-                    )
-                client_output = run(
-                    "ip", "netns", "exec", sender_ns, "iperf3",
-                    "-c", receiver_ip, "-p", str(port),
-                    "-t", str(duration), "-J", *extra_args, capture=True,
-                )
-                server_stdout, server_stderr = server.communicate(
-                    timeout=duration + 15
-                )
-                if server.returncode != 0:
-                    raise RuntimeError(
-                        f"iperf3 server failed: {server_stderr.strip() or server_stdout.strip()}"
-                    )
-                report = json.loads(client_output)
-                end = report.get("end", {})
-                received = end.get("sum_received") or end.get("sum") or {}
-                sent = end.get("sum_sent") or end.get("sum") or {}
-                bits_per_second = received.get("bits_per_second")
-                if bits_per_second is None:
-                    raise RuntimeError(
-                        f"iperf3 report has no receiver throughput: {client_output[-2000:]}"
-                    )
-                item = {
-                    "scenario": scenario,
-                    "direction": direction,
-                    "test": test_name,
-                    "duration_seconds": duration,
-                    "bytes_received": received.get("bytes"),
-                    "bits_per_second": bits_per_second,
-                    "throughput_mbps": bits_per_second / 1_000_000,
-                    "tcp_retransmits": sent.get("retransmits"),
-                    "udp_lost_percent": received.get("lost_percent"),
-                    "udp_lost_packets": received.get("lost_packets"),
-                    "udp_packets": received.get("packets"),
-                }
-                measurements.append(item)
-                print(
-                    f"IPERF3 {scenario} {direction} {test_name}: "
-                    f"{item['throughput_mbps']:.2f} Mbit/s "
-                    f"retransmits={item['tcp_retransmits']} "
-                    f"udp_loss={item['udp_lost_percent']}"
-                )
-            finally:
-                if server.poll() is None:
-                    server.terminate()
-                    try:
-                        server.wait(timeout=2)
-                    except subprocess.TimeoutExpired:
-                        server.kill()
-                        server.wait()
+            measurements.append(item)
+            print(
+                f"IPERF3 {scenario} {direction} {item['test']}: "
+                f"{item['throughput_mbps']:.2f} Mbit/s "
+                f"tunnel_cpu={item['tunnel_cpu_percent_one_core']:.1f}% of one core"
+            )
+
+        # Sweep offered load geometrically until receiver loss exceeds 1%,
+        # then refine the last-good/first-bad interval with binary-search probes.
+        rates_mbps = [
+            100, 200, 400, 800, 1200, 1600, 2400, 3200,
+            4800, 6400, 8000, 12000, 16000, 20000,
+        ]
+        udp_trials = []
+        last_good = 0.0
+        first_bad = None
+        for rate in rates_mbps:
+            item = _run_iperf_trial(
+                receiver_ns=receiver_ns, sender_ns=sender_ns,
+                receiver_ip=receiver_ip, port=port, duration=udp_duration,
+                extra_args=["-u", "-b", f"{rate}M"],
+                tunnel_pids=tunnel_pids, scenario=scenario,
+                direction=direction, test_name=f"udp-sweep-{rate}mbit",
+            )
+            udp_trials.append(item)
+            loss = item.get("udp_lost_percent")
+            print(
+                f"IPERF3 {scenario} {direction} UDP offered={rate} Mbit/s "
+                f"received={item['throughput_mbps']:.2f} Mbit/s "
+                f"loss={loss if loss is not None else 'n/a'}% "
+                f"tunnel_cpu={item['tunnel_cpu_percent_one_core']:.1f}%"
+            )
+            if loss is not None and loss <= 1.0:
+                last_good = float(rate)
+            else:
+                first_bad = float(rate)
+                break
+
+        # Three refinement rounds estimate the 1%-loss boundary while keeping
+        # the total runtime practical on a shared GitHub-hosted runner.
+        for _ in range(3):
+            if first_bad is None or first_bad - last_good <= 25:
+                break
+            rate = int(((last_good + first_bad) / 2) / 25) * 25
+            if rate <= last_good or rate >= first_bad:
+                break
+            item = _run_iperf_trial(
+                receiver_ns=receiver_ns, sender_ns=sender_ns,
+                receiver_ip=receiver_ip, port=port, duration=udp_duration,
+                extra_args=["-u", "-b", f"{rate}M"],
+                tunnel_pids=tunnel_pids, scenario=scenario,
+                direction=direction, test_name=f"udp-refine-{rate}mbit",
+            )
+            udp_trials.append(item)
+            loss = item.get("udp_lost_percent")
+            print(
+                f"IPERF3 {scenario} {direction} UDP refine offered={rate} Mbit/s "
+                f"received={item['throughput_mbps']:.2f} Mbit/s "
+                f"loss={loss if loss is not None else 'n/a'}%"
+            )
+            if loss is not None and loss <= 1.0:
+                last_good = float(rate)
+            else:
+                first_bad = float(rate)
+
+        good = [
+            item for item in udp_trials
+            if item.get("udp_lost_percent") is not None
+            and item["udp_lost_percent"] <= 1.0
+        ]
+        raw_best = max(udp_trials, key=lambda item: item["throughput_mbps"])
+        good_best = max(good, key=lambda item: item["throughput_mbps"]) if good else None
+        summary = {
+            "scenario": scenario,
+            "direction": direction,
+            "test": "udp-max-throughput",
+            "loss_threshold_percent": 1.0,
+            "max_tested_offered_mbps": max(
+                item["offered_mbps"] for item in udp_trials
+                if item["offered_mbps"] is not None
+            ),
+            "tested_ceiling_without_loss": first_bad is None,
+            "max_received_mbps_at_or_below_1pct_loss": (
+                good_best["throughput_mbps"] if good_best else None
+            ),
+            "offered_mbps_at_or_below_1pct_loss": (
+                good_best["offered_mbps"] if good_best else None
+            ),
+            "max_received_mbps_regardless_of_loss": raw_best["throughput_mbps"],
+            "lowest_loss_percent": min(
+                (item["udp_lost_percent"] for item in udp_trials
+                 if item["udp_lost_percent"] is not None),
+                default=None,
+            ),
+            "trials": udp_trials,
+        }
+        measurements.append(summary)
+        print(
+            f"IPERF3 {scenario} {direction} UDP MAX: "
+            f"{summary['max_received_mbps_at_or_below_1pct_loss']} Mbit/s "
+            f"at <=1% loss; raw peak={summary['max_received_mbps_regardless_of_loss']:.2f} Mbit/s"
+        )
 
     safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", scenario)
     result_path = output_dir / f"{safe_name}.json"
@@ -569,8 +722,7 @@ def verify_iperf3(
         json.dumps(measurements, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
-    print(f"IPERF3-RESULTS: {result_path} ({len(measurements)} measurements)")
-
+    print(f"IPERF3-RESULTS: {result_path} ({len(measurements)} records)")
 def verify_wire_pcap(
     pcap_path: Path,
     *,
@@ -854,6 +1006,7 @@ def run_profile(
             verify_iperf3(
                 ns_server, ns_client, Path("target/awg31-performance"),
                 f"{name}-{role}",
+                (server_proc.pid, client_proc.pid),
             )
             verify_udp_roundtrip(ns_server, ns_client)
         elif name in ("accelerated rekey", "long peer lifecycle soak"):
