@@ -265,22 +265,25 @@ def verify_udp_roundtrip(server_ns: str, client_ns: str) -> None:
         "import socket; "
         "s=socket.socket(socket.AF_INET, socket.SOCK_DGRAM); "
         f"s.bind(('{SERVER_TUN}', 39001)); "
-        "s.settimeout(8); "
+        "s.settimeout(14); "
         "data, addr=s.recvfrom(256); "
         "s.sendto(b'awg31-udp-reply:' + data, addr); "
         "print(data.decode(), flush=True)"
     )
     client_code = (
-        "import socket, time; "
-        "s=socket.socket(socket.AF_INET, socket.SOCK_DGRAM); "
-        "s.settimeout(1.5); "
-        f"target=('{SERVER_TUN}', 39001); "
-        "data=None; "
-        "deadline=time.monotonic()+12; "
-        "while time.monotonic()<deadline: "
-        "s.sendto(b'probe', target); "
-        "try: data, _=s.recvfrom(256); break "
-        "except socket.timeout: pass; "
+        "import socket, time\\n"
+        "s=socket.socket(socket.AF_INET, socket.SOCK_DGRAM)\\n"
+        "s.settimeout(1.5)\\n"
+        f"target=('{SERVER_TUN}', 39001)\\n"
+        "data=None\\n"
+        "deadline=time.monotonic()+12\\n"
+        "while time.monotonic()<deadline:\\n"
+        "    s.sendto(b'probe', target)\\n"
+        "    try:\\n"
+        "        data, _=s.recvfrom(256)\\n"
+        "        break\\n"
+        "    except socket.timeout:\\n"
+        "        pass\\n"
         "assert data == b'awg31-udp-reply:probe', data"
     )
     server = subprocess.Popen(
@@ -292,7 +295,7 @@ def verify_udp_roundtrip(server_ns: str, client_ns: str) -> None:
     try:
         time.sleep(0.1)
         run("ip", "netns", "exec", client_ns, "python3", "-c", client_code)
-        stdout, stderr = server.communicate(timeout=4)
+        stdout, stderr = server.communicate(timeout=15)
         if server.returncode != 0:
             raise RuntimeError(f"UDP server failed: {stderr.strip() or stdout.strip()}")
     finally:
