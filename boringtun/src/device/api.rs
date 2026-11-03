@@ -812,16 +812,25 @@ fn api_set(reader: &mut BufReader<&UnixStream>, d: &mut LockReadGuard<Device>) -
                         "public_key" => match val.parse::<KeyBytes>() {
                             // Indicates a new peer section
                             Ok(key_bytes) => {
-                                // Apply before the first peer is built: peers
-                                // snapshot the device's AmneziaWG settings.
+                                // Peers snapshot interface-wide AmneziaWG settings
+                                // when they are created, so apply them before parsing
+                                // peer sections. If peer parsing fails, restore the old
+                                // device settings: upstream merges device parameters only
+                                // after the complete set operation has been scanned.
+                                let previous_obf = device.config.obf;
+                                let previous_amnezia = device.config.amnezia.clone();
                                 if let Err(code) = awg.apply(device) {
                                     return code;
                                 }
-                                return api_set_peer(
+                                let status = api_set_peer(
                                     reader,
                                     device,
                                     x25519::PublicKey::from(key_bytes.0),
                                 );
+                                if status != 0 {
+                                    device.set_obfuscation(previous_obf, previous_amnezia);
+                                }
+                                return status;
                             }
                             Err(_) => return EINVAL,
                         },
