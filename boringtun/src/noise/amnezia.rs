@@ -2930,6 +2930,30 @@ mod tests {
     }
 
     #[test]
+    fn uapi_pre_handshake_junk_validation_rejects_silent_clamping() {
+        assert!(AmneziaPreHandshakeJunk::try_new(
+            MAX_JUNK_PACKET_COUNT + 1,
+            0,
+            0,
+            0
+        )
+        .is_err());
+        assert!(AmneziaPreHandshakeJunk::try_new(1, 0, 10, 0).is_err());
+        assert!(AmneziaPreHandshakeJunk::try_new(
+            1,
+            1,
+            MAX_JUNK_PACKET_SIZE + 1,
+            0
+        )
+        .is_err());
+
+        let valid = AmneziaPreHandshakeJunk::try_new(1, 0, 0, 0).unwrap();
+        assert_eq!(valid.packet_count, 1);
+        assert_eq!(valid.packet_size_min, DEFAULT_JUNK_PACKET_SIZE_MIN);
+        assert_eq!(valid.packet_size_max, DEFAULT_JUNK_PACKET_SIZE_MAX);
+    }
+
+    #[test]
     fn pre_handshake_junk_rejects_zero_min_packet_size() {
         let cfg = AmneziaConfig::new(0, 0, 0, 0).with_pre_handshake_junk(1, 0, 10, 0);
 
