@@ -542,6 +542,37 @@ impl Device {
         tracing::info!("Peer updated");
     }
 
+    /// Remove one exact AllowedIP from a peer without disturbing prefixes
+    /// owned by other peers. The trie stores canonical network addresses, so
+    /// normalise host bits before comparing, just as insert() does.
+    fn remove_allowed_ip(&mut self, pub_key: &x25519::PublicKey, allowed_ip: AllowedIP) {
+        let peer = match self.peers.get(pub_key).cloned() {
+            Some(peer) => peer,
+            None => return,
+        };
+        let network = ip_network::IpNetwork::new_truncate(
+            allowed_ip.addr,
+            allowed_ip.cidr,
+        ).expect("AllowedIP CIDR was validated during parsing");
+        let target_addr = network.network_address();
+        let target_cidr = network.netmask();
+
+        let retained: Vec<_> = self.peers_by_ip.iter()
+            .filter_map(|(owner, addr, cidr)| {
+                if Arc::ptr_eq(owner, &peer) && addr == target_addr && cidr == target_cidr {
+                    None
+                } else {
+                    Some((Arc::clone(owner), addr, cidr))
+                }
+            })
+            .collect();
+
+        self.peers_by_ip.clear();
+        for (owner, addr, cidr) in retained {
+            self.peers_by_ip.insert(addr, cidr as u32, owner);
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn update_peer(
         &mut self,
