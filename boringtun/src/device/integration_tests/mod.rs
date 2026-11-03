@@ -254,6 +254,30 @@ mod tests {
         }
     }
 
+    // UAPI connections remain open for multiple operations. Read exactly one
+    // response through its errno terminator instead of waiting for socket EOF.
+    fn read_uapi_response(socket: UnixStream) -> String {
+        let mut reader = BufReader::new(socket);
+        let mut response = String::new();
+        loop {
+            let mut line = String::new();
+            match reader.read_line(&mut line) {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {}
+            }
+            let done = line == "\\n"
+                && response
+                    .lines()
+                    .last()
+                    .is_some_and(|previous| previous.starts_with("errno="));
+            response.push_str(&line);
+            if done {
+                break;
+            }
+        }
+        response
+    }
+
     impl WGHandle {
         /// Create a new interface for the tunnel with the given address
         fn init(addr_v4: IpAddr, addr_v6: IpAddr) -> WGHandle {
@@ -406,9 +430,7 @@ mod tests {
             let mut socket = UnixStream::connect(path).unwrap();
             write!(socket, "get=1\n\n").unwrap();
 
-            let mut ret = String::new();
-            socket.read_to_string(&mut ret).unwrap();
-            ret
+            read_uapi_response(socket)
         }
 
         /// Issue a set command on the interface
@@ -417,9 +439,7 @@ mod tests {
             let mut socket = UnixStream::connect(path).unwrap();
             write!(socket, "set=1\n{}\n\n", setting).unwrap();
 
-            let mut ret = String::new();
-            socket.read_to_string(&mut ret).unwrap();
-            ret
+            read_uapi_response(socket)
         }
 
         /// Assign a listen_port to the interface
