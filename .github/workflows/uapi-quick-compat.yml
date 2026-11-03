@@ -40,5 +40,6 @@ jobs:
         if: failure()
         run: |
           sudo ip -details link
-          sudo find /var/run/wireguard /var/run/amneziawg -maxdepth 1 -type s -ls 2>/dev/null || true
-          sudo cat /tmp/uapi-wg.trace 2>/dev/null || true
+          sudo find /var/run/wireguard /var/run/amneziawg -maxdepth 1 -ls 2>/dev/null || true
+          sudo sh -c 'for trace in /tmp/uapi-wg.trace*; do [ -f "$trace" ] || continue; echo "===== $trace ====="; cat "$trace"; done'
+          sudo ls -la /tmp/uapi-wg.trace* 2>/dev/null || true
