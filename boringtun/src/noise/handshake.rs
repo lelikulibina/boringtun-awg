@@ -476,7 +476,7 @@ impl ObfuscationRanges {
         let names = ["H1", "H2", "H3", "H4"];
         let mut parsed = [TagRange { start: 0, end: 0 }; 4];
 
-        for (index, (start, end)) in ranges.into_iter().enumerate() {
+        for (index, (start, end)) in ranges.iter().copied().enumerate() {
             if start > end {
                 return Err(format!(
                     "Invalid {} range: start ({start}) > end ({end})",
