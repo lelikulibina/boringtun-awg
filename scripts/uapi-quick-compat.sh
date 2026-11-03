@@ -109,7 +109,7 @@ assert_boringtun_running() {
     for proc in /proc/[0-9]*; do
       [[ -e "$proc/exe" ]] || continue
       [[ "$(readlink -f "$proc/exe" 2>/dev/null)" == "$BT_BIN" ]] || continue
-      if tr '\\0' ' ' < "$proc/cmdline" 2>/dev/null | grep -Fq -- "$iface"; then
+      if tr '\0' ' ' < "$proc/cmdline" 2>/dev/null | grep -Fq -- "$iface"; then
         return 0
       fi
     done
