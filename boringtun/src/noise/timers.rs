@@ -795,19 +795,21 @@ impl Tunn {
                         keepalive_required = true;
                     }
 
-                    // Persistent KEEPALIVE
-                    if self
-                        .timers
-                        .persistent_keepalive_deadline
-                        .map(|deadline| now >= deadline)
-                        .unwrap_or(false)
-                    {
-                        tracing::debug!("KEEPALIVE(PERSISTENT_KEEPALIVE)");
-                        self.timers.persistent_keepalive_deadline = None;
-                        self.timer_tick(TimePersistentKeepalive);
-                        keepalive_required = true;
-                    }
                 }
+            }
+
+            // Persistent keepalive is an independent timer in the Go device;
+            // it remains active while a handshake retransmission is pending.
+            if self
+                .timers
+                .persistent_keepalive_deadline
+                .map(|deadline| now >= deadline)
+                .unwrap_or(false)
+            {
+                tracing::debug!("KEEPALIVE(PERSISTENT_KEEPALIVE)");
+                self.timers.persistent_keepalive_deadline = None;
+                self.timer_tick(TimePersistentKeepalive);
+                keepalive_required = true;
             }
         }
 
