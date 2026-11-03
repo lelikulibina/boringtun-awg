@@ -463,8 +463,8 @@ def verify_wire_pcap(
     header_protection: bool,
     random_trailers: bool,
     expected_handshakes: int,
-    expected_initiations: int | None = None,
     expected_signatures: list[bytes],
+    expected_initiations: int | None = None,
 ) -> None:
     """Decode captured UDP envelopes and assert normalized wire semantics.
 
