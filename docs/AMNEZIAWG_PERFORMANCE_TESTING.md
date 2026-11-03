@@ -1,48 +1,49 @@
-# AWG tunnel performance benchmarks
+# Тестирование производительности туннеля AWG
 
-The `AWG Performance Benchmarks` GitHub Actions workflow is a non-blocking
-benchmark. It can be started from **Actions → AWG Performance Benchmarks →
-Run workflow**, and also runs when its workflow, harness, or this document
-changes on the feature branch. It does not participate in required PR status
-checks.
+Workflow `AWG Performance Benchmarks` — дополнительный benchmark, не блокирующий обязательные PR checks. Его можно запустить вручную через **Actions → AWG Performance Benchmarks → Run workflow**. Workflow также запускается при изменении своего YAML, harness или этого документа на feature branch.
 
-The workflow builds this BoringTun fork and the pinned upstream
-`amneziawg-go`, then creates isolated Linux network namespaces and measures
-the encrypted tunnel with iperf3. Each endpoint receives a distinct interface
-name even when both endpoints use the same implementation: Linux WireGuard
-UAPI sockets are created under the host's `/var/run` filesystem and are not
-isolated by network namespaces. Reusing an interface name across namespaces
-causes a socket collision and prevents the second endpoint from starting.
-The harness measures homogeneous pairs separately:
-`amneziawg-go` client ↔ `amneziawg-go` server and `boringtun-awg` client ↔
-`boringtun-awg` server. This avoids conflating datapath performance with
-cross-implementation interoperability.
+## Методика
 
-## Scenarios
+Workflow собирает BoringTun и закреплённую версию официального `amneziawg-go`, создаёт изолированные Linux network namespaces и измеряет зашифрованный туннель через iperf3.
 
-- Vanilla WireGuard baseline.
-- AWG 3.1 with HeaderProtectionKey, ContentPaddingAddition,
-  RandomTrailers, DisableCookies and randomized timers.
-- Homogeneous endpoint pairs: amneziawg-go ↔ amneziawg-go and BoringTun ↔ BoringTun.
-- Vanilla WireGuard and AWG 3.1 profiles for each homogeneous pair.
-- Both traffic directions.
-- TCP with one stream and four parallel streams.
-- UDP at a fixed offered rate of 100 Mbit/s.
+Каждому endpoint назначается уникальное имя интерфейса даже при использовании одной реализации на обеих сторонах: UAPI-сокеты Linux WireGuard создаются в host `/var/run` и не изолируются network namespaces. Повторное имя интерфейса приводит к конфликту сокетов.
 
-Each measurement runs for 8 seconds; the workflow produces 24 measurements (2 implementations × 2 profiles × 2 directions × 3 traffic modes). JSON reports include receiver throughput,
-received byte count, TCP retransmissions, and UDP packet loss where reported.
-Reports and the matching packet captures are uploaded as the
-`awg31-iperf3-performance` artifact.
+Производительность измеряется отдельно для однородных пар:
+- `amneziawg-go` client ↔ `amneziawg-go` server;
+- `boringtun-awg` client ↔ `boringtun-awg` server.
 
-## Interpreting results
+Это позволяет не смешивать накладные расходы datapath с межреализационной совместимостью.
 
-Compare both the implementations (Go vs BoringTun) and the overhead of AWG 3.1 against vanilla WireGuard within each implementation, using results from the same workflow run. GitHub-hosted
-runner load and virtualization make absolute throughput noisy; these results
-are comparative diagnostics, not a stable hardware performance guarantee.
-For meaningful release comparisons, repeat the workflow on the same dedicated
-runner and compare medians across several runs.
+## Сценарии измерений
 
-The benchmark is intentionally separate from mandatory PR CI: throughput is
-environment-dependent and should not make correctness checks flaky. It runs
-manually from Actions or automatically when the benchmark workflow, harness,
-or this document changes on the feature branch.
+- Vanilla WireGuard как baseline.
+- AWG 3.1 с HeaderProtectionKey, ContentPaddingAddition, RandomTrailers, DisableCookies и randomized timers.
+- Обе однородные пары реализаций.
+- Оба направления передачи данных.
+- TCP: один поток и четыре параллельных потока.
+- UDP: целевая скорость 100 Mbit/s.
+- Длительность одного измерения — 8 секунд.
+
+Итого workflow выполняет 24 iperf3 measurements: 2 реализации × 2 профиля × 2 направления × 3 режима трафика. JSON-отчёты содержат throughput на приёмнике, число полученных байтов, TCP retransmissions и UDP packet loss, если он предоставляется iperf3.
+
+## Последний запуск
+
+[AWG Performance Benchmarks, run 41629778226](https://github.com/lelikulibina/boringtun-awg/actions/runs/41629778226) на HEAD `115a6c35d59a626e4c1f0f074b652618ff2f7092` завершился успешно:
+
+- сборка BoringTun и upstream Go reference — success;
+- все 4 комбинации реализации/профиля — success;
+- **24 iperf3 measurements** завершены;
+- отчёты и соответствующие PCAP загружены как artifact [`awg31-iperf3-performance`](https://github.com/lelikulibina/boringtun-awg/actions/runs/41629778226).
+
+Workflow подтверждает работоспособность benchmark harness и завершение измерений. В этом документе намеренно не приводятся численные выводы о превосходстве одной реализации: сравнивать следует JSON-отчёты одного и того же запуска. Абсолютные значения на GitHub-hosted runner зависят от нагрузки и виртуализации.
+
+## Интерпретация
+
+Сравнивайте:
+1. Go и BoringTun внутри одного профиля;
+2. AWG 3.1 и vanilla WireGuard внутри каждой реализации;
+3. оба направления и все три режима трафика.
+
+Для релизных выводов повторяйте benchmark на одном и том же выделенном runner и сравнивайте медианы нескольких запусков. Один запуск на GitHub-hosted runner не является стабильной гарантией производительности.
+
+Benchmark намеренно отделён от обязательного PR CI: throughput зависит от среды и не должен делать проверки корректности flaky.
