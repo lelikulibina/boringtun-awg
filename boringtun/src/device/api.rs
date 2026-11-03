@@ -420,7 +420,11 @@ impl Device {
                         Ok(0) | Err(_) => break,
                         Ok(_) => {}
                     }
-                    if cmd.ends_with('\n') { cmd.pop(); }
+                    // ReadString in upstream requires a complete operation line.
+                    if !cmd.ends_with('\n') {
+                        break;
+                    }
+                    cmd.pop();
                     // IpcHandle compares the operation line literally; unlike
                     // Scanner lines inside set=1, CRLF is not accepted here.
                     let status = match cmd.as_str() {
@@ -467,7 +471,11 @@ impl Device {
                         }
                         Ok(_) => {}
                     }
-                    if cmd.ends_with('\n') { cmd.pop(); }
+                    // ReadString in upstream requires a complete operation line.
+                    if !cmd.ends_with('\n') {
+                        break;
+                    }
+                    cmd.pop();
                     // IpcHandle compares the operation line literally; unlike
                     // Scanner lines inside set=1, CRLF is not accepted here.
                     let status = match cmd.as_str() {
