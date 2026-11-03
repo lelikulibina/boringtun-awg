@@ -144,7 +144,9 @@ QUICK_PROFILES = [PROFILES[index] for index in (0, 1, 11, 12, 15, 21)]
 
 # Isolated extension profiles for diagnosis; baseline and combined profiles
 # also run UDP sanity checks.
-PERFORMANCE_PROFILES = [PROFILES[index] for index in (0, 6, 7, 8, 9, 15)]
+# Include AWG 2.x as the control for shared S/H obfuscation, and timers-only
+# to distinguish legacy AWG framing from the 3.1 transport extensions.
+PERFORMANCE_PROFILES = [PROFILES[index] for index in (0, 1, 6, 7, 8, 9, 10, 15)]
 
 def run(*args: str, check: bool = True, capture: bool = False) -> str:
     result = subprocess.run(
