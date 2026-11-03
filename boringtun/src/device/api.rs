@@ -1349,6 +1349,14 @@ mod tests {
     }
 
     #[test]
+    fn allowed_ip_prefixes_are_canonicalized_before_uapi_operations() {
+        let host_bits: AllowedIP = "192.0.2.99/24".parse().unwrap();
+        let network: AllowedIP = "192.0.2.0/24".parse().unwrap();
+        assert_eq!(host_bits, network);
+        assert_eq!(host_bits.addr, IpAddr::from([192, 0, 2, 0]));
+    }
+
+    #[test]
     fn allowed_ip_operations_preserve_uapi_line_order() {
         let a: AllowedIP = "192.0.2.0/24".parse().unwrap();
         let b: AllowedIP = "198.51.100.0/24".parse().unwrap();
