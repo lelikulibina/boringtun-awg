@@ -56,6 +56,23 @@ impl<D> AllowedIps<D> {
         self.ips.retain(|_, v| !predicate(v));
     }
 
+    /// Remove one exact prefix only when it is currently owned by data matching
+    /// the supplied predicate. This mirrors amneziawg-go's AllowedIPs.Remove.
+    pub fn remove_exact(
+        &mut self,
+        key: IpAddr,
+        cidr: u32,
+        predicate: &dyn Fn(&D) -> bool,
+    ) {
+        let target = IpNetwork::new_truncate(key, cidr as u8)
+            .expect("cidr is valid length");
+        self.ips.retain(|network, data| {
+            !(network.network_address() == target.network_address()
+                && network.netmask() == target.netmask()
+                && predicate(data))
+        });
+    }
+
     pub fn iter(&self) -> Iter<D> {
         Iter(
             self.ips
