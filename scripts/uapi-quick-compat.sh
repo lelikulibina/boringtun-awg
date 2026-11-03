@@ -24,8 +24,8 @@ AWG_UP=0
 cleanup() {
   local status=$?
   set +e
-  if [[ $AWG_UP -eq 1 ]]; then WG_QUICK_USERSPACE_IMPLEMENTATION="$BT_BIN" WG_SUDO=1 awg-quick down "$WORK/awg.conf"; fi
-  if [[ $WG_UP -eq 1 ]]; then WG_QUICK_USERSPACE_IMPLEMENTATION="$BT_BIN" WG_SUDO=1 wg-quick down "$WORK/wg.conf"; fi
+  if [[ $AWG_UP -eq 1 ]]; then WG_QUICK_USERSPACE_IMPLEMENTATION="$BT_BIN" WG_SUDO=1 awg-quick down "$WORK/awgq0.conf"; fi
+  if [[ $WG_UP -eq 1 ]]; then WG_QUICK_USERSPACE_IMPLEMENTATION="$BT_BIN" WG_SUDO=1 wg-quick down "$WORK/wgq0.conf"; fi
   rm -rf "$WORK"
   exit "$status"
 }
@@ -41,7 +41,7 @@ WG_PEER_PUBLIC="$(wg pubkey < "$WORK/wg-peer-private")"
 AWG_PRIVATE="$(cat "$WORK/awg-private")"
 AWG_PEER_PUBLIC="$(awg pubkey < "$WORK/awg-peer-private")"
 
-cat > "$WORK/wg.conf" <<EOF
+cat > "$WORK/wgq0.conf" <<EOF
 [Interface]
 PrivateKey = $WG_PRIVATE
 Address = 10.77.0.1/24
@@ -54,7 +54,7 @@ AllowedIPs = 10.77.0.2/32
 Endpoint = 127.0.0.1:51872
 EOF
 
-cat > "$WORK/awg.conf" <<EOF
+cat > "$WORK/awgq0.conf" <<EOF
 [Interface]
 PrivateKey = $AWG_PRIVATE
 Address = 10.78.0.1/24
@@ -91,7 +91,7 @@ assert_contains() {
 
 echo "== wg-quick: start userspace BoringTun =="
 WG_UP=1
-WG_QUICK_USERSPACE_IMPLEMENTATION="$BT_BIN" WG_SUDO=1 wg-quick up "$WORK/wg.conf"
+WG_QUICK_USERSPACE_IMPLEMENTATION="$BT_BIN" WG_SUDO=1 wg-quick up "$WORK/wgq0.conf"
 wg_show="$(wg show "$WG_IFACE")"
 assert_contains "$wg_show" "listening port: 51871" "wg show via UAPI"
 wg_dump="$(wg show "$WG_IFACE" dump)"
@@ -108,7 +108,7 @@ wg_conf="$(wg showconf "$WG_IFACE")"
 assert_contains "$wg_conf" "$WG_PRIVATE" "wg showconf private key readback"
 
 echo "== wg-quick: stop =="
-WG_QUICK_USERSPACE_IMPLEMENTATION="$BT_BIN" WG_SUDO=1 wg-quick down "$WORK/wg.conf"
+WG_QUICK_USERSPACE_IMPLEMENTATION="$BT_BIN" WG_SUDO=1 wg-quick down "$WORK/wgq0.conf"
 WG_UP=0
 if ip link show "$WG_IFACE" >/dev/null 2>&1; then
   echo "FAIL: wg-quick down left $WG_IFACE present" >&2
@@ -117,7 +117,7 @@ fi
 
 echo "== awg-quick: start userspace BoringTun =="
 AWG_UP=1
-WG_QUICK_USERSPACE_IMPLEMENTATION="$BT_BIN" WG_SUDO=1 awg-quick up "$WORK/awg.conf"
+WG_QUICK_USERSPACE_IMPLEMENTATION="$BT_BIN" WG_SUDO=1 awg-quick up "$WORK/awgq0.conf"
 awg_show="$(awg show "$AWG_IFACE")"
 assert_contains "$awg_show" "listening port: 51881" "awg show via UAPI"
 awg_dump="$(awg show "$AWG_IFACE" dump)"
@@ -137,7 +137,7 @@ assert_contains "$awg_conf" "H4 = 400" "AWG H4 readback"
 assert_contains "$awg_conf" "DisableCookies = true" "AWG 3.1 flag readback"
 
 echo "== awg-quick: stop =="
-WG_QUICK_USERSPACE_IMPLEMENTATION="$BT_BIN" WG_SUDO=1 awg-quick down "$WORK/awg.conf"
+WG_QUICK_USERSPACE_IMPLEMENTATION="$BT_BIN" WG_SUDO=1 awg-quick down "$WORK/awgq0.conf"
 AWG_UP=0
 if ip link show "$AWG_IFACE" >/dev/null 2>&1; then
   echo "FAIL: awg-quick down left $AWG_IFACE present" >&2
