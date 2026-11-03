@@ -731,6 +731,7 @@ def verify_wire_pcap(
 def run_profile(
     bt: str, go: str, name: str, extra: str,
     awg_enabled: bool, bt_is_server: bool, performance: bool = False,
+    same_implementation: str | None = None,
 ) -> None:
     token = uuid.uuid4().hex[:10]
     ns_server, ns_client = f"awg31s{token}", f"awg31c{token}"
@@ -743,11 +744,18 @@ def run_profile(
     capture_log = None
     workdir = tempfile.TemporaryDirectory(prefix="awg31-interop-")
     logs = Path(workdir.name)
-    server_iface = bt_iface if bt_is_server else go_iface
-    client_iface = go_iface if bt_is_server else bt_iface
-    server_name = "boringtun" if bt_is_server else "amneziawg-go"
-    client_name = "amneziawg-go" if bt_is_server else "boringtun"
-    role = f"{server_name} server"
+    if same_implementation is None:
+        server_is_bt = bt_is_server
+        client_is_bt = not bt_is_server
+    else:
+        if same_implementation not in ("boringtun", "amneziawg-go"):
+            raise ValueError(f"unknown same implementation: {same_implementation}")
+        server_is_bt = client_is_bt = same_implementation == "boringtun"
+    server_iface = bt_iface if server_is_bt else go_iface
+    client_iface = bt_iface if client_is_bt else go_iface
+    server_name = "boringtun" if server_is_bt else "amneziawg-go"
+    client_name = "boringtun" if client_is_bt else "amneziawg-go"
+    role = f"{server_name}-to-{client_name}" if same_implementation else f"{server_name} server"
     capture_dir = Path("target/awg31-wire-pcaps")
     capture_dir.mkdir(parents=True, exist_ok=True)
     capture_path = capture_dir / (
@@ -798,16 +806,15 @@ def run_profile(
         server_private, server_public = keypair()
         client_private, client_public = keypair()
 
-        server_binary = bt if bt_is_server else go
-        client_binary = go if bt_is_server else bt
+        server_binary = bt if server_is_bt else go
+        client_binary = bt if client_is_bt else go
         server_command = (
             [server_binary, "--foreground", "--disable-drop-privileges", server_iface]
-            if bt_is_server else [server_binary, "-f", server_iface]
+            if server_is_bt else [server_binary, "-f", server_iface]
         )
         client_command = (
-            [client_binary, "-f", client_iface]
-            if bt_is_server else
             [client_binary, "--foreground", "--disable-drop-privileges", client_iface]
+            if client_is_bt else [client_binary, "-f", client_iface]
         )
 
         server_log = open(logs / f"{server_name}-server.log", "w", encoding="utf-8")
@@ -957,19 +964,33 @@ def main() -> int:
             return 2
     failures = 0
     total = 0
-    profiles = [PROFILES[0], PROFILES[5]] if performance else PROFILES
-    for name, extra, awg_enabled in profiles:
-        for bt_is_server in (True, False):
-            total += 1
-            try:
-                run_profile(
-                    bt, go, name, extra, awg_enabled, bt_is_server,
-                    performance=performance,
-                )
-            except Exception as error:
-                failures += 1
-                role = "BoringTun server" if bt_is_server else "amneziawg-go server"
-                print(f"FAIL {name} ({role}): {error}", file=sys.stderr)
+    if performance:
+        # Homogeneous endpoint pairs isolate each implementation's own
+        # datapath: amneziawg-go <-> amneziawg-go and BoringTun <-> BoringTun.
+        for implementation in ("amneziawg-go", "boringtun"):
+            for name, extra, awg_enabled in (PROFILES[0], PROFILES[5]):
+                total += 1
+                try:
+                    run_profile(
+                        bt, go, name, extra, awg_enabled, True,
+                        performance=True, same_implementation=implementation,
+                    )
+                except Exception as error:
+                    failures += 1
+                    print(
+                        f"FAIL {name} ({implementation}-to-{implementation}): {error}",
+                        file=sys.stderr,
+                    )
+    else:
+        for name, extra, awg_enabled in PROFILES:
+            for bt_is_server in (True, False):
+                total += 1
+                try:
+                    run_profile(bt, go, name, extra, awg_enabled, bt_is_server)
+                except Exception as error:
+                    failures += 1
+                    role = "BoringTun server" if bt_is_server else "amneziawg-go server"
+                    print(f"FAIL {name} ({role}): {error}", file=sys.stderr)
     print(f"SUMMARY: {total - failures}/{total} passed, {failures} failed")
     return 1 if failures else 0
 
