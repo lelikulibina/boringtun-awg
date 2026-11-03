@@ -548,15 +548,19 @@ fn api_get(writer: &mut BufWriter<&UnixStream>, d: &Device) -> i32 {
     // get command requires an empty line, but there is no reason to be religious about it
     if let Some(ref k) = d.key_pair {
         // The UAPI get operation must return the private key so showconf/setconf
-        // can round-trip the interface configuration.
-        writeln!(writer, "private_key={}", encode_hex(k.0.to_bytes()));
+        // can round-trip the interface configuration. Upstream omits an unset
+        // (all-zero) private key rather than serializing it.
+        let private_key = k.0.to_bytes();
+        if private_key.iter().any(|byte| *byte != 0) {
+            writeln!(writer, "private_key={}", encode_hex(private_key));
+        }
     }
 
     if d.listen_port != 0 {
         writeln!(writer, "listen_port={}", d.listen_port);
     }
 
-    if let Some(fwmark) = d.fwmark {
+    if let Some(fwmark) = d.fwmark.filter(|mark| *mark != 0) {
         writeln!(writer, "fwmark={}", fwmark);
     }
 
