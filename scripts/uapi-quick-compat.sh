@@ -26,8 +26,8 @@ AWG_UP=0
 cleanup() {
   local status=$?
   set +e
-  if [[ $AWG_UP -eq 1 ]]; then PATH="$QUICK_BIN:$PATH" PATH="$QUICK_BIN:$PATH" WG_QUICK_USERSPACE_IMPLEMENTATION="$BT_LAUNCHER" awg-quick down "$WORK/awgq0.conf"; fi
-  if [[ $WG_UP -eq 1 ]]; then PATH="$QUICK_BIN:$PATH" PATH="$QUICK_BIN:$PATH" WG_QUICK_USERSPACE_IMPLEMENTATION="$BT_LAUNCHER" wg-quick down "$WORK/wgq0.conf"; fi
+  if [[ $AWG_UP -eq 1 ]]; then PATH="$QUICK_BIN:$PATH" WG_QUICK_USERSPACE_IMPLEMENTATION="$BT_LAUNCHER" awg-quick down "$WORK/awgq0.conf"; fi
+  if [[ $WG_UP -eq 1 ]]; then PATH="$QUICK_BIN:$PATH" WG_QUICK_USERSPACE_IMPLEMENTATION="$BT_LAUNCHER" wg-quick down "$WORK/wgq0.conf"; fi
   rm -rf "$WORK"
   exit "$status"
 }
@@ -174,7 +174,7 @@ H1 = 100
 H2 = 200
 H3 = 300
 H4 = 400
-DisableCookies = true
+DisableCookies = on
 
 [Peer]
 PublicKey = $AWG_PEER_PUBLIC
@@ -254,7 +254,7 @@ assert_contains "$awg_conf" "$AWG_PRIVATE" "awg showconf private key readback"
 assert_contains "$awg_conf" "Jc = 1" "AWG Jc readback"
 assert_contains "$awg_conf" "S1 = 64" "AWG S1 readback"
 assert_contains "$awg_conf" "H4 = 400" "AWG H4 readback"
-assert_contains "$awg_conf" "DisableCookies = true" "AWG 3.1 flag readback"
+assert_contains "$awg_conf" "DisableCookies = on" "AWG 3.1 flag readback"
 
 echo "== awg-quick: stop =="
 PATH="$QUICK_BIN:$PATH" WG_QUICK_USERSPACE_IMPLEMENTATION="$BT_LAUNCHER" awg-quick down "$WORK/awgq0.conf"
