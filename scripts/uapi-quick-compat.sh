@@ -80,6 +80,22 @@ Endpoint = 127.0.0.1:51882
 PersistentKeepalive = 15
 EOF
 
+assert_boringtun_running() {
+  local iface="$1" proc
+  for _ in $(seq 1 30); do
+    for proc in /proc/[0-9]*; do
+      [[ -e "$proc/exe" ]] || continue
+      [[ "$(readlink -f "$proc/exe" 2>/dev/null)" == "$BT_BIN" ]] || continue
+      if tr '\\0' ' ' < "$proc/cmdline" 2>/dev/null | grep -Fq -- "$iface"; then
+        return 0
+      fi
+    done
+    sleep 0.1
+  done
+  echo "FAIL: $iface was not backed by the requested BoringTun process; quick may have selected the kernel module" >&2
+  exit 1
+}
+
 assert_contains() {
   local haystack="$1" needle="$2" context="$3"
   if ! grep -Fqi -- "$needle" <<<"$haystack"; then
@@ -92,6 +108,7 @@ assert_contains() {
 echo "== wg-quick: start userspace BoringTun =="
 WG_UP=1
 WG_QUICK_USERSPACE_IMPLEMENTATION="$BT_BIN" WG_SUDO=1 wg-quick up "$WORK/wgq0.conf"
+assert_boringtun_running "$WG_IFACE"
 wg_show="$(wg show "$WG_IFACE")"
 assert_contains "$wg_show" "listening port: 51871" "wg show via UAPI"
 wg_dump="$(wg show "$WG_IFACE" dump)"
@@ -118,6 +135,7 @@ fi
 echo "== awg-quick: start userspace BoringTun =="
 AWG_UP=1
 WG_QUICK_USERSPACE_IMPLEMENTATION="$BT_BIN" WG_SUDO=1 awg-quick up "$WORK/awgq0.conf"
+assert_boringtun_running "$AWG_IFACE"
 awg_show="$(awg show "$AWG_IFACE")"
 assert_contains "$awg_show" "listening port: 51881" "awg show via UAPI"
 awg_dump="$(awg show "$AWG_IFACE" dump)"
