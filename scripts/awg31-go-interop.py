@@ -243,27 +243,41 @@ def wait_rekey(
 
 
 def drop_client_egress_during_rekey(client_ns: str, client_link: str) -> int:
-    """Drop all client egress briefly across the rekey deadline and verify qdisc drops."""
+    """Drop only the expected AWG H1 rekey datagram and verify its filter counter."""
+    # This profile uses S1=120, H1=169887817 (wire bytes 49:48:20:0a),
+    # no HeaderProtection and no RandomTrailers. From the IPv4-header start,
+    # H1 is at 20 (IPv4) + 8 (UDP) + 120 (S1) = byte offset 148.
     run("ip", "netns", "exec", client_ns, "tc", "qdisc", "add", "dev",
-        client_link, "root", "netem", "loss", "100%")
+        client_link, "root", "handle", "1:", "prio")
     try:
-        # Initial session is already established. With rekey_after_time=2s,
-        # this window catches the first send-side rekey initiation while it is
-        # still in flight; removing netem allows the retry to complete.
+        run(
+            "ip", "netns", "exec", client_ns, "tc", "filter", "add", "dev",
+            client_link, "protocol", "ip", "parent", "1:", "prio", "1", "u32",
+            "match", "ip", "protocol", "17", "0xff",
+            "match", "ip", "dst", f"{SERVER_LINK}/32",
+            "match", "ip", "dport", str(PORT), "0xffff",
+            "match", "u32", "0x4948200a", "0xffffffff", "at", "148",
+            "action", "drop",
+        )
+        # RekeyAfterTime=2s makes the original initiator emit H1 during this
+        # three-second filter window. Other tunnel packets continue to pass.
         time.sleep(3.0)
-        stats = run("ip", "netns", "exec", client_ns, "tc", "-s", "qdisc",
-                    "show", "dev", client_link, capture=True)
-        match = re.search(r"dropped (\d+)", stats)
+        stats = run(
+            "ip", "netns", "exec", client_ns, "tc", "-s", "filter", "show",
+            "dev", client_link, "parent", "1:", capture=True,
+        )
+        match = re.search(r"dropped (\\d+)", stats)
         dropped = int(match.group(1)) if match else 0
     finally:
         run("ip", "netns", "exec", client_ns, "tc", "qdisc", "del",
             "dev", client_link, "root", check=False)
     if dropped < 1:
-        raise RuntimeError(f"netem did not drop any client packets; qdisc stats: {stats}")
-    print(f"PACKET-LOSS: netem dropped {dropped} client egress packet(s)")
+        raise RuntimeError(
+            "tc did not drop the targeted H1 rekey datagram; "
+            f"filter stats: {stats}"
+        )
+    print(f"PACKET-LOSS: tc dropped {dropped} matching H1 rekey datagram(s)")
     return dropped
-
-
 def verify_udp_roundtrip(server_ns: str, client_ns: str) -> None:
     """Verify an actual bidirectional UDP payload through the encrypted tunnel."""
     server_code = (
