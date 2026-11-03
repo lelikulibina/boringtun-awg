@@ -62,8 +62,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: awg31-iperf3-performance
-          path: |
-            target/awg31-performance/*.json
-            target/awg31-wire-pcaps/*.pcap
+          path: target/awg31-performance/*.json
           if-no-files-found: warn
           retention-days: 30
