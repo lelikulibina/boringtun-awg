@@ -15,7 +15,7 @@ use libc::*;
 use std::collections::HashMap;
 use std::fs::{create_dir, remove_file};
 use std::io::{BufRead, BufReader, BufWriter, Write};
-use std::net::IpAddr;
+use std::net::{IpAddr, ToSocketAddrs};
 use std::os::unix::io::{AsRawFd, FromRawFd};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::atomic::Ordering;
@@ -879,9 +879,16 @@ fn api_set_peer(
                     Ok(key_bytes) => sec.preshared_key = Some(key_bytes.0),
                     Err(_) => return EINVAL,
                 },
-                "endpoint" => match val.parse::<SocketAddr>() {
-                    Ok(addr) => sec.endpoint = Some(addr),
-                    Err(_) => return EINVAL,
+                "endpoint" => {
+                    // WireGuard UAPI accepts both numeric socket addresses and
+                    // hostnames. Resolve hostnames like the Go Bind.ParseEndpoint.
+                    let endpoint = val.parse::<SocketAddr>().ok().or_else(|| {
+                        val.to_socket_addrs().ok()?.next()
+                    });
+                    match endpoint {
+                        Some(addr) => sec.endpoint = Some(addr),
+                        None => return EINVAL,
+                    }
                 },
                 "persistent_keepalive_interval" => match val.parse::<u16>() {
                     Ok(interval) => sec.keepalive = Some(interval),
