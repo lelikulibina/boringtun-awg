@@ -488,7 +488,7 @@ impl ObfuscationRanges {
 
         for i in 0..parsed.len() {
             for j in (i + 1)..parsed.len() {
-                if parsed[i].overlaps(parsed[j]) {
+                if parsed[i].overlaps(&parsed[j]) {
                     let overlap_start = parsed[i].start.max(parsed[j].start);
                     let overlap_end = parsed[i].end.min(parsed[j].end);
                     return Err(format!(
