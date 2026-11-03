@@ -343,7 +343,8 @@ fn commit_peer_section(
             peer = encode_hex(public_key.as_bytes()).as_str(),
             error = ?error
         );
-        return EIO;
+        // Upstream maps peer creation/update failures to IPCErrorInvalid.
+        return EINVAL;
     }
 
     0
