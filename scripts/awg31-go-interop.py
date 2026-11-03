@@ -920,18 +920,18 @@ def run_profile(
         if not capture_verified:
             verify_wire_pcap(
                 capture_path,
-            awg_enabled=awg_enabled,
-            header_protection="header_protection_key=" in extra,
-            random_trailers="random_trailers=true" in extra,
+                awg_enabled=awg_enabled,
+                header_protection="header_protection_key=" in extra,
+                random_trailers="random_trailers=true" in extra,
                 expected_handshakes=(
                     121 if name == "long peer lifecycle soak"
                     else (30 if extended_matrix else 1) + 1 if name == "accelerated rekey"
                     else 2 if name == "rekey packet-loss recovery"
                     else 1
                 ),
-            # The capture runs on the server-side veth: it sees the initial
-            # initiation and the successful retry, while tc's client-egress
-            # filter counter proves the intervening H1 datagram was dropped.
+                # The capture runs on the server-side veth: it sees the initial
+                # initiation and the successful retry, while tc's client-egress
+                # filter counter proves the intervening H1 datagram was dropped.
                 expected_initiations=(
                     2 if name == "rekey packet-loss recovery"
                     else (
@@ -940,11 +940,11 @@ def run_profile(
                         else 1
                     )
                 ),
-            expected_signatures=[
-                bytes.fromhex(value)
-                for value in re.findall(r"i[1-5]=<b 0x([0-9a-fA-F]+)>", extra)
-            ],
-        )
+                expected_signatures=[
+                    bytes.fromhex(value)
+                    for value in re.findall(r"i[1-5]=<b 0x([0-9a-fA-F]+)>", extra)
+                ],
+            )
         print(f"PASS {name} ({role}): handshake + bidirectional ICMP/UDP + normalized pcap")
     except Exception:
         for log_path in logs.glob("*.log"):
