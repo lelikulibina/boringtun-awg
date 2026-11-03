@@ -471,7 +471,10 @@ impl Device {
                         "set=1" => api_set(&mut reader, d),
                         // Match upstream IpcHandle: an unknown operation closes
                         // the connection without an errno response.
-                        _ => break,
+                        _ => {
+                            d.trigger_exit();
+                            return Action::Exit;
+                        },
                     };
                     if writeln!(writer, "errno={}\n", status).is_err() || writer.flush().is_err() {
                         break;
