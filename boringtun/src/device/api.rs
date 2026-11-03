@@ -49,14 +49,17 @@ fn parse_u16_range(val: &str) -> Option<(u16, u16)> {
 }
 
 fn parse_u32_range(val: &str) -> Option<(u32, u32)> {
-    let (start, end) = match val.split_once('-') {
+    // Upstream AmneziaWG exposes all 3.x timer ranges as UintRange values
+    // backed by uint16. Keep the internal timer representation u32 (Duration
+    // arithmetic uses it), but reject values the reference UAPI cannot accept.
+    let (start, end): (u16, u16) = match val.split_once('-') {
         Some((start, end)) => (start.trim().parse().ok()?, end.trim().parse().ok()?),
         None => {
-            let value: u32 = val.trim().parse().ok()?;
+            let value: u16 = val.trim().parse().ok()?;
             (value, value)
         }
     };
-    (start <= end).then_some((start, end))
+    (start <= end).then_some((u32::from(start), u32::from(end)))
 }
 
 fn parse_tag_range(val: &str) -> Option<(u32, u32)> {
@@ -1062,6 +1065,9 @@ mod tests {
         assert_eq!(parse_u32_range("12"), Some((12, 12)));
         assert_eq!(parse_u32_range("5-9"), Some((5, 9)));
         assert_eq!(parse_u32_range("9-5"), None);
+        assert_eq!(parse_u32_range("65535"), Some((65535, 65535)));
+        assert_eq!(parse_u32_range("65535-65535"), Some((65535, 65535)));
+        assert_eq!(parse_u32_range("65536"), None, "upstream timer ranges are uint16");
         assert_eq!(parse_u32_range("4294967296"), None);
 
         let current = AmneziaConfig::new(0, 0, 0, 0);
