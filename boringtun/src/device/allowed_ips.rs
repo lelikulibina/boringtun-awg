@@ -130,6 +130,42 @@ mod tests {
     }
 
     #[test]
+    fn remove_exact_matches_prefix_and_current_owner() {
+        let prefix = IpAddr::from([192, 0, 2, 0]);
+        let mut map: AllowedIps<char> = AllowedIps::new();
+
+        map.insert(prefix, 24, 'b');
+        map.remove_exact(prefix, 24, &|owner| *owner == 'a');
+        assert_eq!(map.find(IpAddr::from([192, 0, 2, 1])), Some(&'b'));
+
+        // Inserting the same prefix transfers ownership. Removing it as the
+        // new owner must delete it entirely, not restore the previous owner.
+        map.insert(prefix, 24, 'a');
+        map.remove_exact(prefix, 24, &|owner| *owner == 'a');
+        assert_eq!(map.find(IpAddr::from([192, 0, 2, 1])), None);
+    }
+
+    #[test]
+    fn replace_and_add_allowed_ip_operations_are_sequential() {
+        let first = IpAddr::from([192, 0, 2, 1]);
+        let second = IpAddr::from([198, 51, 100, 1]);
+        let third = IpAddr::from([203, 0, 113, 1]);
+        let mut map: AllowedIps<char> = AllowedIps::new();
+
+        map.insert(first, 32, 'a');
+        map.insert(second, 32, 'a');
+
+        // replace_allowed_ips removes all entries owned by this peer at the
+        // point where the UAPI line appears; a later add survives.
+        map.remove(&|owner| *owner == 'a');
+        map.insert(third, 32, 'a');
+
+        assert_eq!(map.find(first), None);
+        assert_eq!(map.find(second), None);
+        assert_eq!(map.find(third), Some(&'a'));
+    }
+
+    #[test]
     fn test_allowed_ips_remove() {
         let mut map = build_allowed_ips();
         map.remove(&|c| *c == '5' || *c == '1' || *c == '7');
