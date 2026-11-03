@@ -316,6 +316,17 @@ fn commit_peer_section(
     public_key: &x25519::PublicKey,
     section: &PeerSection,
 ) -> i32 {
+    // Upstream treats the device's own public key as a dummy peer and ignores
+    // its settings. Before a private key is configured, the corresponding
+    // identity is all-zero and the all-zero peer key is ignored as well.
+    let is_device_key = match device.key_pair.as_ref() {
+        Some((_, own_public_key)) => own_public_key.as_bytes() == public_key.as_bytes(),
+        None => public_key.as_bytes().iter().all(|byte| *byte == 0),
+    };
+    if is_device_key {
+        return 0;
+    }
+
     if section.update_only && !device.peers.contains_key(public_key) {
         return 0;
     }
