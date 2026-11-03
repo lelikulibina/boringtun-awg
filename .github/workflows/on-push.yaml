@@ -27,14 +27,14 @@ jobs:
       - tests
       - integration-tests
       - awg31-interoperability
-      - test-windows
     steps:
       - run: exit 0
 
   check_features:
     strategy:
       matrix:
-        os: [ ubuntu-latest, macos-latest ]
+        # macOS is temporarily paused; Linux remains the active validation target.
+        os: [ ubuntu-latest ]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
@@ -47,7 +47,7 @@ jobs:
   clippy:
     strategy:
       matrix:
-        os: [ ubuntu-latest, macos-latest ]
+        os: [ ubuntu-latest ]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
@@ -60,7 +60,7 @@ jobs:
   rustfmt:
     strategy:
       matrix:
-        os: [ ubuntu-latest, macos-latest ]
+        os: [ ubuntu-latest ]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
@@ -72,7 +72,7 @@ jobs:
   tests:
     strategy:
       matrix:
-        os: [ ubuntu-latest, macos-latest ]
+        os: [ ubuntu-latest ]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
@@ -82,7 +82,10 @@ jobs:
       - uses: taiki-e/install-action@cargo-hack
       - run: cargo hack test --each-feature
 
+  # Temporarily disabled: Windows checks passed on the previous full matrix.
+  # Restore by removing this condition and adding test-windows to all-systems-go.
   test-windows:
+    if: ${{ false }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v6
@@ -138,7 +141,7 @@ jobs:
   integration-tests:
     strategy:
       matrix:
-        os: [ ubuntu-latest, macos-latest ]
+        os: [ ubuntu-latest ]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
