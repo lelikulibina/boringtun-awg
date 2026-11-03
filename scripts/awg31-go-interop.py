@@ -763,8 +763,11 @@ def run_profile(
                 else 2 if name == "rekey packet-loss recovery"
                 else 1
             ),
+            # The capture runs on the server-side veth: it sees the initial
+            # initiation and the successful retry, while tc's client-egress
+            # filter counter proves the intervening H1 datagram was dropped.
             expected_initiations=(
-                3 if name == "rekey packet-loss recovery"
+                2 if name == "rekey packet-loss recovery"
                 else (
                     121 if name == "long peer lifecycle soak"
                     else 31 if name == "accelerated rekey"
