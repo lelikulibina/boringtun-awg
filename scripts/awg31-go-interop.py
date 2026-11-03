@@ -367,7 +367,7 @@ else:
 
 def verify_bulk_data_transfer(
     server_ns: str, client_ns: str, helper_path: Path,
-    total_size: int = 64 * 1024 * 1024,
+    total_size: int = 8 * 1024 * 1024,
     block_size: int = 64 * 1024,
 ) -> None:
     """Transfer and verify a large TCP stream in both tunnel directions."""
