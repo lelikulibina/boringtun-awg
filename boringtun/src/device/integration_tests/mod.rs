@@ -269,7 +269,7 @@ mod tests {
                 Ok(0) | Err(_) => break,
                 Ok(_) => {}
             }
-            let done = line == "\\n"
+            let done = line == "\n"
                 && response
                     .lines()
                     .last()
@@ -509,9 +509,13 @@ mod tests {
         let private_key_bytes = private_key.to_bytes();
 
         let wg = WGHandle::init("192.0.2.0".parse().unwrap(), "::2".parse().unwrap());
-        assert!(wg.wg_get().ends_with("errno=0\\n\\n"));
-        assert_eq!(wg.wg_set_port(port), "errno=0\\n\\n");
-        assert_eq!(wg.wg_set_key(private_key), "errno=0\\n\\n");
+        let initial_response = wg.wg_get();
+        assert!(
+            initial_response.ends_with("errno=0\n\n"),
+            "unexpected initial UAPI get response: {initial_response:?}"
+        );
+        assert_eq!(wg.wg_set_port(port), "errno=0\n\n");
+        assert_eq!(wg.wg_set_key(private_key), "errno=0\n\n");
 
         // UAPI get follows the upstream WireGuard/AmneziaWG format: private
         // key (not own_public_key), numeric booleans and explicit default H1-H4.
@@ -529,10 +533,10 @@ mod tests {
         for line in expected {
             assert!(
                 response.lines().any(|actual| actual == line),
-                "missing UAPI line {line:?} in response:\\n{response}"
+                "missing UAPI line {line:?} in response:\n{response}"
             );
         }
-        assert!(response.ends_with("errno=0\\n\\n"));
+        assert!(response.ends_with("errno=0\n\n"));
 
         let peer_key = StaticSecret::random_from_rng(OsRng);
         let peer_pub_key = PublicKey::from(&peer_key);
@@ -550,7 +554,7 @@ mod tests {
 
         assert_eq!(
             wg.wg_set_peer(&peer_pub_key, &endpoint, &allowed_ips),
-            "errno=0\\n\\n"
+            "errno=0\n\n"
         );
 
         // Peer get fields are checked independently of their output order.
@@ -571,10 +575,10 @@ mod tests {
         for line in expected {
             assert!(
                 response.lines().any(|actual| actual == line),
-                "missing UAPI line {line:?} in response:\\n{response}"
+                "missing UAPI line {line:?} in response:\n{response}"
             );
         }
-        assert!(response.ends_with("errno=0\\n\\n"));
+        assert!(response.ends_with("errno=0\n\n"));
     }
 
     /// Test if wireguard can handle simple ipv4 connections, don't use a connected socket
