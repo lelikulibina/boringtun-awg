@@ -12,7 +12,7 @@ concurrency:
 
 on:
   push:
-    branches: [ "main", "master", "awg-2.0-extensions", "fix/uapi-compatibility" ]
+    branches: [ "main", "master", "awg-2.0-extensions" ]
   pull_request:
     branches: [ "main", "master", "awg-2.0-extensions" ]
 
