@@ -68,7 +68,7 @@ if [[ "\${args[0]}" == link && "\${args[1]}" == add ]]; then
   [[ "\${args[index]}" == type ]] && ((index+=1))
   kind="\${args[index]}"
   if [[ "\$iface" == "$WG_IFACE" && "\$kind" == wireguard ]]; then
-    echo "uapi test: force wg-quick userspace fallback" >&2
+    "$QUICK_BIN/path-debug"
     exit 1
   fi
   if [[ "\$iface" == "$AWG_IFACE" && "\$kind" == amneziawg ]]; then
@@ -79,6 +79,13 @@ fi
 exec "$IP_REAL" "\${args[@]}"
 EOF
 chmod +x "$QUICK_BIN/ip"
+cat > "$QUICK_BIN/path-debug" <<EOF
+#!/usr/bin/env bash
+echo "PATH=\$PATH" >&2
+echo "wg=\$(command -v wg) strace=\$(command -v strace)" >&2
+ls -l "$QUICK_BIN/wg" >&2
+EOF
+chmod +x "$QUICK_BIN/path-debug"
 cat > "$BT_LAUNCHER" <<EOF
 #!/usr/bin/env bash
 iface="\$1"
