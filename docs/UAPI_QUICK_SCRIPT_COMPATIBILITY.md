@@ -14,7 +14,7 @@ than reimplementing their setup logic. Both scripts launch BoringTun through
 `awg`) to exercise the Unix-socket UAPI.
 
 Coverage includes interface creation and teardown, setconf, UAPI get/dump,
-private-key and peer readback, endpoint/AllowedIPs/keepalive updates, save,
+private-key and peer readback, endpoint/AllowedIPs/keepalive updates,
 and AmneziaWG J/S/H plus DisableCookies configuration readback. No peer needs
 to be reachable: this is a control-plane/UAPI compatibility test, not a
 wire-protocol handshake test.
