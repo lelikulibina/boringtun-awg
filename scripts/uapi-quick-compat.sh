@@ -33,7 +33,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-umask 022
+umask 077
 wg genkey > "$WORK/wg-private"
 wg genkey > "$WORK/wg-peer-private"
 awg genkey > "$WORK/awg-private"
@@ -43,17 +43,18 @@ WG_PEER_PUBLIC="$(wg pubkey < "$WORK/wg-peer-private")"
 AWG_PRIVATE="$(cat "$WORK/awg-private")"
 AWG_PEER_PUBLIC="$(awg pubkey < "$WORK/awg-peer-private")"
 
-# Stage byte-for-byte copies of the installed quick scripts beside an ip shim.
-# The shim makes only the kernel link-create probe fail, guaranteeing that the
-# original scripts take their documented userspace-implementation fallback
-# even on hosts with WireGuard/AmneziaWG kernel modules available.
+# Stage the original quick scripts and an ip shim. The shim forces the
+# documented userspace fallback without modifying wg-quick/awg-quick.
 mkdir -p "$QUICK_BIN"
 cp -L "$(command -v wg-quick)" "$QUICK_BIN/wg-quick"
 cp -L "$(command -v awg-quick)" "$QUICK_BIN/awg-quick"
 WG_REAL="$(command -v wg)"
 cat > "$QUICK_BIN/wg" <<EOF
 #!/usr/bin/env bash
-exec strace -ff -yy -e trace=%file,connect -s 256 -o /tmp/uapi-wg.trace "$WG_REAL" "\$@"
+if [[ "${UAPI_TRACE:-0}" == 1 ]]; then
+  exec strace -ff -yy -e trace=%file,connect -s 256 -o /tmp/uapi-wg.trace "$WG_REAL" "\$@"
+fi
+exec "$WG_REAL" "\$@"
 EOF
 chmod +x "$QUICK_BIN/wg"
 IP_REAL="$(command -v ip)"
@@ -68,7 +69,6 @@ if [[ "\${args[0]}" == link && "\${args[1]}" == add ]]; then
   [[ "\${args[index]}" == type ]] && ((index+=1))
   kind="\${args[index]}"
   if [[ "\$iface" == "$WG_IFACE" && "\$kind" == wireguard ]]; then
-    "$QUICK_BIN/path-debug"
     exit 1
   fi
   if [[ "\$iface" == "$AWG_IFACE" && "\$kind" == amneziawg ]]; then
@@ -79,13 +79,7 @@ fi
 exec "$IP_REAL" "\${args[@]}"
 EOF
 chmod +x "$QUICK_BIN/ip"
-cat > "$QUICK_BIN/path-debug" <<EOF
-#!/usr/bin/env bash
-echo "PATH=\$PATH" >&2
-echo "wg=\$(command -v wg) strace=\$(command -v strace)" >&2
-ls -l "$QUICK_BIN/wg" >&2
-EOF
-chmod +x "$QUICK_BIN/path-debug"
+
 cat > "$BT_LAUNCHER" <<EOF
 #!/usr/bin/env bash
 iface="\$1"
@@ -100,8 +94,6 @@ if [[ ! -S "\$socket" ]]; then
   ls -ld /var/run/wireguard /var/run/amneziawg 2>&1 || true
   exit 1
 fi
-# The daemon may chown its runtime directory to the invoking sudo user.
-# Keep the temporary CI socket reachable by the root-owned wg/awg clients.
 chmod 0777 /var/run/wireguard /var/run/amneziawg
 chmod 0666 "\$socket"
 echo "UAPI launcher diagnostics for \$iface:" >&2
@@ -114,7 +106,7 @@ import socket, sys
 client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 client.settimeout(2)
 client.connect(sys.argv[1])
-client.sendall(b"get=1\n\n")
+client.sendall(b"get=1\\n\\n")
 print("UAPI get response:", client.recv(65536).decode("ascii", "replace"), file=sys.stderr)
 client.close()
 PY
@@ -159,7 +151,7 @@ AllowedIPs = 10.78.0.2/32
 Endpoint = 127.0.0.1:51882
 PersistentKeepalive = 15
 EOF
-chmod 600 "$WORK/"*.conf "$WORK/"*private
+chmod 600 "$WORK/"*.conf
 
 assert_boringtun_running() {
   local iface="$1" proc
@@ -173,7 +165,7 @@ assert_boringtun_running() {
     done
     sleep 0.1
   done
-  echo "FAIL: $iface was not backed by the requested BoringTun process; quick may have selected the kernel module" >&2
+  echo "FAIL: $iface was not backed by the requested BoringTun process" >&2
   exit 1
 }
 
@@ -190,19 +182,18 @@ echo "== wg-quick: start userspace BoringTun =="
 WG_UP=1
 PATH="$QUICK_BIN:$PATH" WG_QUICK_USERSPACE_IMPLEMENTATION="$BT_LAUNCHER" wg-quick up "$WORK/wgq0.conf"
 assert_boringtun_running "$WG_IFACE"
-wg_show="$(wg show "$WG_IFACE")"
+wg_show="$(PATH="$QUICK_BIN:$PATH" wg show "$WG_IFACE")"
 assert_contains "$wg_show" "listening port: 51871" "wg show via UAPI"
-wg_dump="$(wg show "$WG_IFACE" dump)"
+wg_dump="$(PATH="$QUICK_BIN:$PATH" wg show "$WG_IFACE" dump)"
 assert_contains "$wg_dump" "$WG_PEER_PUBLIC" "wg dump peer readback"
 
-# Exercise UAPI set=1 after initial setconf, then verify get=1 through wg.
-wg set "$WG_IFACE" fwmark 0x1234
-wg set "$WG_IFACE" peer "$WG_PEER_PUBLIC" endpoint 127.0.0.1:51873 persistent-keepalive 25 allowed-ips 10.77.0.3/32
-wg_dump="$(wg show "$WG_IFACE" dump)"
+PATH="$QUICK_BIN:$PATH" wg set "$WG_IFACE" fwmark 0x1234
+PATH="$QUICK_BIN:$PATH" wg set "$WG_IFACE" peer "$WG_PEER_PUBLIC" endpoint 127.0.0.1:51873 persistent-keepalive 25 allowed-ips 10.77.0.3/32
+wg_dump="$(PATH="$QUICK_BIN:$PATH" wg show "$WG_IFACE" dump)"
 assert_contains "$wg_dump" "127.0.0.1:51873" "wg endpoint update/readback"
 assert_contains "$wg_dump" "10.77.0.3/32" "wg AllowedIPs update/readback"
 assert_contains "$wg_dump" "25" "wg persistent keepalive readback"
-wg_conf="$(wg showconf "$WG_IFACE")"
+wg_conf="$(PATH="$QUICK_BIN:$PATH" wg showconf "$WG_IFACE")"
 assert_contains "$wg_conf" "$WG_PRIVATE" "wg showconf private key readback"
 
 echo "== wg-quick: stop =="
@@ -217,18 +208,17 @@ echo "== awg-quick: start userspace BoringTun =="
 AWG_UP=1
 PATH="$QUICK_BIN:$PATH" WG_QUICK_USERSPACE_IMPLEMENTATION="$BT_LAUNCHER" awg-quick up "$WORK/awgq0.conf"
 assert_boringtun_running "$AWG_IFACE"
-awg_show="$(awg show "$AWG_IFACE")"
+awg_show="$(PATH="$QUICK_BIN:$PATH" awg show "$AWG_IFACE")"
 assert_contains "$awg_show" "listening port: 51881" "awg show via UAPI"
-awg_dump="$(awg show "$AWG_IFACE" dump)"
+awg_dump="$(PATH="$QUICK_BIN:$PATH" awg show "$AWG_IFACE" dump)"
 assert_contains "$awg_dump" "$AWG_PEER_PUBLIC" "awg dump peer readback"
 
-# Update both generic WireGuard and Amnezia-specific state through awg's UAPI client.
-awg set "$AWG_IFACE" peer "$AWG_PEER_PUBLIC" endpoint 127.0.0.1:51883 persistent-keepalive 30 allowed-ips 10.78.0.3/32
-awg_dump="$(awg show "$AWG_IFACE" dump)"
+PATH="$QUICK_BIN:$PATH" awg set "$AWG_IFACE" peer "$AWG_PEER_PUBLIC" endpoint 127.0.0.1:51883 persistent-keepalive 30 allowed-ips 10.78.0.3/32
+awg_dump="$(PATH="$QUICK_BIN:$PATH" awg show "$AWG_IFACE" dump)"
 assert_contains "$awg_dump" "127.0.0.1:51883" "awg endpoint update/readback"
 assert_contains "$awg_dump" "10.78.0.3/32" "awg AllowedIPs update/readback"
 assert_contains "$awg_dump" "30" "awg persistent keepalive readback"
-awg_conf="$(awg showconf "$AWG_IFACE")"
+awg_conf="$(PATH="$QUICK_BIN:$PATH" awg showconf "$AWG_IFACE")"
 assert_contains "$awg_conf" "$AWG_PRIVATE" "awg showconf private key readback"
 assert_contains "$awg_conf" "Jc = 1" "AWG Jc readback"
 assert_contains "$awg_conf" "S1 = 64" "AWG S1 readback"
