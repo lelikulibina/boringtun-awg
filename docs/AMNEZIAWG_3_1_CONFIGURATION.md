@@ -10,12 +10,12 @@
 |---|---|---|
 | `disable_cookies` | `true` / `false` | `false`. При `true` MAC1 по-прежнему проверяется, но under-load MAC2/cookie challenge обходится. Входящие Cookie Reply продолжают приниматься. |
 | `header_protection_key` | 64 hex-символа (32 байта) | Нулевой ключ выключает защиту. Один и тот же ключ и S-настройки нужны на обоих концах. |
-| `content_padding_addition` | `N` или `MIN-MAX` | Inclusive диапазон нулевого дополнения transport plaintext перед AEAD. `0`/не задано — выключено. |
+| `content_padding_addition` | `uint16`: `N` или `MIN-MAX` | Inclusive диапазон нулевого дополнения transport plaintext перед AEAD. `0`/не задано — выключено. |
 | `random_trailers` | `true` / `false` | `false`. Случайный внешний trailer для handshake/cookie и нулевое дополнение transport внутри AEAD. |
-| `rekey_after_time` | секунды: `N` или `MIN-MAX` | `120` секунд, если не задано. |
-| `rekey_timeout` | секунды: `N` или `MIN-MAX` | `5` секунд, если не задано. |
-| `reject_after_time` | секунды: `N` или `MIN-MAX` | `180` секунд, если не задано. |
-| `keepalive_timeout` | секунды: `N` или `MIN-MAX` | `10` секунд, если не задано. |
+| `rekey_after_time` | секунды, `uint16`: `N` или `MIN-MAX` | `120` секунд, если не задано. |
+| `rekey_timeout` | секунды, `uint16`: `N` или `MIN-MAX` | `5` секунд, если не задано. |
+| `reject_after_time` | секунды, `uint16`: `N` или `MIN-MAX` | `180` секунд, если не задано. |
+| `keepalive_timeout` | секунды, `uint16`: `N` или `MIN-MAX` | `10` секунд, если не задано. |
 | `max_handshake_attempts` | `N` или `MIN-MAX` | `18`, если не задано. |
 
 Диапазоны включают обе границы. Обратный диапазон отклоняется. Частичный UAPI `set=1` объединяется с текущей конфигурацией и не должен сбрасывать неуказанные AWG-поля.
@@ -55,7 +55,7 @@ sudo python3 scripts/awg31-go-interop.py ./target/release/boringtun-cli ./amnezi
 
 Скрипт требует Linux, root, `iproute2`, `ping`, Python-пакет `cryptography`, BoringTun с feature `device` и официальный бинарник `amneziawg-go` из модуля `/v3`; CI собирает эталон из upstream commit `b5928efb6ca19f0153958460c3d141f04abc5c2e`, чтобы результаты матрицы были воспроизводимыми. Каждый профиль запускается в двух ролях: BoringTun-сервер ↔ amneziawg-go-клиент и amneziawg-go-сервер ↔ BoringTun-клиент. Для каждого прогона создаются отдельные сетевые namespace с уникальными именами; хостовые маршруты и интерфейсы не перенастраиваются. Успех означает не только принятие UAPI-конфигурации, но и handshake с последующим двусторонним ICMP-трафиком.
 
-Матрица сначала проверяет vanilla WireGuard без AWG-параметров и AWG 2.x с H1–H4/S/J, затем HeaderProtectionKey, ContentPaddingAddition, RandomTrailers, DisableCookies, диапазоны таймеров и совместное включение расширений AWG 3.1. В CI run [41496077388](https://github.com/lelikulibina/boringtun-awg/actions/runs/41496077388) матрица завершилась успешно на кодовом HEAD `e11c15e3340b5e73305207f95e7d727d40f7877c`: все 8 профилей прошли в обеих ролях (16/16), включая vanilla WireGuard и AWG 2.x. Для каждого профиля подтверждены UAPI-настройка, handshake и двусторонний ICMP-трафик. Это не заменяет отдельные тесты под искусственной under-load нагрузкой для DisableCookies и длительный differential-тест rekey/retry/expiry.
+Матрица отдельно проверяет 1 MiB двусторонней передачи для vanilla WireGuard, AWG 2.0, AWG 3.0 и AWG 3.1. Профиль AWG 3.0 включает HeaderProtectionKey, ContentPaddingAddition и диапазоны таймеров; AWG 3.1 добавляет RandomTrailers и DisableCookies поверх профиля 3.0. CPS I1–I5 проверяются отдельными сценариями, поскольку цепочки сигнатур не являются заменой транспортных расширений AWG 3.0. В CI run [41496077388](https://github.com/lelikulibina/boringtun-awg/actions/runs/41496077388) матрица завершилась успешно на кодовом HEAD `e11c15e3340b5e73305207f95e7d727d40f7877c`: все 8 профилей прошли в обеих ролях (16/16), включая vanilla WireGuard и AWG 2.x. Для каждого профиля подтверждены UAPI-настройка, handshake и двусторонний ICMP-трафик. Это не заменяет отдельные тесты под искусственной under-load нагрузкой для DisableCookies и длительный differential-тест rekey/retry/expiry.
 
 ## Что ещё не подтверждено
 
