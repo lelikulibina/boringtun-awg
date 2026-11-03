@@ -179,7 +179,10 @@ mod tests {
         fn connect(&self) -> std::net::TcpStream {
             let http_addr = SocketAddr::new(self.allowed_ips[0].ip, 80);
             for _i in 0..5 {
-                let res = std::net::TcpStream::connect(http_addr);
+                let res = std::net::TcpStream::connect_timeout(
+                    &http_addr,
+                    std::time::Duration::from_secs(1),
+                );
                 if let Err(err) = res {
                     println!("failed to connect: {:?}", err);
                     std::thread::sleep(std::time::Duration::from_millis(100));
