@@ -735,7 +735,12 @@ def run_profile(
 ) -> None:
     token = uuid.uuid4().hex[:10]
     ns_server, ns_client = f"awg31s{token}", f"awg31c{token}"
-    bt_iface, go_iface = f"bt31{token}", f"go31{token}"
+    # UAPI sockets live in the host filesystem (/var/run/*), not inside
+    # network namespaces. Therefore even peers in separate netns must have
+    # distinct interface names; reusing one name for a homogeneous pair makes
+    # the second process fail with "unix socket in use".
+    bt_iface, go_iface = f"bt31{token}s", f"go31{token}s"
+    bt_client_iface, go_client_iface = f"bt31{token}c", f"go31{token}c"
     veth_server, veth_client = f"avs{token}", f"avc{token}"
     processes: list[subprocess.Popen] = []
     log_files = []
@@ -752,7 +757,7 @@ def run_profile(
             raise ValueError(f"unknown same implementation: {same_implementation}")
         server_is_bt = client_is_bt = same_implementation == "boringtun"
     server_iface = bt_iface if server_is_bt else go_iface
-    client_iface = bt_iface if client_is_bt else go_iface
+    client_iface = bt_client_iface if client_is_bt else go_client_iface
     server_name = "boringtun" if server_is_bt else "amneziawg-go"
     client_name = "boringtun" if client_is_bt else "amneziawg-go"
     role = f"{server_name}-to-{client_name}" if same_implementation else f"{server_name} server"
@@ -933,7 +938,7 @@ def run_profile(
                     process.wait()
         for log_file in log_files:
             log_file.close()
-        for iface in (bt_iface, go_iface):
+        for iface in (bt_iface, go_iface, bt_client_iface, go_client_iface):
             for directory in ("/var/run/amneziawg", "/var/run/wireguard"):
                 path = f"{directory}/{iface}.sock"
                 try:
