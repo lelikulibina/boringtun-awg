@@ -493,7 +493,10 @@ impl Device {
                             match reader.read_exact(&mut terminator) {
                                 Ok(()) if terminator[0] == b'\n' => api_get(&mut writer, d),
                                 Ok(()) => EINVAL,
-                                Err(_) => break,
+                                Err(_) => {
+                                    d.trigger_exit();
+                                    return Action::Exit;
+                                },
                             }
                         }
                         "set=1" => api_set(&mut reader, d),
