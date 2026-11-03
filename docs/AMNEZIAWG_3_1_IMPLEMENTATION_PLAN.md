@@ -2,6 +2,29 @@
 
 Документ предназначен для сопровождения работ между сессиями и агентами. Перед продолжением необходимо сверить фактическое состояние ветки и PR: отметки ниже описывают состояние на момент последнего обновления документа.
 
+## Снимок актуального состояния — 2026-11-03
+
+Источник истины для текущего статуса — PR [#8](https://github.com/lelikulibina/boringtun-awg/pull/8), ветка `feat/amneziawg-3.1-disable-cookies`, HEAD `115a6c35d59a626e4c1f0f074b652618ff2f7092`. Эталонная реализация закреплена на `amnezia-vpn/amneziawg-go` commit `b5928efb6ca19f0153958460c3d141f04abc5c2e`.
+
+### Подтверждено на этом HEAD
+
+- Linux PR CI [41629784730](https://github.com/lelikulibina/boringtun-awg/actions/runs/41629784730): `rustfmt`, `clippy`, `check_features`, `tests`, `integration-tests`, `awg31-interoperability` и `all-systems-go` — success.
+- Основной тестовый запуск: **277 passed, 0 failed, 9 ignored**; `cargo hack test --each-feature` завершился успешно.
+- AWG Go interoperability: **44/44 сценария** (22 профиля × обе роли сервера), handshake, двусторонние ICMP/UDP и нормализованный PCAP.
+- Packet-loss recovery: `tc` подтвердил потерю одного подходящего H1 rekey datagram в каждой роли; повторный handshake восстановил двусторонний трафик.
+- Long lifecycle soak: **120 rekey cycles на каждой роли сервера**, UDP roundtrip после каждого цикла.
+- Semgrep [41629784731](https://github.com/lelikulibina/boringtun-awg/actions/runs/41629784731) — success.
+- Performance workflow [41629778226](https://github.com/lelikulibina/boringtun-awg/actions/runs/41629778226) — success; 4/4 homogeneous endpoint/profile runs и 24 iperf3 measurements. Артефакты описаны в `docs/AMNEZIAWG_PERFORMANCE_TESTING.md`.
+
+### Оставшиеся ограничения
+
+- Полный byte-for-byte differential PCAP corpus с Go не реализован. Текущий verifier проверяет типы, framing, размеры, направления и наличие ожидаемых datagrams, а не равенство каждого байта двух независимых реализаций.
+- Windows job в текущем workflow отключён условием `if: false`; macOS не входит в merge gate. Зелёный CI подтверждает Linux.
+- 120 ускоренных rekey cycles — сильный автоматизированный lifecycle regression, но не многочасовой production soak.
+
+**Вердикт:** функциональная совместимость подтверждена на перечисленных Linux-профилях; полную byte-for-byte и кроссплатформенную совместимость пока не заявлять.
+
+
 ## Цель и правила совместимости
 
 Реализовать совместимость с AmneziaWG 3.1 поверх существующего BoringTun, не заменяя и не ломая:
@@ -27,7 +50,7 @@
 - [x] Сохранить приём входящих Cookie Reply и старый публичный API rate limiter.
 - [x] Добавить UAPI set/get и unit-тесты.
 - [x] Проверить under-load сценарии на уровне rate limiter: валидный MAC2 принимается, DisableCookies пропускает невалидный MAC2 как с source IP, так и без него, при этом MAC1 остаётся обязательным и счётчик нагрузки не увеличивается.
-- [x] Получить полный зелёный Linux CI на PR (для базовой реализации и первой полной interop-матрицы; новые тесты ожидают отдельного CI запуска).
+- [x] Получить полный зелёный Linux CI на актуальном HEAD `115a6c35d59a626e4c1f0f074b652618ff2f7092`; результаты и границы проверки приведены в снимке состояния выше.
 
 **Готово, когда:** обычное поведение без флага не меняется; с флагом MAC1 продолжает проверяться, но under-load MAC2/cookie challenge отключён (handshake без MAC2 допускается), как в upstream; входящие Cookie Reply продолжают обрабатываться.
 
@@ -44,7 +67,7 @@
 - [x] Проверить базовые vanilla WG/AWG 2.x регрессии handshake + bidirectional ICMP в CI (профили vanilla WireGuard и AWG 2.x, 4/4).
 - [ ] Добавить отдельное побайтовое сравнение wire bytes при выключенной защите.
 
-**Статус:** реализация ingress/egress и UAPI находится в PR #8. Добавлен фиксированный ChaCha20 reference-vector test (key `0x42` × 32, nonce `00..0b`) для handshake и transport; он проверяет IETF ChaCha20 keystream и wire layout, но не является differential test с официальным Go peer. В device UDP ingress запрещён plaintext fallback, если HeaderProtectionKey включён; добавлен deterministic negative test на отклонение plaintext initiation. Полный Linux CI для SHA `5248ff1c53afc4f8649d42235615a5e84097badf` прошёл: rustfmt, check_features, tests, clippy, integration-tests и all-systems-go — success; Semgrep также success. Этап не завершён: нужны upstream Go differential test, реальный двусторонний handshake и проверка vanilla WG/AWG 2.x.
+**Статус:** реализация ingress/egress и UAPI находится в PR #8. Есть фиксированные ChaCha20 reference vectors и negative test на запрет plaintext fallback. Реальный двусторонний handshake с HeaderProtectionKey, vanilla WireGuard и AWG 2.x прошёл в актуальной Go interop matrix. Остаётся точное byte-for-byte сравнение всех wire bytes с Go и расширение differential vectors на все допустимые H1-H4 ranges.
 
 **Готово, когда:** BoringTun и официальный AWG взаимно устанавливают туннель с одинаковым ключом, неверный ключ/недостаточный S-prefix корректно отклоняется, а vanilla WG и AWG 2.x не меняют поведение.
 
@@ -66,11 +89,11 @@
 - [x] Добавить тесты parsing/merge, fixed-range selection и WireGuard defaults.
 - [x] Согласовать inactivity timers с upstream lifecycle: первый data-send запускает new-handshake timer, первый data-receive запускает keepalive timer; последующие пакеты не сдвигают активный deadline, повторные receive запрашивают дополнительный keepalive.
 - [x] Добавить mock-instant регрессии для idle-before-first-send, повторных receive, сохранения первого deadline и дополнительного keepalive.
-- [ ] Differentially verify точные точки выбора диапазонов и retry/expiry semantics против upstream peer; покрыть сценарии rekey/inactivity/handshake exhaustion.
+- [ ] Выполнить отдельный differential-анализ точек выбора случайных таймерных диапазонов и retry/expiry semantics на уровне wire/peer; текущие mock-clock regressions и 44/44 interoperability + 120-cycle soak подтверждают функциональное поведение, но не побайтовую идентичность RNG и всех timer transitions.
 
 **Готово, когда:** интервалы и поведение соответствуют upstream и не меняют дефолты WireGuard.
 
-**Текущий статус:** диапазоны, UAPI, случайный выбор порогов, retry budget и jitter реализованы. Inactivity deadlines теперь моделируют upstream timer lifecycle: повторная отправка данных не перезапускает уже активный new-handshake timer; повторное получение данных не сдвигает активный keepalive timer и запрашивает ещё один keepalive после первого. Добавлены mock-instant regressions. Этап остаётся незавершённым до differential-проверки выбора значений и retry/expiry против upstream.
+**Текущий статус:** диапазоны, UAPI, случайный выбор порогов, retry budget и jitter реализованы. Inactivity deadlines моделируют upstream timer lifecycle; добавлены mock-instant regressions. Реальные accelerated rekey, packet-loss recovery и 120-cycle lifecycle soak прошли в обеих серверных ролях. Открытым остаётся отдельное доказательство точного соответствия выбора случайных значений и всех retry/expiry transitions на wire-level.
 
 ### Этап 5. RandomTrailers
 - [x] Сверить upstream алгоритм: handshake/cookie получают случайный незашифрованный хвост; transport получает нулевое дополнение внутри AEAD; предел — peer UDP window (по умолчанию 500 байт).
@@ -80,30 +103,30 @@
 - [x] Ограничить cookie trailer остатком размера исходного запроса, чтобы RandomTrailers не создавал amplification.
 - [x] Добавить unit/tunnel тесты на handshake/cookie framing, совместную работу HP + trailer, transport AEAD padding, UDP-window bounds и CPA precedence.
 - [x] Исправить локальное увеличение UDP window исходящим размером пакета: окно теперь растёт только по аутентифицированной входящей датаграмме, как в upstream. Добавлен regression test: пакет больше начального окна 500 байт не получает случайное дополнение.
-- [ ] Differentially verify wire lengths, random range boundaries, H1-H4 classification and cookie reply behaviour against upstream Go peer; отдельно закрыть regressions из upstream issues #185/#186.
+- [ ] Завершить byte-for-byte differential verification wire lengths и случайных trailer bytes против upstream Go. Функциональные проверки H1-H4, cookie reply, UDP-window bounds, CPA precedence и регрессии upstream issues #185/#186 пройдены; полный побайтовый corpus остаётся открытым.
 
-**Готово, когда:** обе стороны принимают пакеты с trailer, корректно выделяют исходное сообщение и не возникает потерь на допустимых комбинациях диапазонов. Этап не считается завершённым до differential interop.
+**Статус:** функциональный двусторонний interop с RandomTrailers прошёл в матрице 44/44; issue #185/#186 учтены, небезопасные комбинации S1-S4 отклоняются fail-fast. Не завершён только полный byte-for-byte differential corpus.
 
 ### Этап 6. UAPI, конфигурация и документация
 - [x] Поддержать новые параметры в UAPI set/get, включая сериализацию обоих состояний boolean-флагов; проверить parse/merge и round-trip значений.
 - [x] Добавить fallible `Tunn::try_set_obfuscation`: runtime update сначала проверяет все ограничения, а при ошибке сохраняет прежнюю конфигурацию. Старый `set_obfuscation` API оставлен совместимым и логирует отказ.
 - [x] Документировать формат ключей/диапазонов, согласование настроек сторон, UDP-window/MTU ограничения и обратную совместимость в `docs/AMNEZIAWG_3_1_CONFIGURATION.md`.
-- [x] Добавить ссылку на документацию и оговорку о неполной interop-валидации в README.
+- [x] Добавить ссылку на документацию и оговорку о границах byte-for-byte и cross-platform в README.
 - [x] Проверить merge semantics: частичный `set` не сбрасывает неуказанные параметры и существующие imitation-настройки.
 
-**Статус:** UAPI и конфигурационная документация обновлены. Полная release-готовность не достигнута до выполнения этапа 7.
+**Статус:** UAPI и конфигурационная документация обновлены; документация синхронизирована с последним CI и фактическими ограничениями.
 
 **Готово, когда:** конфигурацию можно безопасно применить, прочитать обратно и перенести без потери значений.
 
 ### Этап 7. Межоперабельность и выпуск
-- [ ] Поднять тестовую матрицу BoringTun client ↔ amneziawg-go server и наоборот.
-- [ ] Прогнать vanilla WireGuard ↔ BoringTun в обоих направлениях.
-- [ ] Прогнать AWG 2.x без новых параметров.
-- [ ] Прогнать AWG 3.1 с каждым механизмом отдельно и со всеми вместе.
+- [x] Поднять тестовую матрицу BoringTun client ↔ amneziawg-go server и наоборот (44/44 сценария).
+- [x] Прогнать vanilla WireGuard ↔ BoringTun в обоих направлениях.
+- [x] Прогнать AWG 2.x без новых параметров.
+- [x] Прогнать AWG 3.1 с каждым механизмом отдельно и со всеми вместе (включая packet-loss recovery и lifecycle soak).
 - [x] Выполнить cargo fmt, cargo hack check/test/clippy --each-feature и Linux CI.
-- [x] Добавить Windows `cargo check -p boringtun --no-default-features` как обязательную проверку `all-systems-go`; macOS `cargo check -p boringtun --all-features` и `cargo check -p boringtun-cli` вынесены в отдельную дополнительную job, не блокирующую основной merge gate.
-- [x] Прогнать существующие probe/imitation unit tests и Linux integration tests; полный upstream interop остаётся отдельным незавершённым пунктом.
-- [ ] После review и зелёного CI обновить PR и только затем обсуждать merge.
+- [ ] Восстановить cross-platform CI: Windows job сейчас отключён через `if: false`, macOS не входит в текущий workflow/merge gate.
+- [x] Прогнать существующие probe/imitation unit tests и Linux integration tests; функциональный upstream interop пройден, byte-for-byte differential остаётся отдельным пунктом.
+- [x] Провести аудит PR, синхронизировать описание и документацию, подтвердить зелёный Linux CI перед squash merge.
 
 **Готово, когда:** вся матрица совместимости пройдена, а документация отражает фактический уровень поддержки.
 
