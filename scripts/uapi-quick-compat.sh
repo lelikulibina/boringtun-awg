@@ -16,6 +16,7 @@ done
 [[ -c /dev/net/tun ]] || { echo "ERROR: /dev/net/tun is unavailable" >&2; exit 2; }
 
 WORK="$(mktemp -d)"
+QUICK_BIN="$WORK/quick-bin"
 WG_IFACE="wgq0"
 AWG_IFACE="awgq0"
 WG_UP=0
@@ -45,7 +46,6 @@ AWG_PEER_PUBLIC="$(awg pubkey < "$WORK/awg-peer-private")"
 # The shim makes only the kernel link-create probe fail, guaranteeing that the
 # original scripts take their documented userspace-implementation fallback
 # even on hosts with WireGuard/AmneziaWG kernel modules available.
-QUICK_BIN="$WORK/quick-bin"
 mkdir -p "$QUICK_BIN"
 cp -L "$(command -v wg-quick)" "$QUICK_BIN/wg-quick"
 cp -L "$(command -v awg-quick)" "$QUICK_BIN/awg-quick"
