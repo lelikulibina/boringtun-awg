@@ -43,20 +43,35 @@ WG_PEER_PUBLIC="$(wg pubkey < "$WORK/wg-peer-private")"
 AWG_PRIVATE="$(cat "$WORK/awg-private")"
 AWG_PEER_PUBLIC="$(awg pubkey < "$WORK/awg-peer-private")"
 
-# Stage the original quick scripts and an ip shim. The shim forces the
-# documented userspace fallback without modifying wg-quick/awg-quick.
+# Stage the original quick scripts and client wrappers. Ubuntu CI images may
+# ship an AppArmor profile named "wg" that denies access to UAPI sockets.
+# Run only the test clients unconfined; do not disable AppArmor system-wide.
 mkdir -p "$QUICK_BIN"
 cp -L "$(command -v wg-quick)" "$QUICK_BIN/wg-quick"
 cp -L "$(command -v awg-quick)" "$QUICK_BIN/awg-quick"
 WG_REAL="$(command -v wg)"
 cat > "$QUICK_BIN/wg" <<EOF
 #!/usr/bin/env bash
-if [[ "${UAPI_TRACE:-0}" == 1 ]]; then
+if [[ "\${UAPI_TRACE:-0}" == 1 ]]; then
   exec strace -ff -yy -e trace=%file,connect -s 256 -o /tmp/uapi-wg.trace "$WG_REAL" "\$@"
+fi
+if command -v aa-exec >/dev/null 2>&1 && [[ -r /sys/kernel/security/apparmor/profiles ]]; then
+  exec aa-exec -p unconfined -- "$WG_REAL" "\$@"
 fi
 exec "$WG_REAL" "\$@"
 EOF
 chmod +x "$QUICK_BIN/wg"
+
+AWG_REAL="$(command -v awg)"
+cat > "$QUICK_BIN/awg" <<EOF
+#!/usr/bin/env bash
+if command -v aa-exec >/dev/null 2>&1 && [[ -r /sys/kernel/security/apparmor/profiles ]]; then
+  exec aa-exec -p unconfined -- "$AWG_REAL" "\$@"
+fi
+exec "$AWG_REAL" "\$@"
+EOF
+chmod +x "$QUICK_BIN/awg"
+
 IP_REAL="$(command -v ip)"
 cat > "$QUICK_BIN/ip" <<EOF
 #!/usr/bin/env bash
