@@ -10,8 +10,9 @@
 
 - PR #8 смержен в main; 398 исходных коммитов объединены squash-коммитом.
 - Полная Linux-матрица на неизменённом кодовом HEAD перед docs-only изменениями прошла **44/44**; основной CI и Semgrep также завершились успешно.
-- Следующий этап — сократить обязательную PR-проверку до 12 сценариев (6 профилей × обе роли) и оставить исходную 44-сценарную матрицу доступной через ручной запуск `--full`.
-- Производительность AWG 3.1 требует отдельного расследования: исходный benchmark показал аномально низкий TCP throughput у upstream Go reference. Изолирующий benchmark по отдельным расширениям добавлен в рабочую ветку; выводы о виновном расширении делать до нового прогона нельзя.
+- Обязательная PR-проверка сокращена до 12 сценариев (6 профилей × обе роли); полная 44-сценарная матрица сохранена для ручного запуска `--full`. Последний прогон короткой матрицы — 12/12, тестовый этап занял 53 секунды.
+- Изолирующий performance benchmark выявил одинаковую деградацию upstream Go на HPK, ContentPaddingAddition, RandomTrailers и DisableCookies по отдельности (около 1,5–2,3 Mbit/s против 7,5–7,8 Gbit/s vanilla). Это пока не доказывает дефект конкретного расширения: все профили используют общую AWG 2.x S/H-обфускацию. Добавлен контроль AWG 2.x baseline и randomized timers.
+- BoringTun сохраняет около 655–750 Mbit/s в AWG-профилях против 1 085 Mbit/s vanilla. UDP 100 Mbit/s — без потерь. Benchmark — короткий run на GitHub-hosted runner; это диагностический сигнал, не стабильная performance-гарантия.
 - Кроссплатформенное расширение CI сознательно отложено.
 
 ### Подтверждено до UAPI follow-up
@@ -37,7 +38,7 @@
 - 120 ускоренных rekey cycles — автоматизированный lifecycle regression, но не многочасовой production soak.
 - Для UAPI-паритета интерфейсные поля должны предшествовать первой peer-секции, как в `awg setconf`; создание нового peer требует уже заданного private key. Пересекающиеся H1-H4 и неодинаковые S1-S4 при `random_trailers=true` намеренно отклоняются.
 
-**Финальный вердикт по PR #8 (2026-11-03): READY TO MERGE.** UAPI-несовместимости и дефект владения AllowedIPs устранены, исправления включены в проверенный HEAD `25dcf432296f8f3cc52d76c889b60e8d5087d0b9`. Финальный [PR Status Checks, run 41684331967](https://github.com/lelikulibina/boringtun-awg/actions/runs/41684331967) завершился `success`: `rustfmt`, `clippy`, `check_features`, `tests`, `integration-tests` (9/9), `awg31-interoperability` (44/44) и `all-systems-go` прошли. [Semgrep, run 41684332036](https://github.com/lelikulibina/boringtun-awg/actions/runs/41684332036) также завершился `success`. Windows job пропущен намеренно; macOS не входит в merge gate. С учётом этих явно описанных платформенных и differential-PCAP ограничений PR готов к **Squash and merge** в `main`.
+**Финальный вердикт по PR #8 (2026-11-03): MERGED.** UAPI-несовместимости и дефект владения AllowedIPs устранены; PR #8 объединён squash-коммитом [`fd4ca6f`](https://github.com/lelikulibina/boringtun-awg/commit/fd4ca6fb4ebb8a504be8474ecb1934bd87c0302b). Полная Linux-матрица 44/44 и основной CI прошли на неизменённом кодовом HEAD; docs-only изменения после этого не меняли код. Follow-up по времени CI и производительности ведётся в [PR #11](https://github.com/lelikulibina/boringtun-awg/pull/11).
 
 
 ## Цель и правила совместимости
@@ -421,14 +422,14 @@ Upstream точки сверки:
 
 - Interop harness расширен: каждый из 8 профилей в обеих серверных ролях теперь проверяет не только handshake и двусторонний ICMP, но и реальный UDP request/reply через зашифрованный туннель.
 - UDP server/client запускаются внутри изолированных network namespaces; проверяется точное содержимое ответа, а не только наличие маршрута или handshake timestamp.
-- Требуется подтверждение полного CI и 16/16 interop прогонов на новом HEAD.
+- Историческая отметка на момент записи; итоговый Linux CI и полная матрица подтверждены последующим прогоном, см. текущее состояние после merge.
 
 
 ### Этап 18: XChaCha20-Poly1305 Cookie Reply known-answer vector (2026-11-03)
 
 - Добавлен фиксированный 64-байтовый Cookie Reply fixture с детерминированными nonce key/counter, AEAD key, cookie, MAC1 и H3 tag.
 - Эталон независимо рассчитан через keyed BLAKE2s-192 и XChaCha20-Poly1305 (HChaCha20 + ChaCha20-Poly1305); сравнивается весь wire envelope: type, receiver index, nonce, ciphertext и Poly1305 tag.
-- Это закрывает ранее отмеченный пробел между MAC1/MAC2 known-answer vectors и end-to-end проверкой Cookie Reply authentication. Требуется CI на новом HEAD.
+- Это закрывает ранее отмеченный пробел между MAC1/MAC2 known-answer vectors и end-to-end проверкой Cookie Reply authentication. На момент записи ожидался CI; итоговое подтверждение приведено в текущем статусе после merge.
 
 
 ### Этап 19: реальный send-side rekey между BoringTun и Go (2026-11-03)
@@ -444,7 +445,7 @@ Upstream точки сверки:
 - Pcap verifier декодирует Ethernet/IPv4/UDP, восстанавливает защищённое поле типа AWG 3.1 через ChaCha20 (для HPK-профилей), затем классифицирует H1-H4 и проверяет направление, фиксированные размеры Initiation/Response/Cookie Reply и framing Transport.
 - Для RandomTrailers проверяются границы handshake/cookie envelope; для accelerated rekey в pcap требуются минимум два Initiation и два Response, а UDP roundtrip повторно проходит после смены handshake.
 - Сравнение выполняется по нормализованной семантике пакетов, а не по полным байтам: ephemeral Noise keys, nonce и случайные trailers закономерно различаются между независимыми запусками. Побайтовое равенство двух независимых pcap не является корректным критерием.
-- Требуется CI на новом HEAD; этап не считается завершённым до проверки.
+- На момент записи этап ожидал CI; его последующая проверка вошла в полный Linux CI, см. текущее состояние после merge.
 
 
 ### Финальный этап B: повторные rekey и непрерывная передача данных (2026-11-03)
