@@ -210,12 +210,20 @@ impl AwgParams {
         amnezia.max_handshake_attempts = self
             .max_handshake_attempts
             .unwrap_or(amnezia.max_handshake_attempts);
-        let amnezia = amnezia.with_pre_handshake_junk(
-            self.jc.unwrap_or(cur_junk.packet_count),
-            self.jmin.unwrap_or(cur_junk.packet_size_min),
-            self.jmax.unwrap_or(cur_junk.packet_size_max),
-            cur_junk.packet_delay_ms,
-        );
+        let amnezia = amnezia
+            .try_with_pre_handshake_junk(
+                self.jc.unwrap_or(cur_junk.packet_count),
+                self.jmin.unwrap_or(cur_junk.packet_size_min),
+                self.jmax.unwrap_or(cur_junk.packet_size_max),
+                cur_junk.packet_delay_ms,
+            )
+            .map_err(|error| {
+                tracing::error!(
+                    message = "rejecting AmneziaWG pre-handshake junk parameters",
+                    error = %error
+                );
+                EINVAL
+            })?;
 
         // Reject sizes that could never emit a valid datagram, before anything
         // is committed. Without this, an oversized S value is accepted here and
