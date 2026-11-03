@@ -1290,6 +1290,19 @@ mod tests {
     }
 
     #[test]
+    fn uapi_boolean_parser_matches_go_strconv_parse_bool() {
+        for value in ["1", "t", "T", "TRUE", "true", "True"] {
+            assert_eq!(parse_uapi_bool(value), Some(true), "{}", value);
+        }
+        for value in ["0", "f", "F", "FALSE", "false", "False"] {
+            assert_eq!(parse_uapi_bool(value), Some(false), "{}", value);
+        }
+        for value in ["", "yes", "no", "2", "on", "off"] {
+            assert_eq!(parse_uapi_bool(value), None, "{}", value);
+        }
+    }
+
+    #[test]
     fn content_padding_addition_range_is_parsed_and_merged() {
         assert_eq!(parse_u16_range("24"), Some((24, 24)));
         assert_eq!(parse_u16_range("0-64"), Some((0, 64)));
