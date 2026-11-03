@@ -421,7 +421,8 @@ impl Device {
                         Ok(_) => {}
                     }
                     if cmd.ends_with('\n') { cmd.pop(); }
-                    if cmd.ends_with('\r') { cmd.pop(); }
+                    // IpcHandle compares the operation line literally; unlike
+                    // Scanner lines inside set=1, CRLF is not accepted here.
                     let status = match cmd.as_str() {
                         "get=1" => {
                             let mut terminator = String::new();
@@ -431,11 +432,9 @@ impl Device {
                             }
                         }
                         "set=1" => api_set(&mut reader, d),
-                        _ => {
-                            let _ = writeln!(writer, "errno={}\n", EIO);
-                            let _ = writer.flush();
-                            break;
-                        }
+                        // Match upstream IpcHandle: an unknown operation closes
+                        // the connection without an errno response.
+                        _ => break,
                     };
                     if writeln!(writer, "errno={}\n", status).is_err() || writer.flush().is_err() {
                         break;
@@ -469,7 +468,8 @@ impl Device {
                         Ok(_) => {}
                     }
                     if cmd.ends_with('\n') { cmd.pop(); }
-                    if cmd.ends_with('\r') { cmd.pop(); }
+                    // IpcHandle compares the operation line literally; unlike
+                    // Scanner lines inside set=1, CRLF is not accepted here.
                     let status = match cmd.as_str() {
                         "get=1" => {
                             let mut terminator = String::new();
@@ -479,11 +479,9 @@ impl Device {
                             }
                         }
                         "set=1" => api_set(&mut reader, d),
-                        _ => {
-                            let _ = writeln!(writer, "errno={}\n", EIO);
-                            let _ = writer.flush();
-                            break;
-                        }
+                        // Match upstream IpcHandle: an unknown operation closes
+                        // the connection without an errno response.
+                        _ => break,
                     };
                     if writeln!(writer, "errno={}\n", status).is_err() || writer.flush().is_err() {
                         break;
