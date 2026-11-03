@@ -62,6 +62,14 @@ fn parse_u32_range(val: &str) -> Option<(u32, u32)> {
     (start <= end).then_some((u32::from(start), u32::from(end)))
 }
 
+fn parse_uapi_bool(val: &str) -> Option<bool> {
+    match val {
+        "1" | "t" | "T" | "TRUE" | "true" | "True" => Some(true),
+        "0" | "f" | "F" | "FALSE" | "false" | "False" => Some(false),
+        _ => None,
+    }
+}
+
 fn parse_tag_range(val: &str) -> Option<(u32, u32)> {
     let (start, end) = match val.split_once('-') {
         Some((start, end)) => (start.trim().parse().ok()?, end.trim().parse().ok()?),
@@ -479,8 +487,8 @@ fn api_get(writer: &mut BufWriter<&UnixStream>, d: &Device) -> i32 {
                 encode_hex(&a.header_protection_key)
             );
         }
-        writeln!(writer, "disable_cookies={}", a.disable_cookies);
-        writeln!(writer, "random_trailers={}", a.random_trailers);
+        writeln!(writer, "disable_cookies={}", if a.disable_cookies { 1 } else { 0 });
+        writeln!(writer, "random_trailers={}", if a.random_trailers { 1 } else { 0 });
         for (index, chain) in a.signature_packets.iter().enumerate() {
             if let Some(chain) = chain {
                 writeln!(writer, "i{}={}", index + 1, chain.spec());
@@ -603,6 +611,9 @@ fn api_get(writer: &mut BufWriter<&UnixStream>, d: &Device) -> i32 {
                     handshake_at.subsec_nanos()
                 );
             }
+        } else {
+            writeln!(writer, "last_handshake_time_sec=0");
+            writeln!(writer, "last_handshake_time_nsec=0");
         }
 
         let (_, tx_bytes, rx_bytes, ..) = p.tunnel.stats();
@@ -683,10 +694,11 @@ fn api_set(reader: &mut BufReader<&UnixStream>, d: &mut LockReadGuard<Device>) -
                             },
                             Err(_) => return EINVAL,
                         },
-                        "replace_peers" => match val.parse::<bool>() {
-                            Ok(true) => device.clear_peers(),
-                            Ok(false) => {}
-                            Err(_) => return EINVAL,
+                        "replace_peers" => {
+                            if val != "true" {
+                                return EINVAL;
+                            }
+                            device.clear_peers();
                         },
                         "public_key" => match val.parse::<KeyBytes>() {
                             // Indicates a new peer section
@@ -775,19 +787,19 @@ fn api_set(reader: &mut BufReader<&UnixStream>, d: &mut LockReadGuard<Device>) -
                                 Err(_) => return EINVAL,
                             }
                         }
-                        "random_trailers" => match val.parse::<bool>() {
-                            Ok(value) => {
+                        "random_trailers" => match parse_uapi_bool(val) {
+                            Some(value) => {
                                 awg.random_trailers = Some(value);
                                 awg.seen = true;
                             }
-                            Err(_) => return EINVAL,
+                            None => return EINVAL,
                         },
-                        "disable_cookies" => match val.parse::<bool>() {
-                            Ok(value) => {
+                        "disable_cookies" => match parse_uapi_bool(val) {
+                            Some(value) => {
                                 awg.disable_cookies = Some(value);
                                 awg.seen = true;
                             }
-                            Err(_) => return EINVAL,
+                            None => return EINVAL,
                         },
                         _ => return EINVAL,
                     }
@@ -857,10 +869,11 @@ fn api_set_peer(
             }
             let (key, val) = (parsed_cmd[0], parsed_cmd[1]);
             match key {
-                "remove" => match val.parse::<bool>() {
-                    Ok(true) => sec.remove = true,
-                    Ok(false) => sec.remove = false,
-                    Err(_) => return EINVAL,
+                "remove" => {
+                    if val != "true" {
+                        return EINVAL;
+                    }
+                    sec.remove = true;
                 },
                 "preshared_key" => match val.parse::<KeyBytes>() {
                     Ok(key_bytes) => sec.preshared_key = Some(key_bytes.0),
@@ -874,10 +887,11 @@ fn api_set_peer(
                     Ok(interval) => sec.keepalive = Some(interval),
                     Err(_) => return EINVAL,
                 },
-                "replace_allowed_ips" => match val.parse::<bool>() {
-                    Ok(true) => sec.replace_ips = true,
-                    Ok(false) => sec.replace_ips = false,
-                    Err(_) => return EINVAL,
+                "replace_allowed_ips" => {
+                    if val != "true" {
+                        return EINVAL;
+                    }
+                    sec.replace_ips = true;
                 },
                 "allowed_ip" => {
                     let (remove, value) = match val.strip_prefix('-') {
@@ -890,9 +904,11 @@ fn api_set_peer(
                         Err(_) => return EINVAL,
                     }
                 }
-                "update_only" => match val.parse::<bool>() {
-                    Ok(true) => sec.update_only = true,
-                    _ => return EINVAL,
+                "update_only" => {
+                    if val != "true" {
+                        return EINVAL;
+                    }
+                    sec.update_only = true;
                 },
                 "public_key" => {
                     // Indicates a new peer section. Commit changes for current peer, and continue to next peer
