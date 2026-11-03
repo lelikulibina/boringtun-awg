@@ -271,11 +271,16 @@ def verify_udp_roundtrip(server_ns: str, client_ns: str) -> None:
         "print(data.decode(), flush=True)"
     )
     client_code = (
-        "import socket; "
+        "import socket, time; "
         "s=socket.socket(socket.AF_INET, socket.SOCK_DGRAM); "
-        "s.settimeout(8); "
-        f"s.sendto(b'probe', ('{SERVER_TUN}', 39001)); "
-        "data, _=s.recvfrom(256); "
+        "s.settimeout(1.5); "
+        f"target=('{SERVER_TUN}', 39001); "
+        "data=None; "
+        "deadline=time.monotonic()+12; "
+        "while time.monotonic()<deadline: "
+        "s.sendto(b'probe', target); "
+        "try: data, _=s.recvfrom(256); break "
+        "except socket.timeout: pass; "
         "assert data == b'awg31-udp-reply:probe', data"
     )
     server = subprocess.Popen(
