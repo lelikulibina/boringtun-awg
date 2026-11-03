@@ -53,7 +53,7 @@ cp -L "$(command -v awg-quick)" "$QUICK_BIN/awg-quick"
 WG_REAL="$(command -v wg)"
 cat > "$QUICK_BIN/wg" <<EOF
 #!/usr/bin/env bash
-exec strace -f -e trace=connect -s 256 -o /tmp/uapi-wg.trace "$WG_REAL" "\$@"
+exec strace -ff -yy -e trace=%file,connect -s 256 -o /tmp/uapi-wg.trace "$WG_REAL" "\$@"
 EOF
 chmod +x "$QUICK_BIN/wg"
 IP_REAL="$(command -v ip)"
