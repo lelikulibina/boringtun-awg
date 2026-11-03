@@ -144,9 +144,22 @@ QUICK_PROFILES = [PROFILES[index] for index in (0, 1, 11, 12, 15, 21)]
 
 # Isolated extension profiles for diagnosis; baseline and combined profiles
 # also run UDP sanity checks.
-# Include AWG 2.x as the control for shared S/H obfuscation, and timers-only
-# to distinguish legacy AWG framing from the 3.1 transport extensions.
-PERFORMANCE_PROFILES = [PROFILES[index] for index in (0, 1, 6, 7, 8, 9, 10, 15)]
+# Include AWG 2.x as the legacy control, then split its J and S/H
+# parameters to identify which shared mechanism drives the upstream slowdown.
+PERFORMANCE_PROFILES = [PROFILES[index] for index in (0, 1, 6, 7, 8, 9, 10, 15)] + [
+    (
+        "AWG 2.x J-only",
+        "jc=4\\njmin=50\\njmax=1000\\n",
+        True,
+    ),
+    (
+        "AWG 2.x S-H-only",
+        "s1=120\\ns2=120\\ns3=120\\ns4=120\\n"
+        "h1=169887817\\nh2=390382747\\n"
+        "h3=1033691040\\nh4=1526332224\\n",
+        True,
+    ),
+]
 
 def run(*args: str, check: bool = True, capture: bool = False) -> str:
     result = subprocess.run(
