@@ -494,6 +494,27 @@ impl Device {
         index_prefixes(&self.peers_by_ip, peer)
     }
 
+    fn remove_peer_allowed_ips(&mut self, peer: &Arc<Mutex<Peer>>) {
+        self.peers_by_ip
+            .remove(&|owner: &Arc<Mutex<Peer>>| Arc::ptr_eq(owner, peer));
+    }
+
+    fn add_peer_allowed_ip(&mut self, peer: &Arc<Mutex<Peer>>, allowed_ip: AllowedIP) {
+        self.peers_by_ip.insert(
+            allowed_ip.addr,
+            allowed_ip.cidr as u32,
+            Arc::clone(peer),
+        );
+    }
+
+    fn remove_peer_allowed_ip(&mut self, peer: &Arc<Mutex<Peer>>, allowed_ip: AllowedIP) {
+        self.peers_by_ip.remove_exact(
+            allowed_ip.addr,
+            allowed_ip.cidr as u32,
+            &|owner: &Arc<Mutex<Peer>>| Arc::ptr_eq(owner, peer),
+        );
+    }
+
     fn merge_peer(
         &mut self,
         peer: &Arc<Mutex<Peer>>,
