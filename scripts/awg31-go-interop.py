@@ -278,6 +278,8 @@ def drop_client_egress_during_rekey(client_ns: str, client_link: str) -> int:
         )
     print(f"PACKET-LOSS: tc dropped {dropped} matching H1 rekey datagram(s)")
     return dropped
+
+
 def verify_udp_roundtrip(server_ns: str, client_ns: str) -> None:
     """Verify an actual bidirectional UDP payload through the encrypted tunnel."""
     server_code = (
