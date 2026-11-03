@@ -24,8 +24,8 @@ AWG_UP=0
 cleanup() {
   local status=$?
   set +e
-  if [[ $AWG_UP -eq 1 ]]; then WG_QUICK_USERSPACE_IMPLEMENTATION="$BT_BIN" WG_SUDO=1 awg-quick down "$WORK/awgq0.conf"; fi
-  if [[ $WG_UP -eq 1 ]]; then WG_QUICK_USERSPACE_IMPLEMENTATION="$BT_BIN" WG_SUDO=1 wg-quick down "$WORK/wgq0.conf"; fi
+  if [[ $AWG_UP -eq 1 ]]; then PATH="$QUICK_BIN:$PATH" WG_QUICK_USERSPACE_IMPLEMENTATION="$BT_BIN" WG_SUDO=1 awg-quick down "$WORK/awgq0.conf"; fi
+  if [[ $WG_UP -eq 1 ]]; then PATH="$QUICK_BIN:$PATH" WG_QUICK_USERSPACE_IMPLEMENTATION="$BT_BIN" WG_SUDO=1 wg-quick down "$WORK/wgq0.conf"; fi
   rm -rf "$WORK"
   exit "$status"
 }
@@ -40,6 +40,29 @@ WG_PRIVATE="$(cat "$WORK/wg-private")"
 WG_PEER_PUBLIC="$(wg pubkey < "$WORK/wg-peer-private")"
 AWG_PRIVATE="$(cat "$WORK/awg-private")"
 AWG_PEER_PUBLIC="$(awg pubkey < "$WORK/awg-peer-private")"
+
+# Stage byte-for-byte copies of the installed quick scripts beside an ip shim.
+# The shim makes only the kernel link-create probe fail, guaranteeing that the
+# original scripts take their documented userspace-implementation fallback
+# even on hosts with WireGuard/AmneziaWG kernel modules available.
+QUICK_BIN="$WORK/quick-bin"
+mkdir -p "$QUICK_BIN"
+cp -L "$(command -v wg-quick)" "$QUICK_BIN/wg-quick"
+cp -L "$(command -v awg-quick)" "$QUICK_BIN/awg-quick"
+IP_REAL="$(command -v ip)"
+cat > "$QUICK_BIN/ip" <<EOF
+#!/usr/bin/env bash
+if [[ "\$1" == link && "\$2" == add && "\$3" == "$WG_IFACE" && "\$4" == type && "\$5" == wireguard ]]; then
+  echo "uapi test: force wg-quick userspace fallback" >&2
+  exit 1
+fi
+if [[ "\$1" == link && "\$2" == add && "\$3" == "$AWG_IFACE" && "\$4" == type && "\$5" == amneziawg ]]; then
+  echo "uapi test: force awg-quick userspace fallback" >&2
+  exit 1
+fi
+exec "$IP_REAL" "\$@"
+EOF
+chmod +x "$QUICK_BIN/ip"
 
 cat > "$WORK/wgq0.conf" <<EOF
 [Interface]
@@ -107,7 +130,7 @@ assert_contains() {
 
 echo "== wg-quick: start userspace BoringTun =="
 WG_UP=1
-WG_QUICK_USERSPACE_IMPLEMENTATION="$BT_BIN" WG_SUDO=1 wg-quick up "$WORK/wgq0.conf"
+PATH="$QUICK_BIN:$PATH" WG_QUICK_USERSPACE_IMPLEMENTATION="$BT_BIN" WG_SUDO=1 wg-quick up "$WORK/wgq0.conf"
 assert_boringtun_running "$WG_IFACE"
 wg_show="$(wg show "$WG_IFACE")"
 assert_contains "$wg_show" "listening port: 51871" "wg show via UAPI"
@@ -134,7 +157,7 @@ fi
 
 echo "== awg-quick: start userspace BoringTun =="
 AWG_UP=1
-WG_QUICK_USERSPACE_IMPLEMENTATION="$BT_BIN" WG_SUDO=1 awg-quick up "$WORK/awgq0.conf"
+PATH="$QUICK_BIN:$PATH" WG_QUICK_USERSPACE_IMPLEMENTATION="$BT_BIN" WG_SUDO=1 awg-quick up "$WORK/awgq0.conf"
 assert_boringtun_running "$AWG_IFACE"
 awg_show="$(awg show "$AWG_IFACE")"
 assert_contains "$awg_show" "listening port: 51881" "awg show via UAPI"
