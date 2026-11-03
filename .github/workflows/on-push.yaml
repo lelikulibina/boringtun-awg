@@ -14,7 +14,7 @@ on:
   push:
     branches: [ "main", "master", "awg-2.0-extensions" ]
   pull_request:
-    branches: [ "main", "master", "awg-2.0-extensions", "feat/amneziawg-3.1-disable-cookies" ]
+    branches: [ "main", "master", "awg-2.0-extensions" ]
 
 jobs:
   # Aggregate required checks for this repository's PR validation.
