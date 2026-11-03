@@ -859,6 +859,10 @@ def run_profile(
         ns(ns_client, "ip", "route", "add", f"{SERVER_TUN}/32", "dev", client_iface)
         initial_handshake_time = wait_handshake(server_iface, ns_client, SERVER_TUN)
         if performance:
+            # Generate a real bidirectional payload before closing the capture.
+            # This guarantees tcpdump has drained the handshake/control packets.
+            verify_udp_roundtrip(ns_server, ns_client)
+            time.sleep(0.1)
             # Do not capture the iperf3 data plane: a previous run uploaded a
             # 1.8 GB pcap. The verifier only needs the handshake/control path.
             capture_proc.terminate()
@@ -884,7 +888,6 @@ def run_profile(
                 ns_server, ns_client, Path("target/awg31-performance"),
                 f"{name}-{role}",
             )
-            verify_udp_roundtrip(ns_server, ns_client)
         elif name in ("accelerated rekey", "long peer lifecycle soak"):
             handshake_time = initial_handshake_time
             cycle_count = (
