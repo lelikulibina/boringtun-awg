@@ -500,7 +500,7 @@ impl Device {
         replace_ips: bool,
         endpoint: Option<SocketAddr>,
         allowed_ips: &[AllowedIP],
-        keepalive: Option<u16>,
+        keepalive: Option<(u32, u32)>,
         preshared_key: Option<[u8; 32]>,
     ) {
         {
@@ -510,7 +510,7 @@ impl Device {
                 p.set_endpoint(addr);
             }
             if keepalive.is_some() {
-                p.set_persistent_keepalive(keepalive);
+                p.set_persistent_keepalive_range(keepalive);
             }
             if preshared_key.is_some() {
                 p.set_preshared_key(preshared_key);
@@ -550,7 +550,7 @@ impl Device {
         replace_ips: bool,
         endpoint: Option<SocketAddr>,
         allowed_ips: &[AllowedIP],
-        keepalive: Option<u16>,
+        keepalive: Option<(u32, u32)>,
         preshared_key: Option<[u8; 32]>,
     ) -> Result<(), Error> {
         if remove {
@@ -600,7 +600,7 @@ impl Device {
             device_key_pair.0.clone(),
             pub_key,
             preshared_key,
-            keepalive,
+            None,
             next_index,
             None,
             self.config.obf,
@@ -616,7 +616,10 @@ impl Device {
         )
         .map_err(Error::PeerSetup)?;
 
-        let peer = Peer::new(tunn, next_index, endpoint, preshared_key);
+        let mut peer = Peer::new(tunn, next_index, endpoint, preshared_key);
+        if let Some(range) = keepalive {
+            peer.set_persistent_keepalive_range(Some(range));
+        }
 
         let peer = Arc::new(Mutex::new(peer));
         self.peers.insert(pub_key, Arc::clone(&peer));
