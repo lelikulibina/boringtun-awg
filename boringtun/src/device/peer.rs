@@ -1,6 +1,7 @@
 // Copyright (c) 2019 Cloudflare, Inc. All rights reserved.
 // SPDX-License-Identifier: BSD-3-Clause
 
+use ip_network::IpNetwork;
 use parking_lot::RwLock;
 use socket2::{Domain, Protocol, Type};
 
@@ -42,8 +43,22 @@ impl FromStr for AllowedIP {
 
         let (addr, cidr) = (ip[0].parse::<IpAddr>(), ip[1].parse::<u8>());
         match (addr, cidr) {
-            (Ok(addr @ IpAddr::V4(_)), Ok(cidr)) if cidr <= 32 => Ok(AllowedIP { addr, cidr }),
-            (Ok(addr @ IpAddr::V6(_)), Ok(cidr)) if cidr <= 128 => Ok(AllowedIP { addr, cidr }),
+            (Ok(addr @ IpAddr::V4(_)), Ok(cidr)) if cidr <= 32 => {
+                let network = IpNetwork::new_truncate(addr, cidr)
+                    .map_err(|_| "Invalid IP format".to_owned())?;
+                Ok(AllowedIP {
+                    addr: network.network_address(),
+                    cidr: network.netmask(),
+                })
+            }
+            (Ok(addr @ IpAddr::V6(_)), Ok(cidr)) if cidr <= 128 => {
+                let network = IpNetwork::new_truncate(addr, cidr)
+                    .map_err(|_| "Invalid IP format".to_owned())?;
+                Ok(AllowedIP {
+                    addr: network.network_address(),
+                    cidr: network.netmask(),
+                })
+            }
             _ => Err("Invalid IP format".to_owned()),
         }
     }
@@ -150,9 +165,14 @@ impl Peer {
         self.tunnel.set_preshared_key(preshared_key);
     }
 
-    /// Replace this peer's persistent-keepalive interval, keeping sessions.
-    pub(crate) fn set_persistent_keepalive(&mut self, keepalive: Option<u16>) {
-        self.tunnel.set_persistent_keepalive(keepalive);
+    /// Replace this peer's persistent-keepalive interval range, keeping sessions.
+    pub(crate) fn set_persistent_keepalive_range(&mut self, keepalive: Option<(u32, u32)>) {
+        self.tunnel.set_persistent_keepalive_range(keepalive);
+    }
+
+    /// The configured persistent-keepalive range, if enabled.
+    pub fn persistent_keepalive_range(&self) -> Option<(u32, u32)> {
+        self.tunnel.persistent_keepalive_range()
     }
 
     // Deliberately no `is_allowed_ip` / `allowed_ips` here. Which prefixes
