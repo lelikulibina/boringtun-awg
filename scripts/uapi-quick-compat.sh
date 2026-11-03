@@ -95,7 +95,16 @@ echo "UAPI launcher diagnostics for \$iface:" >&2
 id >&2
 ls -ldn /var/run/wireguard /var/run/amneziawg >&2
 ls -ln "\$socket" "/var/run/amneziawg/\${iface}.sock" >&2
-ps -eo pid,uid,gid,args | grep '[b]oringtun-cli' >&2 || true
+ps -eo pid,uid,gid,stat,args | grep '[b]oringtun-cli' >&2 || true
+python3 - "\$socket" <<'PY'
+import socket, sys
+client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+client.settimeout(2)
+client.connect(sys.argv[1])
+client.sendall(b"get=1\n\n")
+print("UAPI get response:", client.recv(65536).decode("ascii", "replace"), file=sys.stderr)
+client.close()
+PY
 EOF
 chmod +x "$BT_LAUNCHER"
 
