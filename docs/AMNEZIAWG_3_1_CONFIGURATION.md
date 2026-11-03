@@ -1,6 +1,6 @@
 # Настройка AmneziaWG 3.1 в BoringTun
 
-> **Проверено 2026-11-03:** PR [#8](https://github.com/lelikulibina/boringtun-awg/pull/8), ветка `feat/amneziawg-3.1-disable-cookies`, HEAD `115a6c35d59a626e4c1f0f074b652618ff2f7092`. На этом HEAD Linux CI, Semgrep и двусторонняя матрица с официальным `amneziawg-go` завершились успешно. Матрица: **44/44 сценария**, включая packet-loss recovery и 120 циклов rekey в каждой роли сервера. Это подтверждает функциональную interoperability на проверенных профилях, но не полное побайтовое равенство всех wire datagrams. Windows job пропущен, macOS не входит в текущий merge gate.
+> **Состояние на 2026-11-03:** функциональная матрица AWG 3.1 прошла **44/44 сценария** на исходном кодовом HEAD `115a6c35d59a626e4c1f0f074b652618ff2f7092`; затем в PR #8 интегрированы UAPI и AllowedIPs исправления из follow-up ветки. Финальный Linux CI после этих изменений повторно запускается. Текущие ограничения: нет полного byte-for-byte сравнения всех wire datagrams; Windows job отключён, macOS не входит в merge gate.
 
 > **Предупреждение о безопасности:** `disable_cookies=true` — не просто запрет отправки Cookie Reply. Как и в upstream, при этом обходится весь under-load gate: MAC1 остаётся обязательным, но проверка MAC2 и handshake rate limiting не выполняются. Это снижает защиту от CPU-exhaustion/DoS при потоке handshake-пакетов. Включайте параметр только осознанно и учитывайте риск на публично доступном endpoint.
 
@@ -76,7 +76,7 @@ sudo python3 scripts/awg31-go-interop.py ./target/release/boringtun-cli ./amnezi
 
 ### Результаты на текущем HEAD
 
-На HEAD `115a6c35d59a626e4c1f0f074b652618ff2f7092` завершились успешно:
+На исходном кодовом HEAD `115a6c35d59a626e4c1f0f074b652618ff2f7092` завершились успешно:
 
 - [PR Status Checks, run 41629784730](https://github.com/lelikulibina/boringtun-awg/actions/runs/41629784730): `rustfmt`, `clippy`, `check_features`, `tests`, `integration-tests`, `awg31-interoperability` и `all-systems-go` — success.
 - Основной тестовый запуск: **277 passed, 0 failed, 9 ignored**; матрица `cargo hack test --each-feature` прошла.
@@ -89,6 +89,10 @@ sudo python3 scripts/awg31-go-interop.py ./target/release/boringtun-cli ./amnezi
 Матрица включает vanilla WireGuard, AWG 2.0, AWG 3.0, AWG 3.1, отдельные расширения, совместный профиль, CPS I1–I5, accelerated rekey, packet-loss recovery и длительный ускоренный lifecycle soak. В AWG 3.0-профилях проверяются HeaderProtectionKey, ContentPaddingAddition и таймеры; AWG 3.1 добавляет RandomTrailers и DisableCookies.
 
 **Граница доказательства:** текущий PCAP verifier декодирует типы сообщений и проверяет направление, framing, длины, наличие ожидаемых datagrams и порядок CPS signatures. Он не сравнивает каждый байт независимых PCAP с эталонным Go-процессом. Поэтому 44/44 — это успешные функциональные interoperability-сценарии, а не заявление о полном byte-for-byte wire equivalence.
+
+### Дополнительная проверка UAPI follow-up
+
+UAPI-исправления перенесены из draft PR #9 в PR #8: `private_key` вместо `own_public_key` в `get=1`, абсолютное Unix-время handshake, `protocol_version=1`, uint32 ranges, Go-compatible bool parsing, DNS endpoints, base64 keys, persistent keepalive ranges, EOF/framing, ordered AllowedIP add/remove/replace/update_only и owner-checked routing trie. На исходной follow-up ветке CI run [41670671377](https://github.com/lelikulibina/boringtun-awg/actions/runs/41670671377) прошли `check_features`, `tests`, `clippy` и AWG interoperability 44/44; rustfmt замечания устранены при переносе в PR #8. Финальные проверки должны выполняться на актуальном HEAD PR #8.
 
 ### Оставшиеся ограничения
 
