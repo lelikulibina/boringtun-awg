@@ -8,7 +8,7 @@ if [[ ${EUID} -ne 0 ]]; then
   exit 2
 fi
 
-BT_BIN="$(realpath "${1:-target/release/boringtun}")"
+BT_BIN="$(realpath "${1:-target/release/boringtun-cli}")"
 for tool in wg wg-quick awg awg-quick ip; do
   command -v "$tool" >/dev/null || { echo "ERROR: missing required tool: $tool" >&2; exit 2; }
 done
