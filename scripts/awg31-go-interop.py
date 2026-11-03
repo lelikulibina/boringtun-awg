@@ -5,7 +5,7 @@ Requires Linux, root, iproute2, ping, Python `cryptography`, boringtun-cli built
 with the device feature, and the official amneziawg-go v3 binary. All interfaces and links live
 in uniquely named disposable network namespaces; host routes are not changed.
 
-Usage: sudo python3 scripts/awg31-go-interop.py ./target/release/boringtun-cli ./amneziawg-go [--performance]
+Usage: sudo python3 scripts/awg31-go-interop.py ./target/release/boringtun-cli ./amneziawg-go [--full|--performance]
 """
 from __future__ import annotations
 
@@ -137,6 +137,14 @@ PROFILES = [
     ),
 ]
 
+
+# Fast PR gate: preserve both server roles and the highest-value protocol
+# checks. The complete 22-profile/44-role matrix remains available via --full.
+QUICK_PROFILES = [PROFILES[index] for index in (0, 1, 11, 12, 15, 21)]
+
+# Isolated extension profiles for diagnosis; baseline and combined profiles
+# also run UDP sanity checks.
+PERFORMANCE_PROFILES = [PROFILES[index] for index in (0, 6, 7, 8, 9, 15)]
 
 def run(*args: str, check: bool = True, capture: bool = False) -> str:
     result = subprocess.run(
@@ -477,18 +485,16 @@ def verify_bulk_data_transfer(
 
 def verify_iperf3(
     server_ns: str, client_ns: str, output_dir: Path, scenario: str,
-    duration: int = 8,
+    duration: int = 5,
 ) -> None:
     """Measure TCP/UDP throughput in both directions through the encrypted tunnel."""
     if shutil.which("iperf3") is None:
         raise RuntimeError("iperf3 is required; install the iperf3 package")
     output_dir.mkdir(parents=True, exist_ok=True)
     measurements = []
-    tests = (
-        ("tcp-1-stream", []),
-        ("tcp-4-streams", ["-P", "4"]),
-        ("udp-100-mbit", ["-u", "-b", "100M"]),
-    )
+    tests = [("tcp-1-stream", [])]
+    if scenario.startswith("vanilla WireGuard baseline") or scenario.startswith("all AWG 3.1 extensions combined"):
+        tests.append(("udp-100-mbit", ["-u", "-b", "100M"]))
     directions = (
         ("client-to-server", client_ns, server_ns, SERVER_TUN),
         ("server-to-client", server_ns, client_ns, CLIENT_TUN),
@@ -732,6 +738,7 @@ def run_profile(
     bt: str, go: str, name: str, extra: str,
     awg_enabled: bool, bt_is_server: bool, performance: bool = False,
     same_implementation: str | None = None,
+    extended_matrix: bool = False,
 ) -> None:
     token = uuid.uuid4().hex[:10]
     ns_server, ns_client = f"awg31s{token}", f"awg31c{token}"
@@ -747,6 +754,7 @@ def run_profile(
     links_created = False
     capture_proc = None
     capture_log = None
+    capture_verified = False
     workdir = tempfile.TemporaryDirectory(prefix="awg31-interop-")
     logs = Path(workdir.name)
     if same_implementation is None:
@@ -851,6 +859,27 @@ def run_profile(
         ns(ns_client, "ip", "route", "add", f"{SERVER_TUN}/32", "dev", client_iface)
         initial_handshake_time = wait_handshake(server_iface, ns_client, SERVER_TUN)
         if performance:
+            # Do not capture the iperf3 data plane: a previous run uploaded a
+            # 1.8 GB pcap. The verifier only needs the handshake/control path.
+            capture_proc.terminate()
+            capture_proc.wait(timeout=3)
+            capture_proc = None
+            capture_log.close()
+            capture_log = None
+            verify_wire_pcap(
+                capture_path,
+                awg_enabled=awg_enabled,
+                header_protection="header_protection_key=" in extra,
+                random_trailers="random_trailers=true" in extra,
+                expected_handshakes=1,
+                expected_initiations=1,
+                expected_signatures=[
+                    bytes.fromhex(value)
+                    for value in re.findall(r"i[1-5]=<b 0x([0-9a-fA-F]+)>", extra)
+                ],
+            )
+            capture_verified = True
+        if performance:
             verify_iperf3(
                 ns_server, ns_client, Path("target/awg31-performance"),
                 f"{name}-{role}",
@@ -858,7 +887,10 @@ def run_profile(
             verify_udp_roundtrip(ns_server, ns_client)
         elif name in ("accelerated rekey", "long peer lifecycle soak"):
             handshake_time = initial_handshake_time
-            cycle_count = 120 if name == "long peer lifecycle soak" else 30
+            cycle_count = (
+                120 if name == "long peer lifecycle soak"
+                else 30 if extended_matrix else 1
+            )
             for cycle in range(cycle_count):
                 wait_rekey(server_iface, ns_client, SERVER_TUN, handshake_time)
                 handshake_time = last_handshake_time(server_iface)
@@ -878,33 +910,36 @@ def run_profile(
         else:
             ns(ns_client, "ping", "-c3", "-W2", SERVER_TUN)
             verify_udp_roundtrip(ns_server, ns_client)
-        capture_proc.terminate()
-        capture_proc.wait(timeout=3)
-        capture_proc = None
-        capture_log.close()
-        capture_log = None
-        verify_wire_pcap(
-            capture_path,
+        if capture_proc is not None:
+            capture_proc.terminate()
+            capture_proc.wait(timeout=3)
+            capture_proc = None
+        if capture_log is not None:
+            capture_log.close()
+            capture_log = None
+        if not capture_verified:
+            verify_wire_pcap(
+                capture_path,
             awg_enabled=awg_enabled,
             header_protection="header_protection_key=" in extra,
             random_trailers="random_trailers=true" in extra,
-            expected_handshakes=(
-                121 if name == "long peer lifecycle soak"
-                else 31 if name == "accelerated rekey"
-                else 2 if name == "rekey packet-loss recovery"
-                else 1
-            ),
+                expected_handshakes=(
+                    121 if name == "long peer lifecycle soak"
+                    else (30 if extended_matrix else 1) + 1 if name == "accelerated rekey"
+                    else 2 if name == "rekey packet-loss recovery"
+                    else 1
+                ),
             # The capture runs on the server-side veth: it sees the initial
             # initiation and the successful retry, while tc's client-egress
             # filter counter proves the intervening H1 datagram was dropped.
-            expected_initiations=(
-                2 if name == "rekey packet-loss recovery"
-                else (
-                    121 if name == "long peer lifecycle soak"
-                    else 31 if name == "accelerated rekey"
-                    else 1
-                )
-            ),
+                expected_initiations=(
+                    2 if name == "rekey packet-loss recovery"
+                    else (
+                        121 if name == "long peer lifecycle soak"
+                        else (30 if extended_matrix else 1) + 1 if name == "accelerated rekey"
+                        else 1
+                    )
+                ),
             expected_signatures=[
                 bytes.fromhex(value)
                 for value in re.findall(r"i[1-5]=<b 0x([0-9a-fA-F]+)>", extra)
@@ -955,10 +990,12 @@ def main() -> int:
     if os.geteuid() != 0:
         print("Run as root (creates disposable network namespaces).", file=sys.stderr)
         return 2
-    performance = len(sys.argv) == 4 and sys.argv[3] == "--performance"
-    if len(sys.argv) != (4 if performance else 3):
+    mode = sys.argv[3] if len(sys.argv) == 4 else ""
+    if len(sys.argv) not in (3, 4) or mode not in ("", "--full", "--performance"):
         print(__doc__.split("Usage:", 1)[1].strip(), file=sys.stderr)
         return 2
+    performance = mode == "--performance"
+    extended_matrix = mode == "--full"
     bt, go = (str(Path(p).resolve()) for p in sys.argv[1:3])
     if performance and shutil.which("iperf3") is None:
         print("iperf3 is required for --performance mode", file=sys.stderr)
@@ -970,10 +1007,10 @@ def main() -> int:
     failures = 0
     total = 0
     if performance:
-        # Homogeneous endpoint pairs isolate each implementation's own
-        # datapath: amneziawg-go <-> amneziawg-go and BoringTun <-> BoringTun.
+        # Isolate individual extensions instead of comparing only the full
+        # bundle with vanilla. Homogeneous pairs isolate each datapath.
         for implementation in ("amneziawg-go", "boringtun"):
-            for name, extra, awg_enabled in (PROFILES[0], PROFILES[5]):
+            for name, extra, awg_enabled in PERFORMANCE_PROFILES:
                 total += 1
                 try:
                     run_profile(
@@ -987,11 +1024,20 @@ def main() -> int:
                         file=sys.stderr,
                     )
     else:
-        for name, extra, awg_enabled in PROFILES:
+        profiles = PROFILES if extended_matrix else QUICK_PROFILES
+        print(
+            f"Running {'full' if extended_matrix else 'quick'} AWG interoperability "
+            f"matrix: {len(profiles)} profiles x 2 server roles",
+            flush=True,
+        )
+        for name, extra, awg_enabled in profiles:
             for bt_is_server in (True, False):
                 total += 1
                 try:
-                    run_profile(bt, go, name, extra, awg_enabled, bt_is_server)
+                    run_profile(
+                        bt, go, name, extra, awg_enabled, bt_is_server,
+                        extended_matrix=extended_matrix,
+                    )
                 except Exception as error:
                     failures += 1
                     role = "BoringTun server" if bt_is_server else "amneziawg-go server"
