@@ -273,24 +273,11 @@ struct PeerSection {
     update_only: bool,
 }
 
-fn resolved_allowed_ips(
-    device: &Device,
-    public_key: &x25519::PublicKey,
-    section: &PeerSection,
+fn apply_allowed_ip_operations(
+    mut prefixes: Vec<AllowedIP>,
+    operations: &[AllowedIpOperation],
 ) -> Vec<AllowedIP> {
-    let mut prefixes: Vec<AllowedIP> = device
-        .peers
-        .get(public_key)
-        .map(|peer| {
-            device
-                .peer_allowed_ips(peer)
-                .into_iter()
-                .map(|(addr, cidr)| AllowedIP { addr, cidr })
-                .collect()
-        })
-        .unwrap_or_default();
-
-    for operation in &section.allowed_ip_operations {
+    for operation in operations {
         match *operation {
             AllowedIpOperation::Replace => prefixes.clear(),
             AllowedIpOperation::Add(prefix) => {
@@ -302,8 +289,27 @@ fn resolved_allowed_ips(
             }
         }
     }
-
     prefixes
+}
+
+fn resolved_allowed_ips(
+    device: &Device,
+    public_key: &x25519::PublicKey,
+    section: &PeerSection,
+) -> Vec<AllowedIP> {
+    let existing: Vec<AllowedIP> = device
+        .peers
+        .get(public_key)
+        .map(|peer| {
+            device
+                .peer_allowed_ips(peer)
+                .into_iter()
+                .map(|(addr, cidr)| AllowedIP { addr, cidr })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    apply_allowed_ip_operations(existing, &section.allowed_ip_operations)
 }
 
 fn commit_peer_section(
@@ -1304,6 +1310,46 @@ mod tests {
         );
         assert_eq!(parse_u32_range("10-9"), None);
         assert_eq!(parse_u32_range("4294967296"), None);
+    }
+
+    #[test]
+    fn allowed_ip_operations_preserve_uapi_line_order() {
+        let a: AllowedIP = "192.0.2.0/24".parse().unwrap();
+        let b: AllowedIP = "198.51.100.0/24".parse().unwrap();
+
+        assert_eq!(
+            apply_allowed_ip_operations(
+                vec![a],
+                &[AllowedIpOperation::Remove(a), AllowedIpOperation::Add(a)]
+            ),
+            vec![a],
+            "remove followed by add must leave the prefix installed"
+        );
+        assert!(
+            apply_allowed_ip_operations(
+                vec![a],
+                &[AllowedIpOperation::Add(b), AllowedIpOperation::Remove(b)]
+            )
+            .iter()
+            .all(|prefix| *prefix == a),
+            "add followed by remove must not leave the new prefix installed"
+        );
+        assert_eq!(
+            apply_allowed_ip_operations(
+                vec![a],
+                &[AllowedIpOperation::Add(b), AllowedIpOperation::Replace]
+            ),
+            Vec::<AllowedIP>::new(),
+            "replace must clear all earlier additions"
+        );
+        assert_eq!(
+            apply_allowed_ip_operations(
+                vec![a],
+                &[AllowedIpOperation::Replace, AllowedIpOperation::Add(b)]
+            ),
+            vec![b],
+            "add after replace must survive"
+        );
     }
 
     #[test]
