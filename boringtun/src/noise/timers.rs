@@ -476,12 +476,16 @@ impl Tunn {
             TimeLastPacketReceived => {
                 // Any authenticated packet from the peer cancels the inactivity
                 // handshake timer, as timersAnyAuthenticatedPacketReceived does
-                // in amneziawg-go.
+                // in amneziawg-go. Upstream also restarts persistent keepalive
+                // with a fresh sample on every authenticated traversal.
                 self.timers.new_handshake_deadline = None;
+                self.timers.reset_persistent_keepalive(now);
             }
             TimeLastPacketSent => {
-                // Any authenticated outbound packet cancels a pending keepalive.
+                // Any authenticated outbound packet cancels a pending keepalive
+                // and selects a fresh persistent-keepalive interval.
                 self.timers.send_keepalive_deadline = None;
+                self.timers.reset_persistent_keepalive(now);
             }
             TimeLastHandshakeStarted => {
                 self.timers.rekey_timeout = Duration::from_secs(
