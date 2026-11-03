@@ -20,7 +20,7 @@
 
 Из draft PR [#9](https://github.com/lelikulibina/boringtun-awg/pull/9) перенесены и проверены относительно upstream UAPI исправления: правильный `private_key` в `get=1`, абсолютный Unix timestamp handshake, `protocol_version=1`, UAPI uint32 ranges, Go-compatible bool parsing, hostname endpoint resolution, persistent keepalive ranges, EOF/framing, base64 keys, ordered AllowedIP add/remove/replace/update_only и один авторитетный AllowedIPs trie. Последний устраняет stale per-peer ownership и риск source spoofing после переноса префикса.
 
-На исходной ветке UAPI follow-up [CI run 41670671377](https://github.com/lelikulibina/boringtun-awg/actions/runs/41670671377) прошли `check_features`, `tests`, `clippy` и `awg31-interoperability` (44/44). `rustfmt` первоначально выявил только форматирование; соответствующие правки внесены в PR #8. Интеграционный job исходной ветки ещё выполнялся, поэтому окончательным доказательством будет повторный CI на текущем HEAD PR #8.
+На исходной ветке UAPI follow-up [CI run 41670671377](https://github.com/lelikulibina/boringtun-awg/actions/runs/41670671377) прошли `check_features`, `tests`, `clippy` и `awg31-interoperability` (44/44). `rustfmt` первоначально выявил только форматирование; соответствующие правки внесены в PR #8. Затем финальный CI на итоговом HEAD PR #8 полностью прошёл: [run 41684331967](https://github.com/lelikulibina/boringtun-awg/actions/runs/41684331967). Включая интеграционный job (9/9 ignored-тестов) и interoperability matrix (44/44). Отдельный [Semgrep run 41684332036](https://github.com/lelikulibina/boringtun-awg/actions/runs/41684332036) — success.
 
 ### Оставшиеся ограничения
 
@@ -29,7 +29,7 @@
 - 120 ускоренных rekey cycles — автоматизированный lifecycle regression, но не многочасовой production soak.
 - Для UAPI-паритета интерфейсные поля должны предшествовать первой peer-секции, как в `awg setconf`; создание нового peer требует уже заданного private key. Пересекающиеся H1-H4 и неодинаковые S1-S4 при `random_trailers=true` намеренно отклоняются.
 
-**Вердикт до финального CI:** функциональная interoperability подтверждена на перечисленных Linux-профилях; исходный PR #8 имел UAPI-несовместимости и source-ownership defect, исправления перенесены. Squash merge в `main` допустим только после зелёных проверок на текущем HEAD.
+**Финальный вердикт по PR #8 (2026-11-03): READY TO MERGE.** UAPI-несовместимости и дефект владения AllowedIPs устранены, исправления включены в проверенный HEAD `25dcf432296f8f3cc52d76c889b60e8d5087d0b9`. Финальный [PR Status Checks, run 41684331967](https://github.com/lelikulibina/boringtun-awg/actions/runs/41684331967) завершился `success`: `rustfmt`, `clippy`, `check_features`, `tests`, `integration-tests` (9/9), `awg31-interoperability` (44/44) и `all-systems-go` прошли. [Semgrep, run 41684332036](https://github.com/lelikulibina/boringtun-awg/actions/runs/41684332036) также завершился `success`. Windows job пропущен намеренно; macOS не входит в merge gate. С учётом этих явно описанных платформенных и differential-PCAP ограничений PR готов к **Squash and merge** в `main`.
 
 
 ## Цель и правила совместимости
