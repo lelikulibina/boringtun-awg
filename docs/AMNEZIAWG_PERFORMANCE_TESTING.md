@@ -26,28 +26,30 @@ Workflow собирает BoringTun и закреплённую версию о�
 - TCP: один поток, 5 секунд для каждого направления.
 - UDP: целевые 100 Mbit/s для baseline и полного профиля, 5 секунд.
 
-Итого 40 iperf3 measurements: 32 TCP + 8 UDP. Четырёхпоточный TCP удалён из диагностического smoke-benchmark: сначала нужно локализовать эффект отдельных расширений на базовом одном потоке. JSON-отчёты содержат throughput приёмника, байты, TCP retransmissions и UDP packet loss. В benchmark-режиме PCAP вообще не записывается: wire/PCAP проверяется отдельной interoperability-матрицей. Поэтому artifact содержит только компактные JSON-отчёты.
+Текущая матрица содержит 10 профилей и 48 iperf3 measurements: 40 TCP + 8 UDP. Run 41709590826 проверял предыдущие 8 профилей (40 измерений); в следующем запуске добавлены J-only и S/H-only legacy controls. Четырёхпоточный TCP удалён из диагностического smoke-benchmark: сначала нужно локализовать эффект отдельных расширений на базовом одном потоке. JSON-отчёты содержат throughput приёмника, байты, TCP retransmissions и UDP packet loss. В benchmark-режиме PCAP вообще не записывается: wire/PCAP проверяется отдельной interoperability-матрицей. Поэтому artifact содержит только компактные JSON-отчёты.
 
 ## Изолированный benchmark: результаты и выводы
 
-[Run 41708623320](https://github.com/lelikulibina/boringtun-awg/actions/runs/41708623320) завершился успешно: **12/12 профильных прогонов**, 32 TCP и 8 UDP измерений. Один прогон — 5 секунд, оба направления. Artifact содержит только JSON и занимает **6 116 байт**; ранее PCAP с полным iperf3-трафиком занимал около 1,8 GB.
+[Run 41709590826](https://github.com/lelikulibina/boringtun-awg/actions/runs/41709590826) завершился успешно: **16/16 профильных прогонов**, 32 TCP + 8 UDP измерений. В нём проверены vanilla, AWG 2.x baseline, четыре отдельных расширения AWG 3.1, randomized timers и полный AWG 3.1. Artifact — **8 013 байт**, только JSON; PCAP в benchmark-режиме не создаётся.
 
 Результаты TCP (Mbit/s, client→server / server→client):
 
 | Профиль | amneziawg-go | BoringTun |
 |---|---:|---:|
-| Vanilla WireGuard | 7 572 / 7 768 | 1 085 / 1 085 |
-| HeaderProtectionKey | 1,47 / 1,68 | 733 / 695 |
-| ContentPaddingAddition | 1,68 / 1,47 | 711 / 742 |
-| RandomTrailers | 2,31 / 1,47 | 733 / 702 |
-| DisableCookies | 1,68 / 1,89 | 750 / 743 |
-| Все расширения AWG 3.1 | 1,47 / 1,47 | 655 / 681 |
+| Vanilla WireGuard | 4 066 / 4 349 | 600 / 563 |
+| AWG 2.x baseline | 14,47 / 10,48 | 374 / 375 |
+| HeaderProtectionKey | 23,69 / 6,08 | 387 / 386 |
+| ContentPaddingAddition | 13,84 / 26,41 | 391 / 393 |
+| RandomTrailers | 7,13 / 5,87 | 371 / 387 |
+| DisableCookies | 6,50 / 9,85 | 390 / 395 |
+| Только randomized timers | 11,11 / 10,69 | 369 / 365 |
+| Все расширения AWG 3.1 | 14,26 / 10,69 | 362 / 361 |
 
-В Go baseline зафиксировано 0 TCP retransmissions. В отдельных AWG-профилях — примерно 189–266 retransmissions за 5 секунд. В BoringTun значения TCP retransmissions заметно выше и зависят от направления/профиля, но пропускная способность остаётся в диапазоне 655–750 Mbit/s. UDP 100 Mbit/s прошёл без потерь в baseline и полном AWG 3.1 профиле обеих реализаций.
+UDP 100 Mbit/s прошёл без потерь в vanilla и полном AWG 3.1 профилях обеих реализаций.
 
-**Промежуточный вывод:** сильная деградация upstream Go не локализуется на одном расширении 3.1: каждый из четырёх одиночных профилей даёт почти одинаково низкий TCP throughput. Но эти профили используют общую S/H-обфускацию AWG 2.x. Поэтому пока нельзя утверждать, что проблема вызвана именно 3.1. Следующий benchmark добавляет AWG 2.x baseline без расширений 3.1 и отдельный профиль randomized timers. Это контроль, который позволит отделить стоимость базовой S/H-обфускации от новых параметров.
+**Вывод по контрольному профилю:** upstream Go уже падает до 10–14 Mbit/s на AWG 2.x baseline без расширений 3.1, против 4,1–4,35 Gbit/s vanilla. Каждый отдельный параметр 3.1 даёт сопоставимый порядок величины (примерно 6–26 Mbit/s), а randomized timers alone — около 11 Mbit/s. Это указывает на общий legacy AWG datapath/configuration, а не на отдельную новую функцию 3.1. Однако AWG 2.x baseline объединяет Jc/Jmin/Jmax и S1-S4/H1-H4; чтобы точно локализовать причину, следующий запуск добавляет раздельные J-only и S/H-only профили.
 
-BoringTun на том же runner показывает ожидаемо меньшую, но умеренную деградацию: около 1 085 Mbit/s vanilla против 655–750 Mbit/s в AWG-профилях. Результаты — короткие измерения на GitHub-hosted runner, а не стабильная гарантия производительности.
+BoringTun на том же runner показывает 374–375 Mbit/s для AWG 2.x и 361–395 Mbit/s для профилей AWG 3.1 против 563–600 Mbit/s vanilla. Это умеренное снижение, а не катастрофическая деградация upstream Go. Результаты — короткие измерения на GitHub-hosted runner, не гарантия абсолютной производительности.
 
 ## Исторический baseline
 
@@ -76,4 +78,4 @@ Benchmark намеренно отделён от обязательного PR C
 
 ## Текущий статус расследования
 
-Диагностический workflow дополнен AWG 2.x control и timers-only профилями. Текущая версия — 8 профилей, 40 iperf3 измерений. Запускать через **Actions → AWG Performance Benchmarks → Run workflow**; результаты сравнивать внутри одного запуска и в обоих направлениях.
+Диагностический workflow дополнен AWG 2.x control, timers-only, J-only и S/H-only профилями. Текущая версия — 10 профилей, 48 iperf3 измерений. Запускать через **Actions → AWG Performance Benchmarks → Run workflow**; результаты сравнивать внутри одного запуска и в обоих направлениях.
