@@ -25,7 +25,7 @@ jobs:
       - name: Install WireGuard tools and Linux networking dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y wireguard-tools iproute2 iptables make gcc
+          sudo apt-get install -y wireguard-tools iproute2 iptables make gcc strace
       - name: Build upstream AmneziaWG tools (awg and awg-quick)
         run: |
           git clone https://github.com/amnezia-vpn/amneziawg-tools.git upstream-amneziawg-tools
@@ -41,3 +41,4 @@ jobs:
         run: |
           sudo ip -details link
           sudo find /var/run/wireguard /var/run/amneziawg -maxdepth 1 -type s -ls 2>/dev/null || true
+          sudo cat /tmp/uapi-wg.trace 2>/dev/null || true
