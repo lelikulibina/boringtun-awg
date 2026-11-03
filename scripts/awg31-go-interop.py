@@ -263,21 +263,25 @@ def drop_client_egress_during_rekey(
         )
         # The send-side rekey timer is lazy: without outbound traffic, the
         # peer need not emit H1 when RekeyAfterTime expires. Keep the tunnel
-        # active while the filter is installed so both client implementations
-        # exercise the same rekey trigger.
-        deadline = time.monotonic() + 3.0
+        # active while the filter is installed and poll its counter until the
+        # targeted H1 is actually dropped or the rekey window expires.
+        deadline = time.monotonic() + 14.0
+        dropped = 0
+        stats = ""
         while time.monotonic() < deadline:
             run(
                 "ip", "netns", "exec", client_ns, "ping", "-c1", "-W1",
                 server_ip, check=False,
             )
-            time.sleep(0.1)
-        stats = run(
-            "ip", "netns", "exec", client_ns, "tc", "-s", "filter", "show",
-            "dev", client_link, "parent", "1:", capture=True,
-        )
-        match = re.search(r"dropped (\d+)", stats)
-        dropped = int(match.group(1)) if match else 0
+            stats = run(
+                "ip", "netns", "exec", client_ns, "tc", "-s", "filter",
+                "show", "dev", client_link, "parent", "1:", capture=True,
+            )
+            match = re.search(r"dropped (\\d+)", stats)
+            dropped = int(match.group(1)) if match else 0
+            if dropped > 0:
+                break
+            time.sleep(0.2)
     finally:
         run("ip", "netns", "exec", client_ns, "tc", "qdisc", "del",
             "dev", client_link, "root", check=False)
