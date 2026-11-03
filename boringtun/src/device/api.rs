@@ -256,6 +256,8 @@ struct PeerSection {
     keepalive: Option<u16>,
     preshared_key: Option<[u8; 32]>,
     allowed_ips: Vec<AllowedIP>,
+    removed_allowed_ips: Vec<AllowedIP>,
+    update_only: bool,
 }
 
 fn create_sock_dir(dir: &str) {
@@ -451,7 +453,9 @@ impl Device {
 fn api_get(writer: &mut BufWriter<&UnixStream>, d: &Device) -> i32 {
     // get command requires an empty line, but there is no reason to be religious about it
     if let Some(ref k) = d.key_pair {
-        writeln!(writer, "own_public_key={}", encode_hex(k.1.as_bytes()));
+        // The UAPI get operation must return the private key so showconf/setconf
+        // can round-trip the interface configuration.
+        writeln!(writer, "private_key={}", encode_hex(k.0.to_bytes()));
     }
 
     if d.listen_port != 0 {
@@ -559,9 +563,13 @@ fn api_get(writer: &mut BufWriter<&UnixStream>, d: &Device) -> i32 {
         let p = peer.lock();
         writeln!(writer, "public_key={}", encode_hex(k.as_bytes()));
 
-        if let Some(ref key) = p.preshared_key() {
-            writeln!(writer, "preshared_key={}", encode_hex(key));
-        }
+        let zero_psk = [0u8; 32];
+        writeln!(
+            writer,
+            "preshared_key={}",
+            encode_hex(p.preshared_key().unwrap_or(&zero_psk))
+        );
+        writeln!(writer, "protocol_version=1");
 
         if let Some(keepalive) = p.persistent_keepalive() {
             writeln!(writer, "persistent_keepalive_interval={}", keepalive);
@@ -619,8 +627,17 @@ fn api_set(reader: &mut BufReader<&UnixStream>, d: &mut LockReadGuard<Device>) -
             // snapshot the device's settings when they are created.
             let mut awg = AwgParams::default();
 
-            while reader.read_line(&mut cmd).is_ok() {
-                cmd.pop(); // remove newline if any
+            loop {
+                cmd.clear();
+                let bytes_read = match reader.read_line(&mut cmd) {
+                    Ok(n) => n,
+                    Err(_) => return EIO,
+                };
+                if bytes_read == 0 {
+                    break;
+                }
+                if cmd.ends_with('\n') { cmd.pop(); }
+                if cmd.ends_with('\r') { cmd.pop(); }
                 if cmd.is_empty() {
                     match awg.apply(device) {
                         Ok(()) => return 0, // Done
@@ -793,24 +810,40 @@ fn api_set_peer(
 
     let mut public_key = pub_key;
     let mut sec = PeerSection::default();
-    while reader.read_line(&mut cmd).is_ok() {
-        cmd.pop(); // remove newline if any
+    loop {
+        cmd.clear();
+        let bytes_read = match reader.read_line(&mut cmd) {
+            Ok(n) => n,
+            Err(_) => return EIO,
+        };
+        if bytes_read == 0 {
+            break;
+        }
+        if cmd.ends_with('\n') { cmd.pop(); }
+        if cmd.ends_with('\r') { cmd.pop(); }
         if cmd.is_empty() {
-            if let Err(e) = d.update_peer(
-                public_key,
-                sec.remove,
-                sec.replace_ips,
-                sec.endpoint,
-                sec.allowed_ips.as_slice(),
-                sec.keepalive,
-                sec.preshared_key,
-            ) {
-                tracing::error!(
-                    message = "failed to apply peer",
-                    peer = encode_hex(public_key.as_bytes()).as_str(),
-                    error = ?e
-                );
-                return EIO;
+            if !(sec.update_only && !d.peers.contains_key(&public_key)) {
+                if let Err(e) = d.update_peer(
+                    public_key,
+                    sec.remove,
+                    sec.replace_ips,
+                    sec.endpoint,
+                    sec.allowed_ips.as_slice(),
+                    sec.keepalive,
+                    sec.preshared_key,
+                ) {
+                    tracing::error!(
+                        message = "failed to apply peer",
+                        peer = encode_hex(public_key.as_bytes()).as_str(),
+                        error = ?e
+                    );
+                    return EIO;
+                }
+                if !sec.remove {
+                    for ip in &sec.removed_allowed_ips {
+                        d.remove_allowed_ip(public_key, *ip);
+                    }
+                }
             }
             return 0; // Done
         }
@@ -843,27 +876,45 @@ fn api_set_peer(
                     Ok(false) => sec.replace_ips = false,
                     Err(_) => return EINVAL,
                 },
-                "allowed_ip" => match val.parse::<AllowedIP>() {
-                    Ok(ip) => sec.allowed_ips.push(ip),
-                    Err(_) => return EINVAL,
+                "allowed_ip" => {
+                    let (remove, value) = match val.strip_prefix('-') {
+                        Some(value) => (true, value),
+                        None => (false, val),
+                    };
+                    match value.parse::<AllowedIP>() {
+                        Ok(ip) if remove => sec.removed_allowed_ips.push(ip),
+                        Ok(ip) => sec.allowed_ips.push(ip),
+                        Err(_) => return EINVAL,
+                    }
+                }
+                "update_only" => match val.parse::<bool>() {
+                    Ok(true) => sec.update_only = true,
+                    _ => return EINVAL,
                 },
                 "public_key" => {
                     // Indicates a new peer section. Commit changes for current peer, and continue to next peer
-                    if let Err(e) = d.update_peer(
-                        public_key,
-                        sec.remove,
-                        sec.replace_ips,
-                        sec.endpoint,
-                        sec.allowed_ips.as_slice(),
-                        sec.keepalive,
-                        sec.preshared_key,
-                    ) {
-                        tracing::error!(
-                            message = "failed to apply peer",
-                            peer = encode_hex(public_key.as_bytes()).as_str(),
-                            error = ?e
-                        );
-                        return EIO;
+                    if !(sec.update_only && !d.peers.contains_key(&public_key)) {
+                        if let Err(e) = d.update_peer(
+                            public_key,
+                            sec.remove,
+                            sec.replace_ips,
+                            sec.endpoint,
+                            sec.allowed_ips.as_slice(),
+                            sec.keepalive,
+                            sec.preshared_key,
+                        ) {
+                            tracing::error!(
+                                message = "failed to apply peer",
+                                peer = encode_hex(public_key.as_bytes()).as_str(),
+                                error = ?e
+                            );
+                            return EIO;
+                        }
+                        if !sec.remove {
+                            for ip in &sec.removed_allowed_ips {
+                                d.remove_allowed_ip(public_key, *ip);
+                            }
+                        }
                     }
                     // Each `[Peer]` block is independent, matching the kernel's
                     // nested-attribute model. Reset every attribute, not just
