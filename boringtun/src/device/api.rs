@@ -1067,7 +1067,11 @@ mod tests {
         assert_eq!(parse_u32_range("9-5"), None);
         assert_eq!(parse_u32_range("65535"), Some((65535, 65535)));
         assert_eq!(parse_u32_range("65535-65535"), Some((65535, 65535)));
-        assert_eq!(parse_u32_range("65536"), None, "upstream timer ranges are uint16");
+        assert_eq!(
+            parse_u32_range("65536"),
+            None,
+            "upstream timer ranges are uint16"
+        );
         assert_eq!(parse_u32_range("4294967296"), None);
 
         let current = AmneziaConfig::new(0, 0, 0, 0);
