@@ -75,7 +75,22 @@ EOF
 chmod +x "$QUICK_BIN/ip"
 cat > "$BT_LAUNCHER" <<EOF
 #!/usr/bin/env bash
-exec "$BT_BIN" --disable-drop-privileges "\$@"
+iface="\$1"
+"$BT_BIN" --disable-drop-privileges "\$iface"
+socket="/var/run/wireguard/\${iface}.sock"
+for _ in \$(seq 1 50); do
+  [[ -S "\$socket" ]] && break
+  sleep 0.1
+done
+if [[ ! -S "\$socket" ]]; then
+  echo "BoringTun did not publish its UAPI socket: \$socket" >&2
+  ls -ld /var/run/wireguard /var/run/amneziawg 2>&1 || true
+  exit 1
+fi
+# The daemon may chown its runtime directory to the invoking sudo user.
+# Keep the temporary CI socket reachable by the root-owned wg/awg clients.
+chmod 0777 /var/run/wireguard /var/run/amneziawg
+chmod 0666 "\$socket"
 EOF
 chmod +x "$BT_LAUNCHER"
 
