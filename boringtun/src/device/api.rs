@@ -89,8 +89,8 @@ fn parse_tag_range(val: &str) -> Option<(u32, u32)> {
 
 /// AmneziaWG values accumulated over one `set=1` transaction.
 ///
-/// They cannot be applied one at a time: `ObfuscationRanges::new` validates all
-/// four header ranges together and rejects overlaps, so a partially-applied set
+/// They cannot be applied one at a time: the explicit UAPI range constructor
+/// validates all four header ranges together and rejects overlaps, so a partially-applied set
 /// could transiently fail validation on a configuration that is valid as a
 /// whole. Anything left `None` keeps the device's current value.
 #[derive(Default)]
