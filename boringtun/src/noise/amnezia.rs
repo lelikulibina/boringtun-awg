@@ -2079,12 +2079,12 @@ mod tests {
             Some(7)
         );
         assert_eq!(
-            AmneziaConfig::map_content_padding_sample(min, max, zone - 1),
+            AmneziaConfig::map_content_padding_sample(min, max, (zone - 1) as u32),
             Some(16),
             "the last accepted sample must map to the inclusive maximum"
         );
         assert_eq!(
-            AmneziaConfig::map_content_padding_sample(min, max, zone),
+            AmneziaConfig::map_content_padding_sample(min, max, zone as u32),
             None,
             "the first value in the modulo-bias tail must be rejected"
         );
