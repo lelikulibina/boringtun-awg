@@ -280,7 +280,7 @@ pub struct AmneziaConfig {
     pub(crate) header_protection_key: [u8; 32],
     /// Inclusive range of extra zero bytes appended to the encrypted IP payload.
     /// `(0, 0)` disables ContentPaddingAddition.
-    pub(crate) content_padding_addition: (u16, u16),
+    pub(crate) content_padding_addition: (u32, u32),
     /// Inclusive timer ranges in seconds; (0, 0) preserves WireGuard defaults.
     pub(crate) rekey_after_time: (u32, u32),
     pub(crate) rekey_timeout: (u32, u32),
@@ -343,6 +343,53 @@ impl AmneziaPreHandshakeJunk {
             packet_size_max,
             packet_delay_ms,
         }
+    }
+
+    /// Fallible constructor for control-plane input. Unlike the legacy
+    /// convenience constructor, this never silently disables an excessive Jc
+    /// value or substitutes packet sizes for an invalid range.
+    pub(crate) fn try_new(
+        packet_count: u16,
+        packet_size_min: u16,
+        packet_size_max: u16,
+        delay_ms: u16,
+    ) -> Result<Self, String> {
+        if packet_count > MAX_JUNK_PACKET_COUNT {
+            return Err(format!(
+                "Jc {} exceeds the safe maximum {}",
+                packet_count, MAX_JUNK_PACKET_COUNT
+            ));
+        }
+
+        let (packet_size_min, packet_size_max) = if packet_count == 0 {
+            (packet_size_min, packet_size_max)
+        } else if packet_size_min == 0 && packet_size_max == 0 {
+            (DEFAULT_JUNK_PACKET_SIZE_MIN, DEFAULT_JUNK_PACKET_SIZE_MAX)
+        } else if packet_size_min > 0
+            && packet_size_min <= packet_size_max
+            && packet_size_max <= MAX_JUNK_PACKET_SIZE
+        {
+            (packet_size_min, packet_size_max)
+        } else {
+            return Err(format!(
+                "invalid Jmin/Jmax range {}-{} (maximum packet size {})",
+                packet_size_min, packet_size_max, MAX_JUNK_PACKET_SIZE
+            ));
+        };
+
+        if delay_ms > MAX_JUNK_PACKET_DELAY_MS {
+            return Err(format!(
+                "junk packet delay {} exceeds the safe maximum {}",
+                delay_ms, MAX_JUNK_PACKET_DELAY_MS
+            ));
+        }
+
+        Ok(Self {
+            packet_count,
+            packet_size_min,
+            packet_size_max,
+            packet_delay_ms: delay_ms,
+        })
     }
 
     pub fn is_enabled(&self) -> bool {
@@ -416,6 +463,12 @@ impl AmneziaConfig {
     /// Set the inclusive ContentPaddingAddition range in bytes.
     /// Use `(0, 0)` to disable additional content padding.
     pub fn with_content_padding_addition(mut self, min: u16, max: u16) -> Self {
+        self.content_padding_addition = (u32::from(min), u32::from(max));
+        self
+    }
+
+    /// Set the full UAPI uint32 ContentPaddingAddition range.
+    pub(crate) fn with_content_padding_addition_u32(mut self, min: u32, max: u32) -> Self {
         self.content_padding_addition = (min, max);
         self
     }
@@ -504,16 +557,17 @@ impl AmneziaConfig {
 
     /// Map one u32 draw to the inclusive CPA range without modulo bias.
     /// None denotes a draw in the rejection tail.
-    fn map_content_padding_sample(min: u16, max: u16, sample: u32) -> Option<usize> {
+    fn map_content_padding_sample(min: u32, max: u32, sample: u32) -> Option<usize> {
         if min > max {
             return None;
         }
-        let width = max as u32 - min as u32 + 1;
-        let zone = u32::MAX - (u32::MAX % width);
-        if sample >= zone {
+        let width = u64::from(max) - u64::from(min) + 1;
+        let zone = (1u64 << 32) / width * width;
+        let value = u64::from(sample);
+        if value >= zone {
             return None;
         }
-        Some(min as usize + (sample % width) as usize)
+        Some((u64::from(min) + value % width) as usize)
     }
 
     pub fn with_pre_handshake_junk(
@@ -526,6 +580,22 @@ impl AmneziaConfig {
         self.pre_handshake_junk =
             AmneziaPreHandshakeJunk::new(packet_count, packet_size_min, packet_size_max, delay_ms);
         self
+    }
+
+    pub(crate) fn try_with_pre_handshake_junk(
+        mut self,
+        packet_count: u16,
+        packet_size_min: u16,
+        packet_size_max: u16,
+        delay_ms: u16,
+    ) -> Result<Self, String> {
+        self.pre_handshake_junk = AmneziaPreHandshakeJunk::try_new(
+            packet_count,
+            packet_size_min,
+            packet_size_max,
+            delay_ms,
+        )?;
+        Ok(self)
     }
 
     pub fn with_protocol_imitation(
@@ -2062,36 +2132,35 @@ mod tests {
 
     #[test]
     fn content_padding_range_mapper_is_inclusive_and_rejects_modulo_bias_tail() {
-        let min = 7u16;
-        let max = 16u16;
-        let width = u32::from(max) - u32::from(min) + 1;
-        let zone = u32::MAX - (u32::MAX % width);
+        let min = 7u32;
+        let max = 16u32;
+        let width = u64::from(max) - u64::from(min) + 1;
+        let zone = (1u64 << 32) / width * width;
 
         assert_eq!(
             AmneziaConfig::map_content_padding_sample(min, max, 0),
             Some(7)
         );
         assert_eq!(
-            AmneziaConfig::map_content_padding_sample(min, max, zone - 1),
+            AmneziaConfig::map_content_padding_sample(min, max, (zone - 1) as u32),
             Some(16),
             "the last accepted sample must map to the inclusive maximum"
         );
         assert_eq!(
-            AmneziaConfig::map_content_padding_sample(min, max, zone),
+            AmneziaConfig::map_content_padding_sample(min, max, zone as u32),
             None,
             "the first value in the modulo-bias tail must be rejected"
         );
         assert_eq!(
-            AmneziaConfig::map_content_padding_sample(0, u16::MAX, 0),
+            AmneziaConfig::map_content_padding_sample(0, u32::MAX, 0),
             Some(0),
-            "the full u16 CPA range must not overflow"
+            "the full u32 CPA range must not overflow"
         );
-        let full_width = u32::from(u16::MAX) + 1;
-        let full_zone = u32::MAX - (u32::MAX % full_width);
+        let full_zone = 1u64 << 32;
         assert_eq!(
-            AmneziaConfig::map_content_padding_sample(0, u16::MAX, full_zone - 1),
-            Some(u16::MAX as usize),
-            "the final accepted full-range sample must reach the maximum"
+            AmneziaConfig::map_content_padding_sample(0, u32::MAX, (full_zone - 1) as u32),
+            Some(u32::MAX as usize),
+            "the final full-range sample must reach the maximum"
         );
         assert_eq!(
             AmneziaConfig::map_content_padding_sample(9, 9, 0),
@@ -2858,6 +2927,18 @@ mod tests {
         assert_eq!(seq.len(), 1);
         assert_eq!(seq[0].0, Duration::from_millis(0));
         assert_eq!(seq[0].1.len(), 1250);
+    }
+
+    #[test]
+    fn uapi_pre_handshake_junk_validation_rejects_silent_clamping() {
+        assert!(AmneziaPreHandshakeJunk::try_new(MAX_JUNK_PACKET_COUNT + 1, 0, 0, 0).is_err());
+        assert!(AmneziaPreHandshakeJunk::try_new(1, 0, 10, 0).is_err());
+        assert!(AmneziaPreHandshakeJunk::try_new(1, 1, MAX_JUNK_PACKET_SIZE + 1, 0).is_err());
+
+        let valid = AmneziaPreHandshakeJunk::try_new(1, 0, 0, 0).unwrap();
+        assert_eq!(valid.packet_count, 1);
+        assert_eq!(valid.packet_size_min, DEFAULT_JUNK_PACKET_SIZE_MIN);
+        assert_eq!(valid.packet_size_max, DEFAULT_JUNK_PACKET_SIZE_MAX);
     }
 
     #[test]
