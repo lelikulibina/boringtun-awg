@@ -470,6 +470,50 @@ impl ObfuscationRanges {
         })
     }
 
+    /// Construct explicit UAPI tag ranges without treating (0, 0) as
+    /// "use the WireGuard default". The Go UAPI stores zero as a valid tag.
+    pub(crate) fn from_explicit_ranges(ranges: [(u32, u32); 4]) -> Result<Self, String> {
+        let names = ["H1", "H2", "H3", "H4"];
+        let mut parsed = [TagRange { start: 0, end: 0 }; 4];
+
+        for (index, (start, end)) in ranges.into_iter().enumerate() {
+            if start > end {
+                return Err(format!(
+                    "Invalid {} range: start ({start}) > end ({end})",
+                    names[index]
+                ));
+            }
+            parsed[index] = TagRange { start, end };
+        }
+
+        for i in 0..parsed.len() {
+            for j in (i + 1)..parsed.len() {
+                if parsed[i].overlaps(parsed[j]) {
+                    let overlap_start = parsed[i].start.max(parsed[j].start);
+                    let overlap_end = parsed[i].end.min(parsed[j].end);
+                    return Err(format!(
+                        "{} [{}..{}] overlaps {} [{}..{}] at {}..{}",
+                        names[i],
+                        parsed[i].start,
+                        parsed[i].end,
+                        names[j],
+                        parsed[j].start,
+                        parsed[j].end,
+                        overlap_start,
+                        overlap_end
+                    ));
+                }
+            }
+        }
+
+        Ok(Self {
+            h1_init: parsed[0],
+            h2_resp: parsed[1],
+            h3_cookie: parsed[2],
+            h4_data: parsed[3],
+        })
+    }
+
     pub fn matches_h1(&self, v: u32) -> bool {
         self.h1_init.contains(v)
     }
