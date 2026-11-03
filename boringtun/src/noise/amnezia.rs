@@ -674,29 +674,34 @@ impl AmneziaConfig {
         // "raise" side therefore names every violated bound, not just the
         // binding one: at S1=100, S2=0, S3=185 both are violated, and raising
         // S2 alone still leaves the initiation a byte short.
-        let bounds = self.cookie_amplification_bounds();
-        if let Some(&(which, request, _)) = bounds.first() {
-            let reply = COOKIE_REPLY_SZ + self.cookie_packet_junk_size as usize;
-            let raise = bounds
-                .iter()
-                .map(|&(label, _, min_junk)| format!("{} to at least {}", label, min_junk))
-                .collect::<Vec<_>>()
-                .join(" and ");
-            return Err(format!(
-                "S3 = {} makes a cookie reply {} bytes, larger than the {}-byte packet that provokes it ({} = {}); the reply would be suppressed and handshakes would fail under load. Lower S3 to at most {}, or raise {}.",
-                self.cookie_packet_junk_size,
-                reply,
-                request,
-                which,
-                request
-                    - if which == "S1" {
-                        HANDSHAKE_INIT_SZ
-                    } else {
-                        HANDSHAKE_RESP_SZ
-                    },
-                request - COOKIE_REPLY_SZ,
-                raise
-            ));
+        // DisableCookies bypasses the only path that emits an under-load
+        // Cookie Reply. In that mode the reply-size amplification constraint
+        // is irrelevant; incoming Cookie Replies remain supported.
+        if !self.disable_cookies {
+            let bounds = self.cookie_amplification_bounds();
+            if let Some(&(which, request, _)) = bounds.first() {
+                let reply = COOKIE_REPLY_SZ + self.cookie_packet_junk_size as usize;
+                let raise = bounds
+                    .iter()
+                    .map(|&(label, _, min_junk)| format!("{} to at least {}", label, min_junk))
+                    .collect::<Vec<_>>()
+                    .join(" and ");
+                return Err(format!(
+                    "S3 = {} makes a cookie reply {} bytes, larger than the {}-byte packet that provokes it ({} = {}); the reply would be suppressed and handshakes would fail under load. Lower S3 to at most {}, or raise {}.",
+                    self.cookie_packet_junk_size,
+                    reply,
+                    request,
+                    which,
+                    request
+                        - if which == "S1" {
+                            HANDSHAKE_INIT_SZ
+                        } else {
+                            HANDSHAKE_RESP_SZ
+                        },
+                    request - COOKIE_REPLY_SZ,
+                    raise
+                ));
+            }
         }
 
         Ok(())
@@ -2982,6 +2987,13 @@ mod tests {
         AmneziaConfig::new(120, 130, 110, 80)
             .validate()
             .expect("scripts/awg-interop-poc.sh must still be a legal config");
+
+        // DisableCookies emits no under-load Cookie Reply, so the otherwise
+        // amplifying S3 combination is safe and must remain configurable.
+        AmneziaConfig::new(100, 156, 185, 0)
+            .with_disable_cookies(true)
+            .validate()
+            .expect("DisableCookies must not be blocked by an unused reply-size constraint");
 
         // As must the default: vanilla WireGuard has no S values at all.
         AmneziaConfig::default()
