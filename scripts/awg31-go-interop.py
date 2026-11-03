@@ -51,18 +51,18 @@ PROFILES = [
     ("bulk data integrity — AWG 2.0", "", True),
     (
         "bulk data integrity — AWG 3.0",
-        "i1=<b 0x41574733312d49312d435053>\\n"
-        "i2=<b 0x41574733312d49322d435053>\\n"
-        "i3=<b 0x41574733312d49332d435053>\\n"
-        "i4=<b 0x41574733312d49342d435053>\\n"
-        "i5=<b 0x41574733312d49352d435053>\\n",
+        "i1=<b 0x41574733312d49312d435053>\n"
+        "i2=<b 0x41574733312d49322d435053>\n"
+        "i3=<b 0x41574733312d49332d435053>\n"
+        "i4=<b 0x41574733312d49342d435053>\n"
+        "i5=<b 0x41574733312d49352d435053>\n",
         True,
     ),
     (
         "bulk data integrity — AWG 3.1",
-        f"header_protection_key={HPK}\\n"
-        "content_padding_addition=16-64\\nrandom_trailers=true\\n"
-        "disable_cookies=true\\n",
+        f"header_protection_key={HPK}\n"
+        "content_padding_addition=16-64\nrandom_trailers=true\n"
+        "disable_cookies=true\n",
         True,
     ),
     ("HeaderProtectionKey", f"header_protection_key={HPK}\n", True),
