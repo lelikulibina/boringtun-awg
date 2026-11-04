@@ -791,9 +791,6 @@ impl Tunn {
                     handshake_initiation_required = true;
                 }
 
-                if self.timers.is_initiator() {
-                }
-
                 // If we have sent a packet to a given peer but have not received a
                 // packet after from that peer for (KEEPALIVE + REKEY_TIMEOUT) ms,
                 // we initiate a new handshake.
