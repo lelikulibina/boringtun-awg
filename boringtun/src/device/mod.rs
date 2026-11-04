@@ -439,11 +439,7 @@ impl DeviceHandle {
     }
 
     /// Apply interface-wide AmneziaWG framing and obfuscation settings.
-    pub fn set_obfuscation(
-        &self,
-        obfuscation: ObfuscationRanges,
-        amnezia: AmneziaConfig,
-    ) -> bool {
+    pub fn set_obfuscation(&self, obfuscation: ObfuscationRanges, amnezia: AmneziaConfig) -> bool {
         self.with_device_mut(|device| device.set_obfuscation(obfuscation, amnezia))
     }
 
