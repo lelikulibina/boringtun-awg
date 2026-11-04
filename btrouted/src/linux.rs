@@ -62,6 +62,19 @@ pub fn remove_nft(plan: &RoutingPlan) {
 }
 
 pub fn apply_policy_routing(plan: &RoutingPlan) -> Result<(), LinuxError> {
+    for mark in &plan.socket_marks {
+        for family in ["-4", "-6"] {
+            let args = vec![family.into(), "rule".into(), "del".into(), "priority".into(),
+                "9000".into(), "fwmark".into(), format!("0x{:x}", mark), "lookup".into(), "main".into()];
+            let _ = run("ip", &args);
+            let args = vec![family.into(), "rule".into(), "add".into(), "priority".into(),
+                "9000".into(), "fwmark".into(), format!("0x{:x}", mark), "lookup".into(), "main".into()];
+            if let Err(error) = run("ip", &args) {
+                remove_policy_routing(plan);
+                return Err(error);
+            }
+        }
+    }
     for egress in &plan.egresses {
         for family in ["-4", "-6"] {
             let priority = egress.ip_rule_priority.to_string();
@@ -85,6 +98,12 @@ pub fn apply_policy_routing(plan: &RoutingPlan) -> Result<(), LinuxError> {
 
 
 pub fn remove_policy_routing(plan: &RoutingPlan) {
+    for mark in &plan.socket_marks {
+        for family in ["-4", "-6"] {
+            let _ = run("ip", &[family.into(), "rule".into(), "del".into(), "priority".into(),
+                "9000".into(), "fwmark".into(), format!("0x{:x}", mark), "lookup".into(), "main".into()]);
+        }
+    }
     for egress in &plan.egresses {
         for family in ["-4", "-6"] {
             let _ = run("ip", &[family.into(), "rule".into(), "del".into(), "priority".into(),
