@@ -512,7 +512,9 @@ impl DeviceHandle {
 
     pub fn wait(&mut self) {
         while let Some(thread) = self.threads.pop() {
-            thread.join().unwrap();
+            if thread.join().is_err() {
+                tracing::error!("BoringTun datapath worker panicked during shutdown");
+            }
         }
     }
 
