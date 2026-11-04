@@ -1861,6 +1861,7 @@ mod tests {
 
         let mut first_buffer = vec![0u8; 64 + HANDSHAKE_INIT_SZ];
         write_tag(&mut first_buffer, HANDSHAKE_INIT);
+        let first_plain = first_buffer[..HANDSHAKE_INIT_SZ].to_vec();
         let mut first_rng = ChaCha8Rng::seed_from_u64(1);
         let first = cfg
             .prepend_outbound(obf, &mut first_buffer, HANDSHAKE_INIT_SZ, &mut first_rng)
@@ -1882,7 +1883,7 @@ mod tests {
         );
         assert_eq!(
             cfg.decrypt_inbound(obf, &first).as_deref(),
-            Some(&first[64..64 + HANDSHAKE_INIT_SZ]),
+            Some(first_plain.as_slice()),
             "a freshly randomized S-prefix nonce must still decrypt the protected message"
         );
     }
