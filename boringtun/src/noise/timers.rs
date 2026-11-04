@@ -785,6 +785,9 @@ impl Tunn {
                         self.timers.pick_range(1, REKEY_TIMEOUT.as_secs() as u32) as u64,
                     );
                     self.timers.handshake_retry_jitter = Timers::random_jitter();
+                    // Upstream updates lastSentHandshake on every retry, but
+                    // does not reset the attempt budget until a fresh cycle.
+                    self.timers[TimeLastHandshakeStarted] = now;
                     handshake_initiation_required = true;
                 }
             } else {
