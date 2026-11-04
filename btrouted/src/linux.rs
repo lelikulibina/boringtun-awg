@@ -21,14 +21,18 @@ pub enum LinuxError {
     Conflict { resource: String, details: String },
 }
 
-fn run(program: &str, args: &[String]) -> Result<(), LinuxError> {
-    let output = Command::new(program)
+fn output(program: &str, args: &[String]) -> Result<std::process::Output, LinuxError> {
+    Command::new(program)
         .args(args)
         .output()
         .map_err(|source| LinuxError::Spawn {
             program: program.to_owned(),
             source,
-        })?;
+        })
+}
+
+fn run(program: &str, args: &[String]) -> Result<(), LinuxError> {
+    let output = output(program, args)?;
     if output.status.success() {
         return Ok(());
     }
@@ -126,7 +130,84 @@ pub fn remove_nft(plan: &RoutingPlan) {
     );
 }
 
+fn ensure_policy_slots_available(plan: &RoutingPlan) -> Result<(), LinuxError> {
+    for family in ["-4", "-6"] {
+        let args = vec![family.into(), "rule".into(), "show".into()];
+        let rules = output("ip", &args)?;
+        if !rules.status.success() {
+            return Err(LinuxError::Command {
+                program: format!("ip {}", args.join(" ")),
+                status: rules.status.to_string(),
+                stderr: String::from_utf8_lossy(&rules.stderr).trim().to_owned(),
+            });
+        }
+
+        for line in String::from_utf8_lossy(&rules.stdout).lines() {
+            let Some((priority, _)) = line.split_once(':') else {
+                continue;
+            };
+            let Ok(priority) = priority.trim().parse::<u32>() else {
+                continue;
+            };
+            if priority == 9_000 {
+                let ours = plan.socket_marks.iter().any(|mark| {
+                    line.contains(&format!("fwmark 0x{mark:x}"))
+                        && line.ends_with("lookup main")
+                });
+                if !ours {
+                    return Err(LinuxError::Conflict {
+                        resource: format!("IPv{family} rule priority 9000"),
+                        details: line.trim().to_owned(),
+                    });
+                }
+            }
+            if let Some(egress) = plan
+                .egresses
+                .iter()
+                .find(|egress| egress.ip_rule_priority == priority)
+            {
+                let expected = line.contains(&format!("fwmark 0x{:x}", egress.mark))
+                    && line.ends_with(&format!("lookup {}", egress.table_id));
+                if !expected {
+                    return Err(LinuxError::Conflict {
+                        resource: format!("IPv{family} rule priority {priority}"),
+                        details: line.trim().to_owned(),
+                    });
+                }
+            }
+        }
+
+        for egress in &plan.egresses {
+            let args = vec![
+                family.into(),
+                "route".into(),
+                "show".into(),
+                "table".into(),
+                egress.table_id.to_string(),
+            ];
+            let routes = output("ip", &args)?;
+            if !routes.status.success() {
+                return Err(LinuxError::Command {
+                    program: format!("ip {}", args.join(" ")),
+                    status: routes.status.to_string(),
+                    stderr: String::from_utf8_lossy(&routes.stderr).trim().to_owned(),
+                });
+            }
+            for line in String::from_utf8_lossy(&routes.stdout).lines() {
+                if !line.starts_with(&format!("default dev {}", egress.interface)) {
+                    return Err(LinuxError::Conflict {
+                        resource: format!("IPv{family} route table {}", egress.table_id),
+                        details: line.trim().to_owned(),
+                    });
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 pub fn apply_policy_routing(plan: &RoutingPlan) -> Result<(), LinuxError> {
+    ensure_policy_slots_available(plan)?;
     for mark in &plan.socket_marks {
         for family in ["-4", "-6"] {
             let args = vec![
