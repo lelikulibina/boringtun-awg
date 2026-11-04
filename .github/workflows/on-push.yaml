@@ -44,7 +44,7 @@ jobs:
         os: [ ubuntu-latest ]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
@@ -57,7 +57,7 @@ jobs:
         os: [ ubuntu-latest ]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
@@ -70,7 +70,7 @@ jobs:
         os: [ ubuntu-latest ]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
@@ -82,7 +82,7 @@ jobs:
         os: [ ubuntu-latest ]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
@@ -95,7 +95,7 @@ jobs:
     if: ${{ false }}
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
@@ -111,7 +111,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: ${{ inputs.full_matrix && 30 || 25 }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
@@ -126,7 +126,7 @@ jobs:
       - name: Build BoringTun userspace device
         run: cargo build -p boringtun-cli --release
       - name: Fetch official AmneziaWG Go reference
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: amnezia-vpn/amneziawg-go
           ref: b5928efb6ca19f0153958460c3d141f04abc5c2e
@@ -135,7 +135,7 @@ jobs:
         working-directory: upstream-amneziawg-go
         run: go build -v -o ../amneziawg-go .
       - name: Fetch official AmneziaWG Go 3.0.0 reference
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: amnezia-vpn/amneziawg-go
           ref: v3.0.0
@@ -144,7 +144,7 @@ jobs:
         working-directory: upstream-amneziawg-go-3.0
         run: go build -v -o ../amneziawg-go-3.0 .
       - name: Fetch official WireGuard Go reference
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: WireGuard/wireguard-go
           ref: b3bc704ef0ee21a36298601a9e1e5ff90377ac52
@@ -174,7 +174,7 @@ jobs:
         os: [ ubuntu-latest ]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions-rs/toolchain@v1
         with:
           toolchain: stable

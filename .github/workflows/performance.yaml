@@ -24,7 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
@@ -39,7 +39,7 @@ jobs:
       - name: Build BoringTun userspace device
         run: cargo build -p boringtun-cli --release
       - name: Fetch official AmneziaWG Go reference
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: amnezia-vpn/amneziawg-go
           ref: b5928efb6ca19f0153958460c3d141f04abc5c2e
