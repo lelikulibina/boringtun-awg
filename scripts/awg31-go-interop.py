@@ -806,7 +806,7 @@ def run_profile(
     bt: str, go: str, name: str, extra: str,
     awg_enabled: bool, bt_is_server: bool, performance: bool = False,
     same_implementation: str | None = None,
-    extended_matrix: bool = False,
+    extended_matrix: bool = False, legacy_cpa: bool = False,
 ) -> None:
     token = uuid.uuid4().hex[:10]
     ns_server, ns_client = f"awg31s{token}", f"awg31c{token}"
@@ -920,7 +920,7 @@ def run_profile(
         # Go has no such UAPI key and uses the semantics of its pinned version.
         bt_awg = awg + (
             "content_padding_mode=mtu\n"
-            if name == "bulk data integrity — AWG 3.0" else ""
+            if legacy_cpa and "content_padding_addition=" in awg else ""
         )
         server_awg = bt_awg if server_is_bt else awg
         client_awg = bt_awg if client_is_bt else awg
@@ -1095,6 +1095,7 @@ def main() -> int:
                     run_profile(
                         bt, go, name, extra, awg_enabled, bt_is_server,
                         extended_matrix=full_matrix,
+                        legacy_cpa=(name == "bulk data integrity — AWG 3.0"),
                     )
                 except Exception as error:
                     failures += 1
@@ -1106,7 +1107,10 @@ def main() -> int:
             for bt_is_server in (True, False):
                 total += 1
                 try:
-                    run_profile(bt, awg30, name, extra, awg_enabled, bt_is_server)
+                    run_profile(
+                        bt, awg30, name, extra, awg_enabled, bt_is_server,
+                        legacy_cpa=True,
+                    )
                 except Exception as error:
                     failures += 1
                     role = "BoringTun server" if bt_is_server else "amneziawg-go v3.0.0 server"
