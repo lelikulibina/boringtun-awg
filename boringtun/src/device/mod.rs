@@ -600,6 +600,14 @@ impl DeviceHandle {
 impl Drop for DeviceHandle {
     fn drop(&mut self) {
         self.device.read().trigger_exit();
+        // Do not detach datapath workers: they own TUN queues and UDP event
+        // loops. Joining here makes partial daemon startup rollback bounded
+        // and prevents background threads surviving a failed configuration.
+        while let Some(thread) = self.threads.pop() {
+            if thread.join().is_err() {
+                tracing::error!("BoringTun datapath worker panicked during shutdown");
+            }
+        }
         self.clean();
     }
 }
