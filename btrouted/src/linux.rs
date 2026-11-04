@@ -34,7 +34,7 @@ pub fn apply_nft(plan: &RoutingPlan) -> Result<(), LinuxError> {
         .map_err(|source| LinuxError::Spawn { program: "nft".into(), source })?;
     let mut script = String::new();
     if existing.status.success() {
-        script.push_str(&format!("delete table {} {}\\n", plan.nft_family, plan.nft_table));
+        script.push_str(&format!("delete table {} {}\n", plan.nft_family, plan.nft_table));
     }
     script.push_str(&plan.nft_script());
     let mut child = Command::new("nft")
