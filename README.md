@@ -57,6 +57,30 @@ Testing this project has a few requirements:
 
 This branch contains AmneziaWG 3.0/3.1 extensions. Linux interop CI tests 16 directional scenarios against official `amneziawg-go` v3.1.20260828, 14 against official `amneziawg-go` v3.0.0, and two vanilla WireGuard scenarios against pinned official `wireguard-go`. The default CI suite therefore covers 32 directional scenarios. Coverage includes vanilla WireGuard/AWG 2.x baselines, 1 MiB integrity transfers with AWG 3.0 and 3.1 features, header protection, CPA, randomized timers, CPS, rekey recovery, and the combined AWG 3.1 profile. The exhaustive 44-scenario v3.1 matrix, including isolated extensions and long rekey lifecycle checks, is available with `--full`; with the additional v3.0 and WireGuard references this runs 60 directional scenarios. The PCAP verifier checks framing and packet structure, not byte-for-byte equality of every datagram; Windows is disabled and macOS is outside the current merge gate. The operational guide is [docs/AMNEZIAWG_3_1_CONFIGURATION.md](docs/AMNEZIAWG_3_1_CONFIGURATION.md); the version history, parameter semantics, limits, interoperability matrix, and upstream edge cases are documented in [docs/AMNEZIAWG_PROTOCOL_COMPATIBILITY.md](docs/AMNEZIAWG_PROTOCOL_COMPATIBILITY.md).
 
+
+## Linux multi-tunnel router daemon
+
+The workspace includes the experimental `btrouted` Linux daemon. It creates WG/AWG TUN devices directly through BoringTun's typed device API; daemon-managed devices do not expose UAPI sockets.
+
+Build and validate the example configuration:
+
+```sh
+cargo build -p btrouted --bin btrouted
+sudo install -d -m 0750 /etc/btrouted
+sudo install -m 0600 btrouted/btrouted.example.toml /etc/btrouted/config.toml
+sudo target/debug/btrouted --config /etc/btrouted/config.toml --check
+```
+
+Replace all example keys and endpoint hostnames before starting the daemon. Then run:
+
+```sh
+sudo target/debug/btrouted --config /etc/btrouted/config.toml
+```
+
+The daemon requires Linux TUN support, `iproute2`, and `nftables`. It installs policy routes and an nftables table named in `[daemon].nft_table`; the table is tagged as daemon-owned and conflicting unowned tables or policy-routing slots are rejected. SIGINT/SIGTERM triggers worker shutdown and cleanup.
+
+A privileged network-namespace smoke/integration test is available at `scripts/btrouted-netns-test.sh`. It exercises WG/AWG device creation, IPv4/IPv6 fwmark routing, nftables rule installation, collision rollback, and graceful cleanup. The daemon is experimental; run it in an isolated test environment before production use.
+
 ## Supported platforms
 
 Target triple                 |Binary|Library|
