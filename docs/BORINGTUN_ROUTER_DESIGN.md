@@ -29,7 +29,7 @@
 - DeviceConfig получает явные параметры интерфейса, в том числе listen port, mark внешних UDP-сокетов и настройки AWG.
 - DeviceHandle получает операции configure/reconfigure: private key, peer add/update/remove, endpoint, PSK, keepalive, AllowedIPs.
 - Конфигурация одного интерфейса валидируется целиком до применения; изменения ключа и peer state применяются атомарно настолько, насколько это возможно без потери активных сессий.
-- UAPI handler остаётся совместимым и использует те же внутренние операции; `DeviceConfig.enable_uapi=false` отключает создание сокета в daemon mode.
+- UAPI handler остаётся только для обычного режима и использует те же внутренние операции; `DeviceConfig.enable_uapi=false` полностью отключает UAPI для конкретного Device: сокет/handler не создаётся, переданный `uapi_fd` игнорируется, event loop не обслуживает UAPI. `btrouted` обязан использовать только типизированный Control API.
 - `DeviceConfig.listen_port` позволяет задать UDP-порт при создании `Device`; `None` сохраняет прежний выбор случайного порта.
 - Статистика экспортируется из datapath через read-only snapshot API, а не считывается парсингом UAPI.
 
