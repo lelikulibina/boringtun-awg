@@ -134,7 +134,7 @@ pub struct PeerSnapshot {
     pub endpoint: Option<SocketAddr>,
     pub allowed_ips: Vec<AllowedIP>,
     pub persistent_keepalive: Option<(u32, u32)>,
-    pub last_handshake: Option<std::time::Duration>,
+    pub time_since_last_handshake: Option<std::time::Duration>,
     pub tx_bytes: u64,
     pub rx_bytes: u64,
 }
@@ -483,7 +483,7 @@ impl DeviceHandle {
                 endpoint,
                 allowed_ips,
                 persistent_keepalive: keepalive,
-                last_handshake,
+                time_since_last_handshake: last_handshake,
                 tx_bytes: tx_bytes as u64,
                 rx_bytes: rx_bytes as u64,
             });
