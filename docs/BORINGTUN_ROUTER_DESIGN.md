@@ -21,7 +21,7 @@
 
 **Единый путь UAPI для внешних инструментов:** если UAPI включён, BoringTun создаёт ровно один Unix-сокет `/run/wireguard/<interface>.sock` для WG и всех вариантов AWG. Второй сокет и symlink в `/run/amneziawg` не создаются. Сам daemon использует типизированный API и не открывает UAPI endpoint.
 
-Важно для развёртывания: upstream `amneziawg-tools` на Linux по умолчанию ищет userspace socket в каталоге `/amneziawg` под своим `RUNSTATEDIR`. Для совместимости с единым путём сборка AWG tools должна быть настроена на `RUNSTATEDIR=/run/wireguard` (или соответствующий исходный `SOCK_PATH` должен быть изменён). Без этого стандартный бинарник `awg` не обнаружит сокет, даже если BoringTun корректно его создаёт.
+Важно для развёртывания: upstream `amneziawg-tools` на Linux по умолчанию ищет userspace socket в каталоге `/amneziawg` под своим `RUNSTATEDIR`. Для совместимости в исходниках AWG tools нужно применить `patches/amneziawg-tools-uapi-path.patch`, а при сборке задать `RUNSTATEDIR=/run` (в `src/Makefile`). Тогда `awg` ищет тот же `/run/wireguard/<interface>.sock`. Без этого патча стандартный бинарник `awg` продолжит искать `/run/amneziawg/<interface>.sock` и не обнаружит сокет BoringTun.
 
 
 Текущий Device умеет создавать TUN и обрабатывать UDP, но управление private key/peer/AllowedIPs сейчас завязано на внутренний UAPI parser. Не следует эмулировать UAPI через сокет или shell-команды. Нужен публичный типизированный control API в boringtun::device:
