@@ -2362,7 +2362,8 @@ mod tests {
             TunnResult::Done
         ));
         assert_eq!(
-            initiator.timers[TimerName::TimeLastPacketReceived], last_authenticated_receive,
+            initiator.timers[TimerName::TimeLastPacketReceived],
+            last_authenticated_receive,
             "Cookie Reply updates cookie state but must not reset authenticated traversal timers"
         );
         assert!(
