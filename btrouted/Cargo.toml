@@ -8,6 +8,7 @@ description = "Linux multi-tunnel router daemon for BoringTun and AmneziaWG"
 [dependencies]
 base64 = "0.22"
 boringtun = { path = "../boringtun", version = "0.7.1", features = ["device"] }
+libc = "0.2"
 serde = { version = "1.0", features = ["derive"] }
 thiserror = "2.0"
 toml = "0.8.23"
