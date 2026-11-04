@@ -151,13 +151,16 @@ PROFILES = [
 
 
 # Fast CI/development suite: cover both protocol baselines, 3.0 and 3.1
-# combined data paths, packet-loss rekey recovery, and all CPS slots. The
-# exhaustive per-extension matrix and long soak remain available with --full.
+# bulk-transfer integrity, the combined 3.1 feature path, packet-loss rekey
+# recovery, and all CPS slots. The exhaustive per-extension matrix and long
+# lifecycle soak remain available with --full.
 QUICK_PROFILES = [
     profile for profile in PROFILES
     if profile[0] in {
         "vanilla WireGuard baseline",
         "AWG 2.x baseline",
+        "bulk data integrity — AWG 3.0",
+        "bulk data integrity — AWG 3.1",
         "accelerated rekey",
         "rekey packet-loss recovery",
         "all AWG 3.1 extensions combined",
