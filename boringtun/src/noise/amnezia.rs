@@ -695,7 +695,7 @@ impl AmneziaConfig {
     /// classification unambiguous. Upstream currently accepts unequal values,
     /// but its own documentation recommends equal S values; we enforce that
     /// safe subset rather than silently accepting a lossy configuration.
-    pub(crate) fn validate_random_trailers(&self, _obf: ObfuscationRanges) -> Result<(), String> {
+    pub fn validate_random_trailers(&self, _obf: ObfuscationRanges) -> Result<(), String> {
         if self.random_trailers {
             let s = [
                 self.init_packet_junk_size,
