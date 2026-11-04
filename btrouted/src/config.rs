@@ -505,12 +505,14 @@ impl AwgConfig {
                 interface, error
             ))
         })?;
-        amnezia.validate_random_trailers(obfuscation).map_err(|error| {
-            ConfigError::Validation(format!(
-                "interfaces.{}.awg RandomTrailers settings are invalid: {}",
-                interface, error
-            ))
-        })?;
+        amnezia
+            .validate_random_trailers(obfuscation)
+            .map_err(|error| {
+                ConfigError::Validation(format!(
+                    "interfaces.{}.awg RandomTrailers settings are invalid: {}",
+                    interface, error
+                ))
+            })?;
         Ok(())
     }
 }
@@ -810,7 +812,10 @@ egress = "awg-uplink"
         let input = valid_config().replace("h2 = \"101-200\"", "h2 = \"50-200\"");
         let error = Config::parse_toml(&input).unwrap_err();
         assert!(
-            matches!(&error, ConfigError::Validation(message) if message.contains("H1-H4 ranges")),
+            matches!(
+                &error,
+                ConfigError::Validation(message) if message.contains("H1-H4 ranges")
+            ),
             "unexpected validation error: {error}"
         );
     }
