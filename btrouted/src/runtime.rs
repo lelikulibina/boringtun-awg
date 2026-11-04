@@ -133,8 +133,9 @@ fn build_awg_config(interface: &InterfaceConfig) -> Result<(ObfuscationRanges, A
     amnezia = amnezia.try_with_pre_handshake_junk(jc, jmin, jmax, 0)
         .map_err(|e| RuntimeError::Configuration(format!("invalid AWG junk settings: {e}")))?;
     if let Some(awg) = awg {
-        amnezia.disable_cookies = awg.disable_cookies.unwrap_or(false);
-        amnezia.random_trailers = awg.random_trailers.unwrap_or(false);
+        amnezia = amnezia
+            .with_disable_cookies(awg.disable_cookies.unwrap_or(false))
+            .with_random_trailers(awg.random_trailers.unwrap_or(false));
     }
     Ok((obf, amnezia))
 }
