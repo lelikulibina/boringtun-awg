@@ -122,7 +122,7 @@ jobs:
       - name: Install Linux networking and Python dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y iproute2 iputils-ping tcpdump python3-cryptography
+          sudo apt-get install -y iproute2 iputils-ping tcpdump ethtool python3-cryptography
       - name: Build BoringTun userspace device
         run: cargo build -p boringtun-cli --release
       - name: Fetch official AmneziaWG Go reference
