@@ -1920,11 +1920,11 @@ mod tests {
     #[test]
     fn wireguard_padding_matches_upstream_mtu_algorithm() {
         assert_eq!(AmneziaConfig::calculate_wg_padding_size(0, 1420), 0);
-        assert_eq!(calculate_wg_padding_size(28, 1420), 4);
-        assert_eq!(calculate_wg_padding_size(1419, 1420), 1);
-        assert_eq!(calculate_wg_padding_size(1420, 1420), 0);
-        assert_eq!(calculate_wg_padding_size(1421, 1420), 15);
-        assert_eq!(calculate_wg_padding_size(28, 0), 4);
+        assert_eq!(AmneziaConfig::calculate_wg_padding_size(28, 1420), 4);
+        assert_eq!(AmneziaConfig::calculate_wg_padding_size(1419, 1420), 1);
+        assert_eq!(AmneziaConfig::calculate_wg_padding_size(1420, 1420), 0);
+        assert_eq!(AmneziaConfig::calculate_wg_padding_size(1421, 1420), 15);
+        assert_eq!(AmneziaConfig::calculate_wg_padding_size(28, 0), 4);
     }
 
     #[test]
@@ -2084,6 +2084,7 @@ mod tests {
             packet_size - DATA_OVERHEAD_SZ,
             packet_size,
             500,
+            1420,
             &mut rng,
         );
         assert!(padding < 500 - packet_size);
@@ -2097,6 +2098,7 @@ mod tests {
                 packet_size - DATA_OVERHEAD_SZ,
                 packet_size,
                 500,
+                1420,
                 &mut rng,
             ),
             7,
