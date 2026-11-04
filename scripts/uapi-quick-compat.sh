@@ -166,10 +166,10 @@ Table = off
 Jc = 1
 Jmin = 8
 Jmax = 16
-S1 = 64
-S2 = 64
-S3 = 64
-S4 = 64
+S1 = 284
+S2 = 659
+S3 = 1045
+S4 = 12
 H1 = 100
 H2 = 200
 H3 = 300
@@ -252,7 +252,10 @@ assert_contains "$awg_dump" "30" "awg persistent keepalive readback"
 awg_conf="$(PATH="$QUICK_BIN:$PATH" awg showconf "$AWG_IFACE")"
 assert_contains "$awg_conf" "$AWG_PRIVATE" "awg showconf private key readback"
 assert_contains "$awg_conf" "Jc = 1" "AWG Jc readback"
-assert_contains "$awg_conf" "S1 = 64" "AWG S1 readback"
+assert_contains "$awg_conf" "S1 = 284" "AWG S1 readback"
+assert_contains "$awg_conf" "S2 = 659" "AWG S2 readback"
+assert_contains "$awg_conf" "S3 = 1045" "AWG S3 readback"
+assert_contains "$awg_conf" "S4 = 12" "AWG S4 readback"
 assert_contains "$awg_conf" "H4 = 400" "AWG H4 readback"
 assert_contains "$awg_conf" "DisableCookies = on" "AWG 3.1 flag readback"
 
