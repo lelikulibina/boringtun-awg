@@ -252,9 +252,11 @@ Upstream формулы:
 - Cookie Reply использует device-level `DefaultUdpWindow=500`, а не per-peer high-water mark.
 - Для transport CPA имеет приоритет, если задан; для handshake/cookie RT остаётся независим.
 
-**Критичная неоднозначность классификации:** upstream сначала проверяет handshake offsets, а затем transport. При разных S1-S4 длинный transport packet может попасть в handshake branch, где случайные байты на другом offset случайно соответствуют H1/H2/H3. Пакет будет отвергнут по MAC1, хотя его H4 и AEAD корректны. Это подтверждено [upstream issue #186](https://github.com/amnezia-vpn/amneziawg-go/issues/186).
+**Критичная неоднозначность классификации (upstream issue #186):** при `RandomTrailers=true` upstream сначала пробует Init, Response и Cookie branches, разрешая пакеты длиннее соответствующего фиксированного размера, и только затем пробует Transport. Для каждого handshake branch читается type tag на своём offset `S1/S2/S3`. Если эти offsets не совпадают с `S4`, в transport packet там оказываются случайные байты S4-prefix или ciphertext. Они могут случайно попасть в широкий диапазон `H1/H2/H3`; пакет ошибочно уходит в handshake path и затем теряется на проверке MAC1. Для независимых равномерных 32-битных значений вероятность ложной классификации на один transport packet приблизительно:
+`1 - (1 - W1/2^32) * (1 - W2/2^32) * (1 - W3/2^32)`,
+где `Wi = Hi_max - Hi_min + 1`. Поэтому широкие H1-H3 усугубляют риск, а ширина H4 в этой конкретной ошибке не участвует.
 
-Официальная документация рекомендует одинаковые S1-S4. BoringTun превращает рекомендацию в проверяемое ограничение: при `RandomTrailers=true` конфигурация с разными S1-S4 отклоняется. Upstream UAPI принимает такие значения, но не гарантирует надёжную классификацию. При одинаковых S и непересекающихся H-диапазонах кандидаты смотрят на один и тот же type field.
+Официальная документация рекомендует одинаковые S1-S4. BoringTun превращает рекомендацию в проверяемое ограничение: при `RandomTrailers=true` конфигурация с разными S1-S4 отклоняется. При равных S и непересекающихся H-диапазонах все четыре ветви смотрят на один type offset: реальный H4 не попадает в H1-H3. Это закрывает описанный false-positive path для корректной конфигурации; upstream UAPI пока принимает разные S и широкие H1-H3 без такой защиты.
 
 ### 4.9 DisableCookies
 
@@ -337,8 +339,8 @@ max_handshake_attempts=18
 
 ## 7. Риски и upstream edge cases
 
-1. **RandomTrailers + разные S — issue #186.** Разные offsets могут приводить к ложной handshake classification и потере transport. BoringTun требует одинаковые S1-S4.
-2. **ContentPaddingAddition не ограничивает handshake trailers — issue #185.** CPA влияет на transport; handshake и Cookie Reply всё ещё могут получить внешний RandomTrailers.
+1. **RandomTrailers + разные S + широкие H1-H3 — issue #186.** Ложная handshake classification может молча терять transport packets; риск растёт с суммарной шириной H1-H3. BoringTun требует одинаковые S1-S4 и проверяет непересечение H ranges.
+2. **ContentPaddingAddition не ограничивает handshake trailers — issue #185.** CPA влияет только на transport. Даже при CPA handshake Response и Cookie Reply по-прежнему могут получить внешний RandomTrailers, ограниченный UDP window, а не CPA range и не TUN MTU. Оператор не должен считать CPA гарантией MTU-safe для handshake.
 3. **Небезопасные J/CPS размеры — issue #189.** Upstream 3.1 не проверяет все cross-field combinations Jmin/Jmax и отрицательные длины CPS тегов. BoringTun валидирует их до отправки.
 4. **Cookie Reply amplification.** Upstream не ограничивает размер Cookie Reply относительно вызвавшей handshake datagram. S3 и RT могут увеличить ответ; BoringTun сохраняет это wire behavior. На публичном endpoint требуется сетевой контроль и оценка reflection amplification risk.
 5. **Header Protection — не AEAD.** Он скрывает служебные поля, но не заменяет Noise MAC и transport AEAD. Повтор nonce при одном HP key недопустим.
