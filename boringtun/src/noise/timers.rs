@@ -557,6 +557,10 @@ impl Tunn {
                 self.timers.reset_persistent_keepalive(now);
             }
             TimeLastHandshakeStarted => {
+                // A fresh upstream SendHandshakeInitiation(false) resets both
+                // the attempt counter and its randomly selected budget. Retry
+                // sends do not call this timer event.
+                self.timers.select_new_handshake_budget();
                 self.timers.rekey_due_on_receive = false;
                 self.timers.rekey_timeout = Duration::from_secs(
                     self.timers.pick_range(1, REKEY_TIMEOUT.as_secs() as u32) as u64,

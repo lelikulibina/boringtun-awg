@@ -2386,6 +2386,29 @@ mod tests {
 
     #[test]
     #[cfg(feature = "mock-instant")]
+    fn fresh_handshake_resamples_max_attempts_budget() {
+        let config = AmneziaConfig::new(0, 0, 0, 0).with_max_handshake_attempts(7, 7);
+        let (mut tun, _peer) = create_two_tuns_with_amnezia(config);
+        let mut dst = [0u8; 2048];
+
+        let _ = create_handshake_init(&mut tun);
+        assert_eq!(tun.timers.max_handshake_attempts, 7);
+
+        // Simulate an exhausted cycle. The next non-retry initiation must
+        // reset the count and sample the configured budget again.
+        tun.timers.handshake_attempts = 9;
+        tun.timers.max_handshake_attempts = 0;
+        tun.handshake.abort_initiation();
+        assert!(matches!(
+            tun.format_handshake_initiation(&mut dst, false),
+            TunnResult::WriteToNetwork(_)
+        ));
+        assert_eq!(tun.timers.handshake_attempts, 0);
+        assert_eq!(tun.timers.max_handshake_attempts, 7);
+    }
+
+    #[test]
+    #[cfg(feature = "mock-instant")]
     fn handshake_attempt_budget_is_checked_on_retry_expiry() {
         let (mut my_tun, _their_tun) = create_two_tuns();
         let _init = create_handshake_init(&mut my_tun);
