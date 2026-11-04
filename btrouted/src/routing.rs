@@ -210,6 +210,13 @@ egress = "awg-primary"
     }
 
     #[test]
+    fn rejects_overlap_between_inner_packet_and_udp_socket_marks() {
+        let mut config = sample_config();
+        config.routing.mark_base = 4098;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
     fn creates_ipv4_and_ipv6_policy_rules_for_each_uplink() {
         let plan = RoutingPlan::from_config(&sample_config());
         let commands = plan.ip_commands();
