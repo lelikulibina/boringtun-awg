@@ -618,6 +618,32 @@ def verify_iperf3(
     )
     print(f"IPERF3-RESULTS: {result_path} ({len(measurements)} measurements)")
 
+def disable_packet_offloads(namespace: str, interface: str) -> None:
+    """Disable segmentation/coalescing on both veth ends for wire-accurate PCAPs."""
+    run(
+        "ip", "netns", "exec", namespace, "ethtool", "-K", interface,
+        "gro", "off", "gso", "off", "tso", "off",
+    )
+    features = run(
+        "ip", "netns", "exec", namespace, "ethtool", "-k", interface,
+        capture=True,
+    )
+    for feature in (
+        "generic-receive-offload",
+        "generic-segmentation-offload",
+        "tcp-segmentation-offload",
+    ):
+        match = re.search(
+            rf"^\s*{re.escape(feature)}:\s+(on|off)",
+            features, re.MULTILINE,
+        )
+        if match is None or match.group(1) != "off":
+            raise RuntimeError(
+                f"could not disable {feature} on {namespace}/{interface}: "
+                f"{match.group(1) if match else 'feature unavailable'}"
+            )
+
+
 def verify_wire_pcap(
     pcap_path: Path,
     *,
@@ -692,7 +718,21 @@ def verify_wire_pcap(
         src_port, dst_port, udp_len, _checksum = struct.unpack_from("!HHHH", ip, ihl)
         if src_port != 51820 and dst_port != 51820:
             continue
-        payload = ip[ihl + 8:min(len(ip), ihl + udp_len)]
+        ip_total_len = struct.unpack_from("!H", ip, 2)[0]
+        if udp_len < 8:
+            raise RuntimeError(f"invalid UDP length {udp_len} in {pcap_path.name}")
+        if ip_total_len != ihl + udp_len:
+            raise RuntimeError(
+                f"IP/UDP length mismatch in {pcap_path.name}: "
+                f"IPv4 total length={ip_total_len}, IHL={ihl}, UDP length={udp_len}; "
+                "packet capture may contain GRO/GSO aggregation"
+            )
+        if ip_total_len > len(ip):
+            raise RuntimeError(
+                f"truncated IPv4 packet in {pcap_path.name}: "
+                f"captured={len(ip)}, IPv4 total length={ip_total_len}"
+            )
+        payload = ip[ihl + 8:ihl + udp_len]
         if len(payload) < 4:
             continue
         packets += 1
@@ -862,6 +902,10 @@ def run_profile(
            "dev", veth_client)
         ns(ns_server, "ip", "link", "set", veth_server, "up")
         ns(ns_client, "ip", "link", "set", veth_client, "up")
+        # Disable offloads on both ends: GRO can merge received datagrams and
+        # GSO/TSO can expose oversized pre-segmentation packets to tcpdump.
+        disable_packet_offloads(ns_server, veth_server)
+        disable_packet_offloads(ns_client, veth_client)
         ns(ns_client, "ping", "-c1", "-W3", SERVER_LINK)
         capture_log = open(logs / "tcpdump.log", "w", encoding="utf-8")
         capture_proc = subprocess.Popen(
