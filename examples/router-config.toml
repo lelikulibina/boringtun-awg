@@ -1,0 +1,97 @@
+# /etc/btrouted/config.toml
+# Демон работает от root на Linux. Файл содержит секреты: chmod 0600.
+
+[daemon]
+log_level = "info"
+stats_interval_secs = 10
+nft_table = "btrouted"
+manage_ip_forwarding = false
+
+[[interfaces]]
+name = "wg-server"
+protocol = "wg"
+role = "server"
+addresses = ["10.10.0.1/24"]
+mtu = 1380
+listen_port = 51820
+private_key = "REPLACE_WITH_BASE64_PRIVATE_KEY"
+socket_fwmark = 0x1001
+
+[[interfaces.peers]]
+name = "client-1"
+public_key = "REPLACE_WITH_BASE64_PUBLIC_KEY"
+allowed_ips = ["10.10.0.2/32"]
+persistent_keepalive_secs = 25
+
+[[interfaces]]
+name = "awg-primary"
+protocol = "awg3_1"
+role = "client"
+addresses = ["10.20.0.2/32"]
+mtu = 1380
+listen_port = 51821
+private_key = "REPLACE_WITH_BASE64_PRIVATE_KEY"
+socket_fwmark = 0x1002
+
+[[interfaces.peers]]
+name = "primary-server"
+public_key = "REPLACE_WITH_BASE64_PUBLIC_KEY"
+endpoint = "198.51.100.10:51820"
+allowed_ips = ["0.0.0.0/0", "::/0"]
+persistent_keepalive_secs = 25
+
+[interfaces.awg]
+# Иллюстрация структуры. Значения должны соответствовать профилю AWG 3.1.
+jc = 5
+jmin = 50
+jmax = 1000
+s1 = 0
+s2 = 0
+s3 = 0
+s4 = 0
+# h1..h4, timers, padding и signature chains — по необходимости.
+
+[[interfaces]]
+name = "awg-secondary"
+protocol = "awg2"
+role = "client"
+addresses = ["10.30.0.2/32"]
+mtu = 1380
+listen_port = 51822
+private_key = "REPLACE_WITH_BASE64_PRIVATE_KEY"
+socket_fwmark = 0x1003
+
+[[interfaces.peers]]
+name = "secondary-server"
+public_key = "REPLACE_WITH_BASE64_PUBLIC_KEY"
+endpoint = "203.0.113.20:51820"
+allowed_ips = ["0.0.0.0/0", "::/0"]
+persistent_keepalive_secs = 25
+
+[routing]
+# Отдельная таблица маршрутизации создаётся для каждого egress.
+# Правила применяются только к forwarded пакетам, пришедшим с ingress TUN.
+
+[[routing.rules]]
+priority = 10
+ingress = "wg-server"
+destination = "195.142.0.0/16"
+egress = "awg-secondary"
+
+[[routing.rules]]
+priority = 20
+ingress = "wg-server"
+destination = "79.100.22.0/24"
+egress = "awg-secondary"
+
+[[routing.rules]]
+priority = 1000
+ingress = "wg-server"
+destination = "0.0.0.0/0"
+egress = "awg-primary"
+
+[[routing.rules]]
+priority = 1010
+ingress = "wg-server"
+destination = "::/0"
+egress = "awg-primary"
