@@ -85,7 +85,7 @@ Upstream UAPI хранит `Jc/Jmin/Jmax` как 32-битные значени�
 - `Jmin=0, Jmax=0` при `Jc>0` означает безопасные defaults 50…1000, а не нулевые пакеты.
 - Для пользовательского диапазона `Jmin` должен быть положительным.
 - Равные `Jmin=Jmax` поддерживаются как фиксированный размер.
-- Размеры ограничены, чтобы не провоцировать фрагментацию и неконтролируемый расход памяти.
+- Размеры ограничены для снижения риска фрагментации и ограничения расхода памяти; 1280 байт всё ещё может фрагментироваться на маршрутах с малым MTU.
 
 ### 4.2 Префиксы: `S1-S4`
 
@@ -203,7 +203,9 @@ Upstream формулы:
 - Для Init/Response/Cookie Reply добавляет случайные байты **после** фиксированного WG-сообщения.
 - Для Transport Data добавляет нулевые байты внутрь AEAD plaintext.
 - Длина внешнего trailer выбирается по `fastrandn(udpWindow - packetSize)`; верхняя граница свободного места не включается. Если свободного места нет, trailer равен 0.
-- Upstream UDP window начинается с 500 байт и увеличивается до high-water mark базовых исходящих transport datagrams до padding/trailer. Окно нельзя обучать по входящему padded datagram или уже добавленному trailer.
+- Upstream UDP window для peer начинается с 500 байт и увеличивается до high-water mark базовых исходящих transport datagrams до padding/trailer. BoringTun обновляет его по исходящему пакету и сбрасывает при смене endpoint. Окно нельзя обучать по входящему padded datagram или уже добавленному trailer.
+- Это high-water heuristic, а не Path MTU Discovery: если крупный базовый datagram ранее прошёл, padding меньших пакетов до такого размера всё ещё может фрагментироваться на маршруте с меньшим MTU.
+- Cookie Reply использует device-level `DefaultUdpWindow=500`, а не per-peer high-water mark.
 - Для transport CPA имеет приоритет, если задан; для handshake/cookie RT остаётся независим.
 
 **Критичная неоднозначность классификации:** upstream сначала проверяет handshake offsets, а затем transport. При разных S1-S4 длинный transport packet может попасть в handshake branch, где случайные байты на другом offset случайно соответствуют H1/H2/H3. Пакет будет отвергнут по MAC1, хотя его H4 и AEAD корректны. Это подтверждено [upstream issue #186](https://github.com/amnezia-vpn/amneziawg-go/issues/186).
