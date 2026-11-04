@@ -191,6 +191,7 @@ version = "0.1.0"
 dependencies = [
  "base64",
  "boringtun",
+ "libc",
  "serde",
  "thiserror 2.0.18",
  "toml",
