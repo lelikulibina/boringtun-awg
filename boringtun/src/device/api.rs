@@ -59,6 +59,15 @@ fn parse_uapi_bool(val: &str) -> Option<bool> {
     }
 }
 
+/// BoringTun-only selector for the CPA algorithm; upstream AWG does not negotiate versions.
+fn parse_content_padding_mode(val: &str) -> Option<bool> {
+    match val {
+        "mtu" | "awg30" => Some(true),
+        "udp_window" | "awg31" => Some(false),
+        _ => None,
+    }
+}
+
 fn parse_tag_range(val: &str) -> Option<(u32, u32)> {
     let (start, end) = match val.split_once('-') {
         Some((start, end)) => (start.trim().parse().ok()?, end.trim().parse().ok()?),
@@ -99,6 +108,7 @@ struct AwgParams {
     signature_packets: [Option<Option<SignatureChain>>; 5],
     header_protection_key: Option<[u8; 32]>,
     content_padding_addition: Option<(u32, u32)>,
+    legacy_content_padding: Option<bool>,
     rekey_after_time: Option<(u32, u32)>,
     rekey_timeout: Option<(u32, u32)>,
     reject_after_time: Option<(u32, u32)>,
@@ -202,6 +212,9 @@ impl AwgParams {
             .content_padding_addition
             .unwrap_or(amnezia.content_padding_addition);
         amnezia = amnezia.with_content_padding_addition_u32(padding_min, padding_max);
+        amnezia.legacy_content_padding = self
+            .legacy_content_padding
+            .unwrap_or(amnezia.legacy_content_padding);
         amnezia.rekey_after_time = self.rekey_after_time.unwrap_or(amnezia.rekey_after_time);
         amnezia.rekey_timeout = self.rekey_timeout.unwrap_or(amnezia.rekey_timeout);
         amnezia.reject_after_time = self.reject_after_time.unwrap_or(amnezia.reject_after_time);
@@ -510,11 +523,6 @@ impl Device {
                     return Action::Exit;
                 }
 
-                // Periodically read the mtu of the interface in case it changes
-                if let Ok(mtu) = d.iface.mtu() {
-                    d.mtu.store(mtu, Ordering::Relaxed);
-                }
-
                 Action::Continue
             }),
             std::time::Duration::from_millis(1000),
@@ -583,6 +591,9 @@ fn api_get(writer: &mut BufWriter<&UnixStream>, d: &Device) -> i32 {
             if let Some(chain) = chain {
                 writeln!(output, "i{}={}", index + 1, chain.spec());
             }
+        }
+        if a.legacy_content_padding {
+            writeln!(output, "content_padding_mode=mtu");
         }
         let (padding_min, padding_max) = a.content_padding_addition;
         if padding_min != 0 || padding_max != 0 {
@@ -847,6 +858,13 @@ fn api_set(reader: &mut BufReader<&UnixStream>, d: &mut LockReadGuard<Device>) -
                             }
                             _ => return EINVAL,
                         },
+                        "content_padding_mode" => match parse_content_padding_mode(val) {
+                            Some(mode) => {
+                                awg.legacy_content_padding = Some(mode);
+                                awg.seen = true;
+                            }
+                            None => return EINVAL,
+                        },
                         "content_padding_addition" => match parse_u32_range(val) {
                             Some(range) => {
                                 awg.content_padding_addition = Some(range);
@@ -1058,6 +1076,26 @@ mod tests {
     /// The comment at the merge site asserted this; nothing tested it. A
     /// cross-module claim in prose is exactly the thing that drifts.
     #[test]
+    fn legacy_content_padding_mode_merges_and_can_be_cleared() {
+        let current = AmneziaConfig::new(0, 0, 0, 0);
+        let mut params = AwgParams::default();
+        params.legacy_content_padding = Some(true);
+        params.seen = true;
+        let (_, legacy) = params
+            .merged(ObfuscationRanges::default(), &current)
+            .expect("legacy mode is a valid local setting");
+        assert!(legacy.legacy_content_padding);
+
+        let mut params = AwgParams::default();
+        params.legacy_content_padding = Some(false);
+        params.seen = true;
+        let (_, modern) = params
+            .merged(ObfuscationRanges::default(), &legacy)
+            .expect("AWG 3.1 mode is a valid local setting");
+        assert!(!modern.legacy_content_padding);
+    }
+
+    #[test]
     fn a_set_transaction_preserves_protocol_imitation() {
         use crate::noise::amnezia::{
             AmneziaImitation, AmneziaImitationBrowser, AmneziaImitationProtocol,
@@ -1181,6 +1219,15 @@ mod tests {
                 .is_err(),
             "S4 shorter than 12 must be rejected while HP is enabled"
         );
+    }
+
+    #[test]
+    fn parse_content_padding_mode_accepts_awg30_and_awg31_aliases() {
+        assert_eq!(parse_content_padding_mode("mtu"), Some(true));
+        assert_eq!(parse_content_padding_mode("awg30"), Some(true));
+        assert_eq!(parse_content_padding_mode("udp_window"), Some(false));
+        assert_eq!(parse_content_padding_mode("awg31"), Some(false));
+        assert_eq!(parse_content_padding_mode("auto"), None);
     }
 
     #[test]

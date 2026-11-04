@@ -1,0 +1,56 @@
+name: UAPI quick-script compatibility
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "boringtun-cli/**"
+      - "boringtun/src/device/**"
+      - "scripts/uapi-quick-compat.sh"
+      - ".github/workflows/uapi-quick-compat.yml"
+  push:
+    branches: [test/uapi-wg-quick-awg-quick]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  quick-script-compat:
+    name: wg-quick and awg-quick against BoringTun UAPI
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install WireGuard tools and Linux networking dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wireguard-tools iproute2 iptables make gcc strace acl apparmor-utils
+      - name: Build upstream AmneziaWG tools (awg and awg-quick)
+        run: |
+          git clone https://github.com/amnezia-vpn/amneziawg-tools.git upstream-amneziawg-tools
+          git -C upstream-amneziawg-tools checkout ee0f0a9aa34ff0a0da4b3433b9512781cfe02843
+          make -C upstream-amneziawg-tools/src
+          sudo make -C upstream-amneziawg-tools/src install WITH_WGQUICK=yes WITH_SYSTEMDUNITS=no
+      - name: Build BoringTun CLI
+        run: cargo build --locked --release -p boringtun-cli
+      - name: Verify original quick scripts and UAPI round trips
+        run: sudo bash scripts/uapi-quick-compat.sh "$PWD/target/release/boringtun-cli"
+      - name: Collect diagnostics on failure
+        if: failure()
+        run: |
+          sudo ip -details link
+          sudo find /var/run/wireguard /var/run/amneziawg -maxdepth 1 -ls 2>/dev/null || true
+          echo "=== Linux LSMs ==="
+          sudo cat /sys/kernel/security/lsm 2>/dev/null || true
+          echo "=== AppArmor status ==="
+          sudo aa-status 2>&1 || true
+          echo "=== SELinux status ==="
+          getenforce 2>&1 || true
+          echo "=== ACLs ==="
+          sudo getfacl -p /var/run /var/run/wireguard /var/run/amneziawg 2>&1 || true
+          echo "=== Kernel security denials ==="
+          sudo journalctl -k --no-pager -n 500 2>/dev/null | grep -Ei 'apparmor|avc:|selinux|denied|audit' | tail -n 150 || true
+          sudo dmesg 2>/dev/null | grep -Ei 'apparmor|avc:|selinux|denied|audit' | tail -n 150 || true
+          sudo sh -c 'for trace in /tmp/uapi-wg.trace*; do [ -f "$trace" ] || continue; echo "===== $trace ====="; cat "$trace"; done'
+          sudo ls -la /tmp/uapi-wg.trace* 2>/dev/null || true

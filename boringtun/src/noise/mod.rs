@@ -39,6 +39,8 @@ use mock_instant::Instant;
 
 /// The default value to use for rate limiting, when no other rate limiter is defined
 const PEER_HANDSHAKE_RATE_LIMIT: u64 = 10;
+/// Standalone Tunn default, matching the usual WireGuard userspace MTU.
+const DEFAULT_TUN_MTU: usize = 1420;
 
 const IPV4_MIN_HEADER_SIZE: usize = 20;
 const IPV4_LEN_OFF: usize = 2;
@@ -89,7 +91,12 @@ pub struct Tunn {
     rx_bytes: usize,
     amnezia: AmneziaConfig,
     /// Largest authenticated transport datagram observed for this peer.
+    /// Mirrors upstream's high-water mark: outbound base datagrams are counted
+    /// before padding, while inbound packets use upstream's decrypted-plaintext
+    /// accounting (which excludes the AEAD tag).
     udp_window: usize,
+    /// TUN MTU used by upstream-equivalent fallback WireGuard padding.
+    mtu: usize,
     pending_amnezia_junk: Option<PendingAmneziaJunk>,
     rate_limiter: Arc<RateLimiter>,
 }
@@ -114,7 +121,9 @@ const DATA: MessageType = 4;
 const HANDSHAKE_INIT_SZ: usize = 148;
 const HANDSHAKE_RESP_SZ: usize = 92;
 const COOKIE_REPLY_SZ: usize = 64;
-const DATA_OVERHEAD_SZ: usize = 32;
+const DATA_HEADER_SZ: usize = 16;
+const DATA_AEAD_TAG_SZ: usize = 16;
+const DATA_OVERHEAD_SZ: usize = DATA_HEADER_SZ + DATA_AEAD_TAG_SZ;
 
 /// The wire sizes above, re-exported for the ingress tests in `device`.
 ///
@@ -222,6 +231,17 @@ impl Tunn {
             }
             _ => return Err(WireGuardError::InvalidPacket),
         })
+    }
+
+    /// Set the inner TUN MTU used for standard WireGuard transport padding.
+    ///
+    /// Standalone Tunn users default to 1420 bytes. The device layer should
+    /// override this with the actual interface MTU.
+    pub fn set_mtu(&mut self, mtu: usize) {
+        // This is the inner TUN MTU, not the outer UDP payload ceiling. Keep
+        // zero intact: upstream calculatePaddingSize treats MTU=0 as an
+        // unbounded 16-byte alignment request.
+        self.mtu = mtu;
     }
 
     pub fn is_expired(&self) -> bool {
@@ -388,6 +408,7 @@ impl Tunn {
             rx_bytes: Default::default(),
             amnezia,
             udp_window: amnezia::DEFAULT_UDP_WINDOW,
+            mtu: DEFAULT_TUN_MTU,
             pending_amnezia_junk: None,
 
             packet_queue: VecDeque::new(),
@@ -470,7 +491,7 @@ impl Tunn {
             .set_persistent_keepalive_range(range.unwrap_or((0, 0)));
     }
 
-    /// Reset the peer's learned UDP datagram window after endpoint roaming.
+    /// Reset the peer's outbound UDP datagram high-water mark after endpoint roaming.
     pub(crate) fn reset_udp_window(&mut self) {
         self.udp_window = amnezia::DEFAULT_UDP_WINDOW;
     }
@@ -523,26 +544,34 @@ impl Tunn {
     ///
     /// # Panics
     /// Panics if dst is too small for the base WireGuard packet formatter.
-    /// Without Amnezia padding, dst should be at least src.len() + 32, and no
-    /// less than 148 bytes. With Amnezia enabled, callers must also allow for
-    /// the configured S-prefix on the emitted packet type; when no session is
-    /// established, the first output can instead be a standalone pre-handshake
-    /// junk packet up to 1280 bytes. If dst fits the base WireGuard packet but
-    /// not the configured Amnezia output, this returns
+    /// For transport data, reserve src.len() + 32 bytes plus up to 15 bytes of
+    /// default 16-byte MTU padding when CPA and RandomTrailers are disabled.
+    /// Configured CPA/RandomTrailers can require more space. With Amnezia
+    /// enabled, callers must also allow for the configured S-prefix on the
+    /// emitted packet type; when no session is established, the first output
+    /// can instead be a standalone pre-handshake junk packet up to 1280 bytes.
+    /// If dst fits the base WireGuard packet but not the selected padding or
+    /// Amnezia framing, this returns
     /// TunnResult::Err(WireGuardError::DestinationBufferTooSmall).
     pub fn encapsulate<'a>(&mut self, src: &[u8], dst: &'a mut [u8]) -> TunnResult<'a> {
         let current = self.current;
         if let Some(ref session) = self.sessions[current % N_SESSIONS] {
-            // ContentPaddingAddition and RandomTrailers are applied to the
-            // plaintext IP packet before AEAD encryption. Their combined size
-            // is bounded by the peer's learned UDP window; empty keepalives
-            // remain empty and retain their ordinary wire size.
+            // Upstream tracks the high-water mark of base datagrams sent
+            // to this peer, before adding content padding or an outer trailer.
+            // Learn the current packet size first: the first packet at a new
+            // high-water mark is unpadded, while later smaller packets may be
+            // padded up to that known size.
             let wire_packet_size =
                 src.len() + DATA_OVERHEAD_SZ + self.amnezia.transport_packet_junk_size as usize;
+            self.udp_window = self.udp_window.max(wire_packet_size);
+            // Padding is inside the AEAD plaintext. This also applies to an
+            // empty handshake-confirmation keepalive; the receiver recognizes
+            // its zero-prefixed plaintext and does not deliver it to the TUN.
             let content_padding = self.amnezia.transport_padding_size(
                 src.len(),
                 wire_packet_size,
                 self.udp_window,
+                self.mtu,
                 &mut self.handshake.rng,
             );
             if dst.len() < src.len() + content_padding + DATA_OVERHEAD_SZ {
@@ -558,7 +587,8 @@ impl Tunn {
             );
             let packet_size = packet.len();
             self.timer_tick(TimerName::TimeLastPacketSent);
-            // Exclude Keepalive packets from timer update.
+            self.timer_check_key_fresh_sending();
+            // Exclude Keepalive packets from the data-receive inactivity timer.
             if !src.is_empty() {
                 self.timer_tick(TimerName::TimeLastDataPacketSent);
             }
@@ -589,8 +619,6 @@ impl Tunn {
             return self.send_queued_packet(dst);
         }
 
-        let request_datagram_size = datagram.len();
-
         // Header-protected datagrams must be decrypted far enough to recover
         // their type and receiver index before the regular WireGuard parser
         // and rate limiter can inspect them. Without a key, retain the
@@ -619,13 +647,13 @@ impl Tunn {
             Err(TunnResult::WriteToNetwork(cookie)) => {
                 let packet_size = cookie.len();
                 dst[..packet_size].copy_from_slice(cookie);
-                return self.write_to_network_bounded(dst, packet_size, request_datagram_size);
+                return self.write_to_network(dst, packet_size);
             }
             Err(TunnResult::Err(e)) => return TunnResult::Err(e),
             _ => unreachable!(),
         };
 
-        self.handle_verified_packet_with_datagram_size(packet, dst, request_datagram_size)
+        self.handle_verified_packet(packet, dst)
     }
 
     pub(crate) fn handle_verified_packet<'a>(
@@ -633,20 +661,11 @@ impl Tunn {
         packet: Packet,
         dst: &'a mut [u8],
     ) -> TunnResult<'a> {
-        self.handle_verified_packet_with_datagram_size(packet, dst, 0)
-    }
-
-    pub(crate) fn handle_verified_packet_with_datagram_size<'a>(
-        &mut self,
-        packet: Packet,
-        dst: &'a mut [u8],
-        datagram_size: usize,
-    ) -> TunnResult<'a> {
         match packet {
             Packet::HandshakeInit(p) => self.handle_handshake_init(p, dst),
             Packet::HandshakeResponse(p) => self.handle_handshake_response(p, dst),
             Packet::PacketCookieReply(p) => self.handle_cookie_reply(p),
-            Packet::PacketData(p) => self.handle_data(p, dst, datagram_size),
+            Packet::PacketData(p) => self.handle_data(p, dst),
         }
         .unwrap_or_else(TunnResult::from)
     }
@@ -690,8 +709,24 @@ impl Tunn {
 
         let session = self.handshake.receive_handshake_response(p)?;
 
-        let keepalive_packet =
-            session.format_packet_data(self.handshake.obf, &mut self.handshake.rng, &[], 0, dst);
+        // The handshake-confirmation keepalive goes through the same transport
+        // padding path as any other empty packet in upstream amneziawg-go.
+        let wire_packet_size = DATA_OVERHEAD_SZ + self.amnezia.transport_packet_junk_size as usize;
+        self.udp_window = self.udp_window.max(wire_packet_size);
+        let content_padding = self.amnezia.transport_padding_size(
+            0,
+            wire_packet_size,
+            self.udp_window,
+            self.mtu,
+            &mut self.handshake.rng,
+        );
+        let keepalive_packet = session.format_packet_data(
+            self.handshake.obf,
+            &mut self.handshake.rng,
+            &[],
+            content_padding,
+            dst,
+        );
         let keepalive_packet_size = keepalive_packet.len();
         // Store new session in ring buffer
         let l_idx = session.local_index();
@@ -700,6 +735,7 @@ impl Tunn {
 
         self.timer_tick(TimerName::TimeLastPacketReceived);
         self.timer_tick_session_established(true, index); // New session established, we are the initiator
+        self.timer_tick(TimerName::TimeLastPacketSent); // The handshake-confirmation keepalive is sent below.
         self.set_current_session(l_idx);
 
         tracing::debug!("Sending keepalive");
@@ -717,7 +753,10 @@ impl Tunn {
         );
 
         self.handshake.receive_cookie_reply(p)?;
-        self.timer_tick(TimerName::TimeLastPacketReceived);
+        // Upstream ConsumeReply updates cookie state only. A Cookie Reply is
+        // authenticated, but it is not an authenticated peer traversal for
+        // WireGuard timer purposes: it must not cancel newHandshake or reset
+        // persistent keepalive.
         self.timer_tick(TimerName::TimeCookieReceived);
 
         tracing::debug!("Did set cookie");
@@ -746,7 +785,6 @@ impl Tunn {
         &mut self,
         packet: PacketData,
         dst: &'a mut [u8],
-        datagram_size: usize,
     ) -> Result<TunnResult<'a>, WireGuardError> {
         let r_idx = packet.receiver_idx as usize;
         let idx = r_idx % N_SESSIONS;
@@ -761,15 +799,21 @@ impl Tunn {
             session.receive_packet_data(packet, dst)?
         };
 
-        // Match upstream's per-peer UDP window: learn only from authenticated
-        // transport datagrams, including their S4 prefix and any outer trailer.
-        if datagram_size > 0 {
-            self.udp_window = self.udp_window.max(datagram_size);
-        }
+        // Match amneziawg-go's receive-side peer.udpWindow update. The Go
+        // receiver accounts S4 + MessageTransportHeaderSize + decrypted
+        // plaintext length; unlike its send-side update, this omits the AEAD
+        // tag. Keep that source-level asymmetry for exact AWG 3.1 parity.
+        let inbound_udp_window = (self.amnezia.transport_packet_junk_size as usize)
+            .saturating_add(DATA_HEADER_SZ)
+            .saturating_add(decapsulated_packet.len());
+        self.udp_window = self.udp_window.max(inbound_udp_window);
 
         self.set_current_session(r_idx);
 
         self.timer_tick(TimerName::TimeLastPacketReceived);
+        // Upstream checks receive-side key freshness for every authenticated
+        // transport packet, including an empty keepalive.
+        self.timer_check_key_fresh_receiving();
 
         Ok(self.validate_decapsulated_packet(decapsulated_packet))
     }
@@ -959,6 +1003,13 @@ impl Tunn {
     fn validate_decapsulated_packet<'a>(&mut self, packet: &'a mut [u8]) -> TunnResult<'a> {
         let (computed_len, src_ip_address) = match packet.len() {
             0 => return TunnResult::Done, // This is keepalive, and not an error
+            _ if packet[0] == 0 => {
+                // AWG ContentPaddingAddition and RandomTrailers can turn an
+                // empty keepalive into an authenticated all-zero plaintext.
+                // Upstream treats zero-prefixed transport plaintext as a
+                // keepalive rather than attempting to parse it as an IP packet.
+                return TunnResult::Done;
+            }
             _ if packet[0] >> 4 == 4 && packet.len() >= IPV4_MIN_HEADER_SIZE => {
                 let len_bytes: [u8; IP_LEN_SZ] = packet[IPV4_LEN_OFF..IPV4_LEN_OFF + IP_LEN_SZ]
                     .try_into()
@@ -1437,7 +1488,11 @@ mod tests {
             TunnResult::Done
         ));
 
-        mock_instant::MockClock::advance(Duration::from_millis(1));
+        mock_instant::MockClock::advance(Duration::from_millis(2));
+        assert!(matches!(
+            initiator.encapsulate(&packet, &mut network),
+            TunnResult::WriteToNetwork(_)
+        ));
         match initiator.update_timers(&mut network) {
             TunnResult::WriteToNetwork(packet) => assert_eq!(
                 packet.len(),
@@ -1475,7 +1530,11 @@ mod tests {
             TunnResult::WriteToNetwork(_)
         ));
 
-        mock_instant::MockClock::advance(Duration::from_millis(1999));
+        mock_instant::MockClock::advance(Duration::from_millis(2001));
+        assert!(matches!(
+            initiator.encapsulate(&packet, &mut network),
+            TunnResult::WriteToNetwork(_)
+        ));
         let rekey_init = unwrap_network_packet(initiator.update_timers(&mut network));
         assert!(matches!(
             Tunn::parse_incoming_packet(initiator.handshake.obf, &rekey_init),
@@ -1529,9 +1588,14 @@ mod tests {
         ));
 
         // The first data send is at t=1s; RekeyAfterTime is measured from
-        // session establishment, so rekey is due at t=120s.
+        // session establishment. Upstream checks it on each outbound data
+        // traversal, with a strict greater-than comparison.
+        mock_instant::MockClock::advance(Duration::from_secs(119) + Duration::from_millis(2));
+        assert!(matches!(
+            initiator.encapsulate(&packet, &mut network),
+            TunnResult::WriteToNetwork(_)
+        ));
         // Both peers temporarily retain old and new receive keys.
-        mock_instant::MockClock::advance(Duration::from_secs(119));
         let rekey_init = unwrap_network_packet(initiator.update_timers(&mut network));
         assert!(matches!(
             Tunn::parse_incoming_packet(initiator.handshake.obf, &rekey_init),
@@ -1627,6 +1691,46 @@ mod tests {
 
     #[test]
     #[cfg(feature = "mock-instant")]
+    fn keepalive_timeout_is_serviced_while_rekey_is_pending() {
+        let config = AmneziaConfig::new(0, 0, 0, 0)
+            .with_rekey_after_time(120, 120)
+            .with_rekey_timeout(5, 5)
+            .with_reject_after_time(180, 180)
+            .with_keepalive_timeout(1, 1);
+        let (mut initiator, mut responder) = create_two_tuns_with_amnezia(config);
+
+        let init = create_handshake_init(&mut initiator);
+        let response = create_handshake_response(&mut responder, &init);
+        let keepalive = parse_handshake_resp(&mut initiator, &response);
+        parse_keepalive(&mut responder, &keepalive);
+
+        // Start a rekey first, then receive data while it is pending. The
+        // authenticated receive arms KeepaliveTimeout independently.
+        let _rekey_init = create_handshake_init(&mut initiator);
+        let packet = create_ipv4_udp_packet();
+        let mut network = [0u8; 2048];
+        let mut tunnel = [0u8; 2048];
+        let outbound = unwrap_network_packet(responder.encapsulate(&packet, &mut network));
+        assert!(matches!(
+            initiator.decapsulate(None, &outbound, &mut tunnel),
+            TunnResult::WriteToTunnelV4(_, _)
+        ));
+        assert!(initiator.handshake.timer().is_some());
+
+        mock_instant::MockClock::advance(Duration::from_millis(1001));
+        let keepalive = unwrap_network_packet(initiator.update_timers(&mut network));
+        assert!(matches!(
+            Tunn::parse_incoming_packet(initiator.handshake.obf, &keepalive),
+            Ok(Packet::PacketData(_))
+        ));
+        assert!(
+            initiator.handshake.timer().is_some(),
+            "KeepaliveTimeout must not cancel the pending handshake retransmission"
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "mock-instant")]
     fn authenticated_inbound_data_cancels_and_restarts_inactivity_deadline() {
         let config = AmneziaConfig::new(0, 0, 0, 0)
             .with_rekey_after_time(120, 120)
@@ -1688,7 +1792,7 @@ mod tests {
         let config = AmneziaConfig::new(0, 0, 0, 0)
             .with_rekey_after_time(120, 120)
             .with_rekey_timeout(2, 4)
-            .with_reject_after_time(10, 12)
+            .with_reject_after_time(10, 10)
             .with_keepalive_timeout(6, 8);
         let (mut initiator, mut responder) = create_two_tuns_with_amnezia(config);
 
@@ -1712,24 +1816,34 @@ mod tests {
             TunnResult::WriteToTunnelV4(_, _)
         ));
 
-        // Upstream keyRefreshTimeoutReceiving() selects RejectAfterTime for
-        // this receive and subtracts the configured lower bounds of the other
-        // two ranges. KeepaliveTimeout itself may be a larger random selection.
+        // Upstream keyRefreshTimeoutReceiving() samples RejectAfterTime for
+        // each authenticated transport packet and subtracts the lower bounds
+        // of KeepaliveTimeout and RekeyTimeout.
         let threshold = initiator
             .timers
             .reject_after_time
             .saturating_sub(Duration::from_secs(6 + 2));
-        assert!((Duration::from_secs(2)..=Duration::from_secs(4)).contains(&threshold));
+        assert_eq!(threshold, Duration::from_secs(2));
 
-        // One millisecond elapsed before the authenticated receive above;
-        // stop one millisecond before the computed session-age threshold.
+        // Without a new authenticated packet, the receive-side rule does not
+        // fire merely because wall-clock time passes.
         mock_instant::MockClock::advance(threshold - Duration::from_millis(2));
         assert!(matches!(
             initiator.update_timers(&mut network),
             TunnResult::Done
         ));
 
-        mock_instant::MockClock::advance(Duration::from_millis(1));
+        // A subsequent authenticated packet crosses the threshold and causes
+        // exactly one new handshake, as keepKeyFreshReceiving does upstream.
+        mock_instant::MockClock::advance(Duration::from_millis(2));
+        let outbound = match responder.encapsulate(&packet, &mut network) {
+            TunnResult::WriteToNetwork(packet) => packet.to_vec(),
+            other => panic!("expected second responder data packet, got {:?}", other),
+        };
+        assert!(matches!(
+            initiator.decapsulate(None, &outbound, &mut tunnel),
+            TunnResult::WriteToTunnelV4(_, _)
+        ));
         match initiator.update_timers(&mut network) {
             TunnResult::WriteToNetwork(packet) => {
                 assert_eq!(
@@ -2195,15 +2309,15 @@ mod tests {
         assert_eq!(initiator.timers.max_handshake_attempts, 2);
         assert_eq!(responder.timers.max_handshake_attempts, 2);
 
-        // The selected budget is stable throughout the attempt cycle. A live
-        // configuration update is sampled only when the handshake completes,
-        // matching upstream timersStart/timersHandshakeComplete.
+        // Upstream selects a budget on every fresh SendHandshakeInitiation(false)
+        // and again when a handshake completes. Retries keep that selection stable.
         initiator.timers.set_timer_ranges(&replacement);
         responder.timers.set_timer_ranges(&replacement);
         initiator.timers.handshake_attempts = 5;
         responder.timers.handshake_attempts = 3;
         let init = create_handshake_init(&mut initiator);
-        assert_eq!(initiator.timers.max_handshake_attempts, 2);
+        assert_eq!(initiator.timers.max_handshake_attempts, 7);
+        assert_eq!(initiator.timers.handshake_attempts, 0);
         let response = create_handshake_response(&mut responder, &init);
         let keepalive = parse_handshake_resp(&mut initiator, &response);
         assert_eq!(initiator.timers.max_handshake_attempts, 7);
@@ -2216,9 +2330,116 @@ mod tests {
     }
 
     #[test]
+    fn cookie_reply_does_not_count_as_authenticated_packet_traversal() {
+        let initiator_secret = x25519::StaticSecret::random_from_rng(OsRng);
+        let initiator_public = x25519::PublicKey::from(&initiator_secret);
+        let responder_secret = x25519::StaticSecret::random_from_rng(OsRng);
+        let responder_public = x25519::PublicKey::from(&responder_secret);
+        let rate_limiter = Arc::new(RateLimiter::new(&responder_public, 0));
+        let config = AmneziaConfig::new(0, 0, 0, 0);
+
+        let mut initiator = Tunn::new_with_amnezia(
+            initiator_secret,
+            responder_public,
+            None,
+            None,
+            1,
+            None,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            config.clone(),
+        )
+        .unwrap();
+        let mut responder = Tunn::new_with_amnezia(
+            responder_secret,
+            initiator_public,
+            None,
+            None,
+            2,
+            Some(rate_limiter),
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            config,
+        )
+        .unwrap();
+
+        let mut network = [0u8; 4096];
+        let init = match initiator.format_handshake_initiation(&mut network, false) {
+            TunnResult::WriteToNetwork(packet) => packet.to_vec(),
+            other => panic!("expected handshake initiation, got {:?}", other),
+        };
+        let cookie =
+            match responder.decapsulate(Some("127.0.0.1".parse().unwrap()), &init, &mut network) {
+                TunnResult::WriteToNetwork(packet) => packet.to_vec(),
+                other => panic!("expected under-load Cookie Reply, got {:?}", other),
+            };
+
+        initiator.timer_tick(TimerName::TimeLastPacketReceived);
+        let last_authenticated_receive = initiator.timers[TimerName::TimeLastPacketReceived];
+        advance_past_pacing_gate(Duration::from_millis(2));
+
+        assert!(matches!(
+            initiator.decapsulate(None, &cookie, &mut network),
+            TunnResult::Done
+        ));
+        assert_eq!(
+            initiator.timers[TimerName::TimeLastPacketReceived],
+            last_authenticated_receive,
+            "Cookie Reply updates cookie state but must not reset authenticated traversal timers"
+        );
+        assert!(
+            initiator.timers[TimerName::TimeCookieReceived] > last_authenticated_receive,
+            "the cookie expiry clock must still be updated"
+        );
+    }
+
+    #[test]
+    fn content_padding_addition_preserves_padded_keepalive_semantics() {
+        let config = AmneziaConfig::new(12, 12, 12, 12)
+            .with_header_protection_key([0x42; 32])
+            .with_content_padding_addition(10, 100);
+        let (mut sender, mut receiver) = create_two_tuns_and_handshake_with_amnezia(config);
+        let mut network = [0u8; 2048];
+        let mut tunnel = [0u8; 2048];
+
+        let keepalive = match sender.encapsulate(&[], &mut network) {
+            TunnResult::WriteToNetwork(packet) => packet.to_vec(),
+            other => panic!("expected padded keepalive, got {:?}", other),
+        };
+        assert!(
+            (DATA_OVERHEAD_SZ + 12 + 10..=DATA_OVERHEAD_SZ + 12 + 100).contains(&keepalive.len()),
+            "ContentPaddingAddition must also pad an empty transport keepalive"
+        );
+        assert!(
+            matches!(
+                receiver.decapsulate(None, &keepalive, &mut tunnel),
+                TunnResult::Done
+            ),
+            "an authenticated zero-prefixed keepalive must not be rejected as an invalid IP packet"
+        );
+    }
+
+    #[test]
     #[cfg(feature = "mock-instant")]
     fn new_handshake_after_two_mins() {
-        let (mut my_tun, mut their_tun) = create_two_tuns_and_handshake();
+        let config = AmneziaConfig::new(0, 0, 0, 0)
+            .with_rekey_after_time(120, 120)
+            .with_rekey_timeout(5, 5)
+            .with_reject_after_time(500, 500)
+            .with_keepalive_timeout(200, 200);
+        let (mut my_tun, mut their_tun) = create_two_tuns_and_handshake_with_amnezia(config);
         let mut my_dst = [0u8; 1024];
 
         // Advance time 1 second and "send" 1 packet so that we send a handshake
@@ -2230,12 +2451,36 @@ mod tests {
             TunnResult::Done
         ));
         let sent_packet_buf = create_ipv4_udp_packet();
+        let mut their_dst = [0u8; 1024];
+        let mut their_tunnel = [0u8; 1024];
+        let mut my_tunnel = [0u8; 1024];
+        let outbound = match my_tun.encapsulate(&sent_packet_buf, &mut my_dst) {
+            TunnResult::WriteToNetwork(packet) => packet.to_vec(),
+            other => panic!("expected outbound data packet, got {:?}", other),
+        };
+        assert!(matches!(
+            their_tun.decapsulate(None, &outbound, &mut their_tunnel),
+            TunnResult::WriteToTunnelV4(_, _)
+        ));
+        let reply = match their_tun.encapsulate(&sent_packet_buf, &mut their_dst) {
+            TunnResult::WriteToNetwork(packet) => packet.to_vec(),
+            other => panic!("expected authenticated reply packet, got {:?}", other),
+        };
+        assert!(matches!(
+            my_tun.decapsulate(None, &reply, &mut my_tunnel),
+            TunnResult::WriteToTunnelV4(_, _)
+        ));
+
+        // The authenticated reply cancels the independent inactivity timer.
+        // RekeyAfterTime itself is checked on the next outbound transport
+        // traversal, not by a background timer poll alone.
+        mock_instant::MockClock::advance(REKEY_AFTER_TIME + Duration::from_millis(1));
+        assert!(
+            matches!(my_tun.update_timers(&mut my_dst), TunnResult::Done),
+            "RekeyAfterTime is checked on outbound data traversal, not a timer poll"
+        );
         let data = my_tun.encapsulate(&sent_packet_buf, &mut my_dst);
         assert!(matches!(data, TunnResult::WriteToNetwork(_)));
-
-        //Advance to timeout
-        mock_instant::MockClock::advance(REKEY_AFTER_TIME);
-        assert!(matches!(their_tun.update_timers(&mut []), TunnResult::Done));
         update_timer_results_in_handshake(&mut my_tun);
     }
 
@@ -2308,6 +2553,129 @@ mod tests {
 
     #[test]
     #[cfg(feature = "mock-instant")]
+    fn receive_side_rekey_is_latched_once_until_handshake_completion() {
+        let config = AmneziaConfig::new(0, 0, 0, 0)
+            .with_rekey_timeout(1, 1)
+            .with_reject_after_time(1, 1)
+            .with_keepalive_timeout(100, 100);
+        let (mut my_tun, _their_tun) = create_two_tuns_and_handshake_with_amnezia(config);
+
+        mock_instant::MockClock::advance(Duration::from_secs(2));
+        my_tun.timer_tick(TimerName::TimeLastPacketReceived);
+        my_tun.timer_check_key_fresh_receiving();
+        assert!(my_tun.timers.sent_last_minute_handshake);
+        assert!(my_tun.timers.rekey_due_on_receive);
+
+        let mut dst = [0u8; 2048];
+        assert!(matches!(
+            my_tun.update_timers(&mut dst),
+            TunnResult::WriteToNetwork(_)
+        ));
+        assert!(my_tun.handshake.timer().is_some());
+        assert!(!my_tun.timers.rekey_due_on_receive);
+
+        // Simulate an unsuccessful attempt. Upstream keeps the one-shot guard
+        // set until a new handshake completes, rather than initiating again
+        // on every timer poll or every subsequent received data packet.
+        my_tun.handshake.abort_initiation();
+        assert!(matches!(my_tun.update_timers(&mut dst), TunnResult::Done));
+        my_tun.timer_tick(TimerName::TimeLastDataPacketReceived);
+        assert!(matches!(my_tun.update_timers(&mut dst), TunnResult::Done));
+        assert!(my_tun.handshake.timer().is_none());
+        assert!(my_tun.timers.sent_last_minute_handshake);
+    }
+
+    #[test]
+    #[cfg(feature = "mock-instant")]
+    fn fresh_handshake_resamples_max_attempts_budget() {
+        let config = AmneziaConfig::new(0, 0, 0, 0).with_max_handshake_attempts(7, 7);
+        let (mut tun, _peer) = create_two_tuns_with_amnezia(config);
+        let mut dst = [0u8; 2048];
+
+        let _ = create_handshake_init(&mut tun);
+        assert_eq!(tun.timers.max_handshake_attempts, 7);
+
+        // Simulate an exhausted cycle. The next non-retry initiation must
+        // reset the count and sample the configured budget again.
+        tun.timers.handshake_attempts = 9;
+        tun.timers.max_handshake_attempts = 0;
+        tun.handshake.abort_initiation();
+        assert!(matches!(
+            tun.format_handshake_initiation(&mut dst, false),
+            TunnResult::WriteToNetwork(_)
+        ));
+        assert_eq!(tun.timers.handshake_attempts, 0);
+        assert_eq!(tun.timers.max_handshake_attempts, 7);
+    }
+
+    #[test]
+    #[cfg(feature = "mock-instant")]
+    fn send_side_rekey_is_checked_on_empty_keepalive_too() {
+        let config = AmneziaConfig::new(0, 0, 0, 0)
+            .with_rekey_after_time(2, 2)
+            .with_rekey_timeout(2, 2)
+            .with_keepalive_timeout(10, 10);
+        let (mut initiator, _responder) = create_two_tuns_and_handshake_with_amnezia(config);
+        let mut network = [0u8; 2048];
+
+        mock_instant::MockClock::advance(Duration::from_millis(2001));
+        assert!(matches!(
+            initiator.encapsulate(&[], &mut network),
+            TunnResult::WriteToNetwork(_)
+        ));
+        assert!(initiator.timers.rekey_due_on_send);
+        assert!(matches!(
+            initiator.update_timers(&mut network),
+            TunnResult::WriteToNetwork(_)
+        ));
+    }
+
+    #[test]
+    #[cfg(feature = "mock-instant")]
+    fn send_side_rekey_does_not_spin_after_retry_exhaustion() {
+        let config = AmneziaConfig::new(0, 0, 0, 0)
+            .with_rekey_after_time(1, 1)
+            .with_rekey_timeout(1, 1)
+            .with_keepalive_timeout(10, 10);
+        let (mut initiator, _responder) = create_two_tuns_and_handshake_with_amnezia(config);
+        let packet = create_ipv4_udp_packet();
+        let mut network = [0u8; 2048];
+
+        mock_instant::MockClock::advance(Duration::from_secs(2));
+        assert!(matches!(
+            initiator.encapsulate(&packet, &mut network),
+            TunnResult::WriteToNetwork(_)
+        ));
+        assert!(matches!(
+            initiator.update_timers(&mut network),
+            TunnResult::WriteToNetwork(_)
+        ));
+        // Zero permits the initial initiation and one retry, matching the
+        // upstream attempts-greater-than-budget check.
+        initiator.timers.max_handshake_attempts = 0;
+
+        mock_instant::MockClock::advance(Duration::from_millis(1334));
+        assert!(matches!(
+            initiator.update_timers(&mut network),
+            TunnResult::WriteToNetwork(_)
+        ));
+        mock_instant::MockClock::advance(Duration::from_millis(1334));
+        assert!(matches!(
+            initiator.update_timers(&mut network),
+            TunnResult::Done
+        ));
+        assert!(initiator.handshake.timer().is_none());
+
+        // The expired key is still usable and a timer poll alone must not
+        // start another retry cycle. A later outbound data traversal can.
+        assert!(matches!(
+            initiator.update_timers(&mut network),
+            TunnResult::Done
+        ));
+    }
+
+    #[test]
+    #[cfg(feature = "mock-instant")]
     fn handshake_attempt_budget_is_checked_on_retry_expiry() {
         let (mut my_tun, _their_tun) = create_two_tuns();
         let _init = create_handshake_init(&mut my_tun);
@@ -2329,9 +2697,60 @@ mod tests {
         assert_eq!(my_tun.timers.handshake_attempts, 1);
 
         mock_instant::MockClock::advance(REKEY_TIMEOUT + Duration::from_millis(334));
+        assert!(matches!(my_tun.update_timers(&mut dst), TunnResult::Done));
+        assert!(
+            !my_tun.is_expired(),
+            "exhausting the retry budget must stop this handshake, not expire the peer"
+        );
+        assert!(
+            my_tun.handshake.timer().is_none(),
+            "the timed-out initiation must no longer be scheduled for retransmission"
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "mock-instant")]
+    fn exhausted_rekey_keeps_an_established_session_usable() {
+        let (mut my_tun, _their_tun) = create_two_tuns_and_handshake();
+        let sessions_before = my_tun
+            .sessions
+            .iter()
+            .filter(|session| session.is_some())
+            .count();
+        assert!(sessions_before > 0);
+
+        let mut dst = [0u8; 2048];
+        let _ = unwrap_network_packet(my_tun.format_handshake_initiation(&mut dst, true));
+        my_tun.timers.max_handshake_attempts = 0;
+        my_tun.packet_queue.push_back(vec![0x45, 0x00]);
+
+        // First expiry sends the one retry allowed when max_attempts is zero.
+        mock_instant::MockClock::advance(REKEY_TIMEOUT + Duration::from_millis(334));
         assert!(matches!(
             my_tun.update_timers(&mut dst),
-            TunnResult::Err(WireGuardError::ConnectionExpired)
+            TunnResult::WriteToNetwork(_)
+        ));
+
+        // The next expiry ends only the retry cycle. The established keypair
+        // remains available for traffic, while staged packets are discarded.
+        mock_instant::MockClock::advance(REKEY_TIMEOUT + Duration::from_millis(334));
+        assert!(matches!(my_tun.update_timers(&mut dst), TunnResult::Done));
+        assert!(!my_tun.is_expired());
+        assert_eq!(
+            my_tun
+                .sessions
+                .iter()
+                .filter(|session| session.is_some())
+                .count(),
+            sessions_before,
+            "retry exhaustion must not destroy an otherwise valid session"
+        );
+        assert!(my_tun.packet_queue.is_empty());
+
+        let packet = create_ipv4_udp_packet();
+        assert!(matches!(
+            my_tun.encapsulate(&packet, &mut dst),
+            TunnResult::WriteToNetwork(_)
         ));
     }
 
@@ -2573,6 +2992,85 @@ mod tests {
             unreachable!();
         };
         assert_eq!(sent_packet_buf, recv_packet_buf);
+    }
+
+    #[test]
+    fn wireguard_mtu_padding_is_applied_inside_transport_aead() {
+        // MTU is an inner TUN property: preserve the upstream MTU=0 special
+        // case and do not clamp it to the outer IPv4 UDP datagram limit.
+        let (mut mtu_probe, _) = create_two_tuns_and_handshake();
+        mtu_probe.set_mtu(0);
+        assert_eq!(mtu_probe.mtu, 0);
+        mtu_probe.set_mtu(amnezia::MAX_SENDABLE_DATAGRAM + 1);
+        assert_eq!(mtu_probe.mtu, amnezia::MAX_SENDABLE_DATAGRAM + 1);
+
+        // A 29-byte IPv4/UDP packet is padded to 32 bytes with the default
+        // 1420-byte TUN MTU, and to the configured MTU of 30 bytes when set.
+        for (mtu, expected_plaintext_len) in [(None, 32usize), (Some(30usize), 30usize)] {
+            let (mut sender, mut receiver) = create_two_tuns_and_handshake();
+            if let Some(mtu) = mtu {
+                sender.set_mtu(mtu);
+            }
+
+            let mut packet = create_ipv4_udp_packet();
+            packet.truncate(29);
+            packet[2..4].copy_from_slice(&29u16.to_be_bytes());
+            packet[24..26].copy_from_slice(&9u16.to_be_bytes());
+
+            let mut network_buffer = vec![0u8; 2048];
+            let outbound = match sender.encapsulate(&packet, &mut network_buffer) {
+                TunnResult::WriteToNetwork(datagram) => datagram.to_vec(),
+                other => panic!("expected padded transport datagram, got {:?}", other),
+            };
+            assert_eq!(
+                outbound.len(),
+                DATA_OVERHEAD_SZ + expected_plaintext_len,
+                "default and configured MTU padding must match upstream framing"
+            );
+
+            let mut tunnel_buffer = vec![0u8; 2048];
+            match receiver.decapsulate(None, &outbound, &mut tunnel_buffer) {
+                TunnResult::WriteToTunnelV4(restored, _) => {
+                    assert_eq!(restored, packet.as_slice())
+                }
+                other => panic!("expected original IP packet, got {:?}", other),
+            }
+        }
+    }
+
+    #[test]
+    fn cpa_awg30_and_awg31_modes_apply_their_distinct_limits_end_to_end() {
+        for (legacy, expected_ip_plaintext_len) in [(true, 30usize), (false, 129usize)] {
+            let config = AmneziaConfig::new(0, 0, 0, 0)
+                .with_content_padding_addition(100, 100)
+                .with_legacy_content_padding(legacy);
+            let (mut sender, mut receiver) = create_two_tuns_and_handshake_with_amnezia(config);
+            sender.set_mtu(30);
+
+            let mut packet = create_ipv4_udp_packet();
+            packet.truncate(29);
+            packet[2..4].copy_from_slice(&29u16.to_be_bytes());
+            packet[24..26].copy_from_slice(&9u16.to_be_bytes());
+
+            let mut network = vec![0u8; 2048];
+            let outbound = match sender.encapsulate(&packet, &mut network) {
+                TunnResult::WriteToNetwork(datagram) => datagram.to_vec(),
+                other => panic!("expected CPA-padded transport datagram, got {:?}", other),
+            };
+            assert_eq!(
+                outbound.len(),
+                DATA_OVERHEAD_SZ + expected_ip_plaintext_len,
+                "AWG 3.0 clamps CPA to MTU; AWG 3.1 clamps it to the peer UDP window"
+            );
+
+            let mut tunnel = vec![0u8; 2048];
+            match receiver.decapsulate(None, &outbound, &mut tunnel) {
+                TunnResult::WriteToTunnelV4(restored, _) => {
+                    assert_eq!(restored, packet.as_slice());
+                }
+                other => panic!("expected original IP packet, got {:?}", other),
+            }
+        }
     }
 
     #[test]
@@ -3353,7 +3851,7 @@ mod tests {
 
     #[test]
     fn header_protection_and_random_trailers_interoperate_end_to_end() {
-        let config = AmneziaConfig::new(12, 12, 12, 12)
+        let config = AmneziaConfig::new(64, 64, 64, 64)
             .with_header_protection_key([0x6b; 32])
             .with_random_trailers(true);
         let (mut initiator, mut responder) = create_two_tuns_with_amnezia(config);
@@ -3456,7 +3954,7 @@ mod tests {
     }
 
     #[test]
-    fn random_trailers_learn_udp_window_from_authenticated_inbound_data() {
+    fn random_trailers_learn_udp_window_from_authenticated_packets_in_both_directions() {
         let cfg = AmneziaConfig::new(600, 600, 600, 600).with_random_trailers(true);
         let (mut sender, mut receiver) = create_two_tuns_with_amnezia(cfg);
 
@@ -3477,34 +3975,65 @@ mod tests {
             TunnResult::WriteToNetwork(datagram) => datagram.to_vec(),
             other => panic!("expected transport datagram, got {:?}", other),
         };
-        let observed_size = outbound.len();
+        let base_size = DATA_OVERHEAD_SZ + 600 + large_packet.len();
+        assert_eq!(
+            outbound.len(),
+            base_size,
+            "first high-water packet is not padded"
+        );
+        assert_eq!(
+            sender.udp_window, base_size,
+            "the sender must learn its own largest base datagram before padding"
+        );
+
         let mut tunnel_buffer = vec![0u8; 4096];
         match receiver.decapsulate(None, &outbound, &mut tunnel_buffer) {
             TunnResult::WriteToTunnelV4(restored, _) => assert_eq!(restored, large_packet),
             other => panic!("expected restored IPv4 packet, got {:?}", other),
         }
+        let inbound_window = 600 + DATA_HEADER_SZ + large_packet.len();
         assert_eq!(
-            receiver.udp_window, observed_size,
-            "the authenticated receive path must learn the complete UDP datagram size"
+            receiver.udp_window, inbound_window,
+            "the receiver must learn the authenticated inbound high-water mark using upstream's receive-side accounting"
         );
 
         let small_packet = create_ipv4_udp_packet();
+        let small_base = DATA_OVERHEAD_SZ + 600 + small_packet.len();
         let mut saw_padding = false;
         for _ in 0..64 {
             let mut reverse_buffer = vec![0u8; 4096];
-            let reverse = match receiver.encapsulate(&small_packet, &mut reverse_buffer) {
+            let padded = match receiver.encapsulate(&small_packet, &mut reverse_buffer) {
                 TunnResult::WriteToNetwork(datagram) => datagram.to_vec(),
-                other => panic!("expected reverse transport datagram, got {:?}", other),
+                other => panic!("expected transport datagram, got {:?}", other),
             };
             assert!(
-                reverse.len() <= observed_size,
-                "random trailers must stay within the learned UDP window"
+                padded.len() <= inbound_window,
+                "reverse-direction random trailers must stay within the learned inbound high-water mark"
             );
-            saw_padding |= reverse.len() > DATA_OVERHEAD_SZ + 600 + small_packet.len();
+            if padded.len() > small_base {
+                // Isolate the receive-side update: the sender learned a larger
+                // value from its own first transmission, so reset it to the
+                // default before authenticating this padded reverse packet.
+                sender.udp_window = 500;
+                let mut reverse_tunnel_buffer = vec![0u8; 4096];
+                match sender.decapsulate(None, &padded, &mut reverse_tunnel_buffer) {
+                    TunnResult::WriteToTunnelV4(restored, _) => {
+                        assert_eq!(restored, small_packet.as_slice())
+                    }
+                    other => panic!("expected restored reverse IPv4 packet, got {:?}", other),
+                }
+                assert_eq!(
+                    sender.udp_window,
+                    padded.len() - DATA_AEAD_TAG_SZ,
+                    "the receiver must account for S4 + transport header + decrypted padded plaintext, matching upstream"
+                );
+                saw_padding = true;
+                break;
+            }
         }
         assert!(
             saw_padding,
-            "learned UDP window should permit reverse padding"
+            "the receiver's learned high-water mark should permit reverse-direction padding"
         );
     }
 
@@ -3525,7 +4054,7 @@ mod tests {
     }
 
     #[test]
-    fn random_trailers_do_not_grow_the_udp_window_for_oversized_outbound_packets() {
+    fn oversized_outbound_packet_updates_udp_window_without_padding_itself() {
         let cfg = AmneziaConfig::new(0, 0, 0, 0).with_random_trailers(true);
         let (mut sender, mut receiver) = create_two_tuns_with_amnezia(cfg);
         let mut packet = create_ipv4_udp_packet();
@@ -3544,17 +4073,23 @@ mod tests {
             TunnResult::WriteToNetwork(datagram) => datagram.to_vec(),
             other => panic!("expected transport datagram, got {:?}", other),
         };
+        let base_size = DATA_OVERHEAD_SZ + packet.len();
         assert_eq!(
             outbound.len(),
-            DATA_OVERHEAD_SZ + packet.len(),
-            "a packet larger than the default 500-byte UDP window must not expand that window or receive random padding"
+            base_size,
+            "the new high-water packet has no room for a trailer"
         );
-
+        assert_eq!(sender.udp_window, base_size);
         let mut tunnel_buffer = vec![0u8; 4096];
         match receiver.decapsulate(None, &outbound, &mut tunnel_buffer) {
             TunnResult::WriteToTunnelV4(restored, _) => assert_eq!(restored, packet),
             other => panic!("expected restored IPv4 packet, got {:?}", other),
         }
+        assert_eq!(
+            receiver.udp_window,
+            DATA_HEADER_SZ + packet.len(),
+            "the receiver learns the authenticated inbound size using upstream's header-plus-plaintext formula"
+        );
     }
 
     #[test]
@@ -3608,10 +4143,9 @@ mod tests {
         let init = create_handshake_init(&mut sender);
         let response = create_handshake_response(&mut receiver, &init);
         let keepalive = parse_handshake_resp(&mut sender, &response);
-        assert_eq!(
-            keepalive.len(),
-            DATA_OVERHEAD_SZ,
-            "keepalive must not be padded"
+        assert!(
+            (DATA_OVERHEAD_SZ + 8..=DATA_OVERHEAD_SZ + 32).contains(&keepalive.len()),
+            "ContentPaddingAddition must also pad the handshake-confirmation keepalive"
         );
         parse_keepalive(&mut receiver, &keepalive);
 

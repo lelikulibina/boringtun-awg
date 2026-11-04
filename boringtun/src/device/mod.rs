@@ -634,6 +634,7 @@ impl Device {
             self.config.amnezia.clone(),
         )
         .map_err(Error::PeerSetup)?;
+        tunn.set_mtu(self.mtu.load(Ordering::Relaxed));
 
         let mut peer = Peer::new(tunn, next_index, endpoint, preshared_key);
         if let Some(range) = keepalive {
@@ -882,6 +883,18 @@ impl Device {
         self.queue.new_periodic_event(
             // Execute the timed function of every peer in the list
             Box::new(|d, t| {
+                // The TUN MTU can change after peers are created. Refresh the
+                // device value and every peer-owned Tunn independently of the
+                // presence of a UAPI control socket.
+                if let Ok(mtu) = d.iface.mtu() {
+                    let previous = d.mtu.swap(mtu, Ordering::Relaxed);
+                    if previous != mtu {
+                        for peer in d.peers.values() {
+                            peer.lock().tunnel.set_mtu(mtu);
+                        }
+                    }
+                }
+
                 let peer_map = &d.peers;
 
                 let (udp4, udp6) = match (d.udp4.as_ref(), d.udp6.as_ref()) {
@@ -952,25 +965,6 @@ impl Device {
         // the whole signal: the operator needs to know traffic arrived before
         // the key, not how much of it did.
         let warned_keyless = AtomicBool::new(false);
-        // Also at most once, and for a sharper reason than volume. Whether a
-        // cookie reply amplifies is fixed by S1/S2/S3, so once it is true it is
-        // true for every datagram of that kind until the operator changes the
-        // configuration -- and the datagrams that reach it arrive at flood rate
-        // by construction, since a cookie is only produced once the limiter is
-        // under load. Logging per refusal would turn one misconfiguration into
-        // a log flood driven by the attacker.
-        //
-        // Keyed on the reply length rather than latched to a bare `true`,
-        // because "until the operator changes the configuration" is exactly
-        // what a `bool` cannot express: `set_obfuscation` rewrites S3 under a
-        // live socket (`awg syncconf` re-sends the whole `[Interface]` block on
-        // any peer add or revoke), and a latched flag would suppress the
-        // warning for every configuration after the first. The reply length is
-        // `S3 + 64`, so it moves only when the operator moves it -- unlike the
-        // request length, which alternates between an initiation and a response
-        // and would hand an attacker a way to drive the log.
-        const NEVER_WARNED: usize = usize::MAX;
-        let warned_cookie_amplifier = AtomicUsize::new(NEVER_WARNED);
         self.queue.new_event(
             udp.as_raw_fd(),
             Box::new(move |d, t| {
@@ -1112,13 +1106,11 @@ impl Device {
                             // Nothing here has been authenticated. `verify_packet`
                             // returns a cookie on a valid mac1, and mac1 is keyed
                             // on this server's *public* key -- which is in every
-                            // client configuration -- so the source address is as
-                            // attacker-chosen as a probe's, and the reply is as
-                            // amplifiable. Decided before the junk is generated:
-                            // see `cookie_reply_len`.
+                            // client configuration. Upstream AWG sends the
+                            // configured S3 prefix verbatim; only source-address
+                            // hygiene is applied before sending.
                             let cookie_len = cookie.len();
-                            let reply_len = d.config.amnezia.cookie_reply_len(cookie_len);
-                            match reply_policy::cookie_verdict(from, packet_len, reply_len) {
+                            match reply_policy::cookie_verdict(from) {
                                 reply_policy::CookieVerdict::Send => {
                                     // The limiter writes a bare cookie reply; it
                                     // does not know about S3. Re-prefix it in
@@ -1129,28 +1121,13 @@ impl Device {
                                         &mut t.dst_buf,
                                         cookie_len,
                                         crate::noise::amnezia::DEFAULT_UDP_WINDOW,
-                                        packet_len,
+                                        usize::MAX,
                                         &mut t.junk_rng,
                                     ) {
                                         let _: Result<_, _> = udp.send_to(out, &addr);
                                     }
                                 }
                                 reply_policy::CookieVerdict::RefusedSource => {}
-                                reply_policy::CookieVerdict::WouldAmplify => {
-                                    if warned_cookie_amplifier.swap(reply_len, Ordering::Relaxed)
-                                        != reply_len
-                                    {
-                                        tracing::warn!(
-                                            message = "suppressing cookie replies: S3 makes them \
-                                                       larger than the packets that provoke them, \
-                                                       which is a reflection amplifier. Handshakes \
-                                                       will fail while this interface is under \
-                                                       load; lower S3.",
-                                            reply_len = reply_len,
-                                            request_len = packet_len,
-                                        );
-                                    }
-                                }
                             }
                             continue;
                         }
@@ -1179,11 +1156,10 @@ impl Device {
 
                     // We found a peer, use it to decapsulate the message+
                     let mut flush = false; // Are there packets to send from the queue?
-                    match p.tunnel.handle_verified_packet_with_datagram_size(
-                        parsed_packet,
-                        &mut t.dst_buf[..],
-                        packet_len,
-                    ) {
+                    match p
+                        .tunnel
+                        .handle_verified_packet(parsed_packet, &mut t.dst_buf[..])
+                    {
                         TunnResult::Done => {}
                         TunnResult::Err(_) => continue,
                         TunnResult::WriteToNetwork(packet) => {
@@ -1654,19 +1630,12 @@ mod ingress_tests {
         );
     }
 
-    /// Drive the ingress cookie path the way `register_udp_handler` drives it,
-    /// and report the two numbers the policy decides on: the bytes the sender
-    /// spent, and the bytes the cookie reply would occupy on the wire.
+    /// Drive the ingress cookie path far enough to measure the request and
+    /// the upstream-compatible Cookie Reply wire sizes for an S1/S3 profile.
     ///
-    /// The initiation carries a valid mac1 and no mac2, which is all it takes:
-    /// mac1 is keyed on the server's *public* key, so this `Tunn` is a stranger
-    /// holding nothing but a copy of the server's config file. It is not a
-    /// configured peer and the server never learns who it is.
-    ///
-    /// The limiter is pushed under load first, because that is the only state
-    /// in which `verify_packet` produces a cookie at all — which is also why a
-    /// byte ceiling on this path would bind exclusively during a flood. See
-    /// `reply_policy::cookie_verdict`.
+    /// The initiation carries a valid MAC1 and no MAC2. The limiter is pushed
+    /// under load because that is the only state in which `verify_packet`
+    /// produces a cookie. The helper is test-only and uses fresh local keys.
     fn cookie_exchange_sizes(amnezia: &AmneziaConfig) -> (usize, usize) {
         let server_secret = x25519::StaticSecret::random_from_rng(OsRng);
         let server_public = x25519::PublicKey::from(&server_secret);
@@ -1699,17 +1668,27 @@ mod ingress_tests {
             TunnResult::WriteToNetwork(d) => d.to_vec(),
             other => panic!("expected an initiation, got {:?}", other),
         };
-        // Tunn::new creates the vanilla H-tagged handshake. The device-level
-        // ingress path strips the configured S1 prefix before MAC validation,
-        // so model that prefix explicitly here; using S1-S4 as H-tag values
-        // would produce a different (and invalid) wire format.
-        let mut datagram = vec![0u8; amnezia.init_packet_junk_size as usize];
-        datagram.extend_from_slice(&raw_datagram);
+        // Apply the configured S1 prefix and Header Protection exactly as
+        // the outbound path does, then decode it as the anonymous UDP ingress
+        // path does before MAC1 validation.
+        let mut wire_buffer = vec![0u8; MAX_UDP_SIZE];
+        wire_buffer[..raw_datagram.len()].copy_from_slice(&raw_datagram);
+        let datagram = amnezia
+            .prepend_outbound(obf, &mut wire_buffer, raw_datagram.len(), &mut OsRng)
+            .expect("reference S1 and Header Protection must fit")
+            .to_vec();
 
         let limiter = RateLimiter::new(&server_public, HANDSHAKE_RATE_LIMIT);
-        let stripped = amnezia
-            .strip_inbound(obf, &datagram)
-            .expect("our own initiation must match our own shape");
+        let stripped = if amnezia.header_protection_enabled() {
+            amnezia
+                .decrypt_inbound(obf, &datagram)
+                .expect("our own protected initiation must match its S1/H1 shape")
+        } else {
+            amnezia
+                .strip_inbound(obf, &datagram)
+                .expect("our own initiation must match its S1/H1 shape")
+                .to_vec()
+        };
         let src = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 1));
         let mut scratch = vec![0u8; MAX_UDP_SIZE];
 
@@ -1720,11 +1699,11 @@ mod ingress_tests {
         // limiter in the state the test is about, and it says so.
         for _ in 0..HANDSHAKE_RATE_LIMIT {
             limiter
-                .verify_packet(obf, &mut OsRng, Some(src), stripped, &mut scratch)
+                .verify_packet(obf, &mut OsRng, Some(src), &stripped, &mut scratch)
                 .expect("below the handshake rate limit, no cookie is demanded");
         }
         let cookie_len =
-            match limiter.verify_packet(obf, &mut OsRng, Some(src), stripped, &mut scratch) {
+            match limiter.verify_packet(obf, &mut OsRng, Some(src), &stripped, &mut scratch) {
                 Err(TunnResult::WriteToNetwork(cookie)) => cookie.len(),
                 Ok(_) => panic!("over the rate limit the limiter must demand a cookie"),
                 Err(other) => panic!("expected a cookie reply, got {:?}", other),
@@ -1733,76 +1712,26 @@ mod ingress_tests {
         (datagram.len(), amnezia.cookie_reply_len(cookie_len))
     }
 
-    /// The reflector the cookie path was, in the configuration that makes it
-    /// worst, with the amplification factor measured rather than asserted from
-    /// memory.
-    ///
-    /// This is reachable by anyone who has ever seen a client config for this
-    /// server: no key, no peer entry, no handshake. `cookie_verdict` is what
-    /// stands between it and 65 KB aimed at a stranger.
+    /// The reference S3 value is intentionally allowed to produce a Cookie Reply
+    /// larger than the triggering handshake, matching upstream amneziawg-go.
+    /// This pins the source-address policy to that compatibility decision.
     #[test]
-    fn the_largest_permitted_s3_is_refused_as_an_amplifier() {
-        // 65443 is the largest S3 the *size* rule permits -- the IPv4 UDP
-        // payload limit less the 64-byte cookie reply. Pinned by its neighbour
-        // rather than quoted, so this is the real edge of the configuration
-        // space and not a number someone remembered. S1 and S2 are at their own
-        // maxima, which is what it takes for an S3 that large to also clear the
-        // amplification rule.
-        assert!(AmneziaConfig::new(65_359, 65_415, 65_443, 0)
+    fn large_s3_cookie_replies_follow_upstream_semantics() {
+        let config = AmneziaConfig::new(284, 659, 1045, 12).with_header_protection_key([0x42; 32]);
+        config
             .validate()
-            .is_ok());
-        assert!(AmneziaConfig::new(65_359, 65_415, 65_444, 0)
-            .validate()
-            .is_err());
-
-        // With S1 = 0 the same S3 is now refused at configuration time -- the
-        // first of the two doors, and the loud one.
-        let amnezia = AmneziaConfig::new(0, 0, 65_443, 0);
-        let err = amnezia
-            .validate()
-            .expect_err("an amplifying S3 must not be a loadable configuration");
-        assert!(
-            err.contains("larger than"),
-            "the error must say what is wrong, not just that something is: {}",
-            err
-        );
-
-        // And the second door still holds, because it has to: a `DeviceConfig`
-        // supplied at startup never passes through `validate`, so `cookie_verdict`
-        // is the only thing standing between this config and the reflector below.
-        let (request_len, reply_len) = cookie_exchange_sizes(&amnezia);
-
+            .expect("the reference AWG 3.1 S values must be accepted");
+        let (request_len, reply_len) = cookie_exchange_sizes(&config);
+        assert_eq!(request_len, 284 + HANDSHAKE_INIT_SZ);
+        assert_eq!(reply_len, 1045 + COOKIE_REPLY_SZ);
         assert_eq!(
-            request_len, HANDSHAKE_INIT_SZ,
-            "S1 = 0, so the forgery costs one bare initiation"
-        );
-        assert_eq!(reply_len, 65_443 + COOKIE_REPLY_SZ);
-        assert!(
-            reply_len / request_len > 400,
-            "the point of the test is the ratio: {} in, {} out",
-            request_len,
-            reply_len
-        );
-
-        assert_eq!(
-            reply_policy::cookie_verdict(
-                "203.0.113.5:40000".parse().unwrap(),
-                request_len,
-                reply_len
-            ),
-            reply_policy::CookieVerdict::WouldAmplify,
-            "a {}x reflector must not be sent",
-            reply_len / request_len
+            reply_policy::cookie_verdict("203.0.113.5:40000".parse().unwrap()),
+            reply_policy::CookieVerdict::Send,
+            "upstream sends the S3-prefixed cookie reply even when it exceeds the request"
         );
     }
 
-    /// And the configuration a real deployment runs still gets its cookie.
-    ///
-    /// The S-sizes are the ones `scripts/awg-interop-poc.sh` runs against the
-    /// AmneziaWG kernel module, so this is not a hypothetical shape. Without
-    /// it, the test above would pass just as well against a change that
-    /// disabled cookie replies outright -- which would break WireGuard's flood
-    /// defence rather than bound it.
+    /// A commonly used S1-S4 configuration remains eligible for Cookie Replies.
     #[test]
     fn the_interop_configuration_still_gets_its_cookie_reply() {
         let amnezia = AmneziaConfig::new(120, 130, 110, 80);
@@ -1811,13 +1740,9 @@ mod ingress_tests {
         assert_eq!(request_len, 120 + HANDSHAKE_INIT_SZ);
         assert_eq!(reply_len, 110 + COOKIE_REPLY_SZ);
         assert_eq!(
-            reply_policy::cookie_verdict(
-                "203.0.113.5:40000".parse().unwrap(),
-                request_len,
-                reply_len
-            ),
+            reply_policy::cookie_verdict("203.0.113.5:40000".parse().unwrap()),
             reply_policy::CookieVerdict::Send,
-            "an attenuating cookie reply is WireGuard's DoS defence working"
+            "upstream cookie replies remain WireGuard's DoS defence"
         );
     }
 

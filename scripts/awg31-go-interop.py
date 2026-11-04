@@ -5,7 +5,7 @@ Requires Linux, root, iproute2, ping, Python `cryptography`, boringtun-cli built
 with the device feature, and the official amneziawg-go v3 binary. All interfaces and links live
 in uniquely named disposable network namespaces; host routes are not changed.
 
-Usage: sudo python3 scripts/awg31-go-interop.py ./target/release/boringtun-cli ./amneziawg-go [--performance]
+Usage: sudo python3 scripts/awg31-go-interop.py ./target/release/boringtun-cli ./amneziawg-go [--full] [--performance] [--awg30 ./amneziawg-go-3.0] [--wireguard ./wireguard-go]
 """
 from __future__ import annotations
 
@@ -29,19 +29,29 @@ from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 PORT = 51820
 SERVER_LINK, CLIENT_LINK = "10.55.0.1", "10.55.0.2"
 SERVER_TUN, CLIENT_TUN = "10.77.0.1", "10.77.0.2"
-S_AND_H = """jc=4
+S1, S2, S3, S4 = 284, 659, 1045, 12
+RT_S_PREFIX = 64
+S_AND_H = f"""jc=4
 jmin=50
 jmax=1000
-s1=120
-s2=120
-s3=120
-s4=120
+s1={S1}
+s2={S2}
+s3={S3}
+s4={S4}
 h1=169887817
 h2=390382747
 h3=1033691040
 h4=1526332224
 """
 HPK = "42" * 32
+# RandomTrailers needs identical S offsets to avoid the upstream first-match
+# classifier mistaking transport packets for fixed-size handshake messages.
+S_AND_H_RT = (
+    f"jc=4\njmin=50\njmax=1000\n"
+    f"s1={RT_S_PREFIX}\ns2={RT_S_PREFIX}\n"
+    f"s3={RT_S_PREFIX}\ns4={RT_S_PREFIX}\n"
+    + "h1=" + S_AND_H.split("h1=", 1)[1]
+)
 
 PROFILES = [
     ("vanilla WireGuard baseline", "", False),
@@ -65,11 +75,12 @@ PROFILES = [
     (
         "bulk data integrity — AWG 3.1",
         f"header_protection_key={HPK}\n"
-        "content_padding_addition=16-64\nrandom_trailers=true\n"
+        "content_padding_addition=16-64\n"
         "disable_cookies=true\n"
         "rekey_after_time=119-120\nrekey_timeout=5-6\n"
         "reject_after_time=179-180\nkeepalive_timeout=9-10\n"
-        "max_handshake_attempts=18-19\n",
+        "max_handshake_attempts=18-19\n"
+        "random_trailers=true\n",
         True,
     ),
     ("HeaderProtectionKey", f"header_protection_key={HPK}\n", True),
@@ -112,10 +123,11 @@ PROFILES = [
     (
         "all AWG 3.1 extensions combined",
         f"header_protection_key={HPK}\n"
-        "content_padding_addition=16-64\nrandom_trailers=true\n"
+        "content_padding_addition=16-64\n"
         "disable_cookies=true\nrekey_after_time=119-120\n"
         "rekey_timeout=5-6\nreject_after_time=179-180\n"
-        "keepalive_timeout=9-10\nmax_handshake_attempts=18-19\n",
+        "keepalive_timeout=9-10\nmax_handshake_attempts=18-19\n"
+        "random_trailers=true\n",
         True,
     ),
     # CPS I1-I5: recognizable fixed datagrams let the pcap verifier prove
@@ -135,6 +147,41 @@ PROFILES = [
         "i5=<b 0x41574733312d49352d435053>\n",
         True,
     ),
+]
+
+
+# Fast CI/development suite: cover both protocol baselines, 3.0 and 3.1
+# bulk-transfer integrity, the combined 3.1 feature path, packet-loss rekey
+# recovery, and all CPS slots. The exhaustive per-extension matrix and long
+# lifecycle soak remain available with --full.
+QUICK_PROFILES = [
+    profile for profile in PROFILES
+    if profile[0] in {
+        "vanilla WireGuard baseline",
+        "AWG 2.x baseline",
+        "bulk data integrity — AWG 3.0",
+        "bulk data integrity — AWG 3.1",
+        "accelerated rekey",
+        "rekey packet-loss recovery",
+        "all AWG 3.1 extensions combined",
+        "CPS I1-I5 combined",
+    }
+]
+
+# AWG 3.0 compatibility must be tested against the actual v3.0.0 reference,
+# not merely by switching BoringTun's sender-local CPA algorithm while both
+# endpoints still run the v3.1 Go implementation. Exclude 3.1-only UAPI keys.
+AWG30_PROFILES = [
+    profile for profile in PROFILES
+    if profile[0] in {
+        "vanilla WireGuard baseline",
+        "AWG 2.x baseline",
+        "bulk data integrity — AWG 3.0",
+        "HeaderProtectionKey",
+        "ContentPaddingAddition",
+        "randomized timers",
+        "CPS I1-I5 combined",
+    }
 ]
 
 
@@ -248,9 +295,9 @@ def drop_client_egress_during_rekey(
     client_ns: str, client_link: str, server_ip: str,
 ) -> int:
     """Drop only the expected AWG H1 rekey datagram and verify its filter counter."""
-    # This profile uses S1=120, H1=169887817 (wire bytes 49:48:20:0a),
-    # no HeaderProtection and no RandomTrailers. From the IPv4-header start,
-    # H1 is at 20 (IPv4) + 8 (UDP) + 120 (S1) = byte offset 148.
+    # This profile uses the shared S1 value, H1=169887817
+    # (wire bytes 49:48:20:0a), no HeaderProtection and no RandomTrailers.
+    # From the IPv4-header start, H1 is at 20 (IPv4) + 8 (UDP) + S1.
     run("ip", "netns", "exec", client_ns, "tc", "qdisc", "add", "dev",
         client_link, "root", "handle", "1:", "prio")
     try:
@@ -260,7 +307,7 @@ def drop_client_egress_during_rekey(
             "match", "ip", "protocol", "17", "0xff",
             "match", "ip", "dst", f"{SERVER_LINK}/32",
             "match", "ip", "dport", str(PORT), "0xffff",
-            "match", "u32", "0x4948200a", "0xffffffff", "at", "148",
+            "match", "u32", "0x4948200a", "0xffffffff", "at", str(20 + 8 + S1),
             "action", "drop",
         )
         # The send-side rekey timer is lazy: without outbound traffic, the
@@ -571,6 +618,32 @@ def verify_iperf3(
     )
     print(f"IPERF3-RESULTS: {result_path} ({len(measurements)} measurements)")
 
+def disable_packet_offloads(namespace: str, interface: str) -> None:
+    """Disable segmentation/coalescing on both veth ends for wire-accurate PCAPs."""
+    run(
+        "ip", "netns", "exec", namespace, "ethtool", "-K", interface,
+        "gro", "off", "gso", "off", "tso", "off",
+    )
+    features = run(
+        "ip", "netns", "exec", namespace, "ethtool", "-k", interface,
+        capture=True,
+    )
+    for feature in (
+        "generic-receive-offload",
+        "generic-segmentation-offload",
+        "tcp-segmentation-offload",
+    ):
+        match = re.search(
+            rf"^\s*{re.escape(feature)}:\s+(on|off)",
+            features, re.MULTILINE,
+        )
+        if match is None or match.group(1) != "off":
+            raise RuntimeError(
+                f"could not disable {feature} on {namespace}/{interface}: "
+                f"{match.group(1) if match else 'feature unavailable'}"
+            )
+
+
 def verify_wire_pcap(
     pcap_path: Path,
     *,
@@ -601,7 +674,15 @@ def verify_wire_pcap(
     if link_type != 1:
         raise RuntimeError(f"expected Ethernet pcap (link type 1), got {link_type}")
 
-    prefix = 120 if awg_enabled else 0
+    if awg_enabled:
+        # The RandomTrailers profiles deliberately use a separate equal-S
+        # profile (64 bytes) to avoid upstream's ambiguous first-match parser.
+        # Decode at the offsets actually configured for this run, not the
+        # default S1-S4 values used by the non-RT interoperability profiles.
+        s_values = (RT_S_PREFIX,) * 4 if random_trailers else (S1, S2, S3, S4)
+        prefixes = dict(zip((1, 2, 3, 4), s_values))
+    else:
+        prefixes = {1: 0, 2: 0, 3: 0, 4: 0}
     h_tags = (
         {1: 169887817, 2: 390382747, 3: 1033691040, 4: 1526332224}
         if awg_enabled else {1: 1, 2: 2, 3: 3, 4: 4}
@@ -637,7 +718,21 @@ def verify_wire_pcap(
         src_port, dst_port, udp_len, _checksum = struct.unpack_from("!HHHH", ip, ihl)
         if src_port != 51820 and dst_port != 51820:
             continue
-        payload = ip[ihl + 8:min(len(ip), ihl + udp_len)]
+        ip_total_len = struct.unpack_from("!H", ip, 2)[0]
+        if udp_len < 8:
+            raise RuntimeError(f"invalid UDP length {udp_len} in {pcap_path.name}")
+        if ip_total_len != ihl + udp_len:
+            raise RuntimeError(
+                f"IP/UDP length mismatch in {pcap_path.name}: "
+                f"IPv4 total length={ip_total_len}, IHL={ihl}, UDP length={udp_len}; "
+                "packet capture may contain GRO/GSO aggregation"
+            )
+        if ip_total_len > len(ip):
+            raise RuntimeError(
+                f"truncated IPv4 packet in {pcap_path.name}: "
+                f"captured={len(ip)}, IPv4 total length={ip_total_len}"
+            )
+        payload = ip[ihl + 8:ihl + udp_len]
         if len(payload) < 4:
             continue
         packets += 1
@@ -651,29 +746,45 @@ def verify_wire_pcap(
                 is_signature = True
         if is_signature:
             continue
-        if len(payload) < prefix + 4:
+        # Each Noise message has its own independently configured S prefix.
+        # Using S1 for every packet kind hides transport (type-4) headers,
+        # whose prefix is S4, and misclassifies response/cookie envelopes too.
+        kind_prefixes = prefixes
+        if len(payload) < 4:
             continue
-        encrypted_tag = payload[prefix:prefix + 4]
-        if hp_key is not None:
-            if len(payload) < 12:
-                continue
-            nonce = payload[:12]
-            cipher = Cipher(
-                algorithms.ChaCha20(hp_key, b"\x00" * 4 + nonce),
-                mode=None,
-            ).encryptor()
-            stream = cipher.update(b"\x00" * 4)
-            tag_bytes = bytes(a ^ b for a, b in zip(encrypted_tag, stream))
-        else:
-            tag_bytes = encrypted_tag
-        tag = int.from_bytes(tag_bytes, "little")
-        kind = next((k for k, value in h_tags.items() if value == tag), None)
+        # Header protection leaves the tag at the message-kind-specific offset.
+        # Try each configured offset and accept only a decoded known type tag.
+        candidates = [
+            (kind, payload[prefix_len:prefix_len + 4])
+            for kind, prefix_len in kind_prefixes.items()
+            if len(payload) >= prefix_len + 4
+        ]
+        kind = None
+        tag_bytes = None
+        for candidate_kind, encrypted_tag in candidates:
+            if hp_key is not None:
+                if len(payload) < 12:
+                    continue
+                nonce = payload[:12]
+                cipher = Cipher(
+                    algorithms.ChaCha20(hp_key, b"\x00" * 4 + nonce),
+                    mode=None,
+                ).encryptor()
+                stream = cipher.update(b"\x00" * 4)
+                candidate_tag = bytes(a ^ b for a, b in zip(encrypted_tag, stream))
+            else:
+                candidate_tag = encrypted_tag
+            decoded = int.from_bytes(candidate_tag, "little")
+            if decoded == h_tags[candidate_kind]:
+                kind = candidate_kind
+                tag_bytes = candidate_tag
+                break
         if kind is None:
             # Jc junk packets are not WireGuard message envelopes.
             continue
 
         packet_size = len(payload)
-        minimum = prefix + base_sizes[kind]
+        minimum = prefixes[kind] + base_sizes[kind]
         if packet_size < minimum:
             raise RuntimeError(
                 f"truncated type-{kind} envelope: {packet_size} < {minimum}"
@@ -682,10 +793,13 @@ def verify_wire_pcap(
             raise RuntimeError(
                 f"type-{kind} fixed envelope has length {packet_size}, expected {minimum}"
             )
-        if kind != 4 and random_trailers and packet_size > 500:
-            raise RuntimeError(
-                f"type-{kind} RandomTrailers envelope exceeds 500-byte UDP window: {packet_size}"
-            )
+        # RandomTrailers is bounded by the peer's learned UDP window,
+        # not by DefaultUdpWindow (500). In upstream amneziawg-go,
+        # Peer.randomTrailer() returns zero until that learned window can
+        # accommodate the complete prefixed handshake envelope. Therefore
+        # the only invariant available from a standalone PCAP is the minimum
+        # envelope size checked above; a fixed 500-byte cap is incorrect
+        # when S1/S2/S3 prefixes are configured.
         counts[direction][kind] += 1
         if kind == 1 and first_handshake_position is None:
             first_handshake_position = datagram_index
@@ -732,6 +846,8 @@ def run_profile(
     bt: str, go: str, name: str, extra: str,
     awg_enabled: bool, bt_is_server: bool, performance: bool = False,
     same_implementation: str | None = None,
+    extended_matrix: bool = False, legacy_cpa: bool = False,
+    reference_name: str = "amneziawg-go",
 ) -> None:
     token = uuid.uuid4().hex[:10]
     ns_server, ns_client = f"awg31s{token}", f"awg31c{token}"
@@ -758,8 +874,8 @@ def run_profile(
         server_is_bt = client_is_bt = same_implementation == "boringtun"
     server_iface = bt_iface if server_is_bt else go_iface
     client_iface = bt_client_iface if client_is_bt else go_client_iface
-    server_name = "boringtun" if server_is_bt else "amneziawg-go"
-    client_name = "boringtun" if client_is_bt else "amneziawg-go"
+    server_name = "boringtun" if server_is_bt else reference_name
+    client_name = "boringtun" if client_is_bt else reference_name
     role = f"{server_name}-to-{client_name}" if same_implementation else f"{server_name} server"
     capture_dir = Path("target/awg31-wire-pcaps")
     capture_dir.mkdir(parents=True, exist_ok=True)
@@ -786,12 +902,16 @@ def run_profile(
            "dev", veth_client)
         ns(ns_server, "ip", "link", "set", veth_server, "up")
         ns(ns_client, "ip", "link", "set", veth_client, "up")
+        # Disable offloads on both ends: GRO can merge received datagrams and
+        # GSO/TSO can expose oversized pre-segmentation packets to tcpdump.
+        disable_packet_offloads(ns_server, veth_server)
+        disable_packet_offloads(ns_client, veth_client)
         ns(ns_client, "ping", "-c1", "-W3", SERVER_LINK)
         capture_log = open(logs / "tcpdump.log", "w", encoding="utf-8")
         capture_proc = subprocess.Popen(
             [
                 "ip", "netns", "exec", ns_server, "tcpdump", "-U", "-n",
-                "-i", veth_server, "-s", "320", "-w", str(capture_path), "udp port 51820",
+                "-i", veth_server, "-s", "65535", "-w", str(capture_path), "udp port 51820",
             ],
             stdout=capture_log,
             stderr=subprocess.STDOUT,
@@ -838,11 +958,21 @@ def run_profile(
         wait_socket(server_iface, server_proc)
         wait_socket(client_iface, client_proc)
 
-        awg = (S_AND_H if awg_enabled else "") + extra
+        awg_base = S_AND_H_RT if "random_trailers=true" in extra else S_AND_H
+        awg = (awg_base if awg_enabled else "") + extra
+        # CPA is sender-local. For the AWG 3.0 profile, select BoringTun's
+        # legacy MTU-bounded algorithm only on BoringTun endpoints; upstream
+        # Go has no such UAPI key and uses the semantics of its pinned version.
+        bt_awg = awg + (
+            "content_padding_mode=mtu\n"
+            if legacy_cpa and "content_padding_addition=" in awg else ""
+        )
+        server_awg = bt_awg if server_is_bt else awg
+        client_awg = bt_awg if client_is_bt else awg
         set_peer(server_iface, server_private, client_public, "none",
-                 f"{CLIENT_TUN}/32", awg)
+                 f"{CLIENT_TUN}/32", server_awg)
         set_peer(client_iface, client_private, server_public,
-                 f"{SERVER_LINK}:{PORT}", f"{SERVER_TUN}/32", awg)
+                 f"{SERVER_LINK}:{PORT}", f"{SERVER_TUN}/32", client_awg)
 
         ns(ns_server, "ip", "addr", "add", f"{SERVER_TUN}/24", "dev", server_iface)
         ns(ns_server, "ip", "link", "set", server_iface, "up", "mtu", "1420")
@@ -858,7 +988,10 @@ def run_profile(
             verify_udp_roundtrip(ns_server, ns_client)
         elif name in ("accelerated rekey", "long peer lifecycle soak"):
             handshake_time = initial_handshake_time
-            cycle_count = 120 if name == "long peer lifecycle soak" else 30
+            cycle_count = (
+                120 if name == "long peer lifecycle soak"
+                else 30 if extended_matrix else 1
+            )
             for cycle in range(cycle_count):
                 wait_rekey(server_iface, ns_client, SERVER_TUN, handshake_time)
                 handshake_time = last_handshake_time(server_iface)
@@ -890,7 +1023,7 @@ def run_profile(
             random_trailers="random_trailers=true" in extra,
             expected_handshakes=(
                 121 if name == "long peer lifecycle soak"
-                else 31 if name == "accelerated rekey"
+                else (30 if extended_matrix else 1) + 1 if name == "accelerated rekey"
                 else 2 if name == "rekey packet-loss recovery"
                 else 1
             ),
@@ -901,7 +1034,7 @@ def run_profile(
                 2 if name == "rekey packet-loss recovery"
                 else (
                     121 if name == "long peer lifecycle soak"
-                    else 31 if name == "accelerated rekey"
+                    else cycle_count + 1 if name == "accelerated rekey"
                     else 1
                 )
             ),
@@ -955,15 +1088,33 @@ def main() -> int:
     if os.geteuid() != 0:
         print("Run as root (creates disposable network namespaces).", file=sys.stderr)
         return 2
-    performance = len(sys.argv) == 4 and sys.argv[3] == "--performance"
-    if len(sys.argv) != (4 if performance else 3):
+    options = list(sys.argv[3:])
+    awg30 = None
+    wireguard = None
+    if "--awg30" in options:
+        index = options.index("--awg30")
+        if index + 1 >= len(options):
+            print("--awg30 requires a path to the official AWG 3.0 binary", file=sys.stderr)
+            return 2
+        awg30 = str(Path(options[index + 1]).resolve())
+        del options[index:index + 2]
+    if "--wireguard" in options:
+        index = options.index("--wireguard")
+        if index + 1 >= len(options):
+            print("--wireguard requires a path to the official wireguard-go binary", file=sys.stderr)
+            return 2
+        wireguard = str(Path(options[index + 1]).resolve())
+        del options[index:index + 2]
+    if set(options) - {"--performance", "--full"} or ("--performance" in options and "--full" in options) or len(options) != len(set(options)):
         print(__doc__.split("Usage:", 1)[1].strip(), file=sys.stderr)
         return 2
+    performance = "--performance" in options
+    full_matrix = "--full" in options
     bt, go = (str(Path(p).resolve()) for p in sys.argv[1:3])
     if performance and shutil.which("iperf3") is None:
         print("iperf3 is required for --performance mode", file=sys.stderr)
         return 2
-    for binary in (bt, go):
+    for binary in (bt, go, *((awg30,) if awg30 else ()), *((wireguard,) if wireguard else ())):
         if not os.path.isfile(binary) or not os.access(binary, os.X_OK):
             print(f"not an executable file: {binary}", file=sys.stderr)
             return 2
@@ -987,15 +1138,50 @@ def main() -> int:
                         file=sys.stderr,
                     )
     else:
-        for name, extra, awg_enabled in PROFILES:
+        selected_profiles = PROFILES if full_matrix else QUICK_PROFILES
+        suite_name = "full" if full_matrix else "quick"
+        print(f"MODE: {suite_name} interoperability suite ({len(selected_profiles) * 2} directional scenarios)")
+        for name, extra, awg_enabled in selected_profiles:
             for bt_is_server in (True, False):
                 total += 1
                 try:
-                    run_profile(bt, go, name, extra, awg_enabled, bt_is_server)
+                    run_profile(
+                        bt, go, name, extra, awg_enabled, bt_is_server,
+                        extended_matrix=full_matrix,
+                        legacy_cpa=(name == "bulk data integrity — AWG 3.0"),
+                    )
                 except Exception as error:
                     failures += 1
                     role = "BoringTun server" if bt_is_server else "amneziawg-go server"
                     print(f"FAIL {name} ({role}): {error}", file=sys.stderr)
+    if awg30 is not None and not performance:
+        print(f"MODE: official AWG 3.0.0 reference suite ({len(AWG30_PROFILES) * 2} directional scenarios)")
+        for name, extra, awg_enabled in AWG30_PROFILES:
+            for bt_is_server in (True, False):
+                total += 1
+                try:
+                    run_profile(
+                        bt, awg30, name, extra, awg_enabled, bt_is_server,
+                        legacy_cpa=True,
+                        reference_name="amneziawg-go-v3.0.0",
+                    )
+                except Exception as error:
+                    failures += 1
+                    role = "BoringTun server" if bt_is_server else "amneziawg-go v3.0.0 server"
+                    print(f"FAIL AWG 3.0.0 / {name} ({role}): {error}", file=sys.stderr)
+    if wireguard is not None and not performance:
+        print("MODE: official WireGuard reference suite (2 directional scenarios)")
+        for bt_is_server in (True, False):
+            total += 1
+            try:
+                run_profile(
+                    bt, wireguard, PROFILES[0][0], "", False, bt_is_server,
+                    reference_name="wireguard-go",
+                )
+            except Exception as error:
+                failures += 1
+                role = "BoringTun server" if bt_is_server else "wireguard-go server"
+                print(f"FAIL vanilla WireGuard ({role}): {error}", file=sys.stderr)
     print(f"SUMMARY: {total - failures}/{total} passed, {failures} failed")
     return 1 if failures else 0
 

@@ -109,7 +109,7 @@ jobs:
   # it needs network namespaces, TUN devices and the external Go reference.
   awg31-interoperability:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: ${{ inputs.full_matrix && 30 || 25 }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions-rs/toolchain@v1
@@ -122,7 +122,7 @@ jobs:
       - name: Install Linux networking and Python dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y iproute2 iputils-ping tcpdump python3-cryptography
+          sudo apt-get install -y iproute2 iputils-ping tcpdump ethtool python3-cryptography
       - name: Build BoringTun userspace device
         run: cargo build -p boringtun-cli --release
       - name: Fetch official AmneziaWG Go reference
@@ -134,8 +134,31 @@ jobs:
       - name: Build official AmneziaWG Go
         working-directory: upstream-amneziawg-go
         run: go build -v -o ../amneziawg-go .
-      - name: Run AWG 3.1 bidirectional interoperability matrix
-        run: sudo python3 scripts/awg31-go-interop.py ./target/release/boringtun-cli ./amneziawg-go
+      - name: Fetch official AmneziaWG Go 3.0.0 reference
+        uses: actions/checkout@v6
+        with:
+          repository: amnezia-vpn/amneziawg-go
+          ref: v3.0.0
+          path: upstream-amneziawg-go-3.0
+      - name: Build official AmneziaWG Go 3.0.0
+        working-directory: upstream-amneziawg-go-3.0
+        run: go build -v -o ../amneziawg-go-3.0 .
+      - name: Fetch official WireGuard Go reference
+        uses: actions/checkout@v6
+        with:
+          repository: WireGuard/wireguard-go
+          ref: b3bc704ef0ee21a36298601a9e1e5ff90377ac52
+          path: upstream-wireguard-go
+      - name: Build official WireGuard Go
+        working-directory: upstream-wireguard-go
+        run: go build -v -o ../wireguard-go .
+      - name: Run AWG interoperability suite
+        run: |
+          if [[ "${{ inputs.full_matrix }}" == "true" ]]; then
+            sudo python3 scripts/awg31-go-interop.py ./target/release/boringtun-cli ./amneziawg-go --full --awg30 ./amneziawg-go-3.0 --wireguard ./wireguard-go
+          else
+            sudo python3 scripts/awg31-go-interop.py ./target/release/boringtun-cli ./amneziawg-go --awg30 ./amneziawg-go-3.0 --wireguard ./wireguard-go
+          fi
       - name: Upload normalized wire captures
         if: always()
         uses: actions/upload-artifact@v4

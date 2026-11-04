@@ -217,7 +217,8 @@ impl Session {
         receiver_index.copy_from_slice(&self.sending_index.to_le_bytes());
         counter.copy_from_slice(&sending_key_counter.to_le_bytes());
 
-        // TODO: spec requires padding to 16 bytes, but actually works fine without it
+        // The caller computes standard WireGuard MTU padding or the configured
+        // AmneziaWG CPA/RandomTrailers addition and passes its exact length here.
         let n = {
             let mut nonce = [0u8; 12];
             nonce[4..12].copy_from_slice(&sending_key_counter.to_le_bytes());

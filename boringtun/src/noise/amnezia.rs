@@ -37,12 +37,11 @@ const MAX_JUNK_PACKET_DELAY_MS: u16 = 200;
 /// front is not a parity break: nothing that *functions* on the kernel module
 /// is refused on size grounds here.
 ///
-/// That is a claim about size only. [`AmneziaConfig::validate`] refuses a
-/// configuration whose enabled under-load cookie replies would amplify; this
-/// guard is skipped when DisableCookies prevents those replies. The kernel
-/// accepts amplifying configurations, so the guard is a deliberate parity
-/// break when cookie replies are enabled. The argument for it is at the check.
-const MAX_SENDABLE_DATAGRAM: usize = 65535 - 20 - 8;
+/// This is only a datagram-size bound. Cookie Reply size is not constrained
+/// relative to the triggering handshake: upstream amneziawg-go emits the
+/// configured S3 prefix verbatim, and this implementation follows that wire
+/// behavior.
+pub(crate) const MAX_SENDABLE_DATAGRAM: usize = 65535 - 20 - 8;
 const DNS_JUNK_SIZE_MIN: usize = 50;
 const DNS_JUNK_SIZE_MAX: usize = 200;
 const QUIC_JUNK_SIZE_MIN: usize = 1200;
@@ -281,6 +280,8 @@ pub struct AmneziaConfig {
     /// Inclusive range of extra zero bytes appended to the encrypted IP payload.
     /// `(0, 0)` disables ContentPaddingAddition.
     pub(crate) content_padding_addition: (u32, u32),
+    /// Use AWG 3.0's MTU-bounded CPA algorithm instead of AWG 3.1's peer UDP-window algorithm.
+    pub(crate) legacy_content_padding: bool,
     /// Inclusive timer ranges in seconds; (0, 0) preserves WireGuard defaults.
     pub(crate) rekey_after_time: (u32, u32),
     pub(crate) rekey_timeout: (u32, u32),
@@ -429,6 +430,7 @@ impl AmneziaConfig {
             disable_cookies: false,
             header_protection_key: [0u8; 32],
             content_padding_addition: (0, 0),
+            legacy_content_padding: false,
             rekey_after_time: (0, 0),
             rekey_timeout: (0, 0),
             reject_after_time: (0, 0),
@@ -464,6 +466,16 @@ impl AmneziaConfig {
     /// Use `(0, 0)` to disable additional content padding.
     pub fn with_content_padding_addition(mut self, min: u16, max: u16) -> Self {
         self.content_padding_addition = (u32::from(min), u32::from(max));
+        self
+    }
+
+    /// Select AWG 3.0's legacy MTU-bounded ContentPaddingAddition semantics.
+    ///
+    /// The default (`false`) matches AWG 3.1, which clamps CPA to the peer UDP
+    /// high-water mark. AWG 3.0 instead clamps it to the inner TUN MTU.
+    /// This is a local compatibility setting; AWG does not negotiate versions.
+    pub fn with_legacy_content_padding(mut self, enabled: bool) -> Self {
+        self.legacy_content_padding = enabled;
         self
     }
 
@@ -532,19 +544,34 @@ impl AmneziaConfig {
         self
     }
 
-    /// Select a random ContentPaddingAddition value and clamp it to the
-    /// remaining peer UDP window, matching upstream's randomPaddingAddition.
-    /// Empty keepalives and packets that already fill the window are not padded.
+    /// Select a random ContentPaddingAddition value. AWG 3.1 clamps it to the
+    /// remaining peer UDP window; AWG 3.0 clamps it to the remaining inner TUN
+    /// MTU. Empty keepalives are padded too; the receiver recognizes their zero
+    /// plaintext prefix and does not deliver them to the TUN device.
     pub(crate) fn content_padding_size(
         &self,
         packet_size: usize,
         wire_packet_size: usize,
         udp_window: usize,
+        mtu: usize,
         rng: &mut impl RngCore,
     ) -> usize {
         let (min, max) = self.content_padding_addition;
-        let available = udp_window.saturating_sub(wire_packet_size);
-        if (min == 0 && max == 0) || min > max || packet_size == 0 || available == 0 {
+        let available = if self.legacy_content_padding {
+            if mtu == 0 {
+                usize::MAX
+            } else {
+                let last_unit = if packet_size > mtu {
+                    packet_size % mtu
+                } else {
+                    packet_size
+                };
+                mtu.saturating_sub(last_unit)
+            }
+        } else {
+            udp_window.saturating_sub(wire_packet_size)
+        };
+        if (min == 0 && max == 0) || min > max || available == 0 {
             return 0;
         }
         let selected = loop {
@@ -641,10 +668,6 @@ impl AmneziaConfig {
     /// time with `EMSGSIZE`, so it never worked there either. See
     /// `MAX_SENDABLE_DATAGRAM` for the arithmetic.
     ///
-    /// The amplification check below is a different matter and the one place
-    /// this genuinely refuses a configuration the kernel module runs. It is
-    /// intentional, and argued at the check rather than here, so that "every
-    /// working kernel configuration is accepted" is not read as covering it.
     pub(crate) fn validate_timer_ranges(&self) -> Result<(), String> {
         for (name, (min, max)) in [
             ("rekey_after_time", self.rekey_after_time),
@@ -660,26 +683,31 @@ impl AmneziaConfig {
         Ok(())
     }
 
-    /// RandomTrailers makes handshake lengths variable. With different
-    /// S-prefix lengths, a transport packet can be examined at the wrong
-    /// offset by an earlier handshake classifier and be silently discarded
-    /// before its transport AEAD is tried (upstream amneziawg-go#186).
+    /// Validate RandomTrailers framing constraints.
     ///
-    /// Requiring one common S offset makes every classifier inspect the same
-    /// four-byte type field. Since ObfuscationRanges rejects overlapping H1-H4
-    /// ranges, a transport tag selected from H4 cannot match H1-H3. This is a
-    /// deterministic framing constraint, not a probabilistic width heuristic.
+    /// The upstream Go and kernel classifiers try the three fixed-size
+    /// handshake shapes before transport. With RandomTrailers enabled, a
+    /// transport datagram is also long enough to enter those branches. If
+    /// S1-S4 differ, a branch can inspect random prefix/ciphertext bytes at a
+    /// different offset and claim a real transport packet as a handshake;
+    /// it is then discarded after MAC1 verification. Equal S values make all
+    /// candidates inspect the same type field, and disjoint H ranges make the
+    /// classification unambiguous. Upstream currently accepts unequal values,
+    /// but its own documentation recommends equal S values; we enforce that
+    /// safe subset rather than silently accepting a lossy configuration.
     pub(crate) fn validate_random_trailers(&self, _obf: ObfuscationRanges) -> Result<(), String> {
         if self.random_trailers {
-            let s = self.init_packet_junk_size;
-            if self.response_packet_junk_size != s
-                || self.cookie_packet_junk_size != s
-                || self.transport_packet_junk_size != s
-            {
-                return Err(format!(
-                    "RandomTrailers requires S1 = S2 = S3 = S4 (all currently must equal {}); different offsets can misclassify and silently drop transport packets",
-                    s
-                ));
+            let s = [
+                self.init_packet_junk_size,
+                self.response_packet_junk_size,
+                self.cookie_packet_junk_size,
+                self.transport_packet_junk_size,
+            ];
+            if s.iter().any(|value| *value != s[0]) {
+                return Err(
+                    "RandomTrailers requires S1=S2=S3=S4 to avoid ambiguous packet classification"
+                        .to_owned(),
+                );
             }
         }
         Ok(())
@@ -728,52 +756,9 @@ impl AmneziaConfig {
             }
         }
 
-        // A cookie reply that is larger than the packet provoking it makes this
-        // port a reflector, and the ratio is fixed by S1/S2/S3 alone -- an
-        // attacker cannot influence it. `device::reply_policy` refuses to send
-        // such a reply, which costs the peer every handshake for as long as the
-        // device is over its handshake rate limit, because a peer that never
-        // receives a cookie can never produce a valid mac2.
-        //
-        // Refusing the configuration outright is the louder failure and the one
-        // the operator can act on: it happens at `awg set`, naming the values,
-        // rather than silently during a flood. The AmneziaWG kernel module
-        // accepts these combinations, so this is deliberately stricter than the
-        // reference implementation -- a config rejected here would have run
-        // there, weakly reflecting.
-        // Both alternatives the message offers have to work in one pass. The
-        // "raise" side therefore names every violated bound, not just the
-        // binding one: at S1=100, S2=0, S3=185 both are violated, and raising
-        // S2 alone still leaves the initiation a byte short.
-        // DisableCookies bypasses the only path that emits an under-load
-        // Cookie Reply. In that mode the reply-size amplification constraint
-        // is irrelevant; incoming Cookie Replies remain supported.
-        if !self.disable_cookies {
-            let bounds = self.cookie_amplification_bounds();
-            if let Some(&(which, request, _)) = bounds.first() {
-                let reply = COOKIE_REPLY_SZ + self.cookie_packet_junk_size as usize;
-                let raise = bounds
-                    .iter()
-                    .map(|&(label, _, min_junk)| format!("{} to at least {}", label, min_junk))
-                    .collect::<Vec<_>>()
-                    .join(" and ");
-                return Err(format!(
-                    "S3 = {} makes a cookie reply {} bytes, larger than the {}-byte packet that provokes it ({} = {}); the reply would be suppressed and handshakes would fail under load. Lower S3 to at most {}, or raise {}.",
-                    self.cookie_packet_junk_size,
-                    reply,
-                    request,
-                    which,
-                    request
-                        - if which == "S1" {
-                            HANDSHAKE_INIT_SZ
-                        } else {
-                            HANDSHAKE_RESP_SZ
-                        },
-                    request - COOKIE_REPLY_SZ,
-                    raise
-                ));
-            }
-        }
+        // Cookie replies intentionally retain upstream amneziawg-go semantics:
+        // S3 is an operator-selected wire-format prefix and is not constrained
+        // by the size of the handshake that triggered the rate-limit challenge.
 
         Ok(())
     }
@@ -1048,107 +1033,13 @@ impl AmneziaConfig {
         }
     }
 
-    /// How many bytes a `cookie_len`-byte cookie reply will occupy on the wire,
-    /// S3 prefix included.
+    /// Return the wire size of a cookie reply after applying the configured S3 prefix.
     ///
-    /// Exists so the ingress path can decide whether the reply is an amplifier
-    /// *before* [`Self::prepend_outbound`] generates junk for it. With S3 near
-    /// its 65443-byte maximum, filling a prefix for a reply that policy then
-    /// refuses would itself be the flood — one forged 148-byte initiation per
-    /// 65 KB of keystream, which is a cheaper attack than the amplification it
-    /// was meant to prevent.
-    ///
-    /// Reads the prefix size through [`Self::outbound_junk_size`], the same
-    /// accessor `prepend_outbound` uses, so the prediction cannot drift from
-    /// the production by way of two spellings of one lookup. What it still has
-    /// to assume is the packet *kind*, which `prepend_outbound` derives from
-    /// the tag on the wire, so
-    /// [`tests::the_predicted_cookie_reply_length_is_the_one_actually_produced`]
-    /// pins the two together.
-    ///
-    /// Gated because the ingress path is the only caller: without `device` this
-    /// is dead code, and a crate built without the feature would carry a
-    /// `dead_code` warning for it. `test` is in the list so the test above still
-    /// runs on a default-feature `cargo test`.
-    #[cfg(any(test, feature = "device"))]
+    /// Kept as a test helper so the S3 framing length is pinned to the same
+    /// accessor used by outbound packet construction.
+    #[cfg(test)]
     pub(crate) fn cookie_reply_len(&self, cookie_len: usize) -> usize {
         cookie_len.saturating_add(self.outbound_junk_size(PacketKind::CookieReply))
-    }
-
-    /// The S sizes at which a cookie reply would be larger than the packet that
-    /// provokes it, if there are any.
-    ///
-    /// Every request kind the reply would exceed, tightest bound first, as
-    /// `(kind, request_len, smallest_junk_that_clears_it)`, where `kind` is
-    /// `"S1"` (an initiation) or `"S2"` (a response). Empty when the
-    /// configuration does not amplify.
-    ///
-    /// `device::reply_policy::cookie_verdict` suppresses such a reply, because a
-    /// cookie reply aimed at a forged source is a reflector and the ratio is
-    /// fixed entirely by this configuration — an attacker cannot influence it.
-    /// The cost is real: the peer never learns the cookie, so it can never
-    /// produce a valid mac2, and every one of its handshakes fails for as long
-    /// as the device stays over `HANDSHAKE_RATE_LIMIT`.
-    ///
-    /// This exists so the operator hears about that when they set the sizes,
-    /// rather than during the flood. The condition is decidable from S1/S2/S3
-    /// alone — `64 + S3 > 148 + S1` for an initiation, `64 + S3 > 92 + S2` for a
-    /// response — so there is no reason to discover it at send time.
-    ///
-    /// Both kinds can be violated at once, and they are independent: S3 has to
-    /// clear *both*. That is why this reports all of them rather than the first
-    /// or the tightest. At S1=100, S2=0, S3=185 the reply is 249 bytes against a
-    /// 248-byte initiation and a 92-byte response — advice naming either alone
-    /// leaves the other failing, and the operator is sent round twice.
-    ///
-    /// The `min_junk` values are always reachable: `min_junk + base` is exactly
-    /// `COOKIE_REPLY_SZ + S3`, and [`Self::validate`] has already bounded that
-    /// by `MAX_SENDABLE_DATAGRAM` before it gets here, so following this advice
-    /// can never trip the size check instead.
-    ///
-    /// This function only *reports*. [`Self::validate`] is what rejects, and it
-    /// does so deliberately: see the argument there for why refusing a
-    /// configuration the AmneziaWG kernel module would accept is the right trade
-    /// rather than an interoperability break worth avoiding.
-    ///
-    /// Not gated: [`Self::validate`] calls it on every build, because a
-    /// configuration this shape is refused rather than merely warned about.
-    fn cookie_amplification_bounds(&self) -> Vec<(&'static str, usize, usize)> {
-        let reply = COOKIE_REPLY_SZ + self.cookie_packet_junk_size as usize;
-        let mut bounds: Vec<(&'static str, usize, usize)> = [
-            ("S1", self.init_packet_junk_size, HANDSHAKE_INIT_SZ),
-            ("S2", self.response_packet_junk_size, HANDSHAKE_RESP_SZ),
-        ]
-        .iter()
-        // Filter before the subtraction, not after: `reply - base` underflows
-        // on a configuration that does not amplify, which is most of them.
-        // `reply > base + junk` implies `reply > base`, so the map is safe only
-        // in this order.
-        .filter(|&&(_, junk, base)| reply > base + junk as usize)
-        .map(|&(label, junk, base)| (label, base + junk as usize, reply - base))
-        .collect();
-        // Stable, so an equal pair still reports S1 first and the message stays
-        // the same for the common symmetric configuration.
-        bounds.sort_by_key(|&(_, request, _)| request);
-        bounds
-    }
-
-    /// The **binding** bound as `(kind, request_len, reply_len)` — the shortest
-    /// provoking packet, the one S3 actually has to clear — or `None` when the
-    /// configuration does not amplify.
-    ///
-    /// A view over [`Self::cookie_amplification_bounds`], not a second
-    /// derivation. `validate` needs every violated bound, so it calls that
-    /// directly; this narrower shape is only convenient for asserting *which*
-    /// bound binds, and `#[cfg(test)]` accordingly — left ungated it is dead
-    /// code, and the crate carries a `dead_code` warning for it with or without
-    /// the `device` feature.
-    #[cfg(test)]
-    fn cookie_reply_amplifies(&self) -> Option<(&'static str, usize, usize)> {
-        let reply = COOKIE_REPLY_SZ + self.cookie_packet_junk_size as usize;
-        // Sorted tightest-first, so the first entry is the binding one.
-        let (label, request, _) = self.cookie_amplification_bounds().into_iter().next()?;
-        Some((label, request, reply))
     }
 
     pub(crate) fn prepend_outbound<'a>(
@@ -1171,8 +1062,8 @@ impl AmneziaConfig {
     /// Apply S-prefix, Header Protection and optional RandomTrailers.
     ///
     /// udp_window is the peer's learned maximum datagram size. max_datagram_size
-    /// is normally unbounded, but cookie replies pass the triggering request's
-    /// size so random trailers can never turn a cookie into an amplifier.
+    /// is an additional caller-supplied datagram bound; cookie replies use the
+    /// same unbounded policy as upstream, not the size of the triggering request.
     pub(crate) fn prepend_outbound_with_limits<'a>(
         &self,
         obf: ObfuscationRanges,
@@ -1204,8 +1095,16 @@ impl AmneziaConfig {
         let trailer_limit = max_datagram_size
             .min(buffer.len())
             .min(MAX_SENDABLE_DATAGRAM);
+        // Upstream's Device.randomTrailer (Cookie Reply) uses the fixed
+        // DefaultUdpWindow=500. Handshake Init/Response use the peer's learned
+        // udpWindow; transport trailers are handled inside the AEAD path.
+        let trailer_udp_window = if kind == PacketKind::CookieReply {
+            DEFAULT_UDP_WINDOW
+        } else {
+            udp_window
+        };
         let trailer_len = if self.random_trailers && kind != PacketKind::TransportData {
-            self.random_trailer_len(prefixed_size, udp_window, trailer_limit, rng)
+            self.random_trailer_len(prefixed_size, trailer_udp_window, trailer_limit, rng)
         } else {
             0
         };
@@ -1267,19 +1166,51 @@ impl AmneziaConfig {
         random_usize_inclusive(0, available - 1, rng)
     }
 
-    /// Transport RandomTrailers are zero padding inside the AEAD plaintext.
-    /// Explicit ContentPaddingAddition takes precedence, matching upstream.
+    /// Transport padding follows upstream precedence:
+    /// 1. explicit ContentPaddingAddition,
+    /// 2. RandomTrailers when enabled,
+    /// 3. ordinary WireGuard MTU-bounded 16-byte padding otherwise.
     pub(crate) fn transport_padding_size(
         &self,
         ip_packet_size: usize,
         wire_packet_size: usize,
         udp_window: usize,
+        mtu: usize,
         rng: &mut impl RngCore,
     ) -> usize {
         if self.content_padding_addition != (0, 0) {
-            return self.content_padding_size(ip_packet_size, wire_packet_size, udp_window, rng);
+            return self.content_padding_size(
+                ip_packet_size,
+                wire_packet_size,
+                udp_window,
+                mtu,
+                rng,
+            );
         }
-        self.random_trailer_len(wire_packet_size, udp_window, MAX_SENDABLE_DATAGRAM, rng)
+        if self.random_trailers {
+            return self.random_trailer_len(
+                wire_packet_size,
+                udp_window,
+                MAX_SENDABLE_DATAGRAM,
+                rng,
+            );
+        }
+        Self::calculate_wg_padding_size(ip_packet_size, mtu)
+    }
+
+    /// Match upstream calculatePaddingSize(packetSize, tun.mtu).
+    fn calculate_wg_padding_size(packet_size: usize, mtu: usize) -> usize {
+        if mtu == 0 {
+            return ((packet_size + 15) & !15) - packet_size;
+        }
+
+        let last_unit = if packet_size > mtu {
+            packet_size % mtu
+        } else {
+            packet_size
+        };
+        let padded_size = ((last_unit + 15) & !15).min(mtu);
+        padded_size.saturating_sub(last_unit)
     }
 
     pub fn fill_pre_handshake_junk<'a>(
@@ -1310,7 +1241,10 @@ impl AmneziaConfig {
 
     fn pre_handshake_junk_size(&self, rng: &mut impl RngCore) -> usize {
         match self.imitation.protocol {
-            AmneziaImitationProtocol::None => random_usize_inclusive(
+            // Upstream amneziawg-go uses min + fastrandn(max - min),
+            // so Jmax is an exclusive upper bound (except the degenerate
+            // equal-bound case, which yields that single size).
+            AmneziaImitationProtocol::None => random_usize_exclusive_upper(
                 self.pre_handshake_junk.packet_size_min as usize,
                 self.pre_handshake_junk.packet_size_max as usize,
                 rng,
@@ -1331,6 +1265,18 @@ impl AmneziaConfig {
     }
 
     fn fill_outbound_junk(&self, dst: &mut [u8], trailing_size: usize, rng: &mut impl RngCore) {
+        // Header Protection takes its 96-bit ChaCha20 nonce from the first
+        // 12 bytes of this prefix. Upstream always fills S1-S4 with fresh
+        // random bytes. Protocol-shaped prefixes can have fixed leading
+        // bytes (for example SIP's method line or STUN's magic cookie), which
+        // would repeat the nonce and reuse the header-protection keystream.
+        // Keep the complete S-prefix random whenever HP is enabled; standalone
+        // pre-handshake imitation packets remain available independently.
+        if self.header_protection_enabled() {
+            fill_random(dst, rng);
+            return;
+        }
+
         match self.imitation.protocol {
             AmneziaImitationProtocol::None => fill_random(dst, rng),
             protocol => {
@@ -1367,6 +1313,15 @@ fn random_usize_inclusive(min: usize, max: usize, rng: &mut impl RngCore) -> usi
             return min + (val % range_size) as usize;
         }
     }
+}
+
+/// Sample [min, max), matching upstream's Jmin + fastrandn(Jmax - Jmin).
+/// When min == max, upstream's zero-width draw produces the fixed size.
+fn random_usize_exclusive_upper(min: usize, max: usize, rng: &mut impl RngCore) -> usize {
+    if min >= max {
+        return min;
+    }
+    random_usize_inclusive(min, max - 1, rng)
 }
 
 fn fill_protocol_like(
@@ -1936,9 +1891,7 @@ mod tests {
     }
 
     #[test]
-    fn random_trailers_require_equal_s_prefixes_with_disjoint_h_ranges() {
-        // This profile reproduces the structural ambiguity in upstream issue
-        // #186: the transport type at S4 can be re-read as a control tag at S2.
+    fn random_trailers_reject_unequal_s_prefixes_to_prevent_ambiguous_classification() {
         let obf = ObfuscationRanges::new(
             405_138_553,
             456_138_212,
@@ -1951,17 +1904,79 @@ mod tests {
         )
         .expect("all H ranges are disjoint");
 
-        let unequal = AmneziaConfig::new(97, 41, 133, 24).with_random_trailers(true);
-        let error = unequal
-            .validate_random_trailers(obf)
-            .expect_err("different offsets can misclassify valid transport packets");
-        assert!(error.contains("S1 = S2 = S3 = S4"));
-        assert!(error.contains("RandomTrailers"));
+        let unequal = AmneziaConfig::new(284, 659, 1045, 12).with_random_trailers(true);
+        assert!(
+            unequal
+                .validate_random_trailers(obf)
+                .unwrap_err()
+                .contains("S1=S2=S3=S4"),
+            "unequal S values can cause transport packets to be classified as handshakes"
+        );
 
-        let equal = AmneziaConfig::new(24, 24, 24, 24).with_random_trailers(true);
+        let equal = AmneziaConfig::new(64, 64, 64, 64).with_random_trailers(true);
         equal
             .validate_random_trailers(obf)
-            .expect("equal offsets plus disjoint H ranges make classification unambiguous");
+            .expect("equal S values and disjoint H ranges classify unambiguously");
+    }
+
+    #[test]
+    fn header_protection_keeps_s_prefix_nonce_random_with_protocol_imitation() {
+        let obf = ObfuscationRanges::default();
+        let cfg = AmneziaConfig::new(64, 64, 64, 64)
+            .with_header_protection_key([0x42; 32])
+            .with_protocol_imitation(
+                AmneziaImitationProtocol::Sip,
+                Some("example.com".to_owned()),
+            );
+
+        let mut first_buffer = vec![0u8; 64 + HANDSHAKE_INIT_SZ];
+        write_tag(&mut first_buffer, HANDSHAKE_INIT);
+        let first_plain = first_buffer[..HANDSHAKE_INIT_SZ].to_vec();
+        let mut first_rng = ChaCha8Rng::seed_from_u64(1);
+        let first = cfg
+            .prepend_outbound(obf, &mut first_buffer, HANDSHAKE_INIT_SZ, &mut first_rng)
+            .unwrap()
+            .to_vec();
+
+        let mut second_buffer = vec![0u8; 64 + HANDSHAKE_INIT_SZ];
+        write_tag(&mut second_buffer, HANDSHAKE_INIT);
+        let mut second_rng = ChaCha8Rng::seed_from_u64(2);
+        let second = cfg
+            .prepend_outbound(obf, &mut second_buffer, HANDSHAKE_INIT_SZ, &mut second_rng)
+            .unwrap()
+            .to_vec();
+
+        assert_ne!(
+            &first[..12],
+            &second[..12],
+            "Header Protection must not reuse its nonce when protocol imitation is configured"
+        );
+        assert_eq!(
+            cfg.decrypt_inbound(obf, &first).as_deref(),
+            Some(first_plain.as_slice()),
+            "a freshly randomized S-prefix nonce must still decrypt the protected message"
+        );
+    }
+
+    #[test]
+    fn wireguard_padding_matches_upstream_mtu_algorithm() {
+        assert_eq!(AmneziaConfig::calculate_wg_padding_size(0, 1420), 0);
+        assert_eq!(AmneziaConfig::calculate_wg_padding_size(28, 1420), 4);
+        assert_eq!(AmneziaConfig::calculate_wg_padding_size(1419, 1420), 1);
+        assert_eq!(AmneziaConfig::calculate_wg_padding_size(1420, 1420), 0);
+        assert_eq!(AmneziaConfig::calculate_wg_padding_size(1421, 1420), 15);
+        assert_eq!(AmneziaConfig::calculate_wg_padding_size(28, 0), 4);
+    }
+
+    #[test]
+    fn junk_packet_jmax_is_exclusive_like_upstream() {
+        let mut rng = ChaCha8Rng::seed_from_u64(0x4a6d6178);
+        for _ in 0..256 {
+            let size = random_usize_exclusive_upper(10, 20, &mut rng);
+            assert!((10..20).contains(&size), "sampled {size} outside [10, 20)");
+        }
+        assert_eq!(random_usize_exclusive_upper(10, 11, &mut rng), 10);
+        assert_eq!(random_usize_exclusive_upper(10, 10, &mut rng), 10);
     }
 
     #[test]
@@ -2038,6 +2053,48 @@ mod tests {
     }
 
     #[test]
+    fn cookie_random_trailer_uses_device_default_window_not_peer_window() {
+        let cfg = AmneziaConfig::new(12, 12, 12, 12).with_random_trailers(true);
+        let obf = ObfuscationRanges::default();
+        let mut peer_window_rng = ChaCha8Rng::seed_from_u64(0xC00C1E);
+        let mut default_window_rng = ChaCha8Rng::seed_from_u64(0xC00C1E);
+        let mut peer_window_buffer = vec![0u8; 4096];
+        let mut default_window_buffer = peer_window_buffer.clone();
+        write_tag(&mut peer_window_buffer, COOKIE_REPLY);
+        write_tag(&mut default_window_buffer, COOKIE_REPLY);
+
+        let peer_window_wire = cfg
+            .prepend_outbound_with_limits(
+                obf,
+                &mut peer_window_buffer,
+                COOKIE_REPLY_SZ,
+                10_000,
+                4096,
+                &mut peer_window_rng,
+            )
+            .expect("cookie reply fits")
+            .to_vec();
+        let default_window_wire = cfg
+            .prepend_outbound_with_limits(
+                obf,
+                &mut default_window_buffer,
+                COOKIE_REPLY_SZ,
+                DEFAULT_UDP_WINDOW,
+                4096,
+                &mut default_window_rng,
+            )
+            .expect("cookie reply fits")
+            .to_vec();
+
+        assert_eq!(
+            peer_window_wire.len(),
+            default_window_wire.len(),
+            "Cookie Reply trailers must use the device-level 500-byte window, independent of the peer high-water mark"
+        );
+        assert!(peer_window_wire.len() <= DEFAULT_UDP_WINDOW);
+    }
+
+    #[test]
     fn cookie_random_trailer_is_bounded_by_triggering_request() {
         let cfg = AmneziaConfig::new(12, 12, 12, 12).with_random_trailers(true);
         let mut rng = ChaCha8Rng::seed_from_u64(0xC001);
@@ -2110,6 +2167,7 @@ mod tests {
             packet_size - DATA_OVERHEAD_SZ,
             packet_size,
             500,
+            1420,
             &mut rng,
         );
         assert!(padding < 500 - packet_size);
@@ -2123,10 +2181,41 @@ mod tests {
                 packet_size - DATA_OVERHEAD_SZ,
                 packet_size,
                 500,
+                1420,
                 &mut rng,
             ),
             7,
             "ContentPaddingAddition takes precedence over RandomTrailers"
+        );
+    }
+
+    #[test]
+    fn content_padding_legacy_mode_matches_awg30_mtu_clamping() {
+        let legacy = AmneziaConfig::new(0, 0, 0, 0)
+            .with_content_padding_addition(100, 100)
+            .with_legacy_content_padding(true);
+        let mut rng = ChaCha8Rng::seed_from_u64(0xA030);
+
+        // AWG 3.0 clamps against MTU - (packet_size % MTU), not UDP window.
+        assert_eq!(
+            legacy.content_padding_size(1400, 1432, 2000, 1420, &mut rng),
+            20
+        );
+        assert_eq!(
+            legacy.content_padding_size(1421, 1453, 2000, 1420, &mut rng),
+            100
+        );
+        // Upstream's MTU=0 special case leaves CPA unbounded by MTU.
+        assert_eq!(
+            legacy.content_padding_size(1400, 1432, 2000, 0, &mut rng),
+            100
+        );
+
+        let modern = AmneziaConfig::new(0, 0, 0, 0).with_content_padding_addition(100, 100);
+        assert_eq!(
+            modern.content_padding_size(1400, 1432, 1450, 1420, &mut rng),
+            18,
+            "AWG 3.1 clamps against the peer UDP high-water mark"
         );
     }
 
@@ -2176,7 +2265,7 @@ mod tests {
         let ranged = AmneziaConfig::new(0, 0, 0, 0).with_content_padding_addition(4, 12);
 
         for _ in 0..256 {
-            let padding = ranged.content_padding_size(100, 132, 500, &mut rng);
+            let padding = ranged.content_padding_size(100, 132, 500, 1420, &mut rng);
             assert!(
                 (4..=12).contains(&padding),
                 "selected ContentPaddingAddition {padding} outside inclusive range 4..=12"
@@ -2185,24 +2274,24 @@ mod tests {
 
         let fixed_max = AmneziaConfig::new(0, 0, 0, 0).with_content_padding_addition(12, 12);
         assert_eq!(
-            fixed_max.content_padding_size(100, 132, 500, &mut rng),
+            fixed_max.content_padding_size(100, 132, 500, 1420, &mut rng),
             12,
             "the configured maximum is inclusive"
         );
         assert_eq!(
-            ranged.content_padding_size(100, 495, 500, &mut rng),
+            ranged.content_padding_size(100, 495, 500, 1420, &mut rng),
             5,
             "padding is clamped to the remaining UDP window"
         );
         assert_eq!(
-            ranged.content_padding_size(100, 500, 500, &mut rng),
+            ranged.content_padding_size(100, 500, 500, 1420, &mut rng),
             0,
             "a full UDP window leaves no room for padding"
         );
-        assert_eq!(
-            ranged.content_padding_size(0, 32, 500, &mut rng),
-            0,
-            "empty keepalives must not receive content padding"
+        let keepalive_padding = ranged.content_padding_size(0, 32, 500, 1420, &mut rng);
+        assert!(
+            (4..=12).contains(&keepalive_padding),
+            "upstream also applies ContentPaddingAddition to empty keepalives"
         );
     }
 
@@ -2706,22 +2795,14 @@ mod tests {
     /// `prepend_outbound` actually produces, for every S3 from zero to the
     /// largest `validate` admits.
     ///
-    /// The ingress path predicts the length so it can refuse an amplifying
-    /// cookie reply *without* paying to generate its junk. A prediction that
-    /// ran low would let the amplifier through; one that ran high would silence
-    /// cookie replies for a configuration that is not an amplifier at all. Both
-    /// are silent, so the two are pinned to each other here rather than left to
-    /// agree by inspection.
+    /// This pins the S3 size calculation to the actual outbound framing so
+    /// tests can detect accidental divergence between configuration and wire output.
     #[test]
     fn the_predicted_cookie_reply_length_is_the_one_actually_produced() {
         let max_s3 = (MAX_SENDABLE_DATAGRAM - COOKIE_REPLY_SZ) as u16;
         for s3 in [0u16, 1, 110, 1280, max_s3] {
-            // S1 and S2 are derived rather than zeroed: `validate` now refuses a
-            // cookie reply larger than the packet provoking it, so a bare
-            // `new(0, 0, max_s3, 0)` is no longer a configuration an operator
-            // could set, and asserting against it would be testing the
-            // prediction on a config that cannot exist. These are the smallest
-            // values that keep each S3 legal.
+            // Keep the other prefixes small and valid while exercising the S3
+            // boundary independently.
             let cfg = AmneziaConfig::new(s3.saturating_sub(84), s3.saturating_sub(28), s3, 0);
             cfg.validate().expect("S3 within the validated range");
 
@@ -2968,266 +3049,54 @@ mod tests {
         }
     }
 
-    /// `cookie_reply_amplifies` agrees with the rule `reply_policy` enforces,
-    /// on both packet kinds and at the boundary.
-    ///
-    /// The two live in different modules and neither can see the other, so the
-    /// only thing keeping them in step is this test. The response bound
-    /// (`S3 > S2 + 28`) is the tighter of the two and had no coverage at all.
+    /// The reference AWG 3.1 S values must be accepted with Header Protection.
+    /// S3 is intentionally larger than both handshake prefixes: upstream sends
+    /// the resulting Cookie Reply without an amplification-size restriction.
     #[test]
-    fn cookie_reply_amplifies_agrees_with_the_rule_that_suppresses() {
-        // Parity exactly: 64 + S3 == 148 + S1 and == 92 + S2. Not an amplifier.
-        let ok = AmneziaConfig::new(100, 156, 184, 0);
-        assert_eq!(
-            ok.cookie_reply_amplifies(),
-            None,
-            "parity is not amplifying"
-        );
+    fn reference_s_parameters_with_header_protection_are_accepted() {
+        let config = AmneziaConfig::new(284, 659, 1045, 12)
+            .with_header_protection_key([0x42; 32])
+            .with_random_trailers(true);
+        config
+            .validate()
+            .expect("reference S1-S4 and HP key must be valid");
 
-        // One byte over on the initiation side.
-        let over_s1 = AmneziaConfig::new(100, 156, 185, 0);
+        let obf = ObfuscationRanges::default();
+        let wire = packet_after_prepend(&config, COOKIE_REPLY_SZ, COOKIE_REPLY, 2048);
+        assert_eq!(wire.len(), COOKIE_REPLY_SZ + 1045);
+        let decoded = config
+            .decrypt_inbound(obf, &wire)
+            .expect("S3=1045 Cookie Reply must decrypt with Header Protection");
+        assert_eq!(decoded.len(), COOKIE_REPLY_SZ);
         assert_eq!(
-            over_s1.cookie_reply_amplifies(),
-            Some(("S1", 248, 249)),
-            "one byte past the initiation bound must be reported"
-        );
-
-        // The response bound is tighter, so a config can clear S1 and fail S2.
-        let over_s2 = AmneziaConfig::new(200, 100, 250, 0);
-        assert_eq!(
-            over_s2.cookie_reply_amplifies(),
-            Some(("S2", 192, 314)),
-            "the response bound is the tighter one and must be checked too"
-        );
-
-        // The shape a real installer rolls: S1 small, S3 large.
-        let installer = AmneziaConfig::new(15, 15, 150, 0);
-        assert!(
-            installer.cookie_reply_amplifies().is_some(),
-            "S1=15 S3=150 is a shape independent rolls produce, and it amplifies"
-        );
-
-        // And the interop harness's own sizes must not trip it.
-        let harness = AmneziaConfig::new(120, 130, 110, 80);
-        assert_eq!(
-            harness.cookie_reply_amplifies(),
-            None,
-            "the sizes scripts/awg-interop-poc.sh runs must keep their cookies"
+            u32::from_le_bytes(decoded[..4].try_into().unwrap()),
+            COOKIE_REPLY
         );
     }
 
-    /// `validate` refuses an amplifying configuration when under-load cookie
-    /// replies are enabled, on both packet kinds and at the boundary.
-    ///
-    /// This is deliberately stricter than the AmneziaWG kernel module, which
-    /// accepts these combinations. The trade is stated in `validate`: a config
-    /// refused here would have run there, weakly reflecting, and would have lost
-    /// every handshake under load once `device::reply_policy` suppressed its
-    /// cookie replies. Failing at `awg set` is the one place the operator can
-    /// still act on it.
     #[test]
-    fn validate_refuses_a_configuration_whose_cookie_replies_would_amplify() {
-        // Parity exactly: 64 + S3 == 148 + S1 and == 92 + S2. Legal.
-        AmneziaConfig::new(100, 156, 184, 0)
-            .validate()
-            .expect("parity is not amplification");
+    fn awg31_reference_timer_ranges_are_accepted_and_preserved() {
+        let config = AmneziaConfig::new(12, 12, 12, 12)
+            .with_header_protection_key([0x42; 32])
+            .with_rekey_after_time(100, 120)
+            .with_rekey_timeout(3, 8)
+            .with_reject_after_time(150, 180)
+            .with_keepalive_timeout(7, 13)
+            .with_max_handshake_attempts(15, 20)
+            .with_content_padding_addition(10, 100);
 
-        // One byte past the initiation bound.
-        let err = AmneziaConfig::new(100, 156, 185, 0)
+        config
             .validate()
-            .expect_err("one byte over must be refused");
-        assert!(
-            err.contains("S1"),
-            "the error must name the binding value: {}",
-            err
-        );
-        assert!(
-            err.contains("249") && err.contains("248"),
-            "and both sizes, so the operator can see the margin: {}",
-            err
-        );
-
-        // The response bound is the tighter of the two, so a config can clear
-        // S1 and still fail on S2.
-        let err = AmneziaConfig::new(200, 100, 250, 0)
-            .validate()
-            .expect_err("the response bound must be checked too");
-        assert!(
-            err.contains("S2"),
-            "the error must name S2 here, not S1: {}",
-            err
-        );
-
-        // The shape an installer rolling S values independently produces.
-        assert!(
-            AmneziaConfig::new(15, 15, 150, 0).validate().is_err(),
-            "S1=15 S3=150 amplifies and must not load"
-        );
-
-        // And the sizes the interop harness runs must remain loadable, or this
-        // rule has broken the project's own reference configuration.
-        AmneziaConfig::new(120, 130, 110, 80)
-            .validate()
-            .expect("scripts/awg-interop-poc.sh must still be a legal config");
-
-        // DisableCookies emits no under-load Cookie Reply, so the otherwise
-        // amplifying S3 combination is safe and must remain configurable.
-        AmneziaConfig::new(100, 156, 185, 0)
-            .with_disable_cookies(true)
-            .validate()
-            .expect("DisableCookies must not be blocked by an unused reply-size constraint");
-
-        // As must the default: vanilla WireGuard has no S values at all.
-        AmneziaConfig::default()
-            .validate()
-            .expect("the default configuration must load");
+            .expect("the AWG 3.1 reference timer ranges are valid");
+        assert!(config.header_protection_enabled());
+        assert_eq!(config.rekey_after_time, (100, 120));
+        assert_eq!(config.rekey_timeout, (3, 8));
+        assert_eq!(config.reject_after_time, (150, 180));
+        assert_eq!(config.keepalive_timeout, (7, 13));
+        assert_eq!(config.max_handshake_attempts, (15, 20));
+        assert_eq!(config.content_padding_addition, (10, 100));
     }
 
-    /// Following the error message's advice must actually produce a loadable
-    /// configuration.
-    ///
-    /// The message names a maximum S3. If the helper reports whichever bound it
-    /// checks first rather than the binding one, that maximum can still be too
-    /// high -- at S1=100, S2=0, S3=185 the initiation bound advises 184, and 184
-    /// still fails the response bound of 28. This asserts the property the
-    /// operator actually cares about rather than the mechanism: take the number
-    /// the message gives, apply it, and the config must validate.
-    #[test]
-    fn the_maximum_s3_the_error_recommends_actually_validates() {
-        for (s1, s2, s3) in [
-            (100u16, 0u16, 185u16), // both bounds violated, response the tighter
-            (0, 100, 185),          // both violated, initiation the tighter
-            (15, 15, 150),          // the installer shape
-            (0, 0, 100),            // no S padding at all
-            (100, 156, 185),        // one byte past a symmetric parity
-        ] {
-            let cfg = AmneziaConfig::new(s1, s2, s3, 0);
-            let (_, request, _) = cfg
-                .cookie_reply_amplifies()
-                .unwrap_or_else(|| panic!("S1={} S2={} S3={} should amplify", s1, s2, s3));
-
-            let advised = (request - COOKIE_REPLY_SZ) as u16;
-            AmneziaConfig::new(s1, s2, advised, 0)
-                .validate()
-                .unwrap_or_else(|e| {
-                    panic!(
-                        "S1={} S2={}: advised S3={} still rejected: {}",
-                        s1, s2, advised, e
-                    )
-                });
-
-            // And it is the *largest* such value, or the advice is needlessly
-            // strict and the operator loses padding they could have kept.
-            assert!(
-                AmneziaConfig::new(s1, s2, advised + 1, 0)
-                    .validate()
-                    .is_err(),
-                "S1={} S2={}: S3={} should have been advised instead",
-                s1,
-                s2,
-                advised + 1
-            );
-        }
-    }
-
-    /// The message's *other* alternative has to work in one pass too.
-    ///
-    /// "Lower S3, or raise S1/S2" offers two routes and an operator may take
-    /// either. When both bounds are violated they are independent, so naming
-    /// only the binding one leaves the other failing: at S1=100, S2=0, S3=185,
-    /// raising S2 to parity still leaves the initiation a byte short.
-    ///
-    /// Parses the minima back out of the rendered string rather than calling
-    /// the helper, because the string is what the operator acts on. A helper
-    /// that is right while the message is wrong still sends them round twice.
-    #[test]
-    fn every_raise_the_error_recommends_applied_together_actually_validates() {
-        /// -> [("S1", 101), ("S2", 157)] from "... or raise S1 to at least 101
-        /// and S2 to at least 157."
-        fn parse_raises(msg: &str) -> Vec<(String, u16)> {
-            let tail = msg
-                .split_once(", or raise ")
-                .unwrap_or_else(|| panic!("no raise advice in: {}", msg))
-                .1
-                .trim_end_matches('.');
-            tail.split(" and ")
-                .map(|clause| {
-                    let (label, value) = clause
-                        .split_once(" to at least ")
-                        .unwrap_or_else(|| panic!("malformed raise clause: {}", clause));
-                    (
-                        label.to_string(),
-                        value
-                            .parse()
-                            .unwrap_or_else(|e| panic!("bad number in {}: {}", clause, e)),
-                    )
-                })
-                .collect()
-        }
-
-        for (s1, s2, s3, expected_count) in [
-            (100u16, 0u16, 185u16, 2), // both bounds violated
-            (0, 100, 185, 2),          // both violated, the other way round
-            (200, 100, 250, 1),        // clears S1, fails S2
-            (15, 15, 150, 2),          // the installer shape
-            (100, 156, 185, 2),        // one byte past a symmetric parity
-        ] {
-            let err = AmneziaConfig::new(s1, s2, s3, 0)
-                .validate()
-                .expect_err("this configuration must be refused");
-            let raises = parse_raises(&err);
-            assert_eq!(
-                raises.len(),
-                expected_count,
-                "S1={} S2={} S3={}: wrong number of bounds named in {}",
-                s1,
-                s2,
-                s3,
-                err
-            );
-
-            // Apply every raise the message names, all at once, and the
-            // configuration must load.
-            let mut raised_s1 = s1;
-            let mut raised_s2 = s2;
-            for (label, min) in &raises {
-                match label.as_str() {
-                    "S1" => raised_s1 = *min,
-                    "S2" => raised_s2 = *min,
-                    other => panic!("unexpected label {} in {}", other, err),
-                }
-            }
-            AmneziaConfig::new(raised_s1, raised_s2, s3, 0)
-                .validate()
-                .unwrap_or_else(|e| {
-                    panic!(
-                        "S1={}->{} S2={}->{} S3={}: following the advice still fails: {}",
-                        s1, raised_s1, s2, raised_s2, s3, e
-                    )
-                });
-
-            // And each is the *smallest* value that works, or the advice costs
-            // the operator padding they could have kept.
-            for (label, min) in &raises {
-                let (probe_s1, probe_s2) = match label.as_str() {
-                    "S1" => (min - 1, raised_s2),
-                    _ => (raised_s1, min - 1),
-                };
-                assert!(
-                    AmneziaConfig::new(probe_s1, probe_s2, s3, 0)
-                        .validate()
-                        .is_err(),
-                    "S1={} S2={} S3={}: {} = {} would have done, so {} is too strict",
-                    s1,
-                    s2,
-                    s3,
-                    label,
-                    min - 1,
-                    min
-                );
-            }
-        }
-    }
     #[test]
     fn header_protection_round_trips_all_packet_kinds() {
         use rand_core::OsRng;
