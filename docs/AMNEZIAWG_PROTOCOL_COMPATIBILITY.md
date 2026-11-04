@@ -304,7 +304,7 @@ max_handshake_attempts=18
 | Поле/функция | Статус |
 |---|---|
 | `Jd` | Локальная задержка между pre-handshake junk datagrams; максимум 200 мс |
-| `Ip`, `Id`, `Ib` | Локальная имитация DNS/QUIC/SIP/STUN, домена и browser profile; не часть AWG version negotiation |
+| `Ip`, `Id`, `Ib` | Локальная имитация DNS/QUIC/SIP/STUN, домена и browser profile; не часть AWG version negotiation. При включённом imitation protocol генератор размеров использует protocol-specific шаблон вместо обычного случайного диапазона Jmin/Jmax. |
 | `suppress_pre_handshake` / responder mode | Локальное подавление исходящего I/J/imitation burst |
 | Protocol probe replies | Локальный ответчик на распознанные probe datagrams; не стандарт AWG |
 | Jc≤128, Jmax≤1280 | Ограничения памяти/фрагментации BoringTun |
