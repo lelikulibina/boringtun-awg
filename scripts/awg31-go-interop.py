@@ -5,7 +5,7 @@ Requires Linux, root, iproute2, ping, Python `cryptography`, boringtun-cli built
 with the device feature, and the official amneziawg-go v3 binary. All interfaces and links live
 in uniquely named disposable network namespaces; host routes are not changed.
 
-Usage: sudo python3 scripts/awg31-go-interop.py ./target/release/boringtun-cli ./amneziawg-go [--performance]
+Usage: sudo python3 scripts/awg31-go-interop.py ./target/release/boringtun-cli ./amneziawg-go [--full | --performance]
 """
 from __future__ import annotations
 
@@ -135,6 +135,22 @@ PROFILES = [
         "i5=<b 0x41574733312d49352d435053>\n",
         True,
     ),
+]
+
+
+# Fast CI/development suite: cover both protocol baselines, 3.0 and 3.1
+# combined data paths, packet-loss rekey recovery, and all CPS slots. The
+# exhaustive per-extension matrix and long soak remain available with --full.
+QUICK_PROFILES = [
+    profile for profile in PROFILES
+    if profile[0] in {
+        "vanilla WireGuard baseline",
+        "AWG 2.x baseline",
+        "bulk data integrity — AWG 3.0",
+        "bulk data integrity — AWG 3.1",
+        "rekey packet-loss recovery",
+        "CPS I1-I5 combined",
+    }
 ]
 
 
@@ -791,7 +807,7 @@ def run_profile(
         capture_proc = subprocess.Popen(
             [
                 "ip", "netns", "exec", ns_server, "tcpdump", "-U", "-n",
-                "-i", veth_server, "-s", "320", "-w", str(capture_path), "udp port 51820",
+                "-i", veth_server, "-s", "65535", "-w", str(capture_path), "udp port 51820",
             ],
             stdout=capture_log,
             stderr=subprocess.STDOUT,
@@ -955,8 +971,13 @@ def main() -> int:
     if os.geteuid() != 0:
         print("Run as root (creates disposable network namespaces).", file=sys.stderr)
         return 2
-    performance = len(sys.argv) == 4 and sys.argv[3] == "--performance"
-    if len(sys.argv) != (4 if performance else 3):
+    options = set(sys.argv[3:])
+    if options - {"--performance", "--full"} or ({"--performance", "--full"} <= options):
+        print(__doc__.split("Usage:", 1)[1].strip(), file=sys.stderr)
+        return 2
+    performance = "--performance" in options
+    full_matrix = "--full" in options
+    if len(sys.argv) != 3 + len(options):
         print(__doc__.split("Usage:", 1)[1].strip(), file=sys.stderr)
         return 2
     bt, go = (str(Path(p).resolve()) for p in sys.argv[1:3])
@@ -987,7 +1008,10 @@ def main() -> int:
                         file=sys.stderr,
                     )
     else:
-        for name, extra, awg_enabled in PROFILES:
+        selected_profiles = PROFILES if full_matrix else QUICK_PROFILES
+        suite_name = "full" if full_matrix else "quick"
+        print(f"MODE: {suite_name} interoperability suite ({len(selected_profiles) * 2} directional scenarios)")
+        for name, extra, awg_enabled in selected_profiles:
             for bt_is_server in (True, False):
                 total += 1
                 try:
