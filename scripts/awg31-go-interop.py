@@ -146,9 +146,9 @@ QUICK_PROFILES = [
     if profile[0] in {
         "vanilla WireGuard baseline",
         "AWG 2.x baseline",
-        "bulk data integrity — AWG 3.0",
-        "bulk data integrity — AWG 3.1",
+        "accelerated rekey",
         "rekey packet-loss recovery",
+        "all AWG 3.1 extensions combined",
         "CPS I1-I5 combined",
     }
 ]
@@ -748,6 +748,7 @@ def run_profile(
     bt: str, go: str, name: str, extra: str,
     awg_enabled: bool, bt_is_server: bool, performance: bool = False,
     same_implementation: str | None = None,
+    extended_matrix: bool = False,
 ) -> None:
     token = uuid.uuid4().hex[:10]
     ns_server, ns_client = f"awg31s{token}", f"awg31c{token}"
@@ -874,7 +875,10 @@ def run_profile(
             verify_udp_roundtrip(ns_server, ns_client)
         elif name in ("accelerated rekey", "long peer lifecycle soak"):
             handshake_time = initial_handshake_time
-            cycle_count = 120 if name == "long peer lifecycle soak" else 30
+            cycle_count = (
+                120 if name == "long peer lifecycle soak"
+                else 30 if extended_matrix else 1
+            )
             for cycle in range(cycle_count):
                 wait_rekey(server_iface, ns_client, SERVER_TUN, handshake_time)
                 handshake_time = last_handshake_time(server_iface)
@@ -906,7 +910,7 @@ def run_profile(
             random_trailers="random_trailers=true" in extra,
             expected_handshakes=(
                 121 if name == "long peer lifecycle soak"
-                else 31 if name == "accelerated rekey"
+                else (30 if extended_matrix else 1) + 1 if name == "accelerated rekey"
                 else 2 if name == "rekey packet-loss recovery"
                 else 1
             ),
@@ -1015,7 +1019,10 @@ def main() -> int:
             for bt_is_server in (True, False):
                 total += 1
                 try:
-                    run_profile(bt, go, name, extra, awg_enabled, bt_is_server)
+                    run_profile(
+                        bt, go, name, extra, awg_enabled, bt_is_server,
+                        extended_matrix=full_matrix,
+                    )
                 except Exception as error:
                     failures += 1
                     role = "BoringTun server" if bt_is_server else "amneziawg-go server"
