@@ -609,7 +609,7 @@ impl AmneziaConfig {
         self
     }
 
-    pub(crate) fn try_with_pre_handshake_junk(
+    pub fn try_with_pre_handshake_junk(
         mut self,
         packet_count: u16,
         packet_size_min: u16,
