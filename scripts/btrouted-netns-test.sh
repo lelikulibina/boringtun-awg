@@ -146,11 +146,16 @@ DAEMON_PID=""
 if ip netns exec "$NS" nft list table inet btrouted_it >/dev/null 2>&1; then
     fail "daemon-owned nftables table survived shutdown"
 fi
-if ip netns exec "$NS" ip -4 rule show | grep -q 'fwmark 0x80000000'; then
+if ip netns exec "$NS" ip -4 rule show | grep -Eq 'fwmark 0x8000000[01]'; then
     fail "inner packet policy rule survived shutdown"
 fi
 if ip netns exec "$NS" ip -4 rule show | grep -q 'fwmark 0x1001'; then
     fail "outer socket policy rule survived shutdown"
 fi
+for iface in wg-server awg-primary awg-secondary; do
+    if ip netns exec "$NS" ip link show dev "$iface" >/dev/null 2>&1; then
+        fail "TUN interface $iface survived shutdown"
+    fi
+done
 
 echo "btrouted namespace integration test passed"
