@@ -207,7 +207,7 @@ Upstream 3.1 вычисляет размер как `Jmin + fastrandn(Jmax - Jmi
 - Padding — нулевые байты, добавляемые к внутреннему IP-пакету **до** AEAD encryption.
 - Получатель расшифровывает payload и обрезает его по IPv4 Total Length или IPv6 Payload Length.
 - Значение выбирается включительно и ограничивается доступным местом в текущем UDP window.
-- **Поведение менялось между поколениями:** в AWG 3.0 (`v3.0.0`) CPA ограничивался внутренним TUN MTU и рассчитывался от длины IP payload; в AWG 3.1 используется per-peer UDP window и размер полного базового transport datagram (`S4 + 32 + payload`). BoringTun в этой ветке реализует 3.1 semantics.
+- **Поведение менялось между поколениями:** в AWG 3.0 (`v3.0.0`) CPA ограничивался внутренним TUN MTU и рассчитывался от длины IP payload; в AWG 3.1 используется per-peer UDP window и размер полного базового transport datagram (`S4 + 32 + payload`). BoringTun по умолчанию реализует 3.1 semantics; для точного legacy-поведения 3.0 доступны `content_padding_mode=mtu` в UAPI и `with_legacy_content_padding(true)` в библиотечном API.
 - Публичная документация описывает CPA как padding до внутреннего MTU, что соответствует 3.0; pinned 3.1 Go implementation использует peer UDP window. Это high-water heuristic, а не измеренный path MTU.
 - При обмене AWG 3.0 ↔ 3.1 CPA остаётся wire-compatible: padding находится внутри AEAD и удаляется по IP length field, но размерный профиль/предел padding может отличаться. Для точного воспроизведения 3.0 DPI-профиля текущей реализации нужен отдельный legacy mode; он не включён автоматически.
 - `0-0` означает выключено; любой другой диапазон может включать 0 как допустимый результат.
