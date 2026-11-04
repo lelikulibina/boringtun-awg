@@ -31,6 +31,7 @@
 |---|---|---|
 | `header_protection_key` | 64 hex-символа (32 байта) | Нулевой ключ отключает HP. Один ключ на обоих концах. При HP все S1-S4 должны быть ≥12 байт. |
 | `content_padding_addition` | `N` или `MIN-MAX`, uint32 | Включительный диапазон нулевого padding внутри transport plaintext до AEAD. `0-0` выключает. |
+| `content_padding_mode` | `udp_window` или `mtu` | BoringTun-only: `udp_window` (default) — AWG 3.1; `mtu` — legacy CPA AWG 3.0. На проводе режим не согласуется. |
 | `random_trailers` | boolean | `false`. Внешний случайный trailer для handshake/cookie; нулевой padding внутри transport AEAD. |
 | `disable_cookies` | boolean | `false`. Пропускает under-load MAC2/cookie gate, но MAC1 остаётся обязательным. Входящие Cookie Reply продолжают приниматься. |
 | `rekey_after_time` | секунды, uint32 range | 120 с по умолчанию. |
