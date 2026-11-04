@@ -1095,8 +1095,16 @@ impl AmneziaConfig {
         let trailer_limit = max_datagram_size
             .min(buffer.len())
             .min(MAX_SENDABLE_DATAGRAM);
+        // Upstream's Device.randomTrailer (Cookie Reply) uses the fixed
+        // DefaultUdpWindow=500. Handshake Init/Response use the peer's learned
+        // udpWindow; transport trailers are handled inside the AEAD path.
+        let trailer_udp_window = if kind == PacketKind::CookieReply {
+            DEFAULT_UDP_WINDOW
+        } else {
+            udp_window
+        };
         let trailer_len = if self.random_trailers && kind != PacketKind::TransportData {
-            self.random_trailer_len(prefixed_size, udp_window, trailer_limit, rng)
+            self.random_trailer_len(prefixed_size, trailer_udp_window, trailer_limit, rng)
         } else {
             0
         };
