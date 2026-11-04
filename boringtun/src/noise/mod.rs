@@ -39,6 +39,8 @@ use mock_instant::Instant;
 
 /// The default value to use for rate limiting, when no other rate limiter is defined
 const PEER_HANDSHAKE_RATE_LIMIT: u64 = 10;
+/// Standalone Tunn default, matching the usual WireGuard userspace MTU.
+const DEFAULT_TUN_MTU: usize = 1420;
 
 const IPV4_MIN_HEADER_SIZE: usize = 20;
 const IPV4_LEN_OFF: usize = 2;
@@ -92,6 +94,8 @@ pub struct Tunn {
     /// Upstream-style high-water mark of base datagrams sent to this peer,
     /// before transport padding or RandomTrailers are added.
     udp_window: usize,
+    /// TUN MTU used by upstream-equivalent fallback WireGuard padding.
+    mtu: usize,
     pending_amnezia_junk: Option<PendingAmneziaJunk>,
     rate_limiter: Arc<RateLimiter>,
 }
@@ -224,6 +228,14 @@ impl Tunn {
             }
             _ => return Err(WireGuardError::InvalidPacket),
         })
+    }
+
+    /// Set the inner TUN MTU used for standard WireGuard transport padding.
+    ///
+    /// Standalone Tunn users default to 1420 bytes. The device layer should
+    /// override this with the actual interface MTU.
+    pub fn set_mtu(&mut self, mtu: usize) {
+        self.mtu = mtu.max(1).min(amnezia::MAX_SENDABLE_DATAGRAM);
     }
 
     pub fn is_expired(&self) -> bool {
@@ -390,6 +402,7 @@ impl Tunn {
             rx_bytes: Default::default(),
             amnezia,
             udp_window: amnezia::DEFAULT_UDP_WINDOW,
+            mtu: DEFAULT_TUN_MTU,
             pending_amnezia_junk: None,
 
             packet_queue: VecDeque::new(),
@@ -550,6 +563,7 @@ impl Tunn {
                 src.len(),
                 wire_packet_size,
                 self.udp_window,
+                self.mtu,
                 &mut self.handshake.rng,
             );
             if dst.len() < src.len() + content_padding + DATA_OVERHEAD_SZ {
@@ -695,6 +709,7 @@ impl Tunn {
             0,
             wire_packet_size,
             self.udp_window,
+            self.mtu,
             &mut self.handshake.rng,
         );
         let keepalive_packet = session.format_packet_data(
