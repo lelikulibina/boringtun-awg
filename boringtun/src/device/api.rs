@@ -23,16 +23,14 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const SOCK_DIR: &str = "/var/run/wireguard/";
-/// Where `amneziawg-tools` looks for a userspace implementation's UAPI socket.
-///
-/// `wg` uses `/var/run/wireguard/`, but `awg` is a fork and searches
-/// `/var/run/amneziawg/%s.sock` instead, so a socket published only under
-/// `SOCK_DIR` is invisible to it -- `awg setconf` fails with "Operation not
-/// supported" because it falls back to netlink and finds a TUN device that is
-/// not an amneziawg interface. Since AmneziaWG support is the point of this
-/// fork, publish in both places rather than choosing.
-const AWG_SOCK_DIR: &str = "/var/run/amneziawg/";
+/// All WireGuard and AmneziaWG protocol variants share one UAPI namespace.
+/// `/run` is the canonical runtime directory on Linux (`/var/run` is commonly
+/// a compatibility symlink to it).
+const SOCK_DIR: &str = "/run/wireguard";
+
+fn uapi_socket_path(name: &str) -> String {
+    format!("{}/{}.sock", SOCK_DIR, name)
+}
 
 /// Parse an AmneziaWG magic-header value: either a bare tag (`"1"`) or an
 /// inclusive range (`"342871004-442871003"`). A bare value is a degenerate
@@ -356,42 +354,23 @@ fn create_sock_dir(dir: &str) {
 }
 
 impl Device {
-    /// Register the api handler for this Device. The api handler receives stream connections on a Unix socket
-    /// with a known path: /var/run/wireguard/{tun_name}.sock.
+    /// Register the single UAPI handler for this Device. All protocol
+    /// variants (WireGuard and every supported AmneziaWG version) use the
+    /// canonical path `/run/wireguard/{tun_name}.sock`.
     ///
-    /// The same socket is also published at /var/run/amneziawg/{tun_name}.sock
-    /// as a symlink, because `amneziawg-tools` searches that directory rather
-    /// than the WireGuard one; without it `awg` cannot see this interface at
-    /// all. There is still exactly one socket and one accept loop. If the
-    /// symlink cannot be created the handler is registered anyway and a warning
-    /// is logged, leaving the device reachable by `wg` but not `awg`.
+    /// Do not create a second socket or compatibility symlink: the UAPI
+    /// protocol is identical for WG and AWG, and the daemon owns one endpoint.
     pub fn register_api_handler(&mut self) -> Result<(), Error> {
         let name = self.iface.name()?;
-        let path = format!("{}/{}.sock", SOCK_DIR, name);
+        let path = uapi_socket_path(&name);
 
         create_sock_dir(SOCK_DIR);
 
-        let _ = remove_file(&path); // Attempt to remove the socket if already exists
+        let _ = remove_file(&path); // Remove a stale endpoint before binding.
 
-        let api_listener = UnixListener::bind(&path).map_err(Error::ApiSocket)?; // Bind a new socket to the path
+        let api_listener = UnixListener::bind(&path).map_err(Error::ApiSocket)?;
 
         self.cleanup_paths.push(path.clone());
-
-        // Also publish where `awg` looks. A symlink rather than a second
-        // listener, so there is exactly one socket and one accept loop; both
-        // toolchains then reach the same device. Failure is not fatal -- the
-        // daemon still works, just only under `wg`.
-        let awg_path = format!("{}/{}.sock", AWG_SOCK_DIR, name);
-        create_sock_dir(AWG_SOCK_DIR);
-        let _ = remove_file(&awg_path);
-        match std::os::unix::fs::symlink(&path, &awg_path) {
-            Ok(()) => self.cleanup_paths.push(awg_path),
-            Err(e) => tracing::warn!(
-                message = "could not publish the UAPI socket for amneziawg-tools; awg will not find this interface",
-                path = awg_path.as_str(),
-                error = %e
-            ),
-        }
 
         self.queue.new_event(
             api_listener.as_raw_fd(),
@@ -1064,6 +1043,18 @@ fn api_set_peer(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn all_protocols_use_the_single_wireguard_uapi_socket_namespace() {
+        assert_eq!(
+            uapi_socket_path("wg0"),
+            "/run/wireguard/wg0.sock"
+        );
+        assert_eq!(
+            uapi_socket_path("awg0"),
+            "/run/wireguard/awg0.sock"
+        );
+    }
 
     /// Protocol imitation survives a `set=1` that carries AmneziaWG keys.
     ///
