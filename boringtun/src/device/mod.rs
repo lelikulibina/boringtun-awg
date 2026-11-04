@@ -1680,11 +1680,11 @@ mod ingress_tests {
         // limiter in the state the test is about, and it says so.
         for _ in 0..HANDSHAKE_RATE_LIMIT {
             limiter
-                .verify_packet(obf, &mut OsRng, Some(src), stripped, &mut scratch)
+                .verify_packet(obf, &mut OsRng, Some(src), &stripped, &mut scratch)
                 .expect("below the handshake rate limit, no cookie is demanded");
         }
         let cookie_len =
-            match limiter.verify_packet(obf, &mut OsRng, Some(src), stripped, &mut scratch) {
+            match limiter.verify_packet(obf, &mut OsRng, Some(src), &stripped, &mut scratch) {
                 Err(TunnResult::WriteToNetwork(cookie)) => cookie.len(),
                 Ok(_) => panic!("over the rate limit the limiter must demand a cookie"),
                 Err(other) => panic!("expected a cookie reply, got {:?}", other),
