@@ -2215,7 +2215,7 @@ mod tests {
         let ranged = AmneziaConfig::new(0, 0, 0, 0).with_content_padding_addition(4, 12);
 
         for _ in 0..256 {
-            let padding = ranged.content_padding_size(100, 132, 500, &mut rng);
+            let padding = ranged.content_padding_size(100, 132, 500, 1420, &mut rng);
             assert!(
                 (4..=12).contains(&padding),
                 "selected ContentPaddingAddition {padding} outside inclusive range 4..=12"
@@ -2229,16 +2229,16 @@ mod tests {
             "the configured maximum is inclusive"
         );
         assert_eq!(
-            ranged.content_padding_size(100, 495, 500, &mut rng),
+            ranged.content_padding_size(100, 495, 500, 1420, &mut rng),
             5,
             "padding is clamped to the remaining UDP window"
         );
         assert_eq!(
-            ranged.content_padding_size(100, 500, 500, &mut rng),
+            ranged.content_padding_size(100, 500, 500, 1420, &mut rng),
             0,
             "a full UDP window leaves no room for padding"
         );
-        let keepalive_padding = ranged.content_padding_size(0, 32, 500, &mut rng);
+        let keepalive_padding = ranged.content_padding_size(0, 32, 500, 1420, &mut rng);
         assert!(
             (4..=12).contains(&keepalive_padding),
             "upstream also applies ContentPaddingAddition to empty keepalives"
