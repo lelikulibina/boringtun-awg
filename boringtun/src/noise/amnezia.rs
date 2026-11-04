@@ -1159,7 +1159,10 @@ impl AmneziaConfig {
 
     /// Match upstream calculatePaddingSize(packetSize, tun.mtu).
     fn calculate_wg_padding_size(packet_size: usize, mtu: usize) -> usize {
-        let mtu = mtu.max(1);
+        if mtu == 0 {
+            return ((packet_size + 15) & !15) - packet_size;
+        }
+
         let last_unit = if packet_size > mtu {
             packet_size % mtu
         } else {
@@ -1916,7 +1919,7 @@ mod tests {
 
     #[test]
     fn wireguard_padding_matches_upstream_mtu_algorithm() {
-        assert_eq!(calculate_wg_padding_size(0, 1420), 0);
+        assert_eq!(AmneziaConfig::calculate_wg_padding_size(0, 1420), 0);
         assert_eq!(calculate_wg_padding_size(28, 1420), 4);
         assert_eq!(calculate_wg_padding_size(1419, 1420), 1);
         assert_eq!(calculate_wg_padding_size(1420, 1420), 0);
