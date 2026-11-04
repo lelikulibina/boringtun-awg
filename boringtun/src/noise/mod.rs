@@ -689,8 +689,7 @@ impl Tunn {
 
         // The handshake-confirmation keepalive goes through the same transport
         // padding path as any other empty packet in upstream amneziawg-go.
-        let wire_packet_size =
-            DATA_OVERHEAD_SZ + self.amnezia.transport_packet_junk_size as usize;
+        let wire_packet_size = DATA_OVERHEAD_SZ + self.amnezia.transport_packet_junk_size as usize;
         self.udp_window = self.udp_window.max(wire_packet_size);
         let content_padding = self.amnezia.transport_padding_size(
             0,
@@ -3726,7 +3725,7 @@ mod tests {
 
     #[test]
     fn header_protection_and_random_trailers_interoperate_end_to_end() {
-        let config = AmneziaConfig::new(284, 659, 1045, 12)
+        let config = AmneziaConfig::new(64, 64, 64, 64)
             .with_header_protection_key([0x6b; 32])
             .with_random_trailers(true);
         let (mut initiator, mut responder) = create_two_tuns_with_amnezia(config);
@@ -3851,7 +3850,11 @@ mod tests {
             other => panic!("expected transport datagram, got {:?}", other),
         };
         let base_size = DATA_OVERHEAD_SZ + 600 + large_packet.len();
-        assert_eq!(outbound.len(), base_size, "first high-water packet is not padded");
+        assert_eq!(
+            outbound.len(),
+            base_size,
+            "first high-water packet is not padded"
+        );
         assert_eq!(
             sender.udp_window, base_size,
             "the sender must learn its own largest base datagram before padding"
@@ -3925,7 +3928,11 @@ mod tests {
             other => panic!("expected transport datagram, got {:?}", other),
         };
         let base_size = DATA_OVERHEAD_SZ + packet.len();
-        assert_eq!(outbound.len(), base_size, "the new high-water packet has no room for a trailer");
+        assert_eq!(
+            outbound.len(),
+            base_size,
+            "the new high-water packet has no room for a trailer"
+        );
         assert_eq!(sender.udp_window, base_size);
         assert_eq!(receiver.udp_window, 500);
 
