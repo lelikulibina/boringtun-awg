@@ -98,7 +98,7 @@ impl RoutingPlan {
                 Err(_) => "ip",
             };
             output.push_str(&format!(
-                "add rule {} {} prerouting iifname \"{}\" {} daddr {} meta mark set 0x{:x}\n",
+                "add rule {} {} prerouting iifname \"{}\" {} daddr {} meta mark set 0x{:x} return\n",
                 self.nft_family, self.nft_table, rule.ingress, family_match,
                 rule.destination, rule.mark
             ));
