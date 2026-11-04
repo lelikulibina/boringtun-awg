@@ -2348,7 +2348,7 @@ mod tests {
         assert!(sessions_before > 0);
 
         let mut dst = [0u8; 2048];
-        let _init = unwrap_network_packet(my_tun.format_handshake_initiation(&mut dst, true));
+        let _ = unwrap_network_packet(my_tun.format_handshake_initiation(&mut dst, true));
         my_tun.timers.max_handshake_attempts = 0;
         my_tun.packet_queue.push_back(vec![0x45, 0x00]);
 
