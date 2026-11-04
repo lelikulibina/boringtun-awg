@@ -115,6 +115,30 @@ pub struct DeviceHandle {
     threads: Vec<JoinHandle<()>>,
 }
 
+/// Read-only interface state returned by the typed control API.
+#[derive(Clone, Debug)]
+pub struct DeviceSnapshot {
+    pub name: String,
+    pub listen_port: u16,
+    pub mtu: usize,
+    pub fwmark: Option<u32>,
+    pub peers: Vec<PeerSnapshot>,
+}
+
+/// Read-only peer state. Byte counters and handshake age are taken directly
+/// from the live Noise tunnel; no UAPI serialization or socket is involved.
+#[derive(Clone, Debug)]
+pub struct PeerSnapshot {
+    pub public_key: [u8; 32],
+    pub index: u32,
+    pub endpoint: Option<SocketAddr>,
+    pub allowed_ips: Vec<AllowedIP>,
+    pub persistent_keepalive: Option<(u32, u32)>,
+    pub last_handshake: Option<std::time::Duration>,
+    pub tx_bytes: u64,
+    pub rx_bytes: u64,
+}
+
 // Not `Copy`: `amnezia` owns an optional imitation domain.
 #[derive(Debug, Clone)]
 pub struct DeviceConfig {
@@ -431,6 +455,51 @@ impl DeviceHandle {
     /// Current UDP listen port selected for this interface.
     pub fn listen_port(&self) -> u16 {
         self.device.read().listen_port
+    }
+
+    /// Return a consistent read-only snapshot of the interface and its peers.
+    ///
+    /// This reads the live Device/Noise state directly. It deliberately does
+    /// not query or serialize UAPI, so it is available in daemon mode where
+    /// UAPI is completely disabled.
+    pub fn snapshot(&self) -> Result<DeviceSnapshot, Error> {
+        let device = self.device.read();
+        let mut peers = Vec::with_capacity(device.peers.len());
+
+        for (public_key, peer_ref) in &device.peers {
+            let allowed_ips = device
+                .peer_allowed_ips(peer_ref)
+                .into_iter()
+                .map(|(addr, cidr)| AllowedIP { addr, cidr })
+                .collect();
+            let peer = peer_ref.lock();
+            let endpoint = peer.endpoint().addr;
+            let keepalive = peer.persistent_keepalive_range();
+            let (last_handshake, tx_bytes, rx_bytes, _, _) = peer.tunnel.stats();
+
+            peers.push(PeerSnapshot {
+                public_key: *public_key.as_bytes(),
+                index: peer.index(),
+                endpoint,
+                allowed_ips,
+                persistent_keepalive: keepalive,
+                last_handshake,
+                tx_bytes: tx_bytes as u64,
+                rx_bytes: rx_bytes as u64,
+            });
+        }
+
+        // HashMap iteration order is intentionally unspecified. Stable order
+        // makes snapshots suitable for monitoring, tests, and config diffs.
+        peers.sort_by_key(|peer| peer.public_key);
+
+        Ok(DeviceSnapshot {
+            name: device.iface.name()?,
+            listen_port: device.listen_port,
+            mtu: device.mtu.load(Ordering::Relaxed),
+            fwmark: device.fwmark,
+            peers,
+        })
     }
 
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
