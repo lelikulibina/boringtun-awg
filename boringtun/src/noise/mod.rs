@@ -1447,7 +1447,11 @@ mod tests {
             TunnResult::Done
         ));
 
-        mock_instant::MockClock::advance(Duration::from_millis(1));
+        mock_instant::MockClock::advance(Duration::from_millis(2));
+        assert!(matches!(
+            initiator.encapsulate(&packet, &mut network),
+            TunnResult::WriteToNetwork(_)
+        ));
         match initiator.update_timers(&mut network) {
             TunnResult::WriteToNetwork(packet) => assert_eq!(
                 packet.len(),
@@ -1485,7 +1489,11 @@ mod tests {
             TunnResult::WriteToNetwork(_)
         ));
 
-        mock_instant::MockClock::advance(Duration::from_millis(1999));
+        mock_instant::MockClock::advance(Duration::from_millis(2001));
+        assert!(matches!(
+            initiator.encapsulate(&packet, &mut network),
+            TunnResult::WriteToNetwork(_)
+        ));
         let rekey_init = unwrap_network_packet(initiator.update_timers(&mut network));
         assert!(matches!(
             Tunn::parse_incoming_packet(initiator.handshake.obf, &rekey_init),
@@ -1539,9 +1547,14 @@ mod tests {
         ));
 
         // The first data send is at t=1s; RekeyAfterTime is measured from
-        // session establishment, so rekey is due at t=120s.
+        // session establishment. Upstream checks it on each outbound data
+        // traversal, with a strict greater-than comparison.
+        mock_instant::MockClock::advance(Duration::from_secs(119) + Duration::from_millis(2));
+        assert!(matches!(
+            initiator.encapsulate(&packet, &mut network),
+            TunnResult::WriteToNetwork(_)
+        ));
         // Both peers temporarily retain old and new receive keys.
-        mock_instant::MockClock::advance(Duration::from_secs(119));
         let rekey_init = unwrap_network_packet(initiator.update_timers(&mut network));
         assert!(matches!(
             Tunn::parse_incoming_packet(initiator.handshake.obf, &rekey_init),
