@@ -2321,7 +2321,7 @@ mod tests {
             .with_rekey_timeout(5, 5)
             .with_reject_after_time(500, 500)
             .with_keepalive_timeout(200, 200);
-        let (mut my_tun, mut their_tun) = create_two_tuns_with_amnezia(config);
+        let (mut my_tun, mut their_tun) = create_two_tuns_and_handshake_with_amnezia(config);
         let mut my_dst = [0u8; 1024];
 
         // Advance time 1 second and "send" 1 packet so that we send a handshake
