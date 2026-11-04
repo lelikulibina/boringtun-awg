@@ -118,7 +118,7 @@ impl RoutingPlan {
                     egress.table_id.to_string(),
                 ]);
                 commands.push(vec![
-                    family.into(), "rule".into(), "replace".into(), "priority".into(),
+                    family.into(), "rule".into(), "add".into(), "priority".into(),
                     egress.ip_rule_priority.to_string(), "fwmark".into(),
                     format!("0x{:x}", egress.mark), "lookup".into(),
                     egress.table_id.to_string(),
