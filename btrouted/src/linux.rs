@@ -28,6 +28,15 @@ pub fn run_ip(args: &[String]) -> Result<(), LinuxError> { run("ip", args) }
 /// Replace only the table named by this daemon's configuration, then apply
 /// its complete nft batch. nft processes the batch transactionally.
 pub fn apply_nft(plan: &RoutingPlan) -> Result<(), LinuxError> {
+    let existing = Command::new("nft")
+        .args(["list", "table", &plan.nft_family, &plan.nft_table])
+        .output()
+        .map_err(|source| LinuxError::Spawn { program: "nft".into(), source })?;
+    let mut script = String::new();
+    if existing.status.success() {
+        script.push_str(&format!("delete table {} {}\\n", plan.nft_family, plan.nft_table));
+    }
+    script.push_str(&plan.nft_script());
     let mut child = Command::new("nft")
         .args(["-f", "-"])
         .stdin(Stdio::piped())
@@ -35,7 +44,7 @@ pub fn apply_nft(plan: &RoutingPlan) -> Result<(), LinuxError> {
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|source| LinuxError::Spawn { program: "nft".into(), source })?;
-    child.stdin.take().expect("piped stdin").write_all(plan.nft_script().as_bytes())
+    child.stdin.take().expect("piped stdin").write_all(script.as_bytes())
         .map_err(|source| LinuxError::Spawn { program: "nft stdin".into(), source })?;
     let output = child.wait_with_output().map_err(|source| LinuxError::Spawn {
         program: "nft".into(), source
