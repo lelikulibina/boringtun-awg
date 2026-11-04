@@ -124,10 +124,11 @@ pub struct DeviceConfig {
     pub use_multi_queue: bool,
     #[cfg(target_os = "linux")]
     pub uapi_fd: i32,
-    /// Whether to create the userspace UAPI Unix socket when no file descriptor
-    /// is supplied. Defaults to true for compatibility with wg/awg tooling.
-    /// Embedding applications such as btrouted should set this to false and
-    /// manage the device through the typed control API instead.
+    /// Whether UAPI is enabled for this device. Defaults to true for
+    /// compatibility with wg/awg tooling. When false, no UAPI handler is
+    /// registered and any configured UAPI file descriptor is ignored.
+    /// Embedding applications such as btrouted must set this to false and
+    /// manage the device exclusively through the typed control API instead.
     pub enable_uapi: bool,
     /// Optional UDP listen port. None preserves the historical ephemeral port.
     pub listen_port: Option<u16>,
