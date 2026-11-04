@@ -721,17 +721,17 @@ impl Tunn {
             .map(|deadline| now >= deadline)
             .unwrap_or(false);
         if send_keepalive_due || persistent_keepalive_due {
-            let rearm_send_keepalive = send_keepalive_due && self.timers.need_another_keepalive;
+            let rearm_send_keepalive = self.timers.need_another_keepalive;
             if send_keepalive_due {
                 tracing::debug!("KEEPALIVE(KEEPALIVE_TIMEOUT)");
                 self.timers.send_keepalive_deadline = None;
-                self.timers.need_another_keepalive = false;
             }
             if persistent_keepalive_due {
                 tracing::debug!("KEEPALIVE(PERSISTENT_KEEPALIVE)");
                 self.timers.persistent_keepalive_deadline = None;
                 self.timer_tick(TimePersistentKeepalive);
             }
+            self.timers.need_another_keepalive = false;
 
             let result = self.encapsulate(&[], dst);
             if rearm_send_keepalive {
