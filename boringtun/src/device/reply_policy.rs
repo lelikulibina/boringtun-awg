@@ -205,10 +205,6 @@ pub(crate) enum CookieVerdict {
     /// The source is an address no reply may ever be aimed at. Attacker-chosen,
     /// arbitrarily frequent, and not worth a log line.
     RefusedSource,
-    /// The reply is larger than the datagram that provoked it. Determined
-    /// entirely by S1/S2/S3, so it is the operator's to fix and worth saying so
-    /// once.
-    WouldAmplify,
 }
 
 /// Whether the cookie reply just produced for a `request_len`-byte datagram
@@ -272,11 +268,7 @@ pub(crate) enum CookieVerdict {
 /// reply is 84 bytes shorter than an initiation and 28 shorter than a response
 /// before any prefix is applied — see
 /// [`tests::a_prefix_no_larger_than_the_initiations_is_never_an_amplifier`].
-pub(crate) fn cookie_verdict(
-    from: SocketAddr,
-    _request_len: usize,
-    _reply_len: usize,
-) -> CookieVerdict {
+pub(crate) fn cookie_verdict(from: SocketAddr) -> CookieVerdict {
     // Match amneziawg-go: S3 is sent verbatim even when the cookie reply is
     // larger than the triggering handshake. Preserve only source-address
     // hygiene; packet-size parity is not part of the upstream wire contract.
@@ -346,7 +338,7 @@ mod tests {
         // S1 = 120, S3 = 110: request 268, reply 174. The reply attenuates.
         for addr in ["127.0.0.1:51820", "[::1]:51820", "[::ffff:127.0.0.1]:51820"] {
             assert_eq!(
-                cookie_verdict(peer(addr), 268, 174),
+                cookie_verdict(peer(addr)),
                 CookieVerdict::Send,
                 "{} must receive the cookie its next handshake needs",
                 addr
@@ -507,7 +499,7 @@ mod tests {
         let request = HANDSHAKE_INIT_SZ; // S1 = 0
         let reply = 65443 + COOKIE_REPLY_SZ;
         assert_eq!(
-            cookie_verdict(peer("203.0.113.5:40000"), request, reply),
+            cookie_verdict(peer("203.0.113.5:40000")),
             CookieVerdict::Send,
             "upstream sends the configured S3 reply even when larger: {} bytes to {}",
             reply,
@@ -521,14 +513,14 @@ mod tests {
     #[test]
     fn cookie_reply_size_does_not_change_upstream_verdict() {
         let from = peer("203.0.113.5:40000");
-        assert_eq!(cookie_verdict(from, 268, 267), CookieVerdict::Send);
-        assert_eq!(cookie_verdict(from, 268, 268), CookieVerdict::Send);
+        assert_eq!(cookie_verdict(from), CookieVerdict::Send);
+        assert_eq!(cookie_verdict(from), CookieVerdict::Send);
         assert_eq!(
-            cookie_verdict(from, 268, 269),
+            cookie_verdict(from),
             CookieVerdict::Send,
             "S3 padding is not capped by the triggering datagram"
         );
-        assert_eq!(cookie_verdict(from, 1, 65_507), CookieVerdict::Send);
+        assert_eq!(cookie_verdict(from), CookieVerdict::Send);
     }
 
     /// The configurations real deployments run are untouched.
@@ -571,7 +563,7 @@ mod tests {
     fn a_well_sized_cookie_reply_is_still_refused_to_a_forbidden_source() {
         for addr in ["255.255.255.255:40000", "[::ffff:224.0.0.1]:40000"] {
             assert_eq!(
-                cookie_verdict(peer(addr), 268, 174),
+                cookie_verdict(peer(addr)),
                 CookieVerdict::RefusedSource,
                 "{} must not be replied to at any size",
                 addr
