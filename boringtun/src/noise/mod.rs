@@ -2980,6 +2980,42 @@ mod tests {
     }
 
     #[test]
+    fn wireguard_mtu_padding_is_applied_inside_transport_aead() {
+        // A 29-byte IPv4/UDP packet is padded to 32 bytes with the default
+        // 1420-byte TUN MTU, and to the configured MTU of 30 bytes when set.
+        for (mtu, expected_plaintext_len) in [(None, 32usize), (Some(30usize), 30usize)] {
+            let (mut sender, mut receiver) = create_two_tuns_and_handshake();
+            if let Some(mtu) = mtu {
+                sender.set_mtu(mtu);
+            }
+
+            let mut packet = create_ipv4_udp_packet();
+            packet.truncate(29);
+            packet[2..4].copy_from_slice(&29u16.to_be_bytes());
+            packet[24..26].copy_from_slice(&9u16.to_be_bytes());
+
+            let mut network_buffer = vec![0u8; 2048];
+            let outbound = match sender.encapsulate(&packet, &mut network_buffer) {
+                TunnResult::WriteToNetwork(datagram) => datagram.to_vec(),
+                other => panic!("expected padded transport datagram, got {:?}", other),
+            };
+            assert_eq!(
+                outbound.len(),
+                DATA_OVERHEAD_SZ + expected_plaintext_len,
+                "default and configured MTU padding must match upstream framing"
+            );
+
+            let mut tunnel_buffer = vec![0u8; 2048];
+            match receiver.decapsulate(None, &outbound, &mut tunnel_buffer) {
+                TunnResult::WriteToTunnelV4(restored, _) => {
+                    assert_eq!(restored, packet.as_slice())
+                }
+                other => panic!("expected original IP packet, got {:?}", other),
+            }
+        }
+    }
+
+    #[test]
     fn amnezia_s1_to_s4_full_handshake_and_data() {
         let amnezia = AmneziaConfig::new(5, 7, 11, 13);
         let (mut my_tun, mut their_tun) = create_two_tuns_with_amnezia(amnezia);
