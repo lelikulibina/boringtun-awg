@@ -1839,7 +1839,10 @@ mod tests {
 
         let unequal = AmneziaConfig::new(284, 659, 1045, 12).with_random_trailers(true);
         assert!(
-            unequal.validate_random_trailers(obf).unwrap_err().contains("S1=S2=S3=S4"),
+            unequal
+                .validate_random_trailers(obf)
+                .unwrap_err()
+                .contains("S1=S2=S3=S4"),
             "unequal S values can cause transport packets to be classified as handshakes"
         );
 
