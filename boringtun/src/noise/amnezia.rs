@@ -2136,6 +2136,28 @@ mod tests {
     }
 
     #[test]
+    fn content_padding_legacy_mode_matches_awg30_mtu_clamping() {
+        let legacy = AmneziaConfig::new(0, 0, 0, 0)
+            .with_content_padding_addition(100, 100)
+            .with_legacy_content_padding(true);
+        let mut rng = ChaCha8Rng::seed_from_u64(0xA030);
+
+        // AWG 3.0 clamps against MTU - (packet_size % MTU), not UDP window.
+        assert_eq!(legacy.content_padding_size(1400, 1432, 2000, 1420, &mut rng), 20);
+        assert_eq!(legacy.content_padding_size(1421, 1453, 2000, 1420, &mut rng), 100);
+        // Upstream's MTU=0 special case leaves CPA unbounded by MTU.
+        assert_eq!(legacy.content_padding_size(1400, 1432, 2000, 0, &mut rng), 100);
+
+        let modern = AmneziaConfig::new(0, 0, 0, 0)
+            .with_content_padding_addition(100, 100);
+        assert_eq!(
+            modern.content_padding_size(1400, 1432, 1450, 1420, &mut rng),
+            18,
+            "AWG 3.1 clamps against the peer UDP high-water mark"
+        );
+    }
+
+    #[test]
     fn content_padding_range_mapper_is_inclusive_and_rejects_modulo_bias_tail() {
         let min = 7u32;
         let max = 16u32;
