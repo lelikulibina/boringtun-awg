@@ -2053,6 +2053,48 @@ mod tests {
     }
 
     #[test]
+    fn cookie_random_trailer_uses_device_default_window_not_peer_window() {
+        let cfg = AmneziaConfig::new(12, 12, 12, 12).with_random_trailers(true);
+        let obf = ObfuscationRanges::default();
+        let mut peer_window_rng = ChaCha8Rng::seed_from_u64(0xC00C1E);
+        let mut default_window_rng = ChaCha8Rng::seed_from_u64(0xC00C1E);
+        let mut peer_window_buffer = vec![0u8; 4096];
+        let mut default_window_buffer = peer_window_buffer.clone();
+        write_tag(&mut peer_window_buffer, COOKIE_REPLY);
+        write_tag(&mut default_window_buffer, COOKIE_REPLY);
+
+        let peer_window_wire = cfg
+            .prepend_outbound_with_limits(
+                obf,
+                &mut peer_window_buffer,
+                COOKIE_REPLY_SZ,
+                10_000,
+                4096,
+                &mut peer_window_rng,
+            )
+            .expect("cookie reply fits")
+            .to_vec();
+        let default_window_wire = cfg
+            .prepend_outbound_with_limits(
+                obf,
+                &mut default_window_buffer,
+                COOKIE_REPLY_SZ,
+                DEFAULT_UDP_WINDOW,
+                4096,
+                &mut default_window_rng,
+            )
+            .expect("cookie reply fits")
+            .to_vec();
+
+        assert_eq!(
+            peer_window_wire.len(),
+            default_window_wire.len(),
+            "Cookie Reply trailers must use the device-level 500-byte window, independent of the peer high-water mark"
+        );
+        assert!(peer_window_wire.len() <= DEFAULT_UDP_WINDOW);
+    }
+
+    #[test]
     fn cookie_random_trailer_is_bounded_by_triggering_request() {
         let cfg = AmneziaConfig::new(12, 12, 12, 12).with_random_trailers(true);
         let mut rng = ChaCha8Rng::seed_from_u64(0xC001);
