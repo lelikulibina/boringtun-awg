@@ -8,7 +8,14 @@ use boringtun::noise::handshake::ObfuscationRanges;
 use boringtun::x25519;
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::str::FromStr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
+
+static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+extern "C" fn request_shutdown(_: libc::c_int) {
+    SHUTDOWN_REQUESTED.store(true, Ordering::Relaxed);
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum RuntimeError {
@@ -22,6 +29,8 @@ pub enum RuntimeError {
     Endpoint { endpoint: String, reason: String },
     #[error("failed to enable IP forwarding: {0}")]
     Forwarding(String),
+    #[error("failed to install signal handler: {0}")]
+    Signal(String),
 }
 
 pub struct Runtime {
@@ -136,10 +145,20 @@ impl Runtime {
             .collect()
     }
 
-    /// Keep the daemon alive and periodically publish peer counters.
-    pub fn run(self) -> ! {
-        loop {
-            std::thread::sleep(self.stats_interval);
+    /// Keep the daemon alive, publish peer counters, and stop cleanly on SIGINT/SIGTERM.
+    pub fn run(mut self) -> Result<(), RuntimeError> {
+        install_signal_handlers()?;
+        while !SHUTDOWN_REQUESTED.load(Ordering::Relaxed) {
+            let mut elapsed = 0;
+            while elapsed < self.stats_interval.as_secs()
+                && !SHUTDOWN_REQUESTED.load(Ordering::Relaxed)
+            {
+                std::thread::sleep(Duration::from_secs(1));
+                elapsed += 1;
+            }
+            if SHUTDOWN_REQUESTED.load(Ordering::Relaxed) {
+                break;
+            }
             match self.snapshots() {
                 Ok(snapshots) => {
                     for device in snapshots {
@@ -162,6 +181,14 @@ impl Runtime {
                 }
             }
         }
+
+        for device in &self.devices {
+            device.shutdown();
+        }
+        for device in &mut self.devices {
+            device.wait();
+        }
+        Ok(())
     }
 }
 
@@ -174,6 +201,20 @@ impl Drop for Runtime {
             restore_forwarding(state);
         }
     }
+}
+
+
+fn install_signal_handlers() -> Result<(), RuntimeError> {
+    SHUTDOWN_REQUESTED.store(false, Ordering::Relaxed);
+    unsafe {
+        if libc::signal(libc::SIGINT, request_shutdown as libc::sighandler_t) == libc::SIG_ERR {
+            return Err(RuntimeError::Signal("SIGINT".into()));
+        }
+        if libc::signal(libc::SIGTERM, request_shutdown as libc::sighandler_t) == libc::SIG_ERR {
+            return Err(RuntimeError::Signal("SIGTERM".into()));
+        }
+    }
+    Ok(())
 }
 
 fn hex_key(key: &[u8; 32]) -> String {
