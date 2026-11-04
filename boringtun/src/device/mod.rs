@@ -952,23 +952,6 @@ impl Device {
         // the whole signal: the operator needs to know traffic arrived before
         // the key, not how much of it did.
         let warned_keyless = AtomicBool::new(false);
-        // Also at most once, and for a sharper reason than volume. Whether a
-        // cookie reply amplifies is fixed by S1/S2/S3, so once it is true it is
-        // true for every datagram of that kind until the operator changes the
-        // configuration -- and the datagrams that reach it arrive at flood rate
-        // by construction, since a cookie is only produced once the limiter is
-        // under load. Logging per refusal would turn one misconfiguration into
-        // a log flood driven by the attacker.
-        //
-        // Keyed on the reply length rather than latched to a bare `true`,
-        // because "until the operator changes the configuration" is exactly
-        // what a `bool` cannot express: `set_obfuscation` rewrites S3 under a
-        // live socket (`awg syncconf` re-sends the whole `[Interface]` block on
-        // any peer add or revoke), and a latched flag would suppress the
-        // warning for every configuration after the first. The reply length is
-        // `S3 + 64`, so it moves only when the operator moves it -- unlike the
-        // request length, which alternates between an initiation and a response
-        // and would hand an attacker a way to drive the log.
         self.queue.new_event(
             udp.as_raw_fd(),
             Box::new(move |d, t| {
@@ -1714,13 +1697,9 @@ mod ingress_tests {
         (datagram.len(), amnezia.cookie_reply_len(cookie_len))
     }
 
-    /// The reflector the cookie path was, in the configuration that makes it
-    /// worst, with the amplification factor measured rather than asserted from
-    /// memory.
-    ///
-    /// This is reachable by anyone who has ever seen a client config for this
-    /// server: no key, no peer entry, no handshake. `cookie_verdict` is what
-    /// stands between it and 65 KB aimed at a stranger.
+    /// The reference S3 value is intentionally allowed to produce a Cookie Reply
+    /// larger than the triggering handshake, matching upstream amneziawg-go.
+    /// This pins the source-address policy to that compatibility decision.
     #[test]
     fn large_s3_cookie_replies_follow_upstream_semantics() {
         let config = AmneziaConfig::new(284, 659, 1045, 12).with_header_protection_key([0x42; 32]);
@@ -1734,13 +1713,7 @@ mod ingress_tests {
         );
     }
 
-    /// And the configuration a real deployment runs still gets its cookie.
-    ///
-    /// The S-sizes are the ones `scripts/awg-interop-poc.sh` runs against the
-    /// AmneziaWG kernel module, so this is not a hypothetical shape. Without
-    /// it, the test above would pass just as well against a change that
-    /// disabled cookie replies outright -- which would break WireGuard's flood
-    /// defence rather than bound it.
+    /// A commonly used S1-S4 configuration remains eligible for Cookie Replies.
     #[test]
     fn the_interop_configuration_still_gets_its_cookie_reply() {
         let amnezia = AmneziaConfig::new(120, 130, 110, 80);
