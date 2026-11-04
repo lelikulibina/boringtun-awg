@@ -538,12 +538,14 @@ impl Tunn {
     ///
     /// # Panics
     /// Panics if dst is too small for the base WireGuard packet formatter.
-    /// Without Amnezia padding, dst should be at least src.len() + 32, and no
-    /// less than 148 bytes. With Amnezia enabled, callers must also allow for
-    /// the configured S-prefix on the emitted packet type; when no session is
-    /// established, the first output can instead be a standalone pre-handshake
-    /// junk packet up to 1280 bytes. If dst fits the base WireGuard packet but
-    /// not the configured Amnezia output, this returns
+    /// For transport data, reserve src.len() + 32 bytes plus up to 15 bytes of
+    /// default 16-byte MTU padding when CPA and RandomTrailers are disabled.
+    /// Configured CPA/RandomTrailers can require more space. With Amnezia
+    /// enabled, callers must also allow for the configured S-prefix on the
+    /// emitted packet type; when no session is established, the first output
+    /// can instead be a standalone pre-handshake junk packet up to 1280 bytes.
+    /// If dst fits the base WireGuard packet but not the selected padding or
+    /// Amnezia framing, this returns
     /// TunnResult::Err(WireGuardError::DestinationBufferTooSmall).
     pub fn encapsulate<'a>(&mut self, src: &[u8], dst: &'a mut [u8]) -> TunnResult<'a> {
         let current = self.current;
