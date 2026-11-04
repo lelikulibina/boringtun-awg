@@ -189,6 +189,7 @@ Upstream формулы:
 - Для handshake retransmit и нового handshake добавляется jitter 0…333 мс.
 - Диапазоны выбираются в соответствующих точках жизненного цикла; нельзя заменить их одной общей случайной задержкой.
 - `0-0` означает «параметр не задан, использовать WireGuard default», а не таймер нулевой длины. Диапазон `0-1` уже задан и может выбрать 0.
+- `persistent_keepalive_interval` — отдельный per-peer диапазон секунд (uint32); `0-0` отключает PersistentKeepalive. При переходе из disabled в enabled первый keepalive планируется немедленно, затем интервал заново выбирается после authenticated traversal.
 
 Таймеры локальны: значения не согласуются с другой стороной. Ошибочная комбинация может вызвать слишком ранний rekey, преждевременное удаление ключей или частые retry.
 
@@ -235,7 +236,7 @@ Upstream формулы:
 | S1-S4 | Да | Точные offsets WG-сообщений |
 | H1-H4 | Да | Допустимые type tags |
 | HeaderProtectionKey | Да | Ключ ChaCha20 |
-| RandomTrailers | Да, если sender добавляет handshake/cookie trailers | Receiver должен разрешать variable-length fixed handshake envelopes |
+| RandomTrailers | Receiver каждого направления должен разрешать trailers; для двустороннего туннеля включают на обоих концах | Иначе handshake/cookie datagrams с ненулевым trailer будут отвергнуты |
 
 ### Что не требует зеркального значения
 
