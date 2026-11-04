@@ -2277,9 +2277,13 @@ mod tests {
         let data = my_tun.encapsulate(&sent_packet_buf, &mut my_dst);
         assert!(matches!(data, TunnResult::WriteToNetwork(_)));
 
-        //Advance to timeout
+        // The send-side key-refresh check is performed when another
+        // authenticated data packet traverses the outbound path, not by a
+        // background timer poll alone.
         mock_instant::MockClock::advance(REKEY_AFTER_TIME + Duration::from_millis(1));
         assert!(matches!(their_tun.update_timers(&mut []), TunnResult::Done));
+        let data = my_tun.encapsulate(&sent_packet_buf, &mut my_dst);
+        assert!(matches!(data, TunnResult::WriteToNetwork(_)));
         update_timer_results_in_handshake(&mut my_tun);
     }
 

@@ -72,6 +72,8 @@ pub struct Timers {
     sent_last_minute_handshake: bool,
     /// Deferred until update_timers can emit the handshake datagram.
     rekey_due_on_receive: bool,
+    /// Send-side freshness is evaluated on outbound data traversal, not each timer poll.
+    rekey_due_on_send: bool,
     persistent_keepalive_range: (u32, u32),
     persistent_keepalive_interval: u32,
     persistent_keepalive_deadline: Option<Duration>,
@@ -107,6 +109,7 @@ impl Timers {
             need_another_keepalive: false,
             sent_last_minute_handshake: false,
             rekey_due_on_receive: false,
+            rekey_due_on_send: false,
             persistent_keepalive_range: {
                 let interval = u32::from(persistent_keepalive.unwrap_or(0));
                 (interval, interval)
@@ -154,6 +157,7 @@ impl Timers {
         self.need_another_keepalive = false;
         self.sent_last_minute_handshake = false;
         self.rekey_due_on_receive = false;
+        self.rekey_due_on_send = false;
         self.handshake_attempts = 0;
     }
 
@@ -562,6 +566,7 @@ impl Tunn {
                 // sends do not call this timer event.
                 self.timers.select_new_handshake_budget();
                 self.timers.rekey_due_on_receive = false;
+                self.timers.rekey_due_on_send = false;
                 self.timers.rekey_timeout = Duration::from_secs(
                     self.timers.pick_range(1, REKEY_TIMEOUT.as_secs() as u32) as u64,
                 );
@@ -571,6 +576,21 @@ impl Tunn {
                 self.timers.rekey_after_time = Duration::from_secs(
                     self.timers.pick_range(0, REKEY_AFTER_TIME.as_secs() as u32) as u64,
                 );
+                let established = self.timers[TimeSessionEstablished];
+                let min_rekey_interval = Duration::from_secs(
+                    self.timers.range_min(1, REKEY_TIMEOUT.as_secs() as u32) as u64,
+                );
+                if self.timers.is_initiator()
+                    && established < now
+                    && now - established > self.timers.rekey_after_time
+                    && now.saturating_sub(self.timers[TimeLastHandshakeStarted])
+                        >= min_rekey_interval
+                {
+                    // Match upstream keepKeyFreshSending: evaluate on each
+                    // authenticated outbound data traversal, then request one
+                    // handshake from update_timers.
+                    self.timers.rekey_due_on_send = true;
+                }
                 // Upstream starts this timer on the first data send after the
                 // last authenticated receive; later sends do not reset it.
                 if self.timers.new_handshake_deadline.is_none() {
@@ -624,6 +644,7 @@ impl Tunn {
         self.timers.need_another_keepalive = false;
         self.timers.sent_last_minute_handshake = false;
         self.timers.rekey_due_on_receive = false;
+        self.timers.rekey_due_on_send = false;
         self.timers.select_new_handshake_budget();
         self.timers.handshake_retry_jitter = Timers::random_jitter();
         self.pending_amnezia_junk = None;
@@ -690,7 +711,6 @@ impl Tunn {
         // Load timers only once:
         let session_established = self.timers[TimeSessionEstablished];
         let handshake_started = self.timers[TimeLastHandshakeStarted];
-        let data_packet_sent = self.timers[TimeLastDataPacketSent];
 
         {
             // Clear cookie after COOKIE_EXPIRATION_TIME
@@ -750,6 +770,8 @@ impl Tunn {
                         self.packet_queue.clear();
                         self.timers.send_keepalive_deadline = None;
                         self.timers.need_another_keepalive = false;
+                        self.timers.rekey_due_on_send = false;
+                        self.timers.rekey_due_on_receive = false;
                         return TunnResult::Done;
                     }
 
@@ -765,22 +787,11 @@ impl Tunn {
                     handshake_initiation_required = true;
                 }
             } else {
-                if self.timers.rekey_due_on_receive {
+                if self.timers.rekey_due_on_receive || self.timers.rekey_due_on_send {
                     handshake_initiation_required = true;
                 }
 
                 if self.timers.is_initiator() {
-                    // After sending a packet, if the sender was the original initiator
-                    // of the handshake and if the current session key is REKEY_AFTER_TIME
-                    // ms old, we initiate a new handshake. If the sender was the original
-                    // responder of the handshake, it does not re-initiate a new handshake
-                    // after REKEY_AFTER_TIME ms like the original initiator does.
-                    if session_established < data_packet_sent
-                        && now - session_established > self.timers.rekey_after_time
-                    {
-                        tracing::debug!("HANDSHAKE(REKEY_AFTER_TIME (on send))");
-                        handshake_initiation_required = true;
-                    }
                 }
 
                 // If we have sent a packet to a given peer but have not received a
