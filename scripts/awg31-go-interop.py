@@ -903,7 +903,7 @@ def run_profile(
         # legacy MTU-bounded algorithm only on BoringTun endpoints; upstream
         # Go has no such UAPI key and uses the semantics of its pinned version.
         bt_awg = awg + (
-            "content_padding_mode=mtu\\n"
+            "content_padding_mode=mtu\n"
             if name == "bulk data integrity — AWG 3.0" else ""
         )
         server_awg = bt_awg if server_is_bt else awg
