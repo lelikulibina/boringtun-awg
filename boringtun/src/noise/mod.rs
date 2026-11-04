@@ -2348,14 +2348,11 @@ mod tests {
             TunnResult::WriteToNetwork(packet) => packet.to_vec(),
             other => panic!("expected handshake initiation, got {:?}", other),
         };
-        let cookie = match responder.decapsulate(
-            Some("127.0.0.1".parse().unwrap()),
-            &init,
-            &mut network,
-        ) {
-            TunnResult::WriteToNetwork(packet) => packet.to_vec(),
-            other => panic!("expected under-load Cookie Reply, got {:?}", other),
-        };
+        let cookie =
+            match responder.decapsulate(Some("127.0.0.1".parse().unwrap()), &init, &mut network) {
+                TunnResult::WriteToNetwork(packet) => packet.to_vec(),
+                other => panic!("expected under-load Cookie Reply, got {:?}", other),
+            };
 
         initiator.timer_tick(TimerName::TimeLastPacketReceived);
         let last_authenticated_receive = initiator.timers[TimerName::TimeLastPacketReceived];
