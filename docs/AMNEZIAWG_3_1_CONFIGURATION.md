@@ -2,6 +2,10 @@
 
 Этот документ — практическая памятка по AWG 3.1 в BoringTun: UAPI, безопасные значения и ограничения реализации. Полная история версий, семантика каждого параметра, межверсионная совместимость, upstream edge cases и ссылки на исходники вынесены в [AMNEZIAWG_PROTOCOL_COMPATIBILITY.md](AMNEZIAWG_PROTOCOL_COMPATIBILITY.md).
 
+## Область действия UAPI
+
+В daemon UAPI AWG-настройки являются interface-wide: один профиль S/H, J, CPS, HP, CPA, RT, DisableCookies и timer ranges применяется ко всем peer интерфейса. В библиотечном API отдельный `Tunn` может иметь собственный профиль. `persistent_keepalive_interval` задаётся отдельно для каждого peer.
+
 ## 1. Совместимость
 
 У AWG нет отдельного version negotiation. Версия в конфигурации не согласуется по сети; обе стороны должны заранее иметь совместимые настройки.
@@ -34,6 +38,7 @@
 | `reject_after_time` | секунды, uint32 range | 180 с по умолчанию. |
 | `keepalive_timeout` | секунды, uint32 range | 10 с по умолчанию. |
 | `max_handshake_attempts` | uint32 range | 18 по умолчанию; бюджет выбирается на handshake cycle. |
+| `persistent_keepalive_interval` | per-peer, секунды, uint32 range | `0-0` выключает; интервал выбирается заново после authenticated traversal. |
 
 Таймерные диапазоны включают обе границы. `0-0` означает «не задано, использовать WireGuard default», а не нулевую длительность. Диапазон `0-1` — уже заданная конфигурация, которая может выбрать 0. Подробные формулы таймеров см. в основном исследовании.
 
@@ -59,7 +64,7 @@ BoringTun требует `S1=S2=S3=S4`, когда `random_trailers=true`. Upstr
 ## 4. J-пакеты и CPS
 
 - `Jc=0` выключает junk train.
-- При `Jc>0` BoringTun ограничивает количество 128 пакетами, `Jmax` — 1280 байтами.
+- При `Jc>0` BoringTun ограничивает количество 128 пакетами, `Jmax` — 1280 байтами. Это safety cap, а не гарантия отсутствия фрагментации на маршрутах с MTU ниже 1280.
 - В upstream фактическая формула размера — `Jmin + fastrandn(Jmax-Jmin)`, то есть Jmax не включается.
 - BoringTun отвергает `Jmin>Jmax` и некорректные значения до отправки. При `Jc>0` и `Jmin=Jmax=0` используются безопасные defaults 50…1000.
 - `I1-I5` задают CPS-пакеты. Поддерживаются upstream-теги `b`, `t`, `r`, `rc`, `rd`, `d`, `ds`, `dz`. Отрицательные длины отклоняются; итоговая датаграмма ограничена UDP payload limit.
