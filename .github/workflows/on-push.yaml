@@ -134,12 +134,21 @@ jobs:
       - name: Build official AmneziaWG Go
         working-directory: upstream-amneziawg-go
         run: go build -v -o ../amneziawg-go .
+      - name: Fetch official AmneziaWG Go 3.0.0 reference
+        uses: actions/checkout@v6
+        with:
+          repository: amnezia-vpn/amneziawg-go
+          ref: v3.0.0
+          path: upstream-amneziawg-go-3.0
+      - name: Build official AmneziaWG Go 3.0.0
+        working-directory: upstream-amneziawg-go-3.0
+        run: go build -v -o ../amneziawg-go-3.0 .
       - name: Run AWG interoperability suite
         run: |
           if [[ "${{ inputs.full_matrix }}" == "true" ]]; then
-            sudo python3 scripts/awg31-go-interop.py ./target/release/boringtun-cli ./amneziawg-go --full
+            sudo python3 scripts/awg31-go-interop.py ./target/release/boringtun-cli ./amneziawg-go --full --awg30 ./amneziawg-go-3.0
           else
-            sudo python3 scripts/awg31-go-interop.py ./target/release/boringtun-cli ./amneziawg-go
+            sudo python3 scripts/awg31-go-interop.py ./target/release/boringtun-cli ./amneziawg-go --awg30 ./amneziawg-go-3.0
           fi
       - name: Upload normalized wire captures
         if: always()
