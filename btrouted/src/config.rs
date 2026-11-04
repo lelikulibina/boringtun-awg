@@ -304,7 +304,7 @@ impl Config {
                     )?;
                 }
                 if let Some(endpoint) = &peer.endpoint {
-                    SocketAddr::from_str(endpoint).map_err(|error| {
+                    PeerEndpoint::parse(endpoint).map_err(|error| {
                         ConfigError::Validation(format!(
                             "interfaces.{}.peers.{}.endpoint is invalid: {}",
                             interface.name, peer.name, error
@@ -438,6 +438,77 @@ impl AwgConfig {
         }
         Ok(())
     }
+}
+
+/// Parsed peer endpoint. DNS names are validated but deliberately not resolved
+/// while loading configuration; resolution belongs to daemon startup/reconnect.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PeerEndpoint {
+    pub host: EndpointHost,
+    pub port: u16,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum EndpointHost {
+    Ip(std::net::IpAddr),
+    Dns(String),
+}
+
+impl PeerEndpoint {
+    pub fn parse(value: &str) -> Result<Self, String> {
+        if let Ok(address) = SocketAddr::from_str(value) {
+            return Ok(Self {
+                host: EndpointHost::Ip(address.ip()),
+                port: address.port(),
+            });
+        }
+
+        let (host, port) = value
+            .rsplit_once(':')
+            .ok_or_else(|| "expected host:port (IPv6 literals must be bracketed)".to_owned())?;
+        let port = port
+            .parse::<u16>()
+            .map_err(|_| "port must be an integer in 1..=65535".to_owned())?;
+        if port == 0 {
+            return Err("port must be in 1..=65535".to_owned());
+        }
+        if host.is_empty() || host.starts_with('[') || host.ends_with(']') || host.contains(':') {
+            return Err("invalid host; IPv6 literals must use [address]:port syntax".to_owned());
+        }
+
+        if let Ok(address) = host.parse::<std::net::IpAddr>() {
+            return Ok(Self {
+                host: EndpointHost::Ip(address),
+                port,
+            });
+        }
+        if !valid_ascii_dns_name(host) {
+            return Err(
+                "host must be an IP address or a valid ASCII DNS name (use punycode for IDNs)"
+                    .to_owned(),
+            );
+        }
+        Ok(Self {
+            host: EndpointHost::Dns(host.to_ascii_lowercase()),
+            port,
+        })
+    }
+}
+
+fn valid_ascii_dns_name(host: &str) -> bool {
+    let name = host.strip_suffix('.').unwrap_or(host);
+    if name.is_empty() || name.len() > 253 || !name.is_ascii() {
+        return false;
+    }
+    name.split('.').all(|label| {
+        !label.is_empty()
+            && label.len() <= 63
+            && label.as_bytes()[0].is_ascii_alphanumeric()
+            && label.as_bytes()[label.len() - 1].is_ascii_alphanumeric()
+            && label
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+    })
 }
 
 /// Decode a WireGuard key from standard Base64 and require exactly 32 bytes.
@@ -597,6 +668,53 @@ egress = "awg-uplink"
         assert_eq!(config.interfaces.len(), 2);
         assert_eq!(config.routing.rules.len(), 2);
         assert_eq!(config.interfaces[1].protocol, ProtocolVersion::Awg3_1);
+    }
+
+    #[test]
+    fn parses_dns_peer_endpoints_without_resolving_them() {
+        let endpoint = PeerEndpoint::parse("VPN.Example.COM:51820").unwrap();
+        assert_eq!(
+            endpoint,
+            PeerEndpoint {
+                host: EndpointHost::Dns("vpn.example.com".to_owned()),
+                port: 51820,
+            }
+        );
+        assert_eq!(
+            PeerEndpoint::parse("xn--bcher-kva.example:443").unwrap().port,
+            443
+        );
+    }
+
+    #[test]
+    fn parses_ipv4_and_bracketed_ipv6_peer_endpoints() {
+        assert_eq!(
+            PeerEndpoint::parse("192.0.2.1:51820").unwrap().port,
+            51820
+        );
+        assert_eq!(
+            PeerEndpoint::parse("[2001:db8::1]:51820").unwrap().port,
+            51820
+        );
+    }
+
+    #[test]
+    fn rejects_malformed_dns_endpoints_and_zero_ports() {
+        for value in [
+            "bad..example:51820",
+            "-bad.example:51820",
+            "bad-.example:51820",
+            "bad_name.example:51820",
+            "münich.example:51820",
+            "example.com:0",
+            "example.com:not-a-port",
+            "2001:db8::1:51820",
+        ] {
+            assert!(
+                PeerEndpoint::parse(value).is_err(),
+                "endpoint should be rejected: {value}"
+            );
+        }
     }
 
     #[test]
