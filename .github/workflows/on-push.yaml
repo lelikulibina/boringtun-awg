@@ -15,6 +15,13 @@ on:
     branches: [ "main", "master", "awg-2.0-extensions" ]
   pull_request:
     branches: [ "main", "master", "awg-2.0-extensions" ]
+  workflow_dispatch:
+    inputs:
+      full_matrix:
+        description: "Run the exhaustive 44-scenario interoperability matrix"
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   # Aggregate required checks for this repository's PR validation.
