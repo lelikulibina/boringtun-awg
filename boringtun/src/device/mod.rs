@@ -883,6 +883,18 @@ impl Device {
         self.queue.new_periodic_event(
             // Execute the timed function of every peer in the list
             Box::new(|d, t| {
+                // The TUN MTU can change after peers are created. Refresh the
+                // device value and every peer-owned Tunn independently of the
+                // presence of a UAPI control socket.
+                if let Ok(mtu) = d.iface.mtu() {
+                    let previous = d.mtu.swap(mtu, Ordering::Relaxed);
+                    if previous != mtu {
+                        for peer in d.peers.values() {
+                            peer.lock().tunnel.set_mtu(mtu);
+                        }
+                    }
+                }
+
                 let peer_map = &d.peers;
 
                 let (udp4, udp6) = match (d.udp4.as_ref(), d.udp6.as_ref()) {
