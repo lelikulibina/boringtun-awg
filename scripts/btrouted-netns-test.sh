@@ -96,6 +96,8 @@ destination = "0.0.0.0/0"
 egress = "awg-primary"
 TOML
 
+"$BIN" --config "$TMP/config.toml" --check >/dev/null
+
 ip netns add "$NS"
 ip -n "$NS" link set lo up
 ip -n "$NS" link add main0 type dummy
