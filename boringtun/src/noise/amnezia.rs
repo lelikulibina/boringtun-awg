@@ -1014,7 +1014,7 @@ impl AmneziaConfig {
     /// is dead code, and a crate built without the feature would carry a
     /// `dead_code` warning for it. `test` is in the list so the test above still
     /// runs on a default-feature `cargo test`.
-    #[cfg(any(test, feature = "device"))]
+    #[cfg(test)]
     pub(crate) fn cookie_reply_len(&self, cookie_len: usize) -> usize {
         cookie_len.saturating_add(self.outbound_junk_size(PacketKind::CookieReply))
     }
