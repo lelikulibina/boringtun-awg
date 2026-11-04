@@ -729,52 +729,9 @@ impl AmneziaConfig {
             }
         }
 
-        // A cookie reply that is larger than the packet provoking it makes this
-        // port a reflector, and the ratio is fixed by S1/S2/S3 alone -- an
-        // attacker cannot influence it. `device::reply_policy` refuses to send
-        // such a reply, which costs the peer every handshake for as long as the
-        // device is over its handshake rate limit, because a peer that never
-        // receives a cookie can never produce a valid mac2.
-        //
-        // Refusing the configuration outright is the louder failure and the one
-        // the operator can act on: it happens at `awg set`, naming the values,
-        // rather than silently during a flood. The AmneziaWG kernel module
-        // accepts these combinations, so this is deliberately stricter than the
-        // reference implementation -- a config rejected here would have run
-        // there, weakly reflecting.
-        // Both alternatives the message offers have to work in one pass. The
-        // "raise" side therefore names every violated bound, not just the
-        // binding one: at S1=100, S2=0, S3=185 both are violated, and raising
-        // S2 alone still leaves the initiation a byte short.
-        // DisableCookies bypasses the only path that emits an under-load
-        // Cookie Reply. In that mode the reply-size amplification constraint
-        // is irrelevant; incoming Cookie Replies remain supported.
-        if !self.disable_cookies {
-            let bounds = self.cookie_amplification_bounds();
-            if let Some(&(which, request, _)) = bounds.first() {
-                let reply = COOKIE_REPLY_SZ + self.cookie_packet_junk_size as usize;
-                let raise = bounds
-                    .iter()
-                    .map(|&(label, _, min_junk)| format!("{} to at least {}", label, min_junk))
-                    .collect::<Vec<_>>()
-                    .join(" and ");
-                return Err(format!(
-                    "S3 = {} makes a cookie reply {} bytes, larger than the {}-byte packet that provokes it ({} = {}); the reply would be suppressed and handshakes would fail under load. Lower S3 to at most {}, or raise {}.",
-                    self.cookie_packet_junk_size,
-                    reply,
-                    request,
-                    which,
-                    request
-                        - if which == "S1" {
-                            HANDSHAKE_INIT_SZ
-                        } else {
-                            HANDSHAKE_RESP_SZ
-                        },
-                    request - COOKIE_REPLY_SZ,
-                    raise
-                ));
-            }
-        }
+        // Cookie replies intentionally retain upstream amneziawg-go semantics:
+        // S3 is an operator-selected wire-format prefix and is not constrained
+        // by the size of the handshake that triggered the rate-limit challenge.
 
         Ok(())
     }
