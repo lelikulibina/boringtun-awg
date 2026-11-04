@@ -164,6 +164,7 @@ Upstream 3.1 вычисляет размер как `Jmin + fastrandn(Jmax - Jmi
 - Padding — нулевые байты, добавляемые к внутреннему IP-пакету **до** AEAD encryption.
 - Получатель расшифровывает payload и обрезает его по IPv4 Total Length или IPv6 Payload Length.
 - Значение выбирается включительно и ограничивается доступным местом в текущем UDP window.
+- Публичная документация описывает это как padding до внутреннего MTU, но pinned Go implementation использует peer UDP window. Это high-water heuristic, а не измеренный path MTU; BoringTun следует фактическому source behavior.
 - `0-0` означает выключено; любой другой диапазон может включать 0 как допустимый результат.
 - Настройка локальна для отправителя; значения не обязаны совпадать на peer.
 - Padding применяется к transport data, включая пустой handshake-confirmation keepalive.
