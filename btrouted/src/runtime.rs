@@ -34,36 +34,57 @@ impl Runtime {
     /// Start all interfaces and install routing after the complete config has
     /// been parsed and validated. UAPI is disabled on every daemon device.
     pub fn start(config: Config) -> Result<Self, RuntimeError> {
-        config.validate().map_err(|e| RuntimeError::Configuration(e.to_string()))?;
+        config
+            .validate()
+            .map_err(|error| RuntimeError::Configuration(error.to_string()))?;
         let routing = RoutingPlan::from_config(&config);
         let mut devices = Vec::with_capacity(config.interfaces.len());
 
         for interface in &config.interfaces {
-            let mut handle = create_device(interface)?;
+            let handle = create_device(interface)?;
             linux::configure_interface(&interface.name, interface.mtu, &interface.addresses)?;
-            handle.set_private_key(x25519::StaticSecret::from(decode_key(
-                &interface.private_key, "private_key"
-            ).map_err(|e| RuntimeError::Configuration(e.to_string()))?));
+            handle.set_private_key(x25519::StaticSecret::from(
+                decode_key(&interface.private_key, "private_key")
+                    .map_err(|error| RuntimeError::Configuration(error.to_string()))?,
+            ));
             handle.set_fwmark(interface.socket_fwmark)?;
 
             for peer in &interface.peers {
-                let public_key = x25519::PublicKey::from(decode_key(
-                    &peer.public_key, "peer.public_key"
-                ).map_err(|e| RuntimeError::Configuration(e.to_string()))?);
-                let preshared_key = peer.preshared_key.as_ref().map(|value| {
-                    decode_key(value, "peer.preshared_key")
-                        .map_err(|e| RuntimeError::Configuration(e.to_string()))
-                }).transpose()?;
+                let public_key = x25519::PublicKey::from(
+                    decode_key(&peer.public_key, "peer.public_key")
+                        .map_err(|error| RuntimeError::Configuration(error.to_string()))?,
+                );
+                let preshared_key = peer
+                    .preshared_key
+                    .as_ref()
+                    .map(|value| {
+                        decode_key(value, "peer.preshared_key")
+                            .map_err(|error| RuntimeError::Configuration(error.to_string()))
+                    })
+                    .transpose()?;
                 let endpoint = peer.endpoint.as_deref().map(resolve_endpoint).transpose()?;
-                let allowed_ips: Result<Vec<AllowedIP>, _> = peer.allowed_ips.iter()
-                    .map(|prefix| AllowedIP::from_str(prefix).map_err(|e| {
-                        RuntimeError::Configuration(format!("invalid AllowedIP {prefix}: {e}"))
-                    })).collect();
-                let keepalive = peer.persistent_keepalive_secs.map(|seconds| {
-                    (u32::from(seconds), u32::from(seconds))
-                });
+                let allowed_ips: Result<Vec<AllowedIP>, _> = peer
+                    .allowed_ips
+                    .iter()
+                    .map(|prefix| {
+                        AllowedIP::from_str(prefix).map_err(|error| {
+                            RuntimeError::Configuration(format!(
+                                "invalid AllowedIP {prefix}: {error}"
+                            ))
+                        })
+                    })
+                    .collect();
+                let keepalive = peer
+                    .persistent_keepalive_secs
+                    .map(|seconds| (u32::from(seconds), u32::from(seconds)));
                 handle.update_peer(
-                    public_key, false, true, endpoint, &allowed_ips?, keepalive, preshared_key
+                    public_key,
+                    false,
+                    true,
+                    endpoint,
+                    &allowed_ips?,
+                    keepalive,
+                    preshared_key,
                 )?;
             }
             devices.push(handle);
@@ -77,15 +98,25 @@ impl Runtime {
             linux::remove_nft(&routing);
             return Err(error.into());
         }
+
         tracing::info!(interfaces = devices.len(), "btrouted runtime started");
-        Ok(Self { devices, routing, stats_interval: Duration::from_secs(config.daemon.stats_interval_secs) })
+        Ok(Self {
+            devices,
+            routing,
+            stats_interval: Duration::from_secs(config.daemon.stats_interval_secs),
+        })
     }
 
-    pub fn routing_plan(&self) -> &RoutingPlan { &self.routing }
+    pub fn routing_plan(&self) -> &RoutingPlan {
+        &self.routing
+    }
 
     /// Return consistent live counters without querying UAPI.
     pub fn snapshots(&self) -> Result<Vec<boringtun::device::DeviceSnapshot>, RuntimeError> {
-        self.devices.iter().map(|device| device.snapshot().map_err(RuntimeError::from)).collect()
+        self.devices
+            .iter()
+            .map(|device| device.snapshot().map_err(RuntimeError::from))
+            .collect()
     }
 
     /// Keep the daemon alive and periodically publish peer counters.
@@ -101,20 +132,24 @@ impl Runtime {
                                 peer = %hex_key(&peer.public_key),
                                 tx_bytes = peer.tx_bytes,
                                 rx_bytes = peer.rx_bytes,
-                                handshake_age_secs = ?peer.time_since_last_handshake.map(|age| age.as_secs()),
+                                handshake_age_secs = ?peer
+                                    .time_since_last_handshake
+                                    .map(|age| age.as_secs()),
                                 "peer statistics"
                             );
                         }
                     }
                 }
-                Err(error) => tracing::error!(%error, "failed to collect device statistics"),
+                Err(error) => {
+                    tracing::error!(%error, "failed to collect device statistics")
+                }
             }
         }
     }
 }
 
 fn hex_key(key: &[u8; 32]) -> String {
-    key.iter().map(|byte| format!("{:02x}", byte)).collect()
+    key.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn create_device(interface: &InterfaceConfig) -> Result<DeviceHandle, RuntimeError> {
@@ -133,33 +168,61 @@ fn create_device(interface: &InterfaceConfig) -> Result<DeviceHandle, RuntimeErr
     Ok(DeviceHandle::new(&interface.name, config)?)
 }
 
-fn build_awg_config(interface: &InterfaceConfig) -> Result<(ObfuscationRanges, AmneziaConfig), RuntimeError> {
+fn build_awg_config(
+    interface: &InterfaceConfig,
+) -> Result<(ObfuscationRanges, AmneziaConfig), RuntimeError> {
     if interface.protocol == ProtocolVersion::Wg {
         return Ok((ObfuscationRanges::default(), AmneziaConfig::default()));
     }
+
     let awg = interface.awg.as_ref();
     let defaults = ["1", "2", "3", "4"];
-    let values: Vec<(u32, u32)> = (0..4).map(|index| {
-        let value = awg.and_then(|a| match index {
-            0 => a.h1.as_ref(), 1 => a.h2.as_ref(), 2 => a.h3.as_ref(), _ => a.h4.as_ref()
-        }).map(String::as_str).unwrap_or(defaults[index]);
-        parse_tag_range(value).ok_or_else(|| RuntimeError::Configuration(
-            format!("interfaces.{}.awg.h{} has invalid tag range", interface.name, index + 1)
-        ))
-    }).collect::<Result<_, _>>()?;
-    let obf = ObfuscationRanges::from_explicit_ranges([values[0], values[1], values[2], values[3]])
-        .map_err(|e| RuntimeError::Configuration(format!("invalid AWG header ranges: {e}")))?;
-    let s = |pick: fn(&crate::config::AwgConfig) -> Option<u16>| -> u16 {
+    let values: Vec<(u32, u32)> = (0..4)
+        .map(|index| {
+            let value = awg
+                .and_then(|config| match index {
+                    0 => config.h1.as_ref(),
+                    1 => config.h2.as_ref(),
+                    2 => config.h3.as_ref(),
+                    _ => config.h4.as_ref(),
+                })
+                .map(String::as_str)
+                .unwrap_or(defaults[index]);
+            parse_tag_range(value).ok_or_else(|| {
+                RuntimeError::Configuration(format!(
+                    "interfaces.{}.awg.h{} has invalid tag range",
+                    interface.name,
+                    index + 1
+                ))
+            })
+        })
+        .collect::<Result<_, _>>()?;
+    let obf = ObfuscationRanges::from_explicit_ranges([
+        values[0], values[1], values[2], values[3],
+    ])
+    .map_err(|error| {
+        RuntimeError::Configuration(format!("invalid AWG header ranges: {error}"))
+    })?;
+
+    let value = |pick: fn(&crate::config::AwgConfig) -> Option<u16>| -> u16 {
         awg.and_then(pick).unwrap_or(0)
     };
     let mut amnezia = AmneziaConfig::new(
-        s(|a| a.s1), s(|a| a.s2), s(|a| a.s3), s(|a| a.s4)
+        value(|config| config.s1),
+        value(|config| config.s2),
+        value(|config| config.s3),
+        value(|config| config.s4),
     );
-    let jc = s(|a| a.jc);
-    let jmin = s(|a| a.jmin);
-    let jmax = s(|a| a.jmax);
-    amnezia = amnezia.try_with_pre_handshake_junk(jc, jmin, jmax, 0)
-        .map_err(|e| RuntimeError::Configuration(format!("invalid AWG junk settings: {e}")))?;
+    amnezia = amnezia
+        .try_with_pre_handshake_junk(
+            value(|config| config.jc),
+            value(|config| config.jmin),
+            value(|config| config.jmax),
+            0,
+        )
+        .map_err(|error| {
+            RuntimeError::Configuration(format!("invalid AWG junk settings: {error}"))
+        })?;
     if let Some(awg) = awg {
         amnezia = amnezia
             .with_disable_cookies(awg.disable_cookies.unwrap_or(false))
@@ -171,30 +234,46 @@ fn build_awg_config(interface: &InterfaceConfig) -> Result<(ObfuscationRanges, A
 fn parse_tag_range(value: &str) -> Option<(u32, u32)> {
     let (start, end) = match value.split_once('-') {
         Some((start, end)) => (start.trim().parse().ok()?, end.trim().parse().ok()?),
-        None => { let value = value.parse().ok()?; (value, value) }
+        None => {
+            let value = value.parse().ok()?;
+            (value, value)
+        }
     };
     (start <= end).then_some((start, end))
 }
 
 fn resolve_endpoint(value: &str) -> Result<SocketAddr, RuntimeError> {
-    let parsed = crate::config::PeerEndpoint::parse(value)
-        .map_err(|reason| RuntimeError::Endpoint { endpoint: value.into(), reason })?;
+    let parsed = crate::config::PeerEndpoint::parse(value).map_err(|reason| {
+        RuntimeError::Endpoint {
+            endpoint: value.into(),
+            reason,
+        }
+    })?;
     match parsed.host {
         EndpointHost::Ip(ip) => Ok(SocketAddr::new(ip, parsed.port)),
-        EndpointHost::Dns(host) => (host.as_str(), parsed.port).to_socket_addrs()
-            .map_err(|e| RuntimeError::Endpoint { endpoint: value.into(), reason: e.to_string() })?
+        EndpointHost::Dns(host) => (host.as_str(), parsed.port)
+            .to_socket_addrs()
+            .map_err(|error| RuntimeError::Endpoint {
+                endpoint: value.into(),
+                reason: error.to_string(),
+            })?
             .next()
-            .ok_or_else(|| RuntimeError::Endpoint { endpoint: value.into(), reason: "DNS returned no addresses".into() }),
+            .ok_or_else(|| RuntimeError::Endpoint {
+                endpoint: value.into(),
+                reason: "DNS returned no addresses".into(),
+            }),
     }
 }
 
 fn enable_forwarding() -> Result<(), RuntimeError> {
     for key in ["net.ipv4.ip_forward", "net.ipv6.conf.all.forwarding"] {
-        let output = std::process::Command::new("sysctl").args(["-w", &format!("{key}=1")])
-            .output().map_err(|e| RuntimeError::Forwarding(e.to_string()))?;
+        let output = std::process::Command::new("sysctl")
+            .args(["-w", &format!("{key}=1")])
+            .output()
+            .map_err(|error| RuntimeError::Forwarding(error.to_string()))?;
         if !output.status.success() {
             return Err(RuntimeError::Forwarding(
-                String::from_utf8_lossy(&output.stderr).trim().to_owned()
+                String::from_utf8_lossy(&output.stderr).trim().to_owned(),
             ));
         }
     }
