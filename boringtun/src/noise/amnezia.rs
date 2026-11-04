@@ -658,12 +658,31 @@ impl AmneziaConfig {
 
     /// Validate RandomTrailers framing constraints.
     ///
-    /// Keep the reference implementation's configuration semantics: upstream
-    /// accepts independently configured S1-S4 values when RandomTrailers is
-    /// enabled. Its receiver checks H1-H4 at each configured offset in order;
-    /// unequal S values therefore retain the same classifier trade-offs as
-    /// amneziawg-go rather than being rejected by a BAWG-only policy.
+    /// The upstream Go and kernel classifiers try the three fixed-size
+    /// handshake shapes before transport. With RandomTrailers enabled, a
+    /// transport datagram is also long enough to enter those branches. If
+    /// S1-S4 differ, a branch can inspect random prefix/ciphertext bytes at a
+    /// different offset and claim a real transport packet as a handshake;
+    /// it is then discarded after MAC1 verification. Equal S values make all
+    /// candidates inspect the same type field, and disjoint H ranges make the
+    /// classification unambiguous. Upstream currently accepts unequal values,
+    /// but its own documentation recommends equal S values; we enforce that
+    /// safe subset rather than silently accepting a lossy configuration.
     pub(crate) fn validate_random_trailers(&self, _obf: ObfuscationRanges) -> Result<(), String> {
+        if self.random_trailers {
+            let s = [
+                self.init_packet_junk_size,
+                self.response_packet_junk_size,
+                self.cookie_packet_junk_size,
+                self.transport_packet_junk_size,
+            ];
+            if s.iter().any(|value| *value != s[0]) {
+                return Err(
+                    "RandomTrailers requires S1=S2=S3=S4 to avoid ambiguous packet classification"
+                        .to_owned(),
+                );
+            }
+        }
         Ok(())
     }
 
@@ -1155,7 +1174,10 @@ impl AmneziaConfig {
 
     fn pre_handshake_junk_size(&self, rng: &mut impl RngCore) -> usize {
         match self.imitation.protocol {
-            AmneziaImitationProtocol::None => random_usize_inclusive(
+            // Upstream amneziawg-go uses min + fastrandn(max - min),
+            // so Jmax is an exclusive upper bound (except the degenerate
+            // equal-bound case, which yields that single size).
+            AmneziaImitationProtocol::None => random_usize_exclusive_upper(
                 self.pre_handshake_junk.packet_size_min as usize,
                 self.pre_handshake_junk.packet_size_max as usize,
                 rng,
@@ -1176,6 +1198,18 @@ impl AmneziaConfig {
     }
 
     fn fill_outbound_junk(&self, dst: &mut [u8], trailing_size: usize, rng: &mut impl RngCore) {
+        // Header Protection takes its 96-bit ChaCha20 nonce from the first
+        // 12 bytes of this prefix. Upstream always fills S1-S4 with fresh
+        // random bytes. Protocol-shaped prefixes can have fixed leading
+        // bytes (for example SIP's method line or STUN's magic cookie), which
+        // would repeat the nonce and reuse the header-protection keystream.
+        // Keep the complete S-prefix random whenever HP is enabled; standalone
+        // pre-handshake imitation packets remain available independently.
+        if self.header_protection_enabled() {
+            fill_random(dst, rng);
+            return;
+        }
+
         match self.imitation.protocol {
             AmneziaImitationProtocol::None => fill_random(dst, rng),
             protocol => {
@@ -1212,6 +1246,15 @@ fn random_usize_inclusive(min: usize, max: usize, rng: &mut impl RngCore) -> usi
             return min + (val % range_size) as usize;
         }
     }
+}
+
+/// Sample [min, max), matching upstream's Jmin + fastrandn(Jmax - Jmin).
+/// When min == max, upstream's zero-width draw produces the fixed size.
+fn random_usize_exclusive_upper(min: usize, max: usize, rng: &mut impl RngCore) -> usize {
+    if min >= max {
+        return min;
+    }
+    random_usize_inclusive(min, max - 1, rng)
 }
 
 fn fill_protocol_like(
@@ -1781,7 +1824,7 @@ mod tests {
     }
 
     #[test]
-    fn random_trailers_accept_independent_s_prefixes_like_upstream() {
+    fn random_trailers_reject_unequal_s_prefixes_to_prevent_ambiguous_classification() {
         let obf = ObfuscationRanges::new(
             405_138_553,
             456_138_212,
@@ -1795,14 +1838,64 @@ mod tests {
         .expect("all H ranges are disjoint");
 
         let unequal = AmneziaConfig::new(284, 659, 1045, 12).with_random_trailers(true);
-        unequal
-            .validate_random_trailers(obf)
-            .expect("upstream accepts independently configured S1-S4 values");
+        assert!(
+            unequal.validate_random_trailers(obf).unwrap_err().contains("S1=S2=S3=S4"),
+            "unequal S values can cause transport packets to be classified as handshakes"
+        );
 
-        let equal = AmneziaConfig::new(24, 24, 24, 24).with_random_trailers(true);
+        let equal = AmneziaConfig::new(64, 64, 64, 64).with_random_trailers(true);
         equal
             .validate_random_trailers(obf)
-            .expect("equal S values remain valid too");
+            .expect("equal S values and disjoint H ranges classify unambiguously");
+    }
+
+    #[test]
+    fn header_protection_keeps_s_prefix_nonce_random_with_protocol_imitation() {
+        let obf = ObfuscationRanges::default();
+        let cfg = AmneziaConfig::new(64, 64, 64, 64)
+            .with_header_protection_key([0x42; 32])
+            .with_protocol_imitation(
+                AmneziaImitationProtocol::Sip,
+                Some("example.com".to_owned()),
+            );
+
+        let mut first_buffer = vec![0u8; 64 + HANDSHAKE_INIT_SZ];
+        write_tag(&mut first_buffer, HANDSHAKE_INIT);
+        let mut first_rng = ChaCha8Rng::seed_from_u64(1);
+        let first = cfg
+            .prepend_outbound(obf, &mut first_buffer, HANDSHAKE_INIT_SZ, &mut first_rng)
+            .unwrap()
+            .to_vec();
+
+        let mut second_buffer = vec![0u8; 64 + HANDSHAKE_INIT_SZ];
+        write_tag(&mut second_buffer, HANDSHAKE_INIT);
+        let mut second_rng = ChaCha8Rng::seed_from_u64(2);
+        let second = cfg
+            .prepend_outbound(obf, &mut second_buffer, HANDSHAKE_INIT_SZ, &mut second_rng)
+            .unwrap()
+            .to_vec();
+
+        assert_ne!(
+            &first[..12],
+            &second[..12],
+            "Header Protection must not reuse its nonce when protocol imitation is configured"
+        );
+        assert_eq!(
+            cfg.decrypt_inbound(obf, &first).as_deref(),
+            Some(&first[64..64 + HANDSHAKE_INIT_SZ]),
+            "a freshly randomized S-prefix nonce must still decrypt the protected message"
+        );
+    }
+
+    #[test]
+    fn junk_packet_jmax_is_exclusive_like_upstream() {
+        let mut rng = ChaCha8Rng::seed_from_u64(0x4a6d6178);
+        for _ in 0..256 {
+            let size = random_usize_exclusive_upper(10, 20, &mut rng);
+            assert!((10..20).contains(&size), "sampled {size} outside [10, 20)");
+        }
+        assert_eq!(random_usize_exclusive_upper(10, 11, &mut rng), 10);
+        assert_eq!(random_usize_exclusive_upper(10, 10, &mut rng), 10);
     }
 
     #[test]
