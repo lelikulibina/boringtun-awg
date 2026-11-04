@@ -35,7 +35,7 @@ trap cleanup EXIT
 
 fail() {
     echo "btrouted peer traffic test ($PROTO): $*" >&2
-    for log in "$TMP/server.log" "$TMP/client.log"; do
+    for log in "$TMP/server.log" "$TMP/client.log" "$TMP/server-iperf.log" "$TMP/client-iperf.log"; do
         if [[ -f "$log" ]]; then
             cat "$log" >&2
         fi
@@ -147,18 +147,20 @@ kill -0 "$CLIENT_IPERF_PID" 2>/dev/null || fail "client iperf3 did not start"
 
 run_iperf() {
     local label="$1"
-    shift
+    local minimum_bytes="$2"
+    shift 2
     local output="$TMP/$label.json"
     ip netns exec "$CLIENT_NS" iperf3 "$@" --json >"$output" || fail "$label failed"
-    python3 - "$output" "$label" <<'PY'
+    python3 - "$output" "$label" "$minimum_bytes" <<'PY'
 import json
 import sys
 with open(sys.argv[1], encoding="utf-8") as stream:
     result = json.load(stream)
 received = result.get("end", {}).get("sum_received", {})
 byte_count = received.get("bytes", 0)
-if byte_count <= 0:
-    raise SystemExit(f"{sys.argv[2]} transferred no received payload")
+minimum_bytes = int(sys.argv[3])
+if byte_count < minimum_bytes:
+    raise SystemExit(f"{sys.argv[2]} received only {byte_count} bytes; expected at least {minimum_bytes}")
 if "lost_percent" in received and received["lost_percent"] > 2.0:
     raise SystemExit(f"{sys.argv[2]} UDP loss too high: {received['lost_percent']:.2f}%")
 print(f"{sys.argv[2]}: received={byte_count} bytes" + (f", UDP loss={received['lost_percent']:.2f}%" if "lost_percent" in received else ""))
@@ -166,15 +168,15 @@ PY
 }
 
 # TCP: transfer 8 MiB in each direction with parallel streams.
-run_iperf tcp-client-to-server -c 10.77.0.1 -n 8M -P 2
-run_iperf tcp-server-to-client -c 10.77.0.1 -n 8M -P 2 -R
+run_iperf tcp-client-to-server 8388608 -c 10.77.0.1 -n 8M -P 2
+run_iperf tcp-server-to-client 8388608 -c 10.77.0.1 -n 8M -P 2 -R
 
 # UDP: sustained datagrams with 1200-byte payloads in both directions.
-run_iperf udp-client-to-server -c 10.77.0.1 -u -b 3M -t 3 -l 1200
-run_iperf udp-server-to-client -c 10.77.0.1 -u -b 3M -t 3 -l 1200 -R
+run_iperf udp-client-to-server 1000 -c 10.77.0.1 -u -b 3M -t 3 -l 1200
+run_iperf udp-server-to-client 1000 -c 10.77.0.1 -u -b 3M -t 3 -l 1200 -R
 
 sleep 2
 grep -q "peer statistics" "$TMP/server.log" || fail "server did not publish peer statistics"
 grep -q "peer statistics" "$TMP/client.log" || fail "client did not publish peer statistics"
 
-echo "btrouted peer traffic test passed: protocol=$PROTO, bidirectional ICMP over encrypted tunnel"
+echo "btrouted peer traffic test passed: protocol=$PROTO, bidirectional ICMP/TCP/UDP over encrypted tunnel"
