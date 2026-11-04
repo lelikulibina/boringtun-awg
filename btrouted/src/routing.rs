@@ -42,14 +42,18 @@ pub struct RoutingPlan {
 impl RoutingPlan {
     /// Build a deterministic plan from a fully validated configuration.
     pub fn from_config(config: &Config) -> Self {
-        let mut egress_names: Vec<_> = config.interfaces.iter()
+        let mut egress_names: Vec<_> = config
+            .interfaces
+            .iter()
             .filter(|interface| interface.role == InterfaceRole::Client)
             .map(|interface| interface.name.as_str())
             .collect();
         egress_names.sort_unstable();
         egress_names.dedup();
 
-        let egresses: Vec<_> = egress_names.iter().enumerate()
+        let egresses: Vec<_> = egress_names
+            .iter()
+            .enumerate()
             .map(|(index, name)| EgressPlan {
                 interface: (*name).to_owned(),
                 mark: config.routing.mark_base + index as u32,
@@ -58,11 +62,15 @@ impl RoutingPlan {
             })
             .collect();
 
-        let egress_marks: BTreeMap<_, _> = egresses.iter()
+        let egress_marks: BTreeMap<_, _> = egresses
+            .iter()
             .map(|egress| (egress.interface.as_str(), egress.mark))
             .collect();
 
-        let mut nft_rules: Vec<_> = config.routing.rules.iter()
+        let mut nft_rules: Vec<_> = config
+            .routing
+            .rules
+            .iter()
             .map(|rule| NftRule {
                 priority: rule.priority,
                 ingress: rule.ingress.clone(),
@@ -71,15 +79,25 @@ impl RoutingPlan {
                 mark: egress_marks[rule.egress.as_str()],
             })
             .collect();
-        nft_rules.sort_by(|left, right| left.ingress.cmp(&right.ingress)
-            .then(left.priority.cmp(&right.priority)));
+        nft_rules.sort_by(|left, right| {
+            left.ingress
+                .cmp(&right.ingress)
+                .then(left.priority.cmp(&right.priority))
+        });
+
+        let mut socket_marks: Vec<_> = config
+            .interfaces
+            .iter()
+            .map(|interface| interface.socket_fwmark)
+            .collect();
+        socket_marks.sort_unstable();
 
         Self {
             nft_family: "inet".to_owned(),
             nft_table: config.daemon.nft_table.clone(),
             egresses,
             nft_rules,
-            socket_marks: { let mut marks: Vec<_> = config.interfaces.iter().map(|i| i.socket_fwmark).collect(); marks.sort_unstable(); marks },
+            socket_marks,
         }
     }
 
@@ -99,35 +117,58 @@ impl RoutingPlan {
             };
             output.push_str(&format!(
                 "add rule {} {} prerouting iifname \"{}\" {} daddr {} meta mark set 0x{:x} return\n",
-                self.nft_family, self.nft_table, rule.ingress, family_match,
-                rule.destination, rule.mark
+                self.nft_family,
+                self.nft_table,
+                rule.ingress,
+                family_match,
+                rule.destination,
+                rule.mark
             ));
         }
         output
     }
 
-    /// Commands needed to populate each egress routing table and select it by
-    /// packet mark. The caller is responsible for executing them and rollback.
+    /// Commands needed to populate egress tables and select them by packet
+    /// mark. Socket marks explicitly use the main table to avoid tunnel loops.
     pub fn ip_commands(&self) -> Vec<Vec<String>> {
-        let mut commands = Vec::with_capacity(self.egresses.len() * 4 + self.socket_marks.len() * 2);
+        let mut commands =
+            Vec::with_capacity(self.egresses.len() * 4 + self.socket_marks.len() * 2);
         for mark in &self.socket_marks {
             for family in ["-4", "-6"] {
-                commands.push(vec![family.into(), "rule".into(), "add".into(), "priority".into(),
-                    SOCKET_MAIN_RULE_PRIORITY.to_string(), "fwmark".into(), format!("0x{:x}", mark),
-                    "lookup".into(), "main".into()]);
+                commands.push(vec![
+                    family.into(),
+                    "rule".into(),
+                    "add".into(),
+                    "priority".into(),
+                    SOCKET_MAIN_RULE_PRIORITY.to_string(),
+                    "fwmark".into(),
+                    format!("0x{:x}", mark),
+                    "lookup".into(),
+                    "main".into(),
+                ]);
             }
         }
         for egress in &self.egresses {
             for family in ["-4", "-6"] {
                 commands.push(vec![
-                    family.into(), "route".into(), "replace".into(), "default".into(),
-                    "dev".into(), egress.interface.clone(), "table".into(),
+                    family.into(),
+                    "route".into(),
+                    "replace".into(),
+                    "default".into(),
+                    "dev".into(),
+                    egress.interface.clone(),
+                    "table".into(),
                     egress.table_id.to_string(),
                 ]);
                 commands.push(vec![
-                    family.into(), "rule".into(), "add".into(), "priority".into(),
-                    egress.ip_rule_priority.to_string(), "fwmark".into(),
-                    format!("0x{:x}", egress.mark), "lookup".into(),
+                    family.into(),
+                    "rule".into(),
+                    "add".into(),
+                    "priority".into(),
+                    egress.ip_rule_priority.to_string(),
+                    "fwmark".into(),
+                    format!("0x{:x}", egress.mark),
+                    "lookup".into(),
                     egress.table_id.to_string(),
                 ]);
             }
@@ -216,7 +257,9 @@ egress = "awg-primary"
         assert_eq!(plan.nft_rules[0].mark, 0x8000_0001);
         assert_eq!(plan.nft_rules[2].mark, 0x8000_0000);
         let script = plan.nft_script();
-        assert!(script.contains("ip daddr 195.142.0.0/16 meta mark set 0x80000001 return"));
+        assert!(script.contains(
+            "ip daddr 195.142.0.0/16 meta mark set 0x80000001 return"
+        ));
         assert!(script.contains("iifname \"wg-server\""));
     }
 
@@ -232,8 +275,14 @@ egress = "awg-primary"
         let plan = RoutingPlan::from_config(&sample_config());
         let commands = plan.ip_commands();
         assert_eq!(commands.len(), 14);
-        assert!(commands.iter().any(|args| args.first().is_some_and(|arg| arg == "-6")));
-        assert!(commands.iter().any(|args| args.iter().any(|arg| arg == "0x80000000")));
-        assert!(commands.iter().any(|args| args.iter().any(|arg| arg == "main")));
+        assert!(commands
+            .iter()
+            .any(|args| args.first().is_some_and(|arg| arg == "-6")));
+        assert!(commands
+            .iter()
+            .any(|args| args.iter().any(|arg| arg == "0x80000000")));
+        assert!(commands
+            .iter()
+            .any(|args| args.iter().any(|arg| arg == "main")));
     }
 }
