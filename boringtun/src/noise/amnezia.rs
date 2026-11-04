@@ -561,7 +561,11 @@ impl AmneziaConfig {
             if mtu == 0 {
                 usize::MAX
             } else {
-                let last_unit = if packet_size > mtu { packet_size % mtu } else { packet_size };
+                let last_unit = if packet_size > mtu {
+                    packet_size % mtu
+                } else {
+                    packet_size
+                };
                 mtu.saturating_sub(last_unit)
             }
         } else {
