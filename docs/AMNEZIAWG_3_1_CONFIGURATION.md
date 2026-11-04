@@ -80,7 +80,7 @@ Upstream issue [#189](https://github.com/amnezia-vpn/amneziawg-go/issues/189) д
 - Пустой handshake-confirmation keepalive также проходит transport padding path.
 - UDP window — high-water mark базовых исходящих transport datagrams до добавления padding/trailer. BoringTun обновляет его по исходящим пакетам, как upstream; входящий padded datagram не должен обучать локальное окно.
 
-CPA не ограничивает внешние handshake/cookie trailers — см. [upstream issue #185](https://github.com/amnezia-vpn/amneziawg-go/issues/185).
+CPA не ограничивает внешние handshake/cookie trailers — см. [upstream issue #185](https://github.com/amnezia-vpn/amneziawg-go/issues/185). В AWG 3.0 CPA выбирается и ограничивается относительно TUN MTU; в AWG 3.1 — относительно peer UDP window. BoringTun по умолчанию использует AWG 3.1; для AWG 3.0 задайте `content_padding_mode=mtu` через UAPI или `with_legacy_content_padding(true)` через библиотечный API. Режим локальный: его необходимо выбрать согласно версии/поведению удалённой реализации.
 
 ## 6. DisableCookies: безопасность
 
