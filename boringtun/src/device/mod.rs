@@ -505,6 +505,11 @@ impl DeviceHandle {
         self.with_device_mut(|device| device.set_fwmark(mark))
     }
 
+    /// Request a graceful stop of all datapath worker threads.
+    pub fn shutdown(&self) {
+        self.device.read().trigger_exit();
+    }
+
     pub fn wait(&mut self) {
         while let Some(thread) = self.threads.pop() {
             thread.join().unwrap();
