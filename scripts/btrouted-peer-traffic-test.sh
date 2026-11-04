@@ -131,6 +131,14 @@ done
 ip -n "$SERVER_NS" link show dev wg-peer-test >/dev/null 2>&1 || fail "server TUN did not appear"
 ip -n "$CLIENT_NS" link show dev wg-peer-test >/dev/null 2>&1 || fail "client TUN did not appear"
 
+# Outer encrypted UDP sockets must use the main underlay route, while packets
+# carrying the inner-routing mark must use the TUN egress table. This catches
+# accidental mark overlap and the most common tunnel-loop regression.
+socket_route="$(ip -n "$CLIENT_NS" route get 192.0.2.1 mark 5002)"
+grep -q "dev $CLIENT_VETH" <<<"$socket_route" || fail "outer UDP socket mark escaped the underlay route: $socket_route"
+inner_route="$(ip -n "$CLIENT_NS" route get 192.0.2.1 mark 0x80000000)"
+grep -q "dev wg-peer-test" <<<"$inner_route" || fail "inner routing mark did not select the TUN egress: $inner_route"
+
 # A successful ping requires an authenticated handshake and real encrypted
 # packet delivery over the veth-backed UDP underlay.
 ip netns exec "$CLIENT_NS" ping -n -c 5 -W 2 10.77.0.1 || fail "client-to-server tunnel traffic failed"
@@ -177,6 +185,27 @@ run_iperf udp-server-to-client 1000 -c 10.77.0.1 -u -b 3M -t 3 -l 1200 -R
 
 sleep 2
 grep -q "peer statistics" "$TMP/server.log" || fail "server did not publish peer statistics"
+
 grep -q "peer statistics" "$TMP/client.log" || fail "client did not publish peer statistics"
 
-echo "btrouted peer traffic test passed: protocol=$PROTO, bidirectional ICMP/TCP/UDP over encrypted tunnel"
+# Restart the remote daemon without restarting the local peer. Persistent
+# keepalive must re-establish the session and restore bidirectional delivery.
+kill -TERM "$SERVER_PID" || fail "could not stop server daemon for reconnect test"
+wait "$SERVER_PID" || fail "server daemon failed during reconnect shutdown"
+SERVER_PID=""
+sleep 1
+ip netns exec "$SERVER_NS" "$BIN" --config "$TMP/server.toml" >"$TMP/server-restarted.log" 2>&1 &
+SERVER_PID=$!
+recovered=0
+for _ in $(seq 1 40); do
+    kill -0 "$SERVER_PID" 2>/dev/null || fail "server daemon exited after restart"
+    if ip netns exec "$CLIENT_NS" ping -n -c 1 -W 1 10.77.0.1 >/dev/null 2>&1; then
+        recovered=1
+        break
+    fi
+    sleep 0.5
+done
+[[ "$recovered" -eq 1 ]] || fail "peer did not recover encrypted traffic after remote daemon restart"
+ip netns exec "$SERVER_NS" ping -n -c 3 -W 2 10.77.0.2 || fail "reverse traffic failed after reconnect"
+
+echo "btrouted peer traffic test passed: protocol=$PROTO, bidirectional ICMP/TCP/UDP, socket-mark routing, reconnect/handshake recovery"
