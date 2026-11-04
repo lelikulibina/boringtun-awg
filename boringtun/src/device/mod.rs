@@ -422,6 +422,11 @@ impl DeviceHandle {
         self.with_device_mut(|device| device.set_obfuscation(obfuscation, amnezia))
     }
 
+    /// Change the UDP listen port without going through UAPI.
+    pub fn set_listen_port(&self, port: u16) -> Result<(), Error> {
+        self.with_device_mut(|device| device.open_listen_socket(port))
+    }
+
     /// Current UDP listen port selected for this interface.
     pub fn listen_port(&self) -> u16 {
         self.device.read().listen_port
