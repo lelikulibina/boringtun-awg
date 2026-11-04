@@ -2859,6 +2859,18 @@ mod tests {
         config
             .validate()
             .expect("reference S1-S4 and HP key must be valid");
+
+        let obf = ObfuscationRanges::default();
+        let wire = packet_after_prepend(&config, COOKIE_REPLY_SZ, COOKIE_REPLY, 2048);
+        assert_eq!(wire.len(), COOKIE_REPLY_SZ + 1045);
+        let decoded = config
+            .decrypt_inbound(obf, &wire)
+            .expect("S3=1045 Cookie Reply must decrypt with Header Protection");
+        assert_eq!(decoded.len(), COOKIE_REPLY_SZ);
+        assert_eq!(
+            u32::from_le_bytes(decoded[..4].try_into().unwrap()),
+            COOKIE_REPLY
+        );
     }
 
     #[test]
