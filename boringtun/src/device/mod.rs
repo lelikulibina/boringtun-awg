@@ -1618,19 +1618,12 @@ mod ingress_tests {
         );
     }
 
-    /// Drive the ingress cookie path the way `register_udp_handler` drives it,
-    /// and report the two numbers the policy decides on: the bytes the sender
-    /// spent, and the bytes the cookie reply would occupy on the wire.
+    /// Drive the ingress cookie path far enough to measure the request and
+    /// the upstream-compatible Cookie Reply wire sizes for an S1/S3 profile.
     ///
-    /// The initiation carries a valid mac1 and no mac2, which is all it takes:
-    /// mac1 is keyed on the server's *public* key, so this `Tunn` is a stranger
-    /// holding nothing but a copy of the server's config file. It is not a
-    /// configured peer and the server never learns who it is.
-    ///
-    /// The limiter is pushed under load first, because that is the only state
-    /// in which `verify_packet` produces a cookie at all — which is also why a
-    /// byte ceiling on this path would bind exclusively during a flood. See
-    /// `reply_policy::cookie_verdict`.
+    /// The initiation carries a valid MAC1 and no MAC2. The limiter is pushed
+    /// under load because that is the only state in which `verify_packet`
+    /// produces a cookie. The helper is test-only and uses fresh local keys.
     fn cookie_exchange_sizes(amnezia: &AmneziaConfig) -> (usize, usize) {
         let server_secret = x25519::StaticSecret::random_from_rng(OsRng);
         let server_public = x25519::PublicKey::from(&server_secret);
@@ -1706,6 +1699,9 @@ mod ingress_tests {
         config
             .validate()
             .expect("the reference AWG 3.1 S values must be accepted");
+        let (request_len, reply_len) = cookie_exchange_sizes(&config);
+        assert_eq!(request_len, 284 + HANDSHAKE_INIT_SZ);
+        assert_eq!(reply_len, 1045 + COOKIE_REPLY_SZ);
         assert_eq!(
             reply_policy::cookie_verdict("203.0.113.5:40000".parse().unwrap()),
             reply_policy::CookieVerdict::Send,
