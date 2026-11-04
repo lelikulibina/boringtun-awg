@@ -969,8 +969,6 @@ impl Device {
         // `S3 + 64`, so it moves only when the operator moves it -- unlike the
         // request length, which alternates between an initiation and a response
         // and would hand an attacker a way to drive the log.
-        const NEVER_WARNED: usize = usize::MAX;
-        let warned_cookie_amplifier = AtomicUsize::new(NEVER_WARNED);
         self.queue.new_event(
             udp.as_raw_fd(),
             Box::new(move |d, t| {
@@ -1112,13 +1110,11 @@ impl Device {
                             // Nothing here has been authenticated. `verify_packet`
                             // returns a cookie on a valid mac1, and mac1 is keyed
                             // on this server's *public* key -- which is in every
-                            // client configuration -- so the source address is as
-                            // attacker-chosen as a probe's, and the reply is as
-                            // amplifiable. Decided before the junk is generated:
-                            // see `cookie_reply_len`.
+                            // client configuration. Upstream AWG sends the
+                            // configured S3 prefix verbatim; only source-address
+                            // hygiene is applied before sending.
                             let cookie_len = cookie.len();
-                            let reply_len = d.config.amnezia.cookie_reply_len(cookie_len);
-                            match reply_policy::cookie_verdict(from, packet_len, reply_len) {
+                            match reply_policy::cookie_verdict(from) {
                                 reply_policy::CookieVerdict::Send => {
                                     // The limiter writes a bare cookie reply; it
                                     // does not know about S3. Re-prefix it in
@@ -1129,28 +1125,14 @@ impl Device {
                                         &mut t.dst_buf,
                                         cookie_len,
                                         crate::noise::amnezia::DEFAULT_UDP_WINDOW,
-                                        packet_len,
+                                        usize::MAX,
                                         &mut t.junk_rng,
                                     ) {
                                         let _: Result<_, _> = udp.send_to(out, &addr);
                                     }
                                 }
                                 reply_policy::CookieVerdict::RefusedSource => {}
-                                reply_policy::CookieVerdict::WouldAmplify => {
-                                    if warned_cookie_amplifier.swap(reply_len, Ordering::Relaxed)
-                                        != reply_len
-                                    {
-                                        tracing::warn!(
-                                            message = "suppressing cookie replies: S3 makes them \
-                                                       larger than the packets that provoke them, \
-                                                       which is a reflection amplifier. Handshakes \
-                                                       will fail while this interface is under \
-                                                       load; lower S3.",
-                                            reply_len = reply_len,
-                                            request_len = packet_len,
-                                        );
-                                    }
-                                }
+                                
                             }
                             continue;
                         }
@@ -1741,60 +1723,19 @@ mod ingress_tests {
     /// server: no key, no peer entry, no handshake. `cookie_verdict` is what
     /// stands between it and 65 KB aimed at a stranger.
     #[test]
-    fn the_largest_permitted_s3_is_refused_as_an_amplifier() {
-        // 65443 is the largest S3 the *size* rule permits -- the IPv4 UDP
-        // payload limit less the 64-byte cookie reply. Pinned by its neighbour
-        // rather than quoted, so this is the real edge of the configuration
-        // space and not a number someone remembered. S1 and S2 are at their own
-        // maxima, which is what it takes for an S3 that large to also clear the
-        // amplification rule.
-        assert!(AmneziaConfig::new(65_359, 65_415, 65_443, 0)
+    fn large_s3_cookie_replies_follow_upstream_semantics() {
+        let config = AmneziaConfig::new(284, 659, 1045, 12)
+            .with_header_protection_key([0x42; 32]);
+        config
             .validate()
-            .is_ok());
-        assert!(AmneziaConfig::new(65_359, 65_415, 65_444, 0)
-            .validate()
-            .is_err());
-
-        // With S1 = 0 the same S3 is now refused at configuration time -- the
-        // first of the two doors, and the loud one.
-        let amnezia = AmneziaConfig::new(0, 0, 65_443, 0);
-        let err = amnezia
-            .validate()
-            .expect_err("an amplifying S3 must not be a loadable configuration");
-        assert!(
-            err.contains("larger than"),
-            "the error must say what is wrong, not just that something is: {}",
-            err
-        );
-
-        // And the second door still holds, because it has to: a `DeviceConfig`
-        // supplied at startup never passes through `validate`, so `cookie_verdict`
-        // is the only thing standing between this config and the reflector below.
-        let (request_len, reply_len) = cookie_exchange_sizes(&amnezia);
-
+            .expect("the reference AWG 3.1 S values must be accepted");
         assert_eq!(
-            request_len, HANDSHAKE_INIT_SZ,
-            "S1 = 0, so the forgery costs one bare initiation"
-        );
-        assert_eq!(reply_len, 65_443 + COOKIE_REPLY_SZ);
-        assert!(
-            reply_len / request_len > 400,
-            "the point of the test is the ratio: {} in, {} out",
-            request_len,
-            reply_len
-        );
-
-        assert_eq!(
-            reply_policy::cookie_verdict(
-                "203.0.113.5:40000".parse().unwrap(),
-                request_len,
-                reply_len
-            ),
-            reply_policy::CookieVerdict::WouldAmplify,
-            "a {}x reflector must not be sent",
-            reply_len / request_len
+            reply_policy::cookie_verdict("203.0.113.5:40000".parse().unwrap()),
+            reply_policy::CookieVerdict::Send,
+            "upstream sends the S3-prefixed cookie reply even when it exceeds the request"
         );
     }
+
 
     /// And the configuration a real deployment runs still gets its cookie.
     ///
