@@ -2349,7 +2349,7 @@ mod tests {
             other => panic!("expected handshake initiation, got {:?}", other),
         };
         let cookie = match responder.decapsulate(
-            Some("127.0.0.1:51820".parse().unwrap()),
+            Some("127.0.0.1".parse().unwrap()),
             &init,
             &mut network,
         ) {
