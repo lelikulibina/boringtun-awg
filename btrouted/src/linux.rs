@@ -28,14 +28,6 @@ pub fn run_ip(args: &[String]) -> Result<(), LinuxError> { run("ip", args) }
 /// Replace only the table named by this daemon's configuration, then apply
 /// its complete nft batch. nft processes the batch transactionally.
 pub fn apply_nft(plan: &RoutingPlan) -> Result<(), LinuxError> {
-    let list = Command::new("nft")
-        .args(["list", "table", &plan.nft_family, &plan.nft_table])
-        .output()
-        .map_err(|source| LinuxError::Spawn { program: "nft".into(), source })?;
-    if list.status.success() {
-        run("nft", &["delete".into(), "table".into(), plan.nft_family.clone(), plan.nft_table.clone()])?;
-    }
-
     let mut child = Command::new("nft")
         .args(["-f", "-"])
         .stdin(Stdio::piped())
@@ -54,6 +46,10 @@ pub fn apply_nft(plan: &RoutingPlan) -> Result<(), LinuxError> {
         status: output.status.to_string(),
         stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
     })
+}
+
+pub fn remove_nft(plan: &RoutingPlan) {
+    let _ = run("nft", &["delete".into(), "table".into(), plan.nft_family.clone(), plan.nft_table.clone()]);
 }
 
 pub fn apply_policy_routing(plan: &RoutingPlan) -> Result<(), LinuxError> {
