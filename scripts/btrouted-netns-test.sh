@@ -111,12 +111,14 @@ ip netns exec "$NS" nft add table inet btrouted_it
 ip netns exec "$NS" "$BIN" --config "$TMP/config.toml" >"$TMP/conflict.log" 2>&1 &
 DAEMON_PID=$!
 for _ in $(seq 1 30); do
-    if ! kill -0 "$DAEMON_PID" 2>/dev/null; then
+    state="$(ps -o stat= -p "$DAEMON_PID" 2>/dev/null | tr -d ' ' || true)"
+    if [[ -z "$state" || "$state" == Z* ]]; then
         break
     fi
     sleep 1
 done
-if kill -0 "$DAEMON_PID" 2>/dev/null; then
+state="$(ps -o stat= -p "$DAEMON_PID" 2>/dev/null | tr -d ' ' || true)"
+if [[ -n "$state" && "$state" != Z* ]]; then
     fail "daemon did not reject a pre-existing foreign nftables table"
 fi
 set +e
