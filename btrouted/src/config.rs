@@ -366,9 +366,11 @@ impl Config {
             .routing
             .mark_base
             .checked_add(egress_count.saturating_sub(1) as u32)
-            .ok_or_else(|| ConfigError::Validation(
-                "[routing].mark_base leaves no room for all client routing marks".to_owned()
-            ))?;
+            .ok_or_else(|| {
+                ConfigError::Validation(
+                    "[routing].mark_base leaves no room for all client routing marks".to_owned(),
+                )
+            })?;
         if fwmarks
             .iter()
             .any(|mark| (*mark >= self.routing.mark_base) && (*mark <= last_routing_mark))
