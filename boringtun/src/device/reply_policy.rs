@@ -224,7 +224,11 @@ mod tests {
             "[fe80::1]:40000",
             "203.0.113.5:0",
         ] {
-            assert_eq!(cookie_verdict(peer(addr)), CookieVerdict::RefusedSource, "{addr}");
+            assert_eq!(
+                cookie_verdict(peer(addr)),
+                CookieVerdict::RefusedSource,
+                "{addr}"
+            );
         }
     }
 
