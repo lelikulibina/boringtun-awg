@@ -17,6 +17,8 @@ pub enum LinuxError {
         status: String,
         stderr: String,
     },
+    #[error("refusing to modify non-daemon network resource {resource}: {details}")]
+    Conflict { resource: String, details: String },
 }
 
 fn run(program: &str, args: &[String]) -> Result<(), LinuxError> {
@@ -53,6 +55,13 @@ pub fn apply_nft(plan: &RoutingPlan) -> Result<(), LinuxError> {
         })?;
     let mut script = String::new();
     if existing.status.success() {
+        let current = String::from_utf8_lossy(&existing.stdout);
+        if !current.contains("comment \"managed by btrouted\"") {
+            return Err(LinuxError::Conflict {
+                resource: format!("nft table {} {}", plan.nft_family, plan.nft_table),
+                details: "table exists but has no btrouted ownership comment".into(),
+            });
+        }
         script.push_str(&format!(
             "delete table {} {}\n",
             plan.nft_family, plan.nft_table
@@ -94,6 +103,18 @@ pub fn apply_nft(plan: &RoutingPlan) -> Result<(), LinuxError> {
 }
 
 pub fn remove_nft(plan: &RoutingPlan) {
+    let Ok(existing) = Command::new("nft")
+        .args(["list", "table", &plan.nft_family, &plan.nft_table])
+        .output()
+    else {
+        return;
+    };
+    if !existing.status.success()
+        || !String::from_utf8_lossy(&existing.stdout)
+            .contains("comment \"managed by btrouted\"")
+    {
+        return;
+    }
     let _ = run(
         "nft",
         &[
