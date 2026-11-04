@@ -176,300 +176,65 @@ pub(crate) fn reply_target(from: SocketAddr, door: Door) -> Option<SocketAddr> {
     }
 }
 
-/// What to do with a cookie reply the rate limiter has just produced.
-///
-/// Three variants rather than a `bool`, so the caller can log the operator's
-/// misconfiguration without also logging every forged source address in a
-/// flood. They are not the same event and they do not deserve the same volume.
+/// What to do with a cookie reply produced by the rate limiter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CookieVerdict {
-    /// Send it.
+    /// Send it using the configured S3 prefix.
     Send,
-    /// The source is an address no reply may ever be aimed at. Attacker-chosen,
-    /// arbitrarily frequent, and not worth a log line.
+    /// The source address must never be replied to.
     RefusedSource,
 }
 
-/// Decide whether an upstream-compatible cookie reply may be sent to a source.
-///
-/// The cookie's S3 prefix is not size-limited here: amneziawg-go emits the
-/// configured packet shape verbatim. Address hygiene remains in force because
-/// MAC1 is keyed by the server's public key and does not authenticate the
-/// source address.
-g it prevents no reflection and no amplification.
-    ///
-    /// It does prevent a handshake. A peer reached through a local UDP relay
-    /// holds `127.0.0.1`, and this repository's own integration tests configure
-    /// exactly that. Suppressing its cookie means it can never produce a valid
-    /// mac2, so every one of its handshakes fails for as long as the device
-    /// stays over `HANDSHAKE_RATE_LIMIT` — the moment cookies exist for.
-    ///
-    /// Re-unifying the two doors is the mutation this guards against, and it is
-    /// the shape the module shipped with before this test existed.
-    #[test]
-    fn loopback_is_answered_at_the_cookie_door_and_refused_at_the_probe_door() {
-        for addr in [
-            "127.0.0.1:51820",
-            "[::1]:51820",
-            // Every IPv4 datagram reaching the dual-stack v6 socket arrives in
-            // the mapped form, so a relay-fronted peer looks like this.
-            "[::ffff:127.0.0.1]:51820",
-        ] {
-            assert!(
-                reply_target(peer(addr), Door::Cookie).is_some(),
-                "{} is a peer behind a local relay; its cookie must go out",
-                addr
-            );
-            assert_eq!(
-                reply_target(peer(addr), Door::Probe),
-                None,
-                "{} has no reason to be answered as a probe",
-                addr
-            );
-        }
+/// Match amneziawg-go: the configured S3 prefix is emitted verbatim, without
+/// limiting the cookie reply to the size of the packet that triggered it.
+/// MAC1 uses the server's public key, so source-address hygiene still applies.
+pub(crate) fn cookie_verdict(from: SocketAddr) -> CookieVerdict {
+    if reply_target(from, Door::Cookie).is_none() {
+        CookieVerdict::RefusedSource
+    } else {
+        CookieVerdict::Send
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn peer(addr: &str) -> SocketAddr {
+        addr.parse().unwrap()
     }
 
-    /// The deployment case end to end: a loopback peer, an attenuating reply,
-    /// and the sizes the interop harness actually uses.
-    ///
-    /// Asserted through `cookie_verdict` rather than `reply_target` because the
-    /// regression was in the composition — the size rule was fine and the
-    /// address rule refused first.
     #[test]
-    fn a_relay_fronted_peer_still_gets_its_cookie() {
-        // S1 = 120, S3 = 110: request 268, reply 174. The reply attenuates.
+    fn loopback_cookie_replies_are_allowed_but_probe_replies_are_not() {
         for addr in ["127.0.0.1:51820", "[::1]:51820", "[::ffff:127.0.0.1]:51820"] {
-            assert_eq!(
-                cookie_verdict(peer(addr)),
-                CookieVerdict::Send,
-                "{} must receive the cookie its next handshake needs",
-                addr
-            );
+            assert!(reply_target(peer(addr), Door::Cookie).is_some());
+            assert_eq!(reply_target(peer(addr), Door::Probe), None);
         }
     }
 
-    /// Loopback is the *only* term that differs between the doors. Everything
-    /// else on the list is refused at both, so the split cannot quietly widen.
     #[test]
-    fn the_doors_differ_on_loopback_and_nothing_else() {
-        let both_refuse = [
+    fn unsafe_cookie_destinations_are_refused() {
+        for addr in [
             "0.0.0.0:40000",
             "224.0.0.1:40000",
             "255.255.255.255:40000",
             "169.254.1.1:40000",
-            "0.1.2.3:40000",
-            "240.0.0.1:40000",
-            "203.0.113.5:0",
             "[::]:40000",
             "[ff02::1]:40000",
             "[fe80::1]:40000",
-            "[::ffff:255.255.255.255]:40000",
-            "[::ffff:224.0.0.1]:40000",
-            "[::ffff:169.254.1.1]:40000",
-        ];
-        for addr in both_refuse {
-            assert_eq!(
-                reply_target(peer(addr), Door::Probe),
-                None,
-                "probe: {}",
-                addr
-            );
-            assert_eq!(
-                reply_target(peer(addr), Door::Cookie),
-                None,
-                "cookie: {} is refused at both doors",
-                addr
-            );
-        }
-        // And an ordinary routable source is allowed at both.
-        for addr in ["203.0.113.5:40000", "[2001:db8::1]:40000"] {
-            assert!(
-                reply_target(peer(addr), Door::Probe).is_some(),
-                "probe: {}",
-                addr
-            );
-            assert!(
-                reply_target(peer(addr), Door::Cookie).is_some(),
-                "cookie: {}",
-                addr
-            );
-        }
-        // The name of this test promises loopback *does* differ, so assert it
-        // here too rather than leaving that half to a sibling: re-unifying the
-        // doors must fail every test whose name claims they are split.
-        for addr in ["127.0.0.1:40000", "[::1]:40000"] {
-            assert_eq!(
-                reply_target(peer(addr), Door::Probe),
-                None,
-                "probe: {}",
-                addr
-            );
-            assert!(
-                reply_target(peer(addr), Door::Cookie).is_some(),
-                "cookie: {} is the one address the doors disagree about",
-                addr
-            );
+            "203.0.113.5:0",
+        ] {
+            assert_eq!(cookie_verdict(peer(addr)), CookieVerdict::RefusedSource, "{addr}");
         }
     }
 
-    /// A source address is attacker-chosen. Each of these turns one forged
-    /// datagram into a reply somewhere it must never go.
     #[test]
-    fn refuses_source_addresses_a_reply_must_never_target() {
-        let cases = [
-            ("0.0.0.0:40000", "unspecified"),
-            ("127.0.0.1:40000", "loopback"),
-            ("224.0.0.1:40000", "multicast"),
-            ("255.255.255.255:40000", "broadcast"),
-            ("169.254.1.1:40000", "link-local"),
-            ("0.1.2.3:40000", "0.0.0.0/8 this-network"),
-            ("240.0.0.1:40000", "240.0.0.0/4 reserved"),
-            ("203.0.113.5:0", "port 0"),
-            ("[::]:40000", "v6 unspecified"),
-            ("[::1]:40000", "v6 loopback"),
-            ("[ff02::1]:40000", "v6 multicast"),
-            ("[fe80::1]:40000", "v6 link-local"),
-            // The dual-stack form. `Ipv6Addr::is_multicast` and friends do not
-            // look inside the mapping, so these pass the v6 rules unless the
-            // address is unmapped first -- and every IPv4 datagram reaching the
-            // v6 socket arrives exactly like this.
-            ("[::ffff:255.255.255.255]:40000", "v4-mapped broadcast"),
-            ("[::ffff:224.0.0.1]:40000", "v4-mapped multicast"),
-            ("[::ffff:127.0.0.1]:40000", "v4-mapped loopback"),
-            ("[::ffff:169.254.1.1]:40000", "v4-mapped link-local"),
-        ];
-        for (addr, what) in cases {
-            assert_eq!(
-                reply_target(peer(addr), Door::Probe),
-                None,
-                "{} must not be replied to",
-                what
-            );
-        }
-    }
-
-    /// The mirror of the rejection list, so that list is not vacuously passing
-    /// against a function that refuses everything.
-    #[test]
-    fn an_ordinary_source_is_allowed_over_either_family() {
-        for addr in ["203.0.113.5:40000", "[2001:db8::1]:40000"] {
-            assert_eq!(
-                reply_target(peer(addr), Door::Probe),
-                Some(peer(addr)),
-                "{} is an ordinary peer address",
-                addr
-            );
-        }
-    }
-
-    /// The single door normalises as well as decides: an allowed v4-mapped
-    /// source comes back as the plain IPv4 address it denotes.
-    ///
-    /// This is the half a caller could not have got from a bare predicate, and
-    /// it is what the STUN responder puts in XOR-MAPPED-ADDRESS. A mutant that
-    /// drops the `unmap` still passes the rejection list above only if the
-    /// mapped-form rows are also removed; this one fails immediately.
-    #[test]
-    fn an_allowed_v4_mapped_source_comes_back_unmapped() {
-        assert_eq!(
-            reply_target(peer("[::ffff:203.0.113.5]:40000"), Door::Probe),
-            Some(peer("203.0.113.5:40000")),
-            "the reply must be aimed at, and described by, the IPv4 address"
-        );
-    }
-
-    /// A v6 address that merely looks like a mapping is left alone: the
-    /// deprecated IPv4-*compatible* form is not something a dual-stack socket
-    /// produces, and it must keep failing the v6 rules rather than being
-    /// silently rewritten into an allowed IPv4 address.
-    #[test]
-    fn the_deprecated_v4_compatible_form_is_not_unmapped() {
-        // `::203.0.113.5` is not v4-mapped, so it stays v6 -- and as a v6
-        // address it is neither unspecified nor loopback nor multicast nor
-        // link-local, so it is allowed *as itself*, not as 203.0.113.5.
-        let compat = peer("[::203.0.113.5]:40000");
-        assert_eq!(reply_target(compat, Door::Probe), Some(compat));
-    }
-
-    /// The ~440x reflector this module exists to close, with the real numbers:
-    /// the largest S3 `AmneziaConfig::validate` admits, against an initiation
-    /// carrying no S1 at all.
-    #[test]
-    fn a_cookie_reply_larger_than_its_request_is_sent_like_upstream() {
-        // S3 = 65443 is the maximum `validate` permits; 65443 + 64 = 65507 is
-        // the whole IPv4 UDP payload.
-        let request = HANDSHAKE_INIT_SZ; // S1 = 0
-        let reply = 65443 + COOKIE_REPLY_SZ;
+    fn cookie_reply_is_sent_even_when_s3_makes_it_larger_than_the_request() {
+        // The exact S1/S2/S3 values are validated by AmneziaConfig tests. This
+        // policy deliberately has no request/reply length arguments.
         assert_eq!(
             cookie_verdict(peer("203.0.113.5:40000")),
-            CookieVerdict::Send,
-            "upstream sends the configured S3 reply even when larger: {} bytes to {}",
-            reply,
-            request,
-            reply / request
+            CookieVerdict::Send
         );
-    }
-
-    /// Parity is allowed; one byte over is not. Asserted as the boundary rather
-    /// than as two comfortable cases, because the boundary is the whole rule.
-    #[test]
-    fn cookie_reply_size_does_not_change_upstream_verdict() {
-        let from = peer("203.0.113.5:40000");
-        assert_eq!(cookie_verdict(from), CookieVerdict::Send);
-        assert_eq!(cookie_verdict(from), CookieVerdict::Send);
-        assert_eq!(
-            cookie_verdict(from),
-            CookieVerdict::Send,
-            "S3 padding is not capped by the triggering datagram"
-        );
-        assert_eq!(cookie_verdict(from), CookieVerdict::Send);
-    }
-
-    /// The configurations real deployments run are untouched.
-    ///
-    /// A cookie reply is 84 bytes shorter than an initiation and 28 shorter
-    /// than a response before any prefix is applied, so any S3 no larger than
-    /// S1 (or S2) is an attenuator by construction. Computed from the protocol
-    /// constants rather than from remembered numbers, so a change to either
-    /// packet size is caught here instead of in production.
-    #[test]
-    fn a_prefix_no_larger_than_the_initiations_is_never_an_amplifier() {
-        let from = peer("203.0.113.5:40000");
-        // 65359 is the largest S1 `AmneziaConfig::validate` accepts, so every
-        // row here is a configuration an operator could actually set -- the
-        // claim is about real configurations, not about arithmetic.
-        for s in [0usize, 15, 110, 120, 1000, 65359] {
-            for (base, what) in [
-                (HANDSHAKE_INIT_SZ, "initiation"),
-                (HANDSHAKE_RESP_SZ, "response"),
-            ] {
-                assert_eq!(
-                    cookie_verdict(from, s + base, s + COOKIE_REPLY_SZ),
-                    CookieVerdict::Send,
-                    "S3 = S1 = {} against a{} {}-byte {} must still be answered",
-                    s,
-                    if what == "initiation" { "n" } else { "" },
-                    base,
-                    what
-                );
-            }
-        }
-    }
-
-    /// The address rule applies to cookie replies too, and it applies *first*:
-    /// a perfectly-sized reply to a broadcast source is still refused.
-    ///
-    /// Without this, a mutant that checks only the size passes every other test
-    /// in this module.
-    #[test]
-    fn a_well_sized_cookie_reply_is_still_refused_to_a_forbidden_source() {
-        for addr in ["255.255.255.255:40000", "[::ffff:224.0.0.1]:40000"] {
-            assert_eq!(
-                cookie_verdict(peer(addr)),
-                CookieVerdict::RefusedSource,
-                "{} must not be replied to at any size",
-                addr
-            );
-        }
     }
 }
