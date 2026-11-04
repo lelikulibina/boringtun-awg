@@ -3656,7 +3656,7 @@ mod tests {
 
     #[test]
     fn header_protection_and_random_trailers_interoperate_end_to_end() {
-        let config = AmneziaConfig::new(12, 12, 12, 12)
+        let config = AmneziaConfig::new(284, 659, 1045, 12)
             .with_header_protection_key([0x6b; 32])
             .with_random_trailers(true);
         let (mut initiator, mut responder) = create_two_tuns_with_amnezia(config);
