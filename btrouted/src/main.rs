@@ -38,6 +38,5 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     tracing::info!(path = %config_path.display(), "starting btrouted");
     let runtime = Runtime::start(config)?;
-    runtime.wait();
-    Ok(())
+    runtime.run();
 }
