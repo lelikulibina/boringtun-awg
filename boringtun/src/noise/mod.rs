@@ -2303,8 +2303,7 @@ mod tests {
             other => panic!("expected padded keepalive, got {:?}", other),
         };
         assert!(
-            (DATA_OVERHEAD_SZ + 12 + 10..=DATA_OVERHEAD_SZ + 12 + 100)
-                .contains(&keepalive.len()),
+            (DATA_OVERHEAD_SZ + 12 + 10..=DATA_OVERHEAD_SZ + 12 + 100).contains(&keepalive.len()),
             "ContentPaddingAddition must also pad an empty transport keepalive"
         );
         assert!(
