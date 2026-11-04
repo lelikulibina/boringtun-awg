@@ -1,0 +1,13 @@
+[package]
+name = "btrouted"
+version = "0.1.0"
+edition = "2021"
+license = "BSD-3-Clause"
+description = "Linux multi-tunnel router daemon for BoringTun and AmneziaWG"
+
+[dependencies]
+base64 = "0.22"
+boringtun = { path = "../boringtun", version = "0.7.1", features = ["device"] }
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "2.0"
+toml = "0.8.23"
