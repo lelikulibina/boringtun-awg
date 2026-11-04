@@ -3027,6 +3027,42 @@ mod tests {
     }
 
     #[test]
+    fn cpa_awg30_and_awg31_modes_apply_their_distinct_limits_end_to_end() {
+        for (legacy, expected_ip_plaintext_len) in [(true, 30usize), (false, 29usize)] {
+            let config = AmneziaConfig::new(0, 0, 0, 0)
+                .with_content_padding_addition(100, 100)
+                .with_legacy_content_padding(legacy);
+            let (mut sender, mut receiver) =
+                create_two_tuns_and_handshake_with_amnezia(config);
+            sender.set_mtu(30);
+
+            let mut packet = create_ipv4_udp_packet();
+            packet.truncate(29);
+            packet[2..4].copy_from_slice(&29u16.to_be_bytes());
+            packet[24..26].copy_from_slice(&9u16.to_be_bytes());
+
+            let mut network = vec![0u8; 2048];
+            let outbound = match sender.encapsulate(&packet, &mut network) {
+                TunnResult::WriteToNetwork(datagram) => datagram.to_vec(),
+                other => panic!("expected CPA-padded transport datagram, got {:?}", other),
+            };
+            assert_eq!(
+                outbound.len(),
+                DATA_OVERHEAD_SZ + expected_ip_plaintext_len,
+                "AWG 3.0 clamps CPA to MTU; AWG 3.1 clamps it to the peer UDP window"
+            );
+
+            let mut tunnel = vec![0u8; 2048];
+            match receiver.decapsulate(None, &outbound, &mut tunnel) {
+                TunnResult::WriteToTunnelV4(restored, _) => {
+                    assert_eq!(restored, packet.as_slice());
+                }
+                other => panic!("expected original IP packet, got {:?}", other),
+            }
+        }
+    }
+
+    #[test]
     fn amnezia_s1_to_s4_full_handshake_and_data() {
         let amnezia = AmneziaConfig::new(5, 7, 11, 13);
         let (mut my_tun, mut their_tun) = create_two_tuns_with_amnezia(amnezia);
