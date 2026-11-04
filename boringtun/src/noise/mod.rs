@@ -2291,7 +2291,9 @@ mod tests {
 
     #[test]
     fn content_padding_addition_preserves_padded_keepalive_semantics() {
-        let config = AmneziaConfig::new(0, 0, 0, 0).with_content_padding_addition(10, 100);
+        let config = AmneziaConfig::new(12, 12, 12, 12)
+            .with_header_protection_key([0x42; 32])
+            .with_content_padding_addition(10, 100);
         let (mut sender, mut receiver) = create_two_tuns_and_handshake_with_amnezia(config);
         let mut network = [0u8; 2048];
         let mut tunnel = [0u8; 2048];
@@ -2301,7 +2303,8 @@ mod tests {
             other => panic!("expected padded keepalive, got {:?}", other),
         };
         assert!(
-            (DATA_OVERHEAD_SZ + 10..=DATA_OVERHEAD_SZ + 100).contains(&keepalive.len()),
+            (DATA_OVERHEAD_SZ + 12 + 10..=DATA_OVERHEAD_SZ + 12 + 100)
+                .contains(&keepalive.len()),
             "ContentPaddingAddition must also pad an empty transport keepalive"
         );
         assert!(
