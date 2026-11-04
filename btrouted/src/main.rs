@@ -1,6 +1,9 @@
+#[cfg(target_os = "linux")]
 use btrouted::{Config, Runtime};
+#[cfg(target_os = "linux")]
 use std::path::PathBuf;
 
+#[cfg(target_os = "linux")]
 fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -12,6 +15,13 @@ fn main() {
     }
 }
 
+#[cfg(not(target_os = "linux"))]
+fn main() {
+    eprintln!("btrouted is supported only on Linux");
+    std::process::exit(1);
+}
+
+#[cfg(target_os = "linux")]
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
     let mut config_path = PathBuf::from("/etc/btrouted/config.toml");
@@ -23,7 +33,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
             "--check" => check_only = true,
             "-h" | "--help" => {
-                println!("Usage: btrouted [--config PATH] [--check]\n\n  -c, --config PATH  Configuration file (default: /etc/btrouted/config.toml)\n      --check        Validate configuration and exit");
+                println!(
+                    "Usage: btrouted [--config PATH] [--check]\n\n  -c, --config PATH  Configuration file (default: /etc/btrouted/config.toml)\n      --check        Validate configuration and exit"
+                );
                 return Ok(());
             }
             other => return Err(format!("unknown argument: {other}").into()),
