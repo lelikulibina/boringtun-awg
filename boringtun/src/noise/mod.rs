@@ -2229,15 +2229,15 @@ mod tests {
         assert_eq!(initiator.timers.max_handshake_attempts, 2);
         assert_eq!(responder.timers.max_handshake_attempts, 2);
 
-        // The selected budget is stable throughout the attempt cycle. A live
-        // configuration update is sampled only when the handshake completes,
-        // matching upstream timersStart/timersHandshakeComplete.
+        // Upstream selects a budget on every fresh SendHandshakeInitiation(false)
+        // and again when a handshake completes. Retries keep that selection stable.
         initiator.timers.set_timer_ranges(&replacement);
         responder.timers.set_timer_ranges(&replacement);
         initiator.timers.handshake_attempts = 5;
         responder.timers.handshake_attempts = 3;
         let init = create_handshake_init(&mut initiator);
-        assert_eq!(initiator.timers.max_handshake_attempts, 2);
+        assert_eq!(initiator.timers.max_handshake_attempts, 7);
+        assert_eq!(initiator.timers.handshake_attempts, 0);
         let response = create_handshake_response(&mut responder, &init);
         let keepalive = parse_handshake_resp(&mut initiator, &response);
         assert_eq!(initiator.timers.max_handshake_attempts, 7);
