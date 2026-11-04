@@ -12,7 +12,7 @@ concurrency:
 
 on:
   push:
-    branches: [ "main", "master", "awg-2.0-extensions" ]
+    branches: [ "main", "master", "awg-2.0-extensions", "feature/**" ]
   pull_request:
     branches: [ "main", "master", "awg-2.0-extensions" ]
   workflow_dispatch:
