@@ -2299,6 +2299,67 @@ mod tests {
     }
 
     #[test]
+    fn cookie_reply_does_not_count_as_authenticated_packet_traversal() {
+        let initiator_secret = x25519::StaticSecret::random_from_rng(OsRng);
+        let initiator_public = x25519::PublicKey::from(&initiator_secret);
+        let responder_secret = x25519::StaticSecret::random_from_rng(OsRng);
+        let responder_public = x25519::PublicKey::from(&responder_secret);
+        let rate_limiter = Arc::new(RateLimiter::new(&responder_public, 0));
+        let config = AmneziaConfig::new(0, 0, 0, 0);
+
+        let mut initiator = Tunn::new_with_amnezia(
+            initiator_secret,
+            responder_public,
+            None,
+            None,
+            1,
+            None,
+            0, 0, 0, 0, 0, 0, 0, 0,
+            config.clone(),
+        )
+        .unwrap();
+        let mut responder = Tunn::new_with_amnezia(
+            responder_secret,
+            initiator_public,
+            None,
+            None,
+            2,
+            Some(rate_limiter),
+            0, 0, 0, 0, 0, 0, 0, 0,
+            config,
+        )
+        .unwrap();
+
+        let mut network = [0u8; 4096];
+        let init = match initiator.format_handshake_initiation(&mut network, false) {
+            TunnResult::WriteToNetwork(packet) => packet.to_vec(),
+            other => panic!("expected handshake initiation, got {:?}", other),
+        };
+        let cookie = match responder.decapsulate(None, &init, &mut network) {
+            TunnResult::WriteToNetwork(packet) => packet.to_vec(),
+            other => panic!("expected under-load Cookie Reply, got {:?}", other),
+        };
+
+        initiator.timer_tick(TimerName::TimeLastPacketReceived);
+        let last_authenticated_receive = initiator.timers[TimeLastPacketReceived];
+        advance_past_pacing_gate(Duration::from_millis(2));
+
+        assert!(matches!(
+            initiator.decapsulate(None, &cookie, &mut network),
+            TunnResult::Done
+        ));
+        assert_eq!(
+            initiator.timers[TimeLastPacketReceived],
+            last_authenticated_receive,
+            "Cookie Reply updates cookie state but must not reset authenticated traversal timers"
+        );
+        assert!(
+            initiator.timers[TimeCookieReceived] > last_authenticated_receive,
+            "the cookie expiry clock must still be updated"
+        );
+    }
+
+    #[test]
     fn content_padding_addition_preserves_padded_keepalive_semantics() {
         let config = AmneziaConfig::new(12, 12, 12, 12)
             .with_header_protection_key([0x42; 32])
