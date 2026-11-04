@@ -1488,6 +1488,21 @@ mod ingress_tests {
 
     use super::*;
 
+    #[test]
+    fn device_config_keeps_uapi_compatibility_and_allows_daemon_mode() {
+        let legacy = DeviceConfig::default();
+        assert!(legacy.enable_uapi);
+        assert_eq!(legacy.listen_port, None);
+
+        let daemon = DeviceConfig {
+            enable_uapi: false,
+            listen_port: Some(51820),
+            ..DeviceConfig::default()
+        };
+        assert!(!daemon.enable_uapi);
+        assert_eq!(daemon.listen_port, Some(51820));
+    }
+
     /// Moving a prefix from one peer to another must transfer ownership
     /// completely. The old owner keeping its own copy is what let it carry on
     /// source-spoofing an address the trie had already reassigned.
