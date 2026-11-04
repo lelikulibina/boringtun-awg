@@ -1131,19 +1131,37 @@ impl AmneziaConfig {
         random_usize_inclusive(0, available - 1, rng)
     }
 
-    /// Transport RandomTrailers are zero padding inside the AEAD plaintext.
-    /// Explicit ContentPaddingAddition takes precedence, matching upstream.
+    /// Transport padding follows upstream precedence:
+    /// 1. explicit ContentPaddingAddition,
+    /// 2. RandomTrailers when enabled,
+    /// 3. ordinary WireGuard MTU-bounded 16-byte padding otherwise.
     pub(crate) fn transport_padding_size(
         &self,
         ip_packet_size: usize,
         wire_packet_size: usize,
         udp_window: usize,
+        mtu: usize,
         rng: &mut impl RngCore,
     ) -> usize {
         if self.content_padding_addition != (0, 0) {
             return self.content_padding_size(ip_packet_size, wire_packet_size, udp_window, rng);
         }
-        self.random_trailer_len(wire_packet_size, udp_window, MAX_SENDABLE_DATAGRAM, rng)
+        if self.random_trailers {
+            return self.random_trailer_len(wire_packet_size, udp_window, MAX_SENDABLE_DATAGRAM, rng);
+        }
+        calculate_wg_padding_size(ip_packet_size, mtu)
+    }
+
+    /// Match upstream calculatePaddingSize(packetSize, tun.mtu).
+    fn calculate_wg_padding_size(packet_size: usize, mtu: usize) -> usize {
+        let mtu = mtu.max(1);
+        let last_unit = if packet_size > mtu {
+            packet_size % mtu
+        } else {
+            packet_size
+        };
+        let padded_size = ((last_unit + 15) & !15).min(mtu);
+        padded_size.saturating_sub(last_unit)
     }
 
     pub fn fill_pre_handshake_junk<'a>(
@@ -1889,6 +1907,16 @@ mod tests {
             Some(first_plain.as_slice()),
             "a freshly randomized S-prefix nonce must still decrypt the protected message"
         );
+    }
+
+    #[test]
+    fn wireguard_padding_matches_upstream_mtu_algorithm() {
+        assert_eq!(calculate_wg_padding_size(0, 1420), 0);
+        assert_eq!(calculate_wg_padding_size(28, 1420), 4);
+        assert_eq!(calculate_wg_padding_size(1419, 1420), 1);
+        assert_eq!(calculate_wg_padding_size(1420, 1420), 0);
+        assert_eq!(calculate_wg_padding_size(1421, 1420), 15);
+        assert_eq!(calculate_wg_padding_size(28, 0), 4);
     }
 
     #[test]
