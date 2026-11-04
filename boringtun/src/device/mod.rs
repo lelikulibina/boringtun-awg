@@ -1734,7 +1734,6 @@ mod ingress_tests {
         );
     }
 
-
     /// And the configuration a real deployment runs still gets its cookie.
     ///
     /// The S-sizes are the ones `scripts/awg-interop-poc.sh` runs against the
