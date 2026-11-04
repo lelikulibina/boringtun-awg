@@ -28,6 +28,12 @@ pub struct Runtime {
     devices: Vec<DeviceHandle>,
     routing: RoutingPlan,
     stats_interval: Duration,
+    forwarding_state: Option<ForwardingState>,
+}
+
+struct ForwardingState {
+    ipv4: String,
+    ipv6: String,
 }
 
 impl Runtime {
@@ -90,9 +96,11 @@ impl Runtime {
             devices.push(handle);
         }
 
-        if config.daemon.manage_ip_forwarding {
-            enable_forwarding()?;
-        }
+        let forwarding_state = if config.daemon.manage_ip_forwarding {
+            Some(enable_forwarding()?)
+        } else {
+            None
+        };
         linux::apply_nft(&routing)?;
         if let Err(error) = linux::apply_policy_routing(&routing) {
             linux::remove_nft(&routing);
@@ -104,6 +112,7 @@ impl Runtime {
             devices,
             routing,
             stats_interval: Duration::from_secs(config.daemon.stats_interval_secs),
+            forwarding_state,
         })
     }
 
@@ -153,6 +162,9 @@ impl Drop for Runtime {
     fn drop(&mut self) {
         linux::remove_policy_routing(&self.routing);
         linux::remove_nft(&self.routing);
+        if let Some(state) = &self.forwarding_state {
+            restore_forwarding(state);
+        }
     }
 }
 
@@ -276,17 +288,46 @@ fn resolve_endpoint(value: &str) -> Result<SocketAddr, RuntimeError> {
     }
 }
 
-fn enable_forwarding() -> Result<(), RuntimeError> {
-    for key in ["net.ipv4.ip_forward", "net.ipv6.conf.all.forwarding"] {
-        let output = std::process::Command::new("sysctl")
-            .args(["-w", &format!("{key}=1")])
-            .output()
-            .map_err(|error| RuntimeError::Forwarding(error.to_string()))?;
-        if !output.status.success() {
-            return Err(RuntimeError::Forwarding(
-                String::from_utf8_lossy(&output.stderr).trim().to_owned(),
-            ));
-        }
+fn read_sysctl(key: &str) -> Result<String, RuntimeError> {
+    let output = std::process::Command::new("sysctl")
+        .args(["-n", key])
+        .output()
+        .map_err(|error| RuntimeError::Forwarding(error.to_string()))?;
+    if !output.status.success() {
+        return Err(RuntimeError::Forwarding(
+            String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+}
+
+fn write_sysctl(key: &str, value: &str) -> Result<(), RuntimeError> {
+    let output = std::process::Command::new("sysctl")
+        .args(["-w", &format!("{key}={value}")])
+        .output()
+        .map_err(|error| RuntimeError::Forwarding(error.to_string()))?;
+    if !output.status.success() {
+        return Err(RuntimeError::Forwarding(
+            String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+        ));
     }
     Ok(())
+}
+
+fn enable_forwarding() -> Result<ForwardingState, RuntimeError> {
+    let state = ForwardingState {
+        ipv4: read_sysctl("net.ipv4.ip_forward")?,
+        ipv6: read_sysctl("net.ipv6.conf.all.forwarding")?,
+    };
+    write_sysctl("net.ipv4.ip_forward", "1")?;
+    if let Err(error) = write_sysctl("net.ipv6.conf.all.forwarding", "1") {
+        let _ = write_sysctl("net.ipv4.ip_forward", &state.ipv4);
+        return Err(error);
+    }
+    Ok(state)
+}
+
+fn restore_forwarding(state: &ForwardingState) {
+    let _ = write_sysctl("net.ipv4.ip_forward", &state.ipv4);
+    let _ = write_sysctl("net.ipv6.conf.all.forwarding", &state.ipv6);
 }
