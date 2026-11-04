@@ -702,10 +702,19 @@ impl Tunn {
                     // The upstream checks the retry budget when the retransmit
                     // timer expires, not on every polling tick.
                     if self.timers.handshake_attempts > self.timers.max_handshake_attempts {
-                        tracing::error!("CONNECTION_EXPIRED(MAX_HANDSHAKE_ATTEMPTS)");
-                        self.handshake.set_expired();
-                        self.clear_all();
-                        return TunnResult::Err(WireGuardError::ConnectionExpired);
+                        tracing::warn!(
+                            message = "HANDSHAKE(MAX_HANDSHAKE_ATTEMPTS)",
+                            attempts = self.timers.handshake_attempts,
+                            max_attempts = self.timers.max_handshake_attempts
+                        );
+
+                        // Match amneziawg-go's expiredRetransmitHandshake:
+                        // stop this retry cycle and drop staged packets, but
+                        // retain any still-valid session keypairs. They expire
+                        // independently after RejectAfterTime * 3.
+                        self.handshake.abort_initiation();
+                        self.packet_queue.clear();
+                        return TunnResult::Done;
                     }
 
                     // A handshake initiation is retried after the configured

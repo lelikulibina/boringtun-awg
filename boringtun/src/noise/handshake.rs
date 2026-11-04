@@ -701,6 +701,18 @@ impl Handshake {
         }
     }
 
+    /// Abort a timed-out initiation without destroying established session keys.
+    ///
+    /// Upstream amneziawg-go stops retrying and flushes staged packets when the
+    /// configured handshake-attempt budget is exhausted. It does not expire the
+    /// whole peer or immediately discard an already-established keypair.
+    pub(crate) fn abort_initiation(&mut self) {
+        if matches!(self.state, HandshakeState::InitSent(_)) {
+            self.state = HandshakeState::None;
+            self.previous = HandshakeState::None;
+        }
+    }
+
     pub(crate) fn set_expired(&mut self) {
         self.previous = HandshakeState::Expired;
         self.state = HandshakeState::Expired;

@@ -2329,9 +2329,52 @@ mod tests {
         assert_eq!(my_tun.timers.handshake_attempts, 1);
 
         mock_instant::MockClock::advance(REKEY_TIMEOUT + Duration::from_millis(334));
+        assert!(matches!(my_tun.update_timers(&mut dst), TunnResult::Done));
+        assert!(
+            !my_tun.is_expired(),
+            "exhausting the retry budget must stop this handshake, not expire the peer"
+        );
+        assert!(
+            my_tun.handshake.timer().is_none(),
+            "the timed-out initiation must no longer be scheduled for retransmission"
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "mock-instant")]
+    fn exhausted_rekey_keeps_an_established_session_usable() {
+        let (mut my_tun, _their_tun) = create_two_tuns_and_handshake();
+        let sessions_before = my_tun.sessions.iter().filter(|session| session.is_some()).count();
+        assert!(sessions_before > 0);
+
+        let mut dst = [0u8; 2048];
+        let _init = unwrap_network_packet(my_tun.format_handshake_initiation(&mut dst, true));
+        my_tun.timers.max_handshake_attempts = 0;
+        my_tun.packet_queue.push_back(vec![0x45, 0x00]);
+
+        // First expiry sends the one retry allowed when max_attempts is zero.
+        mock_instant::MockClock::advance(REKEY_TIMEOUT + Duration::from_millis(334));
         assert!(matches!(
             my_tun.update_timers(&mut dst),
-            TunnResult::Err(WireGuardError::ConnectionExpired)
+            TunnResult::WriteToNetwork(_)
+        ));
+
+        // The next expiry ends only the retry cycle. The established keypair
+        // remains available for traffic, while staged packets are discarded.
+        mock_instant::MockClock::advance(REKEY_TIMEOUT + Duration::from_millis(334));
+        assert!(matches!(my_tun.update_timers(&mut dst), TunnResult::Done));
+        assert!(!my_tun.is_expired());
+        assert_eq!(
+            my_tun.sessions.iter().filter(|session| session.is_some()).count(),
+            sessions_before,
+            "retry exhaustion must not destroy an otherwise valid session"
+        );
+        assert!(my_tun.packet_queue.is_empty());
+
+        let packet = create_ipv4_udp_packet();
+        assert!(matches!(
+            my_tun.encapsulate(&packet, &mut dst),
+            TunnResult::WriteToNetwork(_)
         ));
     }
 
