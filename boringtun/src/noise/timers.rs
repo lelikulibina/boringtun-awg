@@ -746,6 +746,26 @@ impl Tunn {
             return result;
         }
 
+        // newHandshake is an independent upstream timer. It may expire while
+        // a retransmission cycle is pending; SendHandshakeInitiation(false)
+        // is rate-limited by RekeyTimeout.Lo and can replace that cycle.
+        let new_handshake_due = self
+            .timers
+            .new_handshake_deadline
+            .map(|deadline| now >= deadline)
+            .unwrap_or(false);
+        if new_handshake_due {
+            self.timers.new_handshake_deadline = None;
+            let min_rekey_interval =
+                Duration::from_secs(self.timers.range_min(1, REKEY_TIMEOUT.as_secs() as u32) as u64);
+            if now.saturating_sub(self.timers[TimeLastHandshakeStarted]) >= min_rekey_interval {
+                if self.handshake.is_in_progress() {
+                    self.handshake.abort_initiation();
+                }
+                handshake_initiation_required = true;
+            }
+        }
+
         // Load timers only once:
         let session_established = self.timers[TimeSessionEstablished];
         let handshake_started = self.timers[TimeLastHandshakeStarted];
@@ -829,20 +849,6 @@ impl Tunn {
                 }
             } else {
                 if self.timers.rekey_due_on_receive || self.timers.rekey_due_on_send {
-                    handshake_initiation_required = true;
-                }
-
-                // If we have sent a packet to a given peer but have not received a
-                // packet after from that peer for (KEEPALIVE + REKEY_TIMEOUT) ms,
-                // we initiate a new handshake.
-                if self
-                    .timers
-                    .new_handshake_deadline
-                    .map(|deadline| now >= deadline)
-                    .unwrap_or(false)
-                {
-                    tracing::warn!("HANDSHAKE(KEEPALIVE + REKEY_TIMEOUT)");
-                    self.timers.new_handshake_deadline = None;
                     handshake_initiation_required = true;
                 }
 
