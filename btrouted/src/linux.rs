@@ -74,6 +74,19 @@ pub fn apply_policy_routing(plan: &RoutingPlan) -> Result<(), LinuxError> {
     Ok(())
 }
 
+
+pub fn remove_policy_routing(plan: &RoutingPlan) {
+    for egress in &plan.egresses {
+        for family in ["-4", "-6"] {
+            let _ = run("ip", &[family.into(), "rule".into(), "del".into(), "priority".into(),
+                egress.ip_rule_priority.to_string(), "fwmark".into(),
+                format!("0x{:x}", egress.mark), "lookup".into(), egress.table_id.to_string()]);
+            let _ = run("ip", &[family.into(), "route".into(), "del".into(), "default".into(),
+                "dev".into(), egress.interface.clone(), "table".into(), egress.table_id.to_string()]);
+        }
+    }
+}
+
 pub fn configure_interface(name: &str, mtu: u16, addresses: &[String]) -> Result<(), LinuxError> {
     run("ip", &["link".into(), "set".into(), "dev".into(), name.into(), "mtu".into(),
         mtu.to_string(), "up".into()])?;
