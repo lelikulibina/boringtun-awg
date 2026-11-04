@@ -718,10 +718,13 @@ def verify_wire_pcap(
             raise RuntimeError(
                 f"type-{kind} fixed envelope has length {packet_size}, expected {minimum}"
             )
-        if kind != 4 and random_trailers and packet_size > 500:
-            raise RuntimeError(
-                f"type-{kind} RandomTrailers envelope exceeds 500-byte UDP window: {packet_size}"
-            )
+        # RandomTrailers is bounded by the peer's learned UDP window,
+        # not by DefaultUdpWindow (500). In upstream amneziawg-go,
+        # Peer.randomTrailer() returns zero until that learned window can
+        # accommodate the complete prefixed handshake envelope. Therefore
+        # the only invariant available from a standalone PCAP is the minimum
+        # envelope size checked above; a fixed 500-byte cap is incorrect
+        # when S1/S2/S3 prefixes are configured.
         counts[direction][kind] += 1
         if kind == 1 and first_handshake_position is None:
             first_handshake_position = datagram_index
@@ -941,7 +944,7 @@ def run_profile(
                 2 if name == "rekey packet-loss recovery"
                 else (
                     121 if name == "long peer lifecycle soak"
-                    else 31 if name == "accelerated rekey"
+                    else cycle_count + 1 if name == "accelerated rekey"
                     else 1
                 )
             ),
