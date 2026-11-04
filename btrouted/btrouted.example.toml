@@ -1,0 +1,98 @@
+# Пример: WG-сервер и два AWG uplink.
+# Замените все ключи и endpoint перед запуском. Файл должен иметь права 0600.
+
+[daemon]
+log_level = "info"
+stats_interval_secs = 10
+nft_table = "btrouted"
+manage_ip_forwarding = false
+
+[[interfaces]]
+name = "wg-server"
+protocol = "wg"
+role = "server"
+addresses = ["10.10.0.1/24"]
+mtu = 1380
+listen_port = 51820
+private_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+socket_fwmark = 4097
+
+[[interfaces.peers]]
+name = "wg-client-1"
+public_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+allowed_ips = ["10.10.0.2/32"]
+persistent_keepalive_secs = 25
+
+[[interfaces]]
+name = "awg-primary"
+protocol = "awg3_1"
+role = "client"
+addresses = ["10.20.0.2/32"]
+mtu = 1380
+listen_port = 51821
+private_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+socket_fwmark = 4098
+
+[interfaces.awg]
+jc = 4
+jmin = 40
+jmax = 80
+s1 = 0
+s2 = 0
+h1 = "1"
+h2 = "2"
+h3 = "3"
+h4 = "4"
+
+[[interfaces.peers]]
+name = "awg-primary-server"
+public_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+endpoint = "vpn-primary.example.net:51820"
+allowed_ips = ["0.0.0.0/0", "::/0"]
+persistent_keepalive_secs = 25
+
+[[interfaces]]
+name = "awg-secondary"
+protocol = "awg2"
+role = "client"
+addresses = ["10.30.0.2/32"]
+mtu = 1380
+listen_port = 51822
+private_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+socket_fwmark = 4099
+
+[interfaces.awg]
+jc = 4
+jmin = 40
+jmax = 80
+s1 = 0
+s2 = 0
+h1 = "1"
+h2 = "2"
+h3 = "3"
+h4 = "4"
+
+[[interfaces.peers]]
+name = "awg-secondary-server"
+public_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+endpoint = "vpn-secondary.example.net:51820"
+allowed_ips = ["0.0.0.0/0", "::/0"]
+persistent_keepalive_secs = 25
+
+[[routing.rules]]
+priority = 10
+ingress = "wg-server"
+destination = "195.142.0.0/16"
+egress = "awg-secondary"
+
+[[routing.rules]]
+priority = 20
+ingress = "wg-server"
+destination = "79.100.22.0/24"
+egress = "awg-secondary"
+
+[[routing.rules]]
+priority = 100
+ingress = "wg-server"
+destination = "0.0.0.0/0"
+egress = "awg-primary"
