@@ -68,6 +68,10 @@ pub struct Timers {
     /// Further data receives while pending request one additional keepalive.
     pub(super) send_keepalive_deadline: Option<Duration>,
     need_another_keepalive: bool,
+    /// Mirrors upstream's one-shot keepKeyFreshReceiving guard.
+    sent_last_minute_handshake: bool,
+    /// Deferred until update_timers can emit the handshake datagram.
+    rekey_due_on_receive: bool,
     persistent_keepalive_range: (u32, u32),
     persistent_keepalive_interval: u32,
     persistent_keepalive_deadline: Option<Duration>,
@@ -101,6 +105,8 @@ impl Timers {
             new_handshake_deadline: None,
             send_keepalive_deadline: None,
             need_another_keepalive: false,
+            sent_last_minute_handshake: false,
+            rekey_due_on_receive: false,
             persistent_keepalive_range: {
                 let interval = u32::from(persistent_keepalive.unwrap_or(0));
                 (interval, interval)
@@ -146,6 +152,8 @@ impl Timers {
         self.new_handshake_deadline = None;
         self.send_keepalive_deadline = None;
         self.need_another_keepalive = false;
+        self.sent_last_minute_handshake = false;
+        self.rekey_due_on_receive = false;
         self.handshake_attempts = 0;
     }
 
@@ -523,6 +531,7 @@ impl Tunn {
                 self.timers.reset_persistent_keepalive(now);
             }
             TimeLastHandshakeStarted => {
+                self.timers.rekey_due_on_receive = false;
                 self.timers.rekey_timeout = Duration::from_secs(
                     self.timers.pick_range(1, REKEY_TIMEOUT.as_secs() as u32) as u64,
                 );
@@ -569,6 +578,24 @@ impl Tunn {
                         .pick_range(2, REJECT_AFTER_TIME.as_secs() as u32)
                         as u64,
                 );
+
+                // Upstream calls keepKeyFreshReceiving directly from the
+                // authenticated receive path and latches the decision so a
+                // later packet cannot move the sampled RejectAfterTime goalpost.
+                if self.timers.is_initiator() && !self.timers.sent_last_minute_handshake {
+                    let refresh_threshold = self.timers.reject_after_time.saturating_sub(
+                        Duration::from_secs(
+                            self.timers.range_min(3, KEEPALIVE_TIMEOUT.as_secs() as u32) as u64,
+                        ) + Duration::from_secs(
+                            self.timers.range_min(1, REKEY_TIMEOUT.as_secs() as u32) as u64,
+                        ),
+                    );
+                    let established = self.timers[TimeSessionEstablished];
+                    if established < now && now - established > refresh_threshold {
+                        self.timers.sent_last_minute_handshake = true;
+                        self.timers.rekey_due_on_receive = true;
+                    }
+                }
             }
             _ => {}
         }
@@ -589,6 +616,8 @@ impl Tunn {
         self.timers.new_handshake_deadline = None;
         self.timers.send_keepalive_deadline = None;
         self.timers.need_another_keepalive = false;
+        self.timers.sent_last_minute_handshake = false;
+        self.timers.rekey_due_on_receive = false;
         self.timers.select_new_handshake_budget();
         self.timers.handshake_retry_jitter = Timers::random_jitter();
         self.pending_amnezia_junk = None;
@@ -729,6 +758,10 @@ impl Tunn {
                     handshake_initiation_required = true;
                 }
             } else {
+                if self.timers.rekey_due_on_receive {
+                    handshake_initiation_required = true;
+                }
+
                 if self.timers.is_initiator() {
                     // After sending a packet, if the sender was the original initiator
                     // of the handshake and if the current session key is REKEY_AFTER_TIME
@@ -736,7 +769,7 @@ impl Tunn {
                     // responder of the handshake, it does not re-initiate a new handshake
                     // after REKEY_AFTER_TIME ms like the original initiator does.
                     if session_established < data_packet_sent
-                        && now - session_established >= self.timers.rekey_after_time
+                        && now - session_established > self.timers.rekey_after_time
                     {
                         tracing::debug!("HANDSHAKE(REKEY_AFTER_TIME (on send))");
                         handshake_initiation_required = true;
@@ -746,24 +779,6 @@ impl Tunn {
                     // of the handshake and if the current session key is REJECT_AFTER_TIME
                     // - KEEPALIVE_TIMEOUT - REKEY_TIMEOUT ms old, we initiate a new
                     // handshake.
-                    if session_established < data_packet_received
-                        && now - session_established
-                            >= self.timers.reject_after_time.saturating_sub(
-                                Duration::from_secs(
-                                    self.timers.range_min(3, KEEPALIVE_TIMEOUT.as_secs() as u32)
-                                        as u64,
-                                ) + Duration::from_secs(
-                                    self.timers.range_min(1, REKEY_TIMEOUT.as_secs() as u32) as u64,
-                                ),
-                            )
-                    {
-                        tracing::warn!(
-                            "HANDSHAKE(REJECT_AFTER_TIME - KEEPALIVE_TIMEOUT - \
-                        REKEY_TIMEOUT \
-                        (on receive))"
-                        );
-                        handshake_initiation_required = true;
-                    }
                 }
 
                 // If we have sent a packet to a given peer but have not received a

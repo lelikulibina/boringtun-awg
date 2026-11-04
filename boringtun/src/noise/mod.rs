@@ -2308,6 +2308,39 @@ mod tests {
 
     #[test]
     #[cfg(feature = "mock-instant")]
+    fn receive_side_rekey_is_latched_once_until_handshake_completion() {
+        let config = AmneziaConfig::new(0, 0, 0, 0)
+            .with_rekey_timeout(1, 1)
+            .with_reject_after_time(1, 1)
+            .with_keepalive_timeout(100, 100);
+        let (mut my_tun, _their_tun) = create_two_tuns_and_handshake_with_amnezia(config);
+
+        mock_instant::MockClock::advance(Duration::from_secs(2));
+        my_tun.timer_tick(TimerName::TimeLastDataPacketReceived);
+        assert!(my_tun.timers.sent_last_minute_handshake);
+        assert!(my_tun.timers.rekey_due_on_receive);
+
+        let mut dst = [0u8; 2048];
+        assert!(matches!(
+            my_tun.update_timers(&mut dst),
+            TunnResult::WriteToNetwork(_)
+        ));
+        assert!(my_tun.handshake.timer().is_some());
+        assert!(!my_tun.timers.rekey_due_on_receive);
+
+        // Simulate an unsuccessful attempt. Upstream keeps the one-shot guard
+        // set until a new handshake completes, rather than initiating again
+        // on every timer poll or every subsequent received data packet.
+        my_tun.handshake.abort_initiation();
+        assert!(matches!(my_tun.update_timers(&mut dst), TunnResult::Done));
+        my_tun.timer_tick(TimerName::TimeLastDataPacketReceived);
+        assert!(matches!(my_tun.update_timers(&mut dst), TunnResult::Done));
+        assert!(my_tun.handshake.timer().is_none());
+        assert!(my_tun.timers.sent_last_minute_handshake);
+    }
+
+    #[test]
+    #[cfg(feature = "mock-instant")]
     fn handshake_attempt_budget_is_checked_on_retry_expiry() {
         let (mut my_tun, _their_tun) = create_two_tuns();
         let _init = create_handshake_init(&mut my_tun);
