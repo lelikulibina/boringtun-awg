@@ -515,6 +515,27 @@ mod tests {
 }
 
 impl Tunn {
+    /// Mirror upstream keepKeyFreshSending. Upstream runs this after every
+    /// authenticated transport packet, including empty keepalives.
+    pub(super) fn timer_check_key_fresh_sending(&mut self) {
+        let now = Instant::now().duration_since(self.timers.time_started);
+        self.timers.rekey_after_time = Duration::from_secs(
+            self.timers
+                .pick_range(0, REKEY_AFTER_TIME.as_secs() as u32) as u64,
+        );
+        let established = self.timers[TimeSessionEstablished];
+        let min_rekey_interval = Duration::from_secs(
+            self.timers.range_min(1, REKEY_TIMEOUT.as_secs() as u32) as u64,
+        );
+        if self.timers.is_initiator()
+            && established < now
+            && now - established > self.timers.rekey_after_time
+            && now.saturating_sub(self.timers[TimeLastHandshakeStarted]) >= min_rekey_interval
+        {
+            self.timers.rekey_due_on_send = true;
+        }
+    }
+
     /// Mirror upstream keepKeyFreshReceiving. This runs for every authenticated
     /// transport packet, including empty keepalives, and latches the decision
     /// until a handshake completes.
@@ -573,24 +594,6 @@ impl Tunn {
                 self.timers.handshake_retry_jitter = Timers::random_jitter();
             }
             TimeLastDataPacketSent => {
-                self.timers.rekey_after_time = Duration::from_secs(
-                    self.timers.pick_range(0, REKEY_AFTER_TIME.as_secs() as u32) as u64,
-                );
-                let established = self.timers[TimeSessionEstablished];
-                let min_rekey_interval = Duration::from_secs(
-                    self.timers.range_min(1, REKEY_TIMEOUT.as_secs() as u32) as u64,
-                );
-                if self.timers.is_initiator()
-                    && established < now
-                    && now - established > self.timers.rekey_after_time
-                    && now.saturating_sub(self.timers[TimeLastHandshakeStarted])
-                        >= min_rekey_interval
-                {
-                    // Match upstream keepKeyFreshSending: evaluate on each
-                    // authenticated outbound data traversal, then request one
-                    // handshake from update_timers.
-                    self.timers.rekey_due_on_send = true;
-                }
                 // Upstream starts this timer on the first data send after the
                 // last authenticated receive; later sends do not reset it.
                 if self.timers.new_handshake_deadline.is_none() {

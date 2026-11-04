@@ -558,7 +558,8 @@ impl Tunn {
             );
             let packet_size = packet.len();
             self.timer_tick(TimerName::TimeLastPacketSent);
-            // Exclude Keepalive packets from timer update.
+            self.timer_check_key_fresh_sending();
+            // Exclude Keepalive packets from the data-receive inactivity timer.
             if !src.is_empty() {
                 self.timer_tick(TimerName::TimeLastDataPacketSent);
             }
@@ -2426,6 +2427,28 @@ mod tests {
         ));
         assert_eq!(tun.timers.handshake_attempts, 0);
         assert_eq!(tun.timers.max_handshake_attempts, 7);
+    }
+
+    #[test]
+    #[cfg(feature = "mock-instant")]
+    fn send_side_rekey_is_checked_on_empty_keepalive_too() {
+        let config = AmneziaConfig::new(0, 0, 0, 0)
+            .with_rekey_after_time(2, 2)
+            .with_rekey_timeout(2, 2)
+            .with_keepalive_timeout(10, 10);
+        let (mut initiator, _responder) = create_two_tuns_and_handshake_with_amnezia(config);
+        let mut network = [0u8; 2048];
+
+        mock_instant::MockClock::advance(Duration::from_millis(2001));
+        assert!(matches!(
+            initiator.encapsulate(&[], &mut network),
+            TunnResult::WriteToNetwork(_)
+        ));
+        assert!(initiator.timers.rekey_due_on_send);
+        assert!(matches!(
+            initiator.update_timers(&mut network),
+            TunnResult::WriteToNetwork(_)
+        ));
     }
 
     #[test]
