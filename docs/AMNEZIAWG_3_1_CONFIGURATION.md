@@ -94,7 +94,7 @@ BoringTun следует исправленному upstream поведению 
 
 ## Обычный WireGuard 16-byte padding
 
-Когда CPA не задан и RandomTrailers выключен, BoringTun повторяет upstream fallback: дополняет transport plaintext до кратного 16 байтам размера с ограничением по TUN MTU. Standalone Tunn использует MTU 1420 байт по умолчанию; Device передаёт фактический MTU интерфейса через set_mtu. Для пакета больше MTU применяется upstream modulo rule; при MTU=0 используется простое выравнивание до 16 байт. Padding остаётся внутри AEAD plaintext и удаляется по длине IP-пакета.
+Когда CPA не задан и RandomTrailers выключен, BoringTun повторяет upstream fallback: дополняет transport plaintext до кратного 16 байтам размера с ограничением по TUN MTU. Standalone Tunn использует MTU 1420 байт по умолчанию; Device передаёт фактический MTU интерфейса через set_mtu и обновляет уже созданные peer-туннели при изменении MTU интерфейса. `set_mtu(0)` сохраняет upstream special case; MTU не ограничивается лимитом внешней UDP-датаграммы. Для пакета больше MTU применяется upstream modulo rule; при MTU=0 используется простое выравнивание до 16 байт. Padding остаётся внутри AEAD plaintext и удаляется по длине IP-пакета.
 
 Это выравнивание меняет распределение размеров пакетов, но не требует отдельного согласования и не меняет расшифровываемый IP-пакет.
 
