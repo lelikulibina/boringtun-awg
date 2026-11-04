@@ -770,6 +770,9 @@ impl Tunn {
         self.set_current_session(r_idx);
 
         self.timer_tick(TimerName::TimeLastPacketReceived);
+        // Upstream checks receive-side key freshness for every authenticated
+        // transport packet, including an empty keepalive.
+        self.timer_check_key_fresh_receiving();
 
         Ok(self.validate_decapsulated_packet(decapsulated_packet))
     }
@@ -1688,7 +1691,7 @@ mod tests {
         let config = AmneziaConfig::new(0, 0, 0, 0)
             .with_rekey_after_time(120, 120)
             .with_rekey_timeout(2, 4)
-            .with_reject_after_time(10, 12)
+            .with_reject_after_time(10, 10)
             .with_keepalive_timeout(6, 8);
         let (mut initiator, mut responder) = create_two_tuns_with_amnezia(config);
 
@@ -1712,24 +1715,34 @@ mod tests {
             TunnResult::WriteToTunnelV4(_, _)
         ));
 
-        // Upstream keyRefreshTimeoutReceiving() selects RejectAfterTime for
-        // this receive and subtracts the configured lower bounds of the other
-        // two ranges. KeepaliveTimeout itself may be a larger random selection.
+        // Upstream keyRefreshTimeoutReceiving() samples RejectAfterTime for
+        // each authenticated transport packet and subtracts the lower bounds
+        // of KeepaliveTimeout and RekeyTimeout.
         let threshold = initiator
             .timers
             .reject_after_time
             .saturating_sub(Duration::from_secs(6 + 2));
-        assert!((Duration::from_secs(2)..=Duration::from_secs(4)).contains(&threshold));
+        assert_eq!(threshold, Duration::from_secs(2));
 
-        // One millisecond elapsed before the authenticated receive above;
-        // stop one millisecond before the computed session-age threshold.
+        // Without a new authenticated packet, the receive-side rule does not
+        // fire merely because wall-clock time passes.
         mock_instant::MockClock::advance(threshold - Duration::from_millis(2));
         assert!(matches!(
             initiator.update_timers(&mut network),
             TunnResult::Done
         ));
 
-        mock_instant::MockClock::advance(Duration::from_millis(1));
+        // A subsequent authenticated packet crosses the threshold and causes
+        // exactly one new handshake, as keepKeyFreshReceiving does upstream.
+        mock_instant::MockClock::advance(Duration::from_millis(2));
+        let outbound = match responder.encapsulate(&packet, &mut network) {
+            TunnResult::WriteToNetwork(packet) => packet.to_vec(),
+            other => panic!("expected second responder data packet, got {:?}", other),
+        };
+        assert!(matches!(
+            initiator.decapsulate(None, &outbound, &mut tunnel),
+            TunnResult::WriteToTunnelV4(_, _)
+        ));
         match initiator.update_timers(&mut network) {
             TunnResult::WriteToNetwork(packet) => {
                 assert_eq!(
@@ -2316,7 +2329,8 @@ mod tests {
         let (mut my_tun, _their_tun) = create_two_tuns_and_handshake_with_amnezia(config);
 
         mock_instant::MockClock::advance(Duration::from_secs(2));
-        my_tun.timer_tick(TimerName::TimeLastDataPacketReceived);
+        my_tun.timer_tick(TimerName::TimeLastPacketReceived);
+        my_tun.timer_check_key_fresh_receiving();
         assert!(my_tun.timers.sent_last_minute_handshake);
         assert!(my_tun.timers.rekey_due_on_receive);
 

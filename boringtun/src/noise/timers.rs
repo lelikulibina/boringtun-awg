@@ -511,6 +511,32 @@ mod tests {
 }
 
 impl Tunn {
+    /// Mirror upstream keepKeyFreshReceiving. This runs for every authenticated
+    /// transport packet, including empty keepalives, and latches the decision
+    /// until a handshake completes.
+    pub(super) fn timer_check_key_fresh_receiving(&mut self) {
+        let now = Instant::now().duration_since(self.timers.time_started);
+        self.timers.reject_after_time = Duration::from_secs(
+            self.timers
+                .pick_range(2, REJECT_AFTER_TIME.as_secs() as u32) as u64,
+        );
+
+        if self.timers.is_initiator() && !self.timers.sent_last_minute_handshake {
+            let refresh_threshold = self.timers.reject_after_time.saturating_sub(
+                Duration::from_secs(
+                    self.timers.range_min(3, KEEPALIVE_TIMEOUT.as_secs() as u32) as u64,
+                ) + Duration::from_secs(
+                    self.timers.range_min(1, REKEY_TIMEOUT.as_secs() as u32) as u64,
+                ),
+            );
+            let established = self.timers[TimeSessionEstablished];
+            if established < now && now - established > refresh_threshold {
+                self.timers.sent_last_minute_handshake = true;
+                self.timers.rekey_due_on_receive = true;
+            }
+        }
+    }
+
     pub(super) fn timer_tick(&mut self, timer_name: TimerName) {
         let now = Instant::now().duration_since(self.timers.time_started);
         self.timers[TimeCurrent] = now;
@@ -570,32 +596,8 @@ impl Tunn {
                 } else {
                     self.timers.need_another_keepalive = true;
                 }
-                self.timers.keepalive_timeout_max = Duration::from_secs(
-                    self.timers.range_max(3, KEEPALIVE_TIMEOUT.as_secs() as u32) as u64,
-                );
-                self.timers.reject_after_time = Duration::from_secs(
-                    self.timers
-                        .pick_range(2, REJECT_AFTER_TIME.as_secs() as u32)
-                        as u64,
-                );
-
-                // Upstream calls keepKeyFreshReceiving directly from the
-                // authenticated receive path and latches the decision so a
-                // later packet cannot move the sampled RejectAfterTime goalpost.
-                if self.timers.is_initiator() && !self.timers.sent_last_minute_handshake {
-                    let refresh_threshold = self.timers.reject_after_time.saturating_sub(
-                        Duration::from_secs(
-                            self.timers.range_min(3, KEEPALIVE_TIMEOUT.as_secs() as u32) as u64,
-                        ) + Duration::from_secs(
-                            self.timers.range_min(1, REKEY_TIMEOUT.as_secs() as u32) as u64,
-                        ),
-                    );
-                    let established = self.timers[TimeSessionEstablished];
-                    if established < now && now - established > refresh_threshold {
-                        self.timers.sent_last_minute_handshake = true;
-                        self.timers.rekey_due_on_receive = true;
-                    }
-                }
+                // newHandshakeTimeout uses KeepaliveTimeout.Hi when the
+                // first outbound data packet arms its inactivity timer.
             }
             _ => {}
         }
