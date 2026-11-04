@@ -3230,6 +3230,29 @@ mod tests {
         }
     }
     #[test]
+    fn awg31_reference_timer_ranges_are_accepted_and_preserved() {
+        let config = AmneziaConfig::new(12, 12, 12, 12)
+            .with_header_protection_key([0x42; 32])
+            .with_rekey_after_time(100, 120)
+            .with_rekey_timeout(3, 8)
+            .with_reject_after_time(150, 180)
+            .with_keepalive_timeout(7, 13)
+            .with_max_handshake_attempts(15, 20)
+            .with_content_padding_addition(10, 100);
+
+        config
+            .validate()
+            .expect("the AWG 3.1 reference timer ranges are valid");
+        assert!(config.header_protection_enabled());
+        assert_eq!(config.rekey_after_time, (100, 120));
+        assert_eq!(config.rekey_timeout, (3, 8));
+        assert_eq!(config.reject_after_time, (150, 180));
+        assert_eq!(config.keepalive_timeout, (7, 13));
+        assert_eq!(config.max_handshake_attempts, (15, 20));
+        assert_eq!(config.content_padding_addition, (10, 100));
+    }
+
+    #[test]
     fn header_protection_round_trips_all_packet_kinds() {
         use rand_core::OsRng;
 
