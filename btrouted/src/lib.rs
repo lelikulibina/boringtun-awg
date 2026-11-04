@@ -6,4 +6,4 @@
 
 pub mod config;
 
-pub use config::{Config, ConfigError};
+pub use config::{Config, ConfigError, EndpointHost, PeerEndpoint};
