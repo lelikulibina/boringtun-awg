@@ -711,6 +711,7 @@ impl Tunn {
 
         self.timer_tick(TimerName::TimeLastPacketReceived);
         self.timer_tick_session_established(true, index); // New session established, we are the initiator
+        self.timer_tick(TimerName::TimeLastPacketSent); // The handshake-confirmation keepalive is sent below.
         self.set_current_session(l_idx);
 
         tracing::debug!("Sending keepalive");
@@ -728,7 +729,10 @@ impl Tunn {
         );
 
         self.handshake.receive_cookie_reply(p)?;
-        self.timer_tick(TimerName::TimeLastPacketReceived);
+        // Upstream ConsumeReply updates cookie state only. A Cookie Reply is
+        // authenticated, but it is not an authenticated peer traversal for
+        // WireGuard timer purposes: it must not cancel newHandshake or reset
+        // persistent keepalive.
         self.timer_tick(TimerName::TimeCookieReceived);
 
         tracing::debug!("Did set cookie");
