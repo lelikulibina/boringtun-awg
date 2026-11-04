@@ -29,10 +29,11 @@ from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 PORT = 51820
 SERVER_LINK, CLIENT_LINK = "10.55.0.1", "10.55.0.2"
 SERVER_TUN, CLIENT_TUN = "10.77.0.1", "10.77.0.2"
-S_AND_H = """jc=4
+S1 = 284
+S_AND_H = f"""jc=4
 jmin=50
 jmax=1000
-s1=284
+s1={S1}
 s2=659
 s3=1045
 s4=12
@@ -264,9 +265,9 @@ def drop_client_egress_during_rekey(
     client_ns: str, client_link: str, server_ip: str,
 ) -> int:
     """Drop only the expected AWG H1 rekey datagram and verify its filter counter."""
-    # This profile uses S1=120, H1=169887817 (wire bytes 49:48:20:0a),
-    # no HeaderProtection and no RandomTrailers. From the IPv4-header start,
-    # H1 is at 20 (IPv4) + 8 (UDP) + 120 (S1) = byte offset 148.
+    # This profile uses the shared S1 value, H1=169887817
+    # (wire bytes 49:48:20:0a), no HeaderProtection and no RandomTrailers.
+    # From the IPv4-header start, H1 is at 20 (IPv4) + 8 (UDP) + S1.
     run("ip", "netns", "exec", client_ns, "tc", "qdisc", "add", "dev",
         client_link, "root", "handle", "1:", "prio")
     try:
@@ -276,7 +277,7 @@ def drop_client_egress_during_rekey(
             "match", "ip", "protocol", "17", "0xff",
             "match", "ip", "dst", f"{SERVER_LINK}/32",
             "match", "ip", "dport", str(PORT), "0xffff",
-            "match", "u32", "0x4948200a", "0xffffffff", "at", "148",
+            "match", "u32", "0x4948200a", "0xffffffff", "at", str(20 + 8 + S1),
             "action", "drop",
         )
         # The send-side rekey timer is lazy: without outbound traffic, the
@@ -617,7 +618,7 @@ def verify_wire_pcap(
     if link_type != 1:
         raise RuntimeError(f"expected Ethernet pcap (link type 1), got {link_type}")
 
-    prefix = 120 if awg_enabled else 0
+    prefix = S1 if awg_enabled else 0
     h_tags = (
         {1: 169887817, 2: 390382747, 3: 1033691040, 4: 1526332224}
         if awg_enabled else {1: 1, 2: 2, 3: 3, 4: 4}
