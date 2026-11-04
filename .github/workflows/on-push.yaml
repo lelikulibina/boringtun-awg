@@ -189,10 +189,14 @@ jobs:
       - name: Install Linux networking tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y iproute2 nftables
+          sudo apt-get install -y iproute2 nftables iputils-ping wireguard-tools
       - name: Run ignored integration tests
         run: cargo test -- --ignored
       - name: Build router daemon
         run: cargo build -p btrouted --bin btrouted
-      - name: Exercise daemon in isolated network namespace
+      - name: Exercise daemon routing in isolated network namespace
         run: sudo bash scripts/btrouted-netns-test.sh
+      - name: Verify bidirectional WireGuard peer traffic
+        run: sudo bash scripts/btrouted-peer-traffic-test.sh wg
+      - name: Verify bidirectional AmneziaWG 3.1 peer traffic
+        run: sudo bash scripts/btrouted-peer-traffic-test.sh awg3_1
