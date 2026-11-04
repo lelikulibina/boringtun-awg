@@ -1,30 +1,10 @@
-// Copyright (c) 2024 BoringTun contributors. All rights reserved.
-// SPDX-License-Identifier: BSD-3-Clause
-
-//! May we send bytes to this unauthenticated source, and how many of them?
+//! Source-address policy shared by unauthenticated probe replies and
+//! WireGuard cookie replies.
 //!
-//! Two places on the ingress path write to an address nobody has proved
-//! anything about, and before this module they answered that question
-//! differently:
-//!
-//! - [`super::probe_reply`], which answers DNS/STUN/QUIC probes. It applies the
-//!   rules below, plus an aggregate byte ceiling ([`super::probe_budget`]).
-//! - the cookie-reply arm of `register_udp_handler`, which is stock WireGuard's
-//!   own flood defence and predates every line of the probe work. It applied
-//!   nothing: any source address, any size.
-//!
-//! The second was the older and the more exposed of the two. `mac1` is keyed on
-//! the server's *public* key, which is in every client configuration, so an
-//! attacker who has ever seen one can reach the cookie path with a forged
-//! source address and no secret at all. The probe responder's module docs argue
-//! that a reply to a spoofable source is "a multiplier no byte-based ceiling
-//! models" — and that was true ten lines above a call site where the multiplier
-//! ran unguarded.
-//!
-//! So the address rules live here, with one door ([`reply_target`]) that both
-//! callers go through. The size rules do **not** unify, and [`cookie_verdict`]
-//! explains why: the two paths are bounded by different things because they
-//! fail in different ways.
+//! Cookie replies preserve upstream AmneziaWG semantics: S3 is emitted exactly
+//! as configured, without a request-size amplification cap. This module only
+//! prevents replies to invalid or unsafe destination addresses. Probe replies
+//! have their own protocol-specific size limits and aggregate byte budget.
 
 use std::net::{IpAddr, SocketAddr};
 
@@ -207,94 +187,13 @@ pub(crate) enum CookieVerdict {
     RefusedSource,
 }
 
-/// Whether the cookie reply just produced for a `request_len`-byte datagram
-/// from `from` may go out, given that it will occupy `reply_len` bytes on the
-/// wire once its S3 prefix is attached.
+/// Decide whether an upstream-compatible cookie reply may be sent to a source.
 ///
-/// # The source address
-///
-/// [`reply_target`], the same rule the probe responder uses, for the same
-/// reason: `mac1` is computed from the server's *public* key. That key is in
-/// every client configuration, so reaching this path proves nothing about who
-/// sent the datagram or where the reply will land.
-///
-/// # The size, and why it is not [`super::probe_budget::ProbeBudget`]
-///
-/// Routing cookie replies through the probe responder's aggregate byte ceiling
-/// is the obvious move and it is the wrong one. `verify_packet` produces a
-/// cookie only once `is_under_load()` trips, so a ceiling on cookie replies is
-/// a ceiling that binds *exclusively* during a flood — it would run out at the
-/// one moment the replies are load-bearing, and every legitimate peer trying to
-/// complete a handshake for the duration would be denied the cookie its retry
-/// needs. Sharing the probe budget specifically would be worse again: a stream
-/// of DNS probes could then drain the tunnel's own DoS defence.
-///
-/// A separate allowance for the cookie path has the same defect, only with a
-/// number the operator has to guess. So there is no ceiling here. What is
-/// bounded instead is the amplification factor, and it is bounded to 1: a
-/// cookie reply may not be larger than the datagram that provoked it.
-///
-/// That is already stock WireGuard's property, held there by arithmetic nobody
-/// had to write down — a 64-byte cookie reply against a 148-byte initiation is
-/// an attenuator at 0.43x. AmneziaWG breaks it: S3 is prepended to the reply
-/// and S1/S2 to the request, so the real ratio is `(64 + S3) / (S1 + 148)` for
-/// an initiation and `(64 + S3) / (S2 + 92)` for a response. `validate` permits
-/// S3 up to 65443, so the configuration space reaches a 65507-byte reply to a
-/// 148-byte forgery: a ~440x reflector, pointed wherever the sender likes, and
-/// unlocked by first pushing this server to 100 handshakes a second.
-///
-/// The bound is the request's own length rather than a constant because every
-/// constant here would be invented, and this crate has already been bitten by
-/// an invented factor (see `probe_reply`'s
-/// `every_generator_stays_under_the_backstop_at_its_worst_case`). Parity is the
-/// one number that means something on its own: below it, bouncing bytes off
-/// this port costs an attacker more than sending them to the victim directly,
-/// so the port is not worth using. Reflection as such does not disappear — it
-/// does not disappear from stock WireGuard either, and no byte ceiling removes
-/// it — but the bandwidth gain does.
-///
-/// # What this costs, said plainly
-///
-/// A configuration with a large S3 against a small S1 loses its cookie replies
-/// *while under load*, and therefore loses handshakes for as long as the flood
-/// lasts. That is a real regression for a real configuration, and it is why the
-/// call site warns with the sizes in it rather than dropping silently: the fix
-/// is to lower S3, and the operator can only make it if they are told. The
-/// alternative was to keep reflecting 65 KB at a third party for every 148-byte
-/// forgery, which is not the operator's to trade away.
-///
-/// The ordinary AmneziaWG shape is unaffected. Any configuration whose S3 is no
-/// larger than its S1 and S2 is an attenuator by construction, because a cookie
-/// reply is 84 bytes shorter than an initiation and 28 shorter than a response
-/// before any prefix is applied — see
-/// [`tests::a_prefix_no_larger_than_the_initiations_is_never_an_amplifier`].
-pub(crate) fn cookie_verdict(from: SocketAddr) -> CookieVerdict {
-    // Match amneziawg-go: S3 is sent verbatim even when the cookie reply is
-    // larger than the triggering handshake. Preserve only source-address
-    // hygiene; packet-size parity is not part of the upstream wire contract.
-    if reply_target(from, Door::Cookie).is_none() {
-        CookieVerdict::RefusedSource
-    } else {
-        CookieVerdict::Send
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::noise::packet_sizes::{COOKIE_REPLY_SZ, HANDSHAKE_INIT_SZ, HANDSHAKE_RESP_SZ};
-
-    fn peer(addr: &str) -> SocketAddr {
-        addr.parse().unwrap()
-    }
-
-    /// The one address the two doors answer differently, and why.
-    ///
-    /// A loopback source cannot be forged from off-host: Linux drops `127/8` as
-    /// a martian source on every non-loopback interface, unconditionally — it
-    /// still does with `rp_filter=0` and `route_localnet=1`, measured across a
-    /// veth with a raw socket. So a reply aimed there can never leave the host,
-    /// and refusing it prevents no reflection and no amplification.
+/// The cookie's S3 prefix is not size-limited here: amneziawg-go emits the
+/// configured packet shape verbatim. Address hygiene remains in force because
+/// MAC1 is keyed by the server's public key and does not authenticate the
+/// source address.
+g it prevents no reflection and no amplification.
     ///
     /// It does prevent a handshake. A peer reached through a local UDP relay
     /// holds `127.0.0.1`, and this repository's own integration tests configure
