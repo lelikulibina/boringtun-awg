@@ -105,6 +105,37 @@ ip -n "$NS" link set main0 up
 ip -n "$NS" route replace default dev main0
 ip -n "$NS" -6 route replace default dev main0
 
+# A foreign table with the configured name must be preserved. Startup must
+# fail and roll back policy rules and TUN devices instead of deleting it.
+ip netns exec "$NS" nft add table inet btrouted_it
+ip netns exec "$NS" "$BIN" --config "$TMP/config.toml" >"$TMP/conflict.log" 2>&1 &
+DAEMON_PID=$!
+for _ in $(seq 1 30); do
+    if ! kill -0 "$DAEMON_PID" 2>/dev/null; then
+        break
+    fi
+    sleep 1
+done
+if kill -0 "$DAEMON_PID" 2>/dev/null; then
+    fail "daemon did not reject a pre-existing foreign nftables table"
+fi
+set +e
+wait "$DAEMON_PID"
+conflict_status=$?
+set -e
+DAEMON_PID=""
+[[ $conflict_status -ne 0 ]] || fail "daemon accepted a foreign nftables table"
+ip netns exec "$NS" nft list table inet btrouted_it >/dev/null 2>&1 || fail "foreign nftables table was deleted"
+if ip netns exec "$NS" ip -4 rule show | grep -Eq 'fwmark 0x(80000000|1001)'; then
+    fail "policy rules leaked after nftables ownership conflict"
+fi
+for iface in wg-server awg-primary awg-secondary; do
+    if ip netns exec "$NS" ip link show dev "$iface" >/dev/null 2>&1; then
+        fail "TUN interface $iface leaked after startup failure"
+    fi
+done
+ip netns exec "$NS" nft delete table inet btrouted_it
+
 ip netns exec "$NS" "$BIN" --config "$TMP/config.toml" >"$TMP/daemon.log" 2>&1 &
 DAEMON_PID=$!
 
