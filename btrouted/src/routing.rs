@@ -46,14 +46,10 @@ impl RoutingPlan {
         egress_names.sort_unstable();
         egress_names.dedup();
 
-        let marks: BTreeMap<_, _> = config.interfaces.iter()
-            .map(|interface| (interface.name.as_str(), interface.socket_fwmark))
-            .collect();
-
         let egresses: Vec<_> = egress_names.iter().enumerate()
             .map(|(index, name)| EgressPlan {
                 interface: (*name).to_owned(),
-                mark: marks[name],
+                mark: config.routing.mark_base + index as u32,
                 table_id: FIRST_ROUTING_TABLE + index as u32,
                 ip_rule_priority: FIRST_IP_RULE_PRIORITY + index as u32,
             })
@@ -195,7 +191,9 @@ egress = "awg-primary"
         assert_eq!(plan.egresses[0].table_id, FIRST_ROUTING_TABLE);
         assert_eq!(plan.egresses[1].interface, "awg-secondary");
         assert_eq!(plan.egresses[1].table_id, FIRST_ROUTING_TABLE + 1);
-        assert_eq!(plan.egresses[1].mark, 4099);
+        assert_eq!(plan.egresses[0].mark, 0x8000_0000);
+        assert_eq!(plan.egresses[1].mark, 0x8000_0001);
+        assert_ne!(plan.egresses[1].mark, 4099);
     }
 
     #[test]
@@ -204,10 +202,10 @@ egress = "awg-primary"
         assert_eq!(plan.nft_rules[0].destination, "195.142.0.0/16");
         assert_eq!(plan.nft_rules[1].destination, "79.100.22.0/24");
         assert_eq!(plan.nft_rules[2].destination, "0.0.0.0/0");
-        assert_eq!(plan.nft_rules[0].mark, 4099);
-        assert_eq!(plan.nft_rules[2].mark, 4098);
+        assert_eq!(plan.nft_rules[0].mark, 0x8000_0001);
+        assert_eq!(plan.nft_rules[2].mark, 0x8000_0000);
         let script = plan.nft_script();
-        assert!(script.contains("ip daddr 195.142.0.0/16 meta mark set 0x1003 return"));
+        assert!(script.contains("ip daddr 195.142.0.0/16 meta mark set 0x80000001 return"));
         assert!(script.contains("iifname \"wg-server\""));
     }
 
@@ -217,6 +215,6 @@ egress = "awg-primary"
         let commands = plan.ip_commands();
         assert_eq!(commands.len(), 8);
         assert!(commands.iter().any(|args| args.first().is_some_and(|arg| arg == "-6")));
-        assert!(commands.iter().any(|args| args.iter().any(|arg| arg == "0x1002")));
+        assert!(commands.iter().any(|args| args.iter().any(|arg| arg == "0x80000000")));
     }
 }
