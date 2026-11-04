@@ -127,7 +127,8 @@ jobs:
       - name: Build official AmneziaWG Go
         working-directory: upstream-amneziawg-go
         run: go build -v -o ../amneziawg-go .
-      - name: Run AWG 3.1 bidirectional interoperability matrix
+      - name: Run quick AWG interoperability suite (12 directional scenarios)
+        # Default mode is intentionally short; use --full for the exhaustive 44-case matrix.
         run: sudo python3 scripts/awg31-go-interop.py ./target/release/boringtun-cli ./amneziawg-go
       - name: Upload normalized wire captures
         if: always()
