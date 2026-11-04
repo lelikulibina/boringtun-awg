@@ -91,6 +91,10 @@ BoringTun следует исправленному upstream поведению 
 
 `Jd` (задержка между junk-пакетами), `Ip/Id/Ib` (локальная имитация протокола/domain/browser), responder-mode/suppress-pre-handshake и protocol probe replies — локальные расширения BoringTun, а не параметры version negotiation AWG. Их нельзя считать обязательными для совместимости с официальным AmneziaWG.
 
+## Известное отличие от upstream: обычный 16-byte padding
+
+Когда CPA не задан и RandomTrailers выключен, upstream дополняет transport plaintext до кратного 16 байтам размера с ограничением по TUN MTU. Текущий BoringTun `Session::format_packet_data` это padding намеренно не добавляет; standalone `Tunn` также не хранит MTU. Wire compatibility сохраняется, но размеры обычных transport-пакетов отличаются от upstream. Для полного parity нужен отдельный MTU plumbing в `Tunn` и fallback `calculatePaddingSize`; это отличие подробно описано в основном исследовании.
+
 ## 8. Проверка
 
 Любое изменение framing должно проверяться в обеих ролях: BoringTun server ↔ amneziawg-go client и amneziawg-go server ↔ BoringTun client. Для RandomTrailers нужны равные S на обеих сторонах; для HP — общий ключ и S≥12. Quick interop матрица в PR #13 включает vanilla WG, AWG 2.x baseline, accelerated rekey, packet-loss recovery, combined AWG 3.1 и CPS I1-I5. Полная матрица запускается отдельно через workflow_dispatch.
