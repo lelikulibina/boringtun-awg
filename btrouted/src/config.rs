@@ -1,6 +1,8 @@
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine as _;
 use boringtun::device::AllowedIP;
+use boringtun::noise::amnezia::AmneziaConfig;
+use boringtun::noise::handshake::ObfuscationRanges;
 use serde::Deserialize;
 use std::collections::HashSet;
 use std::fs;
@@ -453,33 +455,62 @@ impl AwgConfig {
             (None, None) => {}
         }
 
-        let mut header_ranges = Vec::new();
-        for (name, value) in [
-            ("h1", &self.h1),
-            ("h2", &self.h2),
-            ("h3", &self.h3),
-            ("h4", &self.h4),
-        ] {
-            if let Some(value) = value {
-                let range = parse_u32_range(value).ok_or_else(|| {
-                    ConfigError::Validation(format!(
-                        "interfaces.{}.awg.{} must be a uint32 tag or an inclusive start-end range",
-                        interface, name
-                    ))
-                })?;
-                header_ranges.push((name, range));
-            }
+        let header_values = [
+            self.h1.as_deref().unwrap_or("1"),
+            self.h2.as_deref().unwrap_or("2"),
+            self.h3.as_deref().unwrap_or("3"),
+            self.h4.as_deref().unwrap_or("4"),
+        ];
+        let mut headers = [(0, 0); 4];
+        for (index, value) in header_values.iter().enumerate() {
+            headers[index] = parse_u32_range(value).ok_or_else(|| {
+                ConfigError::Validation(format!(
+                    "interfaces.{}.awg.h{} must be a uint32 tag or an inclusive start-end range",
+                    interface,
+                    index + 1
+                ))
+            })?;
         }
-        for (index, (left_name, (left_start, left_end))) in header_ranges.iter().enumerate() {
-            for (right_name, (right_start, right_end)) in header_ranges.iter().skip(index + 1) {
-                if left_start <= right_end && right_start <= left_end {
-                    return invalid(format!(
-                        "interfaces.{}.awg.{} and {} ranges overlap",
-                        interface, left_name, right_name
-                    ));
-                }
-            }
-        }
+        let obfuscation = ObfuscationRanges::from_explicit_ranges(headers).map_err(|error| {
+            ConfigError::Validation(format!(
+                "interfaces.{}.awg has invalid H1-H4 ranges: {}",
+                interface, error
+            ))
+        })?;
+
+        let amnezia = AmneziaConfig::new(
+            self.s1.unwrap_or(0),
+            self.s2.unwrap_or(0),
+            self.s3.unwrap_or(0),
+            self.s4.unwrap_or(0),
+        )
+        .try_with_pre_handshake_junk(
+            self.jc.unwrap_or(0),
+            self.jmin.unwrap_or(0),
+            self.jmax.unwrap_or(0),
+            0,
+        )
+        .map_err(|error| {
+            ConfigError::Validation(format!(
+                "interfaces.{}.awg junk settings are invalid: {}",
+                interface, error
+            ))
+        })?
+        .with_disable_cookies(self.disable_cookies.unwrap_or(false))
+        .with_random_trailers(self.random_trailers.unwrap_or(false));
+
+        amnezia.validate().map_err(|error| {
+            ConfigError::Validation(format!(
+                "interfaces.{}.awg settings are invalid: {}",
+                interface, error
+            ))
+        })?;
+        amnezia.validate_random_trailers(obfuscation).map_err(|error| {
+            ConfigError::Validation(format!(
+                "interfaces.{}.awg RandomTrailers settings are invalid: {}",
+                interface, error
+            ))
+        })?;
         Ok(())
     }
 }
