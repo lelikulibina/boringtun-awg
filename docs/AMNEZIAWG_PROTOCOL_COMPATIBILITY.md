@@ -30,6 +30,19 @@ AmneziaWG не выполняет отдельное согласование в
 | AWG 3.0 | `HeaderProtectionKey`, `ContentPaddingAddition`, диапазоны таймеров | ChaCha20 скрывает незашифрованные поля WireGuard; внутри AEAD добавляется padding; таймеры рандомизируются |
 | AWG 3.1 | `RandomTrailers`, `DisableCookies` | Вариативность внешней длины handshake/cookie, padding transport и изменение under-load cookie policy |
 
+### Проверяемые поколения UAPI по исходникам
+
+Ниже не рекламные названия релизов, а набор ключей, реально присутствующих в upstream UAPI на закреплённых ревизиях:
+
+| Upstream source | Ключи, которые уже присутствуют в UAPI | Вывод |
+|---|---|---|
+| `v0.2.19` (до 3.x) | `jc/jmin/jmax`, `s1-s4`, `h1-h4`, `i1-i5` | Базовая обфускация и CPS |
+| `v3.0.0` | Всё из предыдущего + `header_protection_key`, `content_padding_addition`, `rekey_after_time`, `rekey_timeout`, `reject_after_time`, `keepalive_timeout`, `max_handshake_attempts` | HP, CPA и timer ranges |
+| `v3.1.20260812` | Всё из 3.0 + `random_trailers`, `disable_cookies` | Появились оба 3.1 ключа; ранняя DisableCookies реализация ещё не обходила under-load gate |
+| `v3.1.20260828` | Тот же набор ключей, исправлен DisableCookies under-load gate | Текущий эталон 3.1 для этой ветки |
+
+Это позволяет точно определить, когда UAPI parser вообще знает ключ. Наличие ключа не всегда доказывает корректность реализации: пример — `disable_cookies` в `v3.1.20260812`. Аналогично, старый бинарник может отвергнуть неизвестный ключ целиком при применении конфигурации, даже если сами сетевые пакеты без нового расширения были бы совместимы.
+
 Исторические исходники:
 
 - [amneziawg-go v0.2.19](https://github.com/amnezia-vpn/amneziawg-go/tree/v0.2.19) — поколение до 3.x с S3/S4, H-диапазонами и CPS.
