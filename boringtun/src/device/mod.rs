@@ -1667,9 +1667,16 @@ mod ingress_tests {
             .to_vec();
 
         let limiter = RateLimiter::new(&server_public, HANDSHAKE_RATE_LIMIT);
-        let stripped = amnezia
-            .decrypt_inbound(obf, &datagram)
-            .expect("our own protected initiation must match its S1/H1 shape");
+        let stripped = if amnezia.header_protection_enabled() {
+            amnezia
+                .decrypt_inbound(obf, &datagram)
+                .expect("our own protected initiation must match its S1/H1 shape")
+        } else {
+            amnezia
+                .strip_inbound(obf, &datagram)
+                .expect("our own initiation must match its S1/H1 shape")
+                .to_vec()
+        };
         let src = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 1));
         let mut scratch = vec![0u8; MAX_UDP_SIZE];
 
