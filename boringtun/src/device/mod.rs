@@ -1132,7 +1132,6 @@ impl Device {
                                     }
                                 }
                                 reply_policy::CookieVerdict::RefusedSource => {}
-                                
                             }
                             continue;
                         }
