@@ -228,6 +228,9 @@ fn build_awg_config(
             .with_disable_cookies(awg.disable_cookies.unwrap_or(false))
             .with_random_trailers(awg.random_trailers.unwrap_or(false));
     }
+    amnezia.validate().map_err(|error| {
+        RuntimeError::Configuration(format!("invalid AWG settings: {error}"))
+    })?;
     Ok((obf, amnezia))
 }
 
