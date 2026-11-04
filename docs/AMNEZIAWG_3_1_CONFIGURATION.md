@@ -99,6 +99,6 @@ BoringTun следует исправленному upstream поведению 
 
 ## 8. Проверка
 
-Любое изменение framing должно проверяться в обеих ролях: BoringTun server ↔ amneziawg-go client и amneziawg-go server ↔ BoringTun client. Для RandomTrailers нужны равные S на обеих сторонах; для HP — общий ключ и S≥12. Quick interop матрица в PR #13 включает vanilla WG, AWG 2.x baseline, accelerated rekey, packet-loss recovery, combined AWG 3.1 и CPS I1-I5. Полная матрица запускается отдельно через workflow_dispatch.
+Любое изменение framing должно проверяться в обеих ролях: BoringTun server ↔ amneziawg-go client и amneziawg-go server ↔ BoringTun client. Для RandomTrailers нужны равные S на обеих сторонах; для HP — общий ключ и S≥12. Quick interop матрица в PR #13 выполняет 16 направленных сценариев: vanilla WG и AWG 2.x baseline, 1 MiB integrity transfer для AWG 3.0 и 3.1, combined AWG 3.1, accelerated rekey, packet-loss recovery и CPS I1-I5. Полная 44-сценарная матрица запускается отдельно через workflow_dispatch.
 
 Полное исследование параметров, версий, лимитов и известных upstream defects: [AMNEZIAWG_PROTOCOL_COMPATIBILITY.md](AMNEZIAWG_PROTOCOL_COMPATIBILITY.md).
