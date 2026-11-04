@@ -2288,14 +2288,30 @@ mod tests {
             TunnResult::Done
         ));
         let sent_packet_buf = create_ipv4_udp_packet();
-        let data = my_tun.encapsulate(&sent_packet_buf, &mut my_dst);
-        assert!(matches!(data, TunnResult::WriteToNetwork(_)));
+        let mut their_dst = [0u8; 1024];
+        let mut their_tunnel = [0u8; 1024];
+        let mut my_tunnel = [0u8; 1024];
+        let outbound = match my_tun.encapsulate(&sent_packet_buf, &mut my_dst) {
+            TunnResult::WriteToNetwork(packet) => packet.to_vec(),
+            other => panic!("expected outbound data packet, got {:?}", other),
+        };
+        assert!(matches!(
+            their_tun.decapsulate(None, &outbound, &mut their_tunnel),
+            TunnResult::WriteToTunnelV4(_, _)
+        ));
+        let reply = match their_tun.encapsulate(&sent_packet_buf, &mut their_dst) {
+            TunnResult::WriteToNetwork(packet) => packet.to_vec(),
+            other => panic!("expected authenticated reply packet, got {:?}", other),
+        };
+        assert!(matches!(
+            my_tun.decapsulate(None, &reply, &mut my_tunnel),
+            TunnResult::WriteToTunnelV4(_, _)
+        ));
 
-        // The send-side key-refresh check is performed when another
-        // authenticated data packet traverses the outbound path, not by a
-        // background timer poll alone.
+        // The authenticated reply cancels the independent inactivity timer.
+        // RekeyAfterTime itself is checked on the next outbound transport
+        // traversal, not by a background timer poll alone.
         mock_instant::MockClock::advance(REKEY_AFTER_TIME + Duration::from_millis(1));
-        assert!(matches!(their_tun.update_timers(&mut []), TunnResult::Done));
         assert!(
             matches!(my_tun.update_timers(&mut my_dst), TunnResult::Done),
             "RekeyAfterTime is checked on outbound data traversal, not a timer poll"
