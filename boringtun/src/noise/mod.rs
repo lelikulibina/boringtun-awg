@@ -235,7 +235,10 @@ impl Tunn {
     /// Standalone Tunn users default to 1420 bytes. The device layer should
     /// override this with the actual interface MTU.
     pub fn set_mtu(&mut self, mtu: usize) {
-        self.mtu = mtu.max(1).min(amnezia::MAX_SENDABLE_DATAGRAM);
+        // This is the inner TUN MTU, not the outer UDP payload ceiling. Keep
+        // zero intact: upstream calculatePaddingSize treats MTU=0 as an
+        // unbounded 16-byte alignment request.
+        self.mtu = mtu;
     }
 
     pub fn is_expired(&self) -> bool {
