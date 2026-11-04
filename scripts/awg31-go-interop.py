@@ -5,7 +5,7 @@ Requires Linux, root, iproute2, ping, Python `cryptography`, boringtun-cli built
 with the device feature, and the official amneziawg-go v3 binary. All interfaces and links live
 in uniquely named disposable network namespaces; host routes are not changed.
 
-Usage: sudo python3 scripts/awg31-go-interop.py ./target/release/boringtun-cli ./amneziawg-go [--full | --performance]
+Usage: sudo python3 scripts/awg31-go-interop.py ./target/release/boringtun-cli ./amneziawg-go [--full] [--performance] [--awg30 ./amneziawg-go-3.0]
 """
 from __future__ import annotations
 
@@ -164,6 +164,22 @@ QUICK_PROFILES = [
         "accelerated rekey",
         "rekey packet-loss recovery",
         "all AWG 3.1 extensions combined",
+        "CPS I1-I5 combined",
+    }
+]
+
+# AWG 3.0 compatibility must be tested against the actual v3.0.0 reference,
+# not merely by switching BoringTun's sender-local CPA algorithm while both
+# endpoints still run the v3.1 Go implementation. Exclude 3.1-only UAPI keys.
+AWG30_PROFILES = [
+    profile for profile in PROFILES
+    if profile[0] in {
+        "vanilla WireGuard baseline",
+        "AWG 2.x baseline",
+        "bulk data integrity — AWG 3.0",
+        "HeaderProtectionKey",
+        "ContentPaddingAddition",
+        "randomized timers",
         "CPS I1-I5 combined",
     }
 ]
@@ -1027,20 +1043,25 @@ def main() -> int:
     if os.geteuid() != 0:
         print("Run as root (creates disposable network namespaces).", file=sys.stderr)
         return 2
-    options = set(sys.argv[3:])
-    if options - {"--performance", "--full"} or ({"--performance", "--full"} <= options):
+    options = list(sys.argv[3:])
+    awg30 = None
+    if "--awg30" in options:
+        index = options.index("--awg30")
+        if index + 1 >= len(options):
+            print("--awg30 requires a path to the official AWG 3.0 binary", file=sys.stderr)
+            return 2
+        awg30 = str(Path(options[index + 1]).resolve())
+        del options[index:index + 2]
+    if set(options) - {"--performance", "--full"} or ("--performance" in options and "--full" in options) or len(options) != len(set(options)):
         print(__doc__.split("Usage:", 1)[1].strip(), file=sys.stderr)
         return 2
     performance = "--performance" in options
     full_matrix = "--full" in options
-    if len(sys.argv) != 3 + len(options):
-        print(__doc__.split("Usage:", 1)[1].strip(), file=sys.stderr)
-        return 2
     bt, go = (str(Path(p).resolve()) for p in sys.argv[1:3])
     if performance and shutil.which("iperf3") is None:
         print("iperf3 is required for --performance mode", file=sys.stderr)
         return 2
-    for binary in (bt, go):
+    for binary in (bt, go, *((awg30,) if awg30 else ())):
         if not os.path.isfile(binary) or not os.access(binary, os.X_OK):
             print(f"not an executable file: {binary}", file=sys.stderr)
             return 2
@@ -1079,6 +1100,17 @@ def main() -> int:
                     failures += 1
                     role = "BoringTun server" if bt_is_server else "amneziawg-go server"
                     print(f"FAIL {name} ({role}): {error}", file=sys.stderr)
+    if awg30 is not None and not performance:
+        print(f"MODE: official AWG 3.0.0 reference suite ({len(AWG30_PROFILES) * 2} directional scenarios)")
+        for name, extra, awg_enabled in AWG30_PROFILES:
+            for bt_is_server in (True, False):
+                total += 1
+                try:
+                    run_profile(bt, awg30, name, extra, awg_enabled, bt_is_server)
+                except Exception as error:
+                    failures += 1
+                    role = "BoringTun server" if bt_is_server else "amneziawg-go v3.0.0 server"
+                    print(f"FAIL AWG 3.0.0 / {name} ({role}): {error}", file=sys.stderr)
     print(f"SUMMARY: {total - failures}/{total} passed, {failures} failed")
     return 1 if failures else 0
 
