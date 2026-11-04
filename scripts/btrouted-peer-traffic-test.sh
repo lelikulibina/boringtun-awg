@@ -33,10 +33,33 @@ cleanup() {
 }
 trap cleanup EXIT
 
+dump_namespace_diagnostics() {
+    local ns="$1"
+    ip netns list >&2 || true
+    if ! ip netns list | awk '{print $1}' | grep -Fxq "$ns"; then
+        return
+    fi
+    echo "--- diagnostics for namespace $ns ---" >&2
+    ip -n "$ns" -details link show >&2 || true
+    ip -n "$ns" address show >&2 || true
+    ip -n "$ns" -4 rule show >&2 || true
+    ip -n "$ns" -6 rule show >&2 || true
+    ip -n "$ns" -4 route show table all >&2 || true
+    ip -n "$ns" -6 route show table all >&2 || true
+    ip netns exec "$ns" nft -a list ruleset >&2 || true
+    if [[ "$ns" == "$CLIENT_NS" ]]; then
+        ip -n "$ns" -4 route get 192.0.2.1 mark 5002 >&2 || true
+        ip -n "$ns" -4 route get 192.0.2.1 mark 0x80000000 >&2 || true
+    fi
+}
+
 fail() {
     echo "btrouted peer traffic test ($PROTO): $*" >&2
+    dump_namespace_diagnostics "$CLIENT_NS"
+    dump_namespace_diagnostics "$SERVER_NS"
     for log in "$TMP/server.log" "$TMP/client.log" "$TMP/server-iperf.log" "$TMP/client-iperf.log"; do
         if [[ -f "$log" ]]; then
+            echo "--- $log ---" >&2
             cat "$log" >&2
         fi
     done
