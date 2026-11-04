@@ -14,6 +14,10 @@ AmneziaWG не выполняет отдельное согласование в
 
 «Клиентские» и «серверные» настройки не следует путать с обязательной ролью инициатора. Любая сторона, которая инициирует handshake, может отправить I/J-пакеты. Рекомендация задавать их только на клиенте — операционная практика, а не ограничение Noise.
 
+### Область действия: интерфейс или peer
+
+В upstream Go UAPI почти все AWG-поля (`S/H`, `Jc/Jmin/Jmax`, `I1-I5`, HP key, CPA, RT, DisableCookies и timer ranges) — **поля Device**, то есть одна конфигурация интерфейса применяется ко всем peer на этом интерфейсе. В BoringTun это отражено в `DeviceConfig.obf` и `DeviceConfig.amnezia`. Самостоятельный library API `Tunn::new_with_amnezia` позволяет задать профиль отдельному Tunn, но daemon UAPI остаётся interface-wide. `persistent_keepalive_interval` — отдельная per-peer настройка.
+
 ## 2. История версий
 
 Ниже — история возможностей по публичной документации Amnezia и историческим исходникам. Это **не** поле version negotiation и не гарантия, что любой бинарник с таким номером версии принимает все поздние ключи UAPI.
@@ -191,7 +195,7 @@ Upstream формулы:
 - `0-0` означает «параметр не задан, использовать WireGuard default», а не таймер нулевой длины. Диапазон `0-1` уже задан и может выбрать 0.
 - `persistent_keepalive_interval` — отдельный per-peer диапазон секунд (uint32); `0-0` отключает PersistentKeepalive. При переходе из disabled в enabled первый keepalive планируется немедленно, затем интервал заново выбирается после authenticated traversal.
 
-Таймеры локальны: значения не согласуются с другой стороной. Ошибочная комбинация может вызвать слишком ранний rekey, преждевременное удаление ключей или частые retry.
+Таймерные ranges задаются на интерфейсе и применяются к его peer; фактические timer states независимы для каждого peer. Значения не согласуются с другой стороной. Ошибочная комбинация может вызвать слишком ранний rekey, преждевременное удаление ключей или частые retry.
 
 ### 4.8 RandomTrailers
 
@@ -242,11 +246,11 @@ Upstream формулы:
 
 | Настройка | Где действует |
 |---|---|
-| Jc/Jmin/Jmax | На стороне, отправляющей junk train |
-| I1-I5 | На стороне, отправляющей CPS packets |
-| ContentPaddingAddition | На стороне, отправляющей transport data |
-| Таймеры | Локальная timer policy |
-| DisableCookies | Локальная under-load policy принимающей стороны |
+| Jc/Jmin/Jmax | На интерфейсе-отправителе; burst отправляет peer, который инициирует handshake |
+| I1-I5 | На интерфейсе-отправителе; CPS packets отправляет peer, который инициирует handshake |
+| ContentPaddingAddition | На интерфейсе-отправителе; применяется к исходящему transport каждого peer |
+| Таймеры | Локальная interface-wide timer policy; состояния отдельных peer независимы |
+| DisableCookies | Локальная interface-wide under-load policy принимающей стороны |
 | PersistentKeepalive | Локальная настройка peer |
 
 ## 6. Риски и upstream edge cases
