@@ -533,12 +533,17 @@ impl Tunn {
     pub fn encapsulate<'a>(&mut self, src: &[u8], dst: &'a mut [u8]) -> TunnResult<'a> {
         let current = self.current;
         if let Some(ref session) = self.sessions[current % N_SESSIONS] {
-            // ContentPaddingAddition and RandomTrailers are applied to the
-            // plaintext IP packet before AEAD encryption. Their combined size
-            // is bounded by the peer's learned UDP window; empty keepalives
-            // remain empty and retain their ordinary wire size.
+            // Upstream tracks the high-water mark of base datagrams sent
+            // to this peer, before adding content padding or an outer trailer.
+            // Learn the current packet size first: the first packet at a new
+            // high-water mark is unpadded, while later smaller packets may be
+            // padded up to that known size.
             let wire_packet_size =
                 src.len() + DATA_OVERHEAD_SZ + self.amnezia.transport_packet_junk_size as usize;
+            self.udp_window = self.udp_window.max(wire_packet_size);
+            // Padding is inside the AEAD plaintext. This also applies to an
+            // empty handshake-confirmation keepalive; the receiver recognizes
+            // its zero-prefixed plaintext and does not deliver it to the TUN.
             let content_padding = self.amnezia.transport_padding_size(
                 src.len(),
                 wire_packet_size,
@@ -590,8 +595,6 @@ impl Tunn {
             return self.send_queued_packet(dst);
         }
 
-        let request_datagram_size = datagram.len();
-
         // Header-protected datagrams must be decrypted far enough to recover
         // their type and receiver index before the regular WireGuard parser
         // and rate limiter can inspect them. Without a key, retain the
@@ -626,7 +629,7 @@ impl Tunn {
             _ => unreachable!(),
         };
 
-        self.handle_verified_packet_with_datagram_size(packet, dst, request_datagram_size)
+        self.handle_verified_packet(packet, dst)
     }
 
     pub(crate) fn handle_verified_packet<'a>(
@@ -634,20 +637,11 @@ impl Tunn {
         packet: Packet,
         dst: &'a mut [u8],
     ) -> TunnResult<'a> {
-        self.handle_verified_packet_with_datagram_size(packet, dst, 0)
-    }
-
-    pub(crate) fn handle_verified_packet_with_datagram_size<'a>(
-        &mut self,
-        packet: Packet,
-        dst: &'a mut [u8],
-        datagram_size: usize,
-    ) -> TunnResult<'a> {
         match packet {
             Packet::HandshakeInit(p) => self.handle_handshake_init(p, dst),
             Packet::HandshakeResponse(p) => self.handle_handshake_response(p, dst),
             Packet::PacketCookieReply(p) => self.handle_cookie_reply(p),
-            Packet::PacketData(p) => self.handle_data(p, dst, datagram_size),
+            Packet::PacketData(p) => self.handle_data(p, dst),
         }
         .unwrap_or_else(TunnResult::from)
     }
@@ -691,8 +685,24 @@ impl Tunn {
 
         let session = self.handshake.receive_handshake_response(p)?;
 
-        let keepalive_packet =
-            session.format_packet_data(self.handshake.obf, &mut self.handshake.rng, &[], 0, dst);
+        // The handshake-confirmation keepalive goes through the same transport
+        // padding path as any other empty packet in upstream amneziawg-go.
+        let wire_packet_size =
+            DATA_OVERHEAD_SZ + self.amnezia.transport_packet_junk_size as usize;
+        self.udp_window = self.udp_window.max(wire_packet_size);
+        let content_padding = self.amnezia.transport_padding_size(
+            0,
+            wire_packet_size,
+            self.udp_window,
+            &mut self.handshake.rng,
+        );
+        let keepalive_packet = session.format_packet_data(
+            self.handshake.obf,
+            &mut self.handshake.rng,
+            &[],
+            content_padding,
+            dst,
+        );
         let keepalive_packet_size = keepalive_packet.len();
         // Store new session in ring buffer
         let l_idx = session.local_index();
@@ -747,7 +757,6 @@ impl Tunn {
         &mut self,
         packet: PacketData,
         dst: &'a mut [u8],
-        datagram_size: usize,
     ) -> Result<TunnResult<'a>, WireGuardError> {
         let r_idx = packet.receiver_idx as usize;
         let idx = r_idx % N_SESSIONS;
@@ -761,12 +770,6 @@ impl Tunn {
             })?;
             session.receive_packet_data(packet, dst)?
         };
-
-        // Match upstream's per-peer UDP window: learn only from authenticated
-        // transport datagrams, including their S4 prefix and any outer trailer.
-        if datagram_size > 0 {
-            self.udp_window = self.udp_window.max(datagram_size);
-        }
 
         self.set_current_session(r_idx);
 
@@ -3759,7 +3762,7 @@ mod tests {
     }
 
     #[test]
-    fn random_trailers_learn_udp_window_from_authenticated_inbound_data() {
+    fn random_trailers_learn_udp_window_from_outbound_base_size() {
         let cfg = AmneziaConfig::new(600, 600, 600, 600).with_random_trailers(true);
         let (mut sender, mut receiver) = create_two_tuns_with_amnezia(cfg);
 
@@ -3780,34 +3783,41 @@ mod tests {
             TunnResult::WriteToNetwork(datagram) => datagram.to_vec(),
             other => panic!("expected transport datagram, got {:?}", other),
         };
-        let observed_size = outbound.len();
+        let base_size = DATA_OVERHEAD_SZ + 600 + large_packet.len();
+        assert_eq!(outbound.len(), base_size, "first high-water packet is not padded");
+        assert_eq!(
+            sender.udp_window, base_size,
+            "the sender must learn its own largest base datagram before padding"
+        );
+
         let mut tunnel_buffer = vec![0u8; 4096];
         match receiver.decapsulate(None, &outbound, &mut tunnel_buffer) {
             TunnResult::WriteToTunnelV4(restored, _) => assert_eq!(restored, large_packet),
             other => panic!("expected restored IPv4 packet, got {:?}", other),
         }
         assert_eq!(
-            receiver.udp_window, observed_size,
-            "the authenticated receive path must learn the complete UDP datagram size"
+            receiver.udp_window, 500,
+            "an inbound datagram must not redefine the sender-side UDP window"
         );
 
         let small_packet = create_ipv4_udp_packet();
+        let small_base = DATA_OVERHEAD_SZ + 600 + small_packet.len();
         let mut saw_padding = false;
         for _ in 0..64 {
             let mut reverse_buffer = vec![0u8; 4096];
-            let reverse = match receiver.encapsulate(&small_packet, &mut reverse_buffer) {
+            let padded = match sender.encapsulate(&small_packet, &mut reverse_buffer) {
                 TunnResult::WriteToNetwork(datagram) => datagram.to_vec(),
-                other => panic!("expected reverse transport datagram, got {:?}", other),
+                other => panic!("expected transport datagram, got {:?}", other),
             };
             assert!(
-                reverse.len() <= observed_size,
-                "random trailers must stay within the learned UDP window"
+                padded.len() <= base_size,
+                "random trailers must stay within the outbound high-water mark"
             );
-            saw_padding |= reverse.len() > DATA_OVERHEAD_SZ + 600 + small_packet.len();
+            saw_padding |= padded.len() > small_base;
         }
         assert!(
             saw_padding,
-            "learned UDP window should permit reverse padding"
+            "the previously observed outbound high-water mark should permit padding"
         );
     }
 
@@ -3828,7 +3838,7 @@ mod tests {
     }
 
     #[test]
-    fn random_trailers_do_not_grow_the_udp_window_for_oversized_outbound_packets() {
+    fn oversized_outbound_packet_updates_udp_window_without_padding_itself() {
         let cfg = AmneziaConfig::new(0, 0, 0, 0).with_random_trailers(true);
         let (mut sender, mut receiver) = create_two_tuns_with_amnezia(cfg);
         let mut packet = create_ipv4_udp_packet();
@@ -3847,11 +3857,10 @@ mod tests {
             TunnResult::WriteToNetwork(datagram) => datagram.to_vec(),
             other => panic!("expected transport datagram, got {:?}", other),
         };
-        assert_eq!(
-            outbound.len(),
-            DATA_OVERHEAD_SZ + packet.len(),
-            "a packet larger than the default 500-byte UDP window must not expand that window or receive random padding"
-        );
+        let base_size = DATA_OVERHEAD_SZ + packet.len();
+        assert_eq!(outbound.len(), base_size, "the new high-water packet has no room for a trailer");
+        assert_eq!(sender.udp_window, base_size);
+        assert_eq!(receiver.udp_window, 500);
 
         let mut tunnel_buffer = vec![0u8; 4096];
         match receiver.decapsulate(None, &outbound, &mut tunnel_buffer) {
@@ -3911,10 +3920,9 @@ mod tests {
         let init = create_handshake_init(&mut sender);
         let response = create_handshake_response(&mut receiver, &init);
         let keepalive = parse_handshake_resp(&mut sender, &response);
-        assert_eq!(
-            keepalive.len(),
-            DATA_OVERHEAD_SZ,
-            "keepalive must not be padded"
+        assert!(
+            (DATA_OVERHEAD_SZ + 8..=DATA_OVERHEAD_SZ + 32).contains(&keepalive.len()),
+            "ContentPaddingAddition must also pad the handshake-confirmation keepalive"
         );
         parse_keepalive(&mut receiver, &keepalive);
 
