@@ -192,7 +192,6 @@ impl Runtime {
     }
 }
 
-
 impl Drop for Runtime {
     fn drop(&mut self) {
         linux::remove_policy_routing(&self.routing);
@@ -202,7 +201,6 @@ impl Drop for Runtime {
         }
     }
 }
-
 
 fn install_signal_handlers() -> Result<(), RuntimeError> {
     SHUTDOWN_REQUESTED.store(false, Ordering::Relaxed);
