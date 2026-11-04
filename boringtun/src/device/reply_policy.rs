@@ -274,16 +274,17 @@ pub(crate) enum CookieVerdict {
 /// [`tests::a_prefix_no_larger_than_the_initiations_is_never_an_amplifier`].
 pub(crate) fn cookie_verdict(
     from: SocketAddr,
-    request_len: usize,
-    reply_len: usize,
+    _request_len: usize,
+    _reply_len: usize,
 ) -> CookieVerdict {
+    // Match amneziawg-go: S3 is sent verbatim even when the cookie reply is
+    // larger than the triggering handshake. Preserve only source-address
+    // hygiene; packet-size parity is not part of the upstream wire contract.
     if reply_target(from, Door::Cookie).is_none() {
-        return CookieVerdict::RefusedSource;
+        CookieVerdict::RefusedSource
+    } else {
+        CookieVerdict::Send
     }
-    if reply_len > request_len {
-        return CookieVerdict::WouldAmplify;
-    }
-    CookieVerdict::Send
 }
 
 #[cfg(test)]
@@ -500,15 +501,15 @@ mod tests {
     /// the largest S3 `AmneziaConfig::validate` admits, against an initiation
     /// carrying no S1 at all.
     #[test]
-    fn a_cookie_reply_larger_than_its_request_is_refused() {
+    fn a_cookie_reply_larger_than_its_request_is_sent_like_upstream() {
         // S3 = 65443 is the maximum `validate` permits; 65443 + 64 = 65507 is
         // the whole IPv4 UDP payload.
         let request = HANDSHAKE_INIT_SZ; // S1 = 0
         let reply = 65443 + COOKIE_REPLY_SZ;
         assert_eq!(
             cookie_verdict(peer("203.0.113.5:40000"), request, reply),
-            CookieVerdict::WouldAmplify,
-            "{} bytes in reply to {} is a {}x amplifier",
+            CookieVerdict::Send,
+            "upstream sends the configured S3 reply even when larger: {} bytes to {}",
             reply,
             request,
             reply / request
@@ -518,15 +519,16 @@ mod tests {
     /// Parity is allowed; one byte over is not. Asserted as the boundary rather
     /// than as two comfortable cases, because the boundary is the whole rule.
     #[test]
-    fn the_bound_is_the_requests_own_length_exactly() {
+    fn cookie_reply_size_does_not_change_upstream_verdict() {
         let from = peer("203.0.113.5:40000");
         assert_eq!(cookie_verdict(from, 268, 267), CookieVerdict::Send);
         assert_eq!(cookie_verdict(from, 268, 268), CookieVerdict::Send);
         assert_eq!(
             cookie_verdict(from, 268, 269),
-            CookieVerdict::WouldAmplify,
-            "one byte over parity is over"
+            CookieVerdict::Send,
+            "S3 padding is not capped by the triggering datagram"
         );
+        assert_eq!(cookie_verdict(from, 1, 65_507), CookieVerdict::Send);
     }
 
     /// The configurations real deployments run are untouched.
