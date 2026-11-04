@@ -899,10 +899,19 @@ def run_profile(
 
         awg_base = S_AND_H_RT if "random_trailers=true" in extra else S_AND_H
         awg = (awg_base if awg_enabled else "") + extra
+        # CPA is sender-local. For the AWG 3.0 profile, select BoringTun's
+        # legacy MTU-bounded algorithm only on BoringTun endpoints; upstream
+        # Go has no such UAPI key and uses the semantics of its pinned version.
+        bt_awg = awg + (
+            "content_padding_mode=mtu\\n"
+            if name == "bulk data integrity — AWG 3.0" else ""
+        )
+        server_awg = bt_awg if server_is_bt else awg
+        client_awg = bt_awg if client_is_bt else awg
         set_peer(server_iface, server_private, client_public, "none",
-                 f"{CLIENT_TUN}/32", awg)
+                 f"{CLIENT_TUN}/32", server_awg)
         set_peer(client_iface, client_private, server_public,
-                 f"{SERVER_LINK}:{PORT}", f"{SERVER_TUN}/32", awg)
+                 f"{SERVER_LINK}:{PORT}", f"{SERVER_TUN}/32", client_awg)
 
         ns(ns_server, "ip", "addr", "add", f"{SERVER_TUN}/24", "dev", server_iface)
         ns(ns_server, "ip", "link", "set", server_iface, "up", "mtu", "1420")
