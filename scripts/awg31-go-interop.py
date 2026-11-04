@@ -45,7 +45,7 @@ h4=1526332224
 HPK = "42" * 32
 # RandomTrailers needs identical S offsets to avoid the upstream first-match
 # classifier mistaking transport packets for fixed-size handshake messages.
-RT_S = "s1=64\ns2=64\ns3=64\ns4=64\n"
+S_AND_H_RT = "s1=64\ns2=64\ns3=64\ns4=64\nh1=" + S_AND_H.split("h1=", 1)[1]
 
 PROFILES = [
     ("vanilla WireGuard baseline", "", False),
@@ -74,12 +74,12 @@ PROFILES = [
         "rekey_after_time=119-120\nrekey_timeout=5-6\n"
         "reject_after_time=179-180\nkeepalive_timeout=9-10\n"
         "max_handshake_attempts=18-19\n"
-        + RT_S + "random_trailers=true\n",
+        "random_trailers=true\n",
         True,
     ),
     ("HeaderProtectionKey", f"header_protection_key={HPK}\n", True),
     ("ContentPaddingAddition", "content_padding_addition=16-64\n", True),
-    ("RandomTrailers", RT_S + "random_trailers=true\n", True),
+    ("RandomTrailers", "random_trailers=true\n", True),
     ("DisableCookies", "disable_cookies=true\n", True),
     (
         "randomized timers",
@@ -121,7 +121,7 @@ PROFILES = [
         "disable_cookies=true\nrekey_after_time=119-120\n"
         "rekey_timeout=5-6\nreject_after_time=179-180\n"
         "keepalive_timeout=9-10\nmax_handshake_attempts=18-19\n"
-        + RT_S + "random_trailers=true\n",
+        "random_trailers=true\n",
         True,
     ),
     # CPS I1-I5: recognizable fixed datagrams let the pcap verifier prove
@@ -883,7 +883,8 @@ def run_profile(
         wait_socket(server_iface, server_proc)
         wait_socket(client_iface, client_proc)
 
-        awg = (S_AND_H if awg_enabled else "") + extra
+        awg_base = S_AND_H_RT if "random_trailers=true" in extra else S_AND_H
+        awg = (awg_base if awg_enabled else "") + extra
         set_peer(server_iface, server_private, client_public, "none",
                  f"{CLIENT_TUN}/32", awg)
         set_peer(client_iface, client_private, server_public,
