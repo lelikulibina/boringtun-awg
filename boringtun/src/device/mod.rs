@@ -364,6 +364,75 @@ impl DeviceHandle {
         })
     }
 
+    /// Run a control-plane operation while the datapath cooperatively yields
+    /// its read locks. This is the same synchronization used by UAPI set=1.
+    fn with_device_mut<R>(&self, operation: impl FnOnce(&mut Device) -> R) -> R {
+        let mut device = self.device.read();
+        device
+            .try_writeable(
+                |device| device.trigger_yield(),
+                |device| {
+                    device.cancel_yield();
+                    operation(device)
+                },
+            )
+            .expect("device write operation always returns a result")
+    }
+
+    /// Configure the interface private key without going through UAPI.
+    pub fn set_private_key(&self, private_key: x25519::StaticSecret) {
+        self.with_device_mut(|device| device.set_key(private_key));
+    }
+
+    /// Add, update, or remove a peer through the typed device API.
+    ///
+    /// When `remove` is false, `allowed_ips` are either appended or replace
+    /// the existing set according to `replace_allowed_ips`. Optional fields
+    /// preserve their current values when omitted.
+    #[allow(clippy::too_many_arguments)]
+    pub fn update_peer(
+        &self,
+        public_key: x25519::PublicKey,
+        remove: bool,
+        replace_allowed_ips: bool,
+        endpoint: Option<SocketAddr>,
+        allowed_ips: &[AllowedIP],
+        persistent_keepalive: Option<(u32, u32)>,
+        preshared_key: Option<[u8; 32]>,
+    ) -> Result<(), Error> {
+        self.with_device_mut(|device| {
+            device.update_peer(
+                public_key,
+                remove,
+                replace_allowed_ips,
+                endpoint,
+                allowed_ips,
+                persistent_keepalive,
+                preshared_key,
+            )
+        })
+    }
+
+    /// Apply interface-wide AmneziaWG framing and obfuscation settings.
+    pub fn set_obfuscation(
+        &self,
+        obfuscation: ObfuscationRanges,
+        amnezia: AmneziaConfig,
+    ) -> bool {
+        self.with_device_mut(|device| device.set_obfuscation(obfuscation, amnezia))
+    }
+
+    /// Current UDP listen port selected for this interface.
+    pub fn listen_port(&self) -> u16 {
+        self.device.read().listen_port
+    }
+
+    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+    /// Set the socket fwmark used by this interface and its connected peers.
+    pub fn set_fwmark(&self, mark: u32) -> Result<(), Error> {
+        self.with_device_mut(|device| device.set_fwmark(mark))
+    }
+
     pub fn wait(&mut self) {
         while let Some(thread) = self.threads.pop() {
             thread.join().unwrap();
