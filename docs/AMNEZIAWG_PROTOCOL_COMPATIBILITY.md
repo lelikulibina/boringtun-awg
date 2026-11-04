@@ -63,6 +63,32 @@ AmneziaWG не выполняет отдельное согласование в
 
 ## 4. Параметры и их ограничения
 
+### 4.0 Значения по умолчанию в upstream 3.1
+
+Здесь приведены именно defaults исходников amneziawg-go v3.1.20260828, а не рекомендации для развёртывания.
+
+| Параметр | Default | Комментарий |
+|---|---:|---|
+| Jc | 0 | Junk train выключен |
+| Jmin/Jmax | 0/0 | Сами по себе не создают junk; BoringTun подставляет безопасный диапазон 50–1000, если Jc включён и обе границы нулевые |
+| S1-S4 | 0 | Нет дополнительных префиксов |
+| H1-H4 | 1 / 2 / 3 / 4 | Стандартные WireGuard type tags |
+| I1-I5 | пусто | CPS datagrams не отправляются |
+| HeaderProtectionKey | нулевой ключ | Header Protection выключен |
+| ContentPaddingAddition | 0–0 | CPA выключен; применяется обычное WG MTU padding, если RT тоже выключен |
+| RandomTrailers | false | Внешние handshake/cookie trailers и transport RT выключены |
+| DisableCookies | false | Under-load cookie challenge остаётся включён |
+| RekeyAfterTime | 120 с | Порог инициирования rekey по отправке |
+| RekeyTimeout | 5 с | Интервал handshake retry |
+| RejectAfterTime | 180 с | Базовый срок жизни ключевого материала |
+| KeepaliveTimeout | 10 с | Таймер keepalive |
+| MaxTimerHandshakes | 18 | 90 / 5; лимит handshake попыток |
+| DefaultUdpWindow | 500 байт | Начальный размер окна для device-level Cookie Reply |
+| PersistentKeepalive | 0 | По умолчанию выключен; задаётся отдельно для каждого peer |
+
+Важная разница defaults: upstream атомики Jmin/Jmax изначально равны нулю, а BoringTun при включённом Jc и 0-0 применяет 50–1000 байт, чтобы не генерировать пустые junk datagrams. Это защитное поведение BoringTun, а не upstream default.
+
+
 ### 4.1 Junk train: `Jc`, `Jmin`, `Jmax`
 
 | Поле | Значение |
@@ -318,13 +344,13 @@ max_handshake_attempts=18
 
 Имитация в S-prefix не должна подменять nonce Header Protection. При включённом HP BoringTun заполняет S-prefix случайными байтами; самостоятельные pre-handshake imitation datagrams остаются отдельным механизмом.
 
-## 9. Оставшийся parity gap: стандартный WireGuard padding
+## 9. Стандартный WireGuard padding: parity в текущей ветке
 
-В upstream AWG 3.0/3.1, когда `ContentPaddingAddition` не задан и `RandomTrailers` выключен, transport encryption fallback вызывает `calculatePaddingSize(packetSize, tun.mtu)`: plaintext IP-пакет дополняется до кратного 16 байтам размера с ограничением по MTU. При включённом CPA используется соответствующая версия random padding; при RT — RandomTrailers.
+В upstream AWG 3.0/3.1, когда ContentPaddingAddition не задан и RandomTrailers выключен, transport encryption fallback вызывает calculatePaddingSize(packetSize, tun.mtu): plaintext IP-пакет дополняется нулевыми байтами до кратного 16 байтам размера с ограничением по MTU. При включённом CPA используется CPA; при RT — RandomTrailers.
 
-В текущем BoringTun `Session::format_packet_data` прямо содержит TODO о padding до 16 байт и намеренно не добавляет его; `Tunn` не хранит MTU. Поэтому обычный профиль без CPA/RT остаётся wire-compatible, но packet-size distribution отличается от upstream даже при одинаковых S/H. Это не ломает расшифровку, однако уменьшает точность DPI-поведенческого профиля.
+В текущей ветке BoringTun это поведение реализовано в AmneziaConfig::calculate_wg_padding_size и вызывается из transport_padding_size. Tunn хранит MTU: standalone API использует 1420 байт по умолчанию, Device передаёт фактический MTU через set_mtu. Алгоритм повторяет upstream special case для MTU=0, modulo для пакетов больше MTU и ограничение результата MTU. Тест wireguard_padding_matches_upstream_mtu_algorithm фиксирует граничные случаи.
 
-Для полного parity требуется отдельная доработка: добавить MTU в `Tunn` (с безопасным default для standalone API и передачей фактического `Device.mtu` из device layer), затем вызывать upstream-equivalent `calculatePaddingSize` только когда CPA и RT не заданы. В текущий пакет эта API/MTU plumbing не включена, чтобы не менять поведение всех существующих пользователей без отдельного тестового прохода.
+Это изменение касается распределения размеров, а не wire compatibility: padding находится внутри AEAD plaintext и удаляется по длине IP-пакета. Важно прогнать обычный WG/AWG baseline и interop для IPv4/IPv6, а также убедиться, что выходной буфер рассчитан на добавляемый padding.
 
 ## 10. Соответствие исходникам BoringTun
 
