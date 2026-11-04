@@ -399,6 +399,10 @@ max_handshake_attempts=18
 
 ## 11. Проверенные источники
 
+### Реальные interop-проверки
+
+CI использует два независимых официальных Go-эталона: `amneziawg-go` commit `b5928efb6ca19f0153958460c3d141f04abc5c2e` (v3.1.20260828) и tag `v3.0.0`. Быстрый набор проверяет 16 направленных сценариев с v3.1 и дополнительно 14 направленных сценариев с v3.0.0; последний набор исключает UAPI-поля, появившиеся только в 3.1. Полная матрица `--full` добавляет к v3.1-набору 44 сценария и длинные lifecycle/rekey проверки. CPA для профиля AWG 3.0 выбирается только на BoringTun через локальный `content_padding_mode=mtu`; официальный Go 3.0.0 использует собственную реализацию MTU-bounded CPA без неизвестного ему UAPI ключа.
+
 - [Официальная документация AmneziaWG](https://docs.amnezia.org/documentation/amnezia-wg/)
 - [amneziawg-go v0.2.19](https://github.com/amnezia-vpn/amneziawg-go/tree/v0.2.19)
 - [amneziawg-go v3.0.0](https://github.com/amnezia-vpn/amneziawg-go/tree/v3.0.0)
@@ -406,7 +410,8 @@ max_handshake_attempts=18
 - [amneziawg-go v3.1.20260828](https://github.com/amnezia-vpn/amneziawg-go/tree/v3.1.20260828)
 - [noise-types.go](https://github.com/amnezia-vpn/amneziawg-go/blob/v3.1.20260828/device/noise-types.go) — размеры ключей, UintRange, HeaderCipherNonceSize.
 - [uapi.go](https://github.com/amnezia-vpn/amneziawg-go/blob/v3.1.20260828/device/uapi.go) — реальные типы и проверки UAPI.
-- [send.go](https://github.com/amnezia-vpn/amneziawg-go/blob/v3.1.20260828/device/send.go) — S-prefix, HP, RT, CPA, UDP window, handshake keepalive.
+- [send.go AWG 3.0.0](https://github.com/amnezia-vpn/amneziawg-go/blob/v3.0.0/device/send.go) — MTU-bounded CPA and legacy transport padding.
+- [send.go AWG 3.1](https://github.com/amnezia-vpn/amneziawg-go/blob/v3.1.20260828/device/send.go) — S-prefix, HP, RT, peer UDP window, CPA, handshake keepalive.
 - [receive.go](https://github.com/amnezia-vpn/amneziawg-go/blob/v3.1.20260828/device/receive.go) — receive classifier, cookie policy, handshake lifecycle.
 - [timers.go](https://github.com/amnezia-vpn/amneziawg-go/blob/v3.1.20260828/device/timers.go) — timer defaults and formulas.
 - [obf.go](https://github.com/amnezia-vpn/amneziawg-go/blob/v3.1.20260828/device/obf.go) и `obf_*.go` — CPS grammar.
