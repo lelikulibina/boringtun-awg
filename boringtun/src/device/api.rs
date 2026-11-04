@@ -1046,14 +1046,8 @@ mod tests {
 
     #[test]
     fn all_protocols_use_the_single_wireguard_uapi_socket_namespace() {
-        assert_eq!(
-            uapi_socket_path("wg0"),
-            "/run/wireguard/wg0.sock"
-        );
-        assert_eq!(
-            uapi_socket_path("awg0"),
-            "/run/wireguard/awg0.sock"
-        );
+        assert_eq!(uapi_socket_path("wg0"), "/run/wireguard/wg0.sock");
+        assert_eq!(uapi_socket_path("awg0"), "/run/wireguard/awg0.sock");
     }
 
     /// Protocol imitation survives a `set=1` that carries AmneziaWG keys.
