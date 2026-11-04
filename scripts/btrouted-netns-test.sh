@@ -19,9 +19,11 @@ trap cleanup EXIT
 
 fail() {
     echo "btrouted namespace test: $*" >&2
-    if [[ -f "$TMP/daemon.log" ]]; then
-        cat "$TMP/daemon.log" >&2
-    fi
+    for log in "$TMP/daemon.log" "$TMP/conflict.log"; do
+        if [[ -f "$log" ]]; then
+            cat "$log" >&2
+        fi
+    done
     exit 1
 }
 
@@ -128,7 +130,7 @@ set -e
 DAEMON_PID=""
 [[ $conflict_status -ne 0 ]] || fail "daemon accepted a foreign nftables table"
 ip netns exec "$NS" nft list table inet btrouted_it >/dev/null 2>&1 || fail "foreign nftables table was deleted"
-if ip netns exec "$NS" ip -4 rule show | grep -Eq 'fwmark 0x(80000000|1001)'; then
+if ip netns exec "$NS" ip -4 rule show | grep -Eq 'fwmark 0x(80000000|80000001|1001)'; then
     fail "policy rules leaked after nftables ownership conflict"
 fi
 for iface in wg-server awg-primary awg-secondary; do
