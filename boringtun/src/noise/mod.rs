@@ -4080,17 +4080,16 @@ mod tests {
             "the new high-water packet has no room for a trailer"
         );
         assert_eq!(sender.udp_window, base_size);
-        assert_eq!(
-            receiver.udp_window,
-            DATA_HEADER_SZ + packet.len(),
-            "the receiver learns the authenticated inbound size using upstream's header-plus-plaintext formula"
-        );
-
         let mut tunnel_buffer = vec![0u8; 4096];
         match receiver.decapsulate(None, &outbound, &mut tunnel_buffer) {
             TunnResult::WriteToTunnelV4(restored, _) => assert_eq!(restored, packet),
             other => panic!("expected restored IPv4 packet, got {:?}", other),
         }
+        assert_eq!(
+            receiver.udp_window,
+            DATA_HEADER_SZ + packet.len(),
+            "the receiver learns the authenticated inbound size using upstream's header-plus-plaintext formula"
+        );
     }
 
     #[test]
