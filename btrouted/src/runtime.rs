@@ -72,8 +72,11 @@ impl Runtime {
         if config.daemon.manage_ip_forwarding {
             enable_forwarding()?;
         }
-        linux::apply_policy_routing(&routing)?;
         linux::apply_nft(&routing)?;
+        if let Err(error) = linux::apply_policy_routing(&routing) {
+            linux::remove_nft(&routing);
+            return Err(error.into());
+        }
         tracing::info!(interfaces = devices.len(), "btrouted runtime started");
         Ok(Self { devices, routing, stats_interval: Duration::from_secs(config.daemon.stats_interval_secs) })
     }
