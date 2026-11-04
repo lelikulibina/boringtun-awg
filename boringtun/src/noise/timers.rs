@@ -685,8 +685,6 @@ impl Tunn {
 
     pub fn update_timers<'a>(&mut self, dst: &'a mut [u8]) -> TunnResult<'a> {
         let mut handshake_initiation_required = false;
-        let mut keepalive_required = false;
-        let mut keepalive_rearm = None;
 
         let time = Instant::now();
 
@@ -707,6 +705,45 @@ impl Tunn {
 
         if self.handshake.is_expired() {
             return TunnResult::Err(WireGuardError::ConnectionExpired);
+        }
+
+        // Keepalive timers are independent of handshake retransmission in
+        // amneziawg-go. Service them first so a pending handshake cannot mask
+        // KeepaliveTimeout or PersistentKeepalive.
+        let send_keepalive_due = self
+            .timers
+            .send_keepalive_deadline
+            .map(|deadline| now >= deadline)
+            .unwrap_or(false);
+        let persistent_keepalive_due = self
+            .timers
+            .persistent_keepalive_deadline
+            .map(|deadline| now >= deadline)
+            .unwrap_or(false);
+        if send_keepalive_due || persistent_keepalive_due {
+            let rearm_send_keepalive = send_keepalive_due && self.timers.need_another_keepalive;
+            if send_keepalive_due {
+                tracing::debug!("KEEPALIVE(KEEPALIVE_TIMEOUT)");
+                self.timers.send_keepalive_deadline = None;
+                self.timers.need_another_keepalive = false;
+            }
+            if persistent_keepalive_due {
+                tracing::debug!("KEEPALIVE(PERSISTENT_KEEPALIVE)");
+                self.timers.persistent_keepalive_deadline = None;
+                self.timer_tick(TimePersistentKeepalive);
+            }
+
+            let result = self.encapsulate(&[], dst);
+            if rearm_send_keepalive {
+                let timeout = self
+                    .timers
+                    .pick_range(3, KEEPALIVE_TIMEOUT.as_secs() as u32);
+                self.timers.send_keepalive_deadline = Some(
+                    Instant::now().duration_since(self.timers.time_started)
+                        + Duration::from_secs(timeout as u64),
+                );
+            }
+            return result;
         }
 
         // Load timers only once:
@@ -809,59 +846,12 @@ impl Tunn {
                     handshake_initiation_required = true;
                 }
 
-                if !handshake_initiation_required {
-                    // The first data receive starts this timer. If more data
-                    // arrived while it was pending, upstream sends one extra
-                    // keepalive after the first keepalive has gone out.
-                    if self
-                        .timers
-                        .send_keepalive_deadline
-                        .map(|deadline| now >= deadline)
-                        .unwrap_or(false)
-                    {
-                        tracing::debug!("KEEPALIVE(KEEPALIVE_TIMEOUT)");
-                        self.timers.send_keepalive_deadline = None;
-                        if self.timers.need_another_keepalive {
-                            self.timers.need_another_keepalive = false;
-                            let timeout = self
-                                .timers
-                                .pick_range(3, KEEPALIVE_TIMEOUT.as_secs() as u32);
-                            keepalive_rearm = Some(Duration::from_secs(timeout as u64));
-                        }
-                        keepalive_required = true;
-                    }
-                }
             }
 
-            // Persistent keepalive is an independent timer in the Go device;
-            // it remains active while a handshake retransmission is pending.
-            if self
-                .timers
-                .persistent_keepalive_deadline
-                .map(|deadline| now >= deadline)
-                .unwrap_or(false)
-            {
-                tracing::debug!("KEEPALIVE(PERSISTENT_KEEPALIVE)");
-                self.timers.persistent_keepalive_deadline = None;
-                self.timer_tick(TimePersistentKeepalive);
-                keepalive_required = true;
-            }
         }
 
         if handshake_initiation_required {
             return self.format_handshake_initiation(dst, true);
-        }
-
-        if keepalive_required {
-            let result = self.encapsulate(&[], dst);
-            // encapsulate marks the keepalive as sent and clears the old
-            // deadline. Re-arm only after a timer-driven send, matching
-            // expiredSendKeepalive; a persistent keepalive must not re-arm it.
-            if let Some(timeout) = keepalive_rearm {
-                self.timers.send_keepalive_deadline =
-                    Some(Instant::now().duration_since(self.timers.time_started) + timeout);
-            }
-            return result;
         }
 
         TunnResult::Done
