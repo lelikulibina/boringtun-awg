@@ -3032,8 +3032,7 @@ mod tests {
             let config = AmneziaConfig::new(0, 0, 0, 0)
                 .with_content_padding_addition(100, 100)
                 .with_legacy_content_padding(legacy);
-            let (mut sender, mut receiver) =
-                create_two_tuns_and_handshake_with_amnezia(config);
+            let (mut sender, mut receiver) = create_two_tuns_and_handshake_with_amnezia(config);
             sender.set_mtu(30);
 
             let mut packet = create_ipv4_udp_packet();
