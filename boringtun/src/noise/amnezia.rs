@@ -641,10 +641,6 @@ impl AmneziaConfig {
     /// time with `EMSGSIZE`, so it never worked there either. See
     /// `MAX_SENDABLE_DATAGRAM` for the arithmetic.
     ///
-    /// The amplification check below is a different matter and the one place
-    /// this genuinely refuses a configuration the kernel module runs. It is
-    /// intentional, and argued at the check rather than here, so that "every
-    /// working kernel configuration is accepted" is not read as covering it.
     pub(crate) fn validate_timer_ranges(&self) -> Result<(), String> {
         for (name, (min, max)) in [
             ("rekey_after_time", self.rekey_after_time),
@@ -1020,8 +1016,8 @@ impl AmneziaConfig {
     /// Apply S-prefix, Header Protection and optional RandomTrailers.
     ///
     /// udp_window is the peer's learned maximum datagram size. max_datagram_size
-    /// is normally unbounded, but cookie replies pass the triggering request's
-    /// size so random trailers can never turn a cookie into an amplifier.
+    /// is an additional caller-supplied datagram bound; cookie replies use the
+    /// same unbounded policy as upstream, not the size of the triggering request.
     pub(crate) fn prepend_outbound_with_limits<'a>(
         &self,
         obf: ObfuscationRanges,
@@ -2551,22 +2547,14 @@ mod tests {
     /// `prepend_outbound` actually produces, for every S3 from zero to the
     /// largest `validate` admits.
     ///
-    /// The ingress path predicts the length so it can refuse an amplifying
-    /// cookie reply *without* paying to generate its junk. A prediction that
-    /// ran low would let the amplifier through; one that ran high would silence
-    /// cookie replies for a configuration that is not an amplifier at all. Both
-    /// are silent, so the two are pinned to each other here rather than left to
-    /// agree by inspection.
+    /// This pins the S3 size calculation to the actual outbound framing so
+    /// tests can detect accidental divergence between configuration and wire output.
     #[test]
     fn the_predicted_cookie_reply_length_is_the_one_actually_produced() {
         let max_s3 = (MAX_SENDABLE_DATAGRAM - COOKIE_REPLY_SZ) as u16;
         for s3 in [0u16, 1, 110, 1280, max_s3] {
-            // S1 and S2 are derived rather than zeroed: `validate` now refuses a
-            // cookie reply larger than the packet provoking it, so a bare
-            // `new(0, 0, max_s3, 0)` is no longer a configuration an operator
-            // could set, and asserting against it would be testing the
-            // prediction on a config that cannot exist. These are the smallest
-            // values that keep each S3 legal.
+            // Keep the other prefixes small and valid while exercising the S3
+            // boundary independently.
             let cfg = AmneziaConfig::new(s3.saturating_sub(84), s3.saturating_sub(28), s3, 0);
             cfg.validate().expect("S3 within the validated range");
 
