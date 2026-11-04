@@ -5,5 +5,7 @@
 //! devices and is not part of this crate's management path.
 
 pub mod config;
+pub mod routing;
 
 pub use config::{Config, ConfigError, EndpointHost, PeerEndpoint};
+pub use routing::{EgressPlan, NftRule, RoutingPlan};
