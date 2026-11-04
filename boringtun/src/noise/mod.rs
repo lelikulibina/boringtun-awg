@@ -2276,7 +2276,12 @@ mod tests {
     #[test]
     #[cfg(feature = "mock-instant")]
     fn new_handshake_after_two_mins() {
-        let (mut my_tun, mut their_tun) = create_two_tuns_and_handshake();
+        let config = AmneziaConfig::new(0, 0, 0, 0)
+            .with_rekey_after_time(120, 120)
+            .with_rekey_timeout(5, 5)
+            .with_reject_after_time(500, 500)
+            .with_keepalive_timeout(200, 200);
+        let (mut my_tun, mut their_tun) = create_two_tuns_with_amnezia(config);
         let mut my_dst = [0u8; 1024];
 
         // Advance time 1 second and "send" 1 packet so that we send a handshake
