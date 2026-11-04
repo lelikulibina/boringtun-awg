@@ -280,6 +280,8 @@ pub struct AmneziaConfig {
     /// Inclusive range of extra zero bytes appended to the encrypted IP payload.
     /// `(0, 0)` disables ContentPaddingAddition.
     pub(crate) content_padding_addition: (u32, u32),
+    /// Use AWG 3.0's MTU-bounded CPA algorithm instead of AWG 3.1's peer UDP-window algorithm.
+    pub(crate) legacy_content_padding: bool,
     /// Inclusive timer ranges in seconds; (0, 0) preserves WireGuard defaults.
     pub(crate) rekey_after_time: (u32, u32),
     pub(crate) rekey_timeout: (u32, u32),
@@ -428,6 +430,7 @@ impl AmneziaConfig {
             disable_cookies: false,
             header_protection_key: [0u8; 32],
             content_padding_addition: (0, 0),
+            legacy_content_padding: false,
             rekey_after_time: (0, 0),
             rekey_timeout: (0, 0),
             reject_after_time: (0, 0),
@@ -463,6 +466,16 @@ impl AmneziaConfig {
     /// Use `(0, 0)` to disable additional content padding.
     pub fn with_content_padding_addition(mut self, min: u16, max: u16) -> Self {
         self.content_padding_addition = (u32::from(min), u32::from(max));
+        self
+    }
+
+    /// Select AWG 3.0's legacy MTU-bounded ContentPaddingAddition semantics.
+    ///
+    /// The default (`false`) matches AWG 3.1, which clamps CPA to the peer UDP
+    /// high-water mark. AWG 3.0 instead clamps it to the inner TUN MTU.
+    /// This is a local compatibility setting; AWG does not negotiate versions.
+    pub fn with_legacy_content_padding(mut self, enabled: bool) -> Self {
+        self.legacy_content_padding = enabled;
         self
     }
 
@@ -531,19 +544,29 @@ impl AmneziaConfig {
         self
     }
 
-    /// Select a random ContentPaddingAddition value and clamp it to the
-    /// remaining peer UDP window, matching upstream's randomPaddingAddition.
-    /// Empty keepalives are padded too; the receiver recognizes their zero
+    /// Select a random ContentPaddingAddition value. AWG 3.1 clamps it to the
+    /// remaining peer UDP window; AWG 3.0 clamps it to the remaining inner TUN
+    /// MTU. Empty keepalives are padded too; the receiver recognizes their zero
     /// plaintext prefix and does not deliver them to the TUN device.
     pub(crate) fn content_padding_size(
         &self,
-        _packet_size: usize,
+        packet_size: usize,
         wire_packet_size: usize,
         udp_window: usize,
+        mtu: usize,
         rng: &mut impl RngCore,
     ) -> usize {
         let (min, max) = self.content_padding_addition;
-        let available = udp_window.saturating_sub(wire_packet_size);
+        let available = if self.legacy_content_padding {
+            if mtu == 0 {
+                usize::MAX
+            } else {
+                let last_unit = if packet_size > mtu { packet_size % mtu } else { packet_size };
+                mtu.saturating_sub(last_unit)
+            }
+        } else {
+            udp_window.saturating_sub(wire_packet_size)
+        };
         if (min == 0 && max == 0) || min > max || available == 0 {
             return 0;
         }
@@ -1144,7 +1167,13 @@ impl AmneziaConfig {
         rng: &mut impl RngCore,
     ) -> usize {
         if self.content_padding_addition != (0, 0) {
-            return self.content_padding_size(ip_packet_size, wire_packet_size, udp_window, rng);
+            return self.content_padding_size(
+                ip_packet_size,
+                wire_packet_size,
+                udp_window,
+                mtu,
+                rng,
+            );
         }
         if self.random_trailers {
             return self.random_trailer_len(
