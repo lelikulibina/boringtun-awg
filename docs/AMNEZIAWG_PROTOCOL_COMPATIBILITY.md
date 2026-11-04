@@ -318,7 +318,15 @@ max_handshake_attempts=18
 
 Имитация в S-prefix не должна подменять nonce Header Protection. При включённом HP BoringTun заполняет S-prefix случайными байтами; самостоятельные pre-handshake imitation datagrams остаются отдельным механизмом.
 
-## 9. Соответствие исходникам BoringTun
+## 9. Оставшийся parity gap: стандартный WireGuard padding
+
+В upstream AWG 3.0/3.1, когда `ContentPaddingAddition` не задан и `RandomTrailers` выключен, transport encryption fallback вызывает `calculatePaddingSize(packetSize, tun.mtu)`: plaintext IP-пакет дополняется до кратного 16 байтам размера с ограничением по MTU. При включённом CPA используется соответствующая версия random padding; при RT — RandomTrailers.
+
+В текущем BoringTun `Session::format_packet_data` прямо содержит TODO о padding до 16 байт и намеренно не добавляет его; `Tunn` не хранит MTU. Поэтому обычный профиль без CPA/RT остаётся wire-compatible, но packet-size distribution отличается от upstream даже при одинаковых S/H. Это не ломает расшифровку, однако уменьшает точность DPI-поведенческого профиля.
+
+Для полного parity требуется отдельная доработка: добавить MTU в `Tunn` (с безопасным default для standalone API и передачей фактического `Device.mtu` из device layer), затем вызывать upstream-equivalent `calculatePaddingSize` только когда CPA и RT не заданы. В текущий пакет эта API/MTU plumbing не включена, чтобы не менять поведение всех существующих пользователей без отдельного тестового прохода.
+
+## 10. Соответствие исходникам BoringTun
 
 | Область | Файл |
 |---|---|
@@ -344,7 +352,7 @@ max_handshake_attempts=18
 11. Cookie Reply не сбрасывает обычные authenticated traversal timers; DisableCookies оставляет MAC1, но пропускает under-load MAC2/rate-limit gate.
 12. Timer ranges inclusive; 0-0 означает default; retry budget выбирается один раз на handshake cycle.
 
-## 10. Проверенные источники
+## 11. Проверенные источники
 
 - [Официальная документация AmneziaWG](https://docs.amnezia.org/documentation/amnezia-wg/)
 - [amneziawg-go v0.2.19](https://github.com/amnezia-vpn/amneziawg-go/tree/v0.2.19)
