@@ -1088,6 +1088,26 @@ mod tests {
     /// The comment at the merge site asserted this; nothing tested it. A
     /// cross-module claim in prose is exactly the thing that drifts.
     #[test]
+    fn legacy_content_padding_mode_merges_and_can_be_cleared() {
+        let current = AmneziaConfig::new(0, 0, 0, 0);
+        let mut params = AwgParams::default();
+        params.legacy_content_padding = Some(true);
+        params.seen = true;
+        let (_, legacy) = params
+            .merged(ObfuscationRanges::default(), &current)
+            .expect("legacy mode is a valid local setting");
+        assert!(legacy.legacy_content_padding);
+
+        let mut params = AwgParams::default();
+        params.legacy_content_padding = Some(false);
+        params.seen = true;
+        let (_, modern) = params
+            .merged(ObfuscationRanges::default(), &legacy)
+            .expect("AWG 3.1 mode is a valid local setting");
+        assert!(!modern.legacy_content_padding);
+    }
+
+    #[test]
     fn a_set_transaction_preserves_protocol_imitation() {
         use crate::noise::amnezia::{
             AmneziaImitation, AmneziaImitationBrowser, AmneziaImitationProtocol,
