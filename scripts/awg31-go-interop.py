@@ -29,14 +29,14 @@ from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 PORT = 51820
 SERVER_LINK, CLIENT_LINK = "10.55.0.1", "10.55.0.2"
 SERVER_TUN, CLIENT_TUN = "10.77.0.1", "10.77.0.2"
-S1 = 284
+S1, S2, S3, S4 = 284, 659, 1045, 12
 S_AND_H = f"""jc=4
 jmin=50
 jmax=1000
 s1={S1}
-s2=659
-s3=1045
-s4=12
+s2={S2}
+s3={S3}
+s4={S4}
 h1=169887817
 h2=390382747
 h3=1033691040
@@ -618,7 +618,10 @@ def verify_wire_pcap(
     if link_type != 1:
         raise RuntimeError(f"expected Ethernet pcap (link type 1), got {link_type}")
 
-    prefix = S1 if awg_enabled else 0
+    prefixes = (
+        {1: S1, 2: S2, 3: S3, 4: S4}
+        if awg_enabled else {1: 0, 2: 0, 3: 0, 4: 0}
+    )
     h_tags = (
         {1: 169887817, 2: 390382747, 3: 1033691040, 4: 1526332224}
         if awg_enabled else {1: 1, 2: 2, 3: 3, 4: 4}
@@ -668,29 +671,45 @@ def verify_wire_pcap(
                 is_signature = True
         if is_signature:
             continue
-        if len(payload) < prefix + 4:
+        # Each Noise message has its own independently configured S prefix.
+        # Using S1 for every packet kind hides transport (type-4) headers,
+        # whose prefix is S4, and misclassifies response/cookie envelopes too.
+        kind_prefixes = prefixes
+        if len(payload) < 4:
             continue
-        encrypted_tag = payload[prefix:prefix + 4]
-        if hp_key is not None:
-            if len(payload) < 12:
-                continue
-            nonce = payload[:12]
-            cipher = Cipher(
-                algorithms.ChaCha20(hp_key, b"\x00" * 4 + nonce),
-                mode=None,
-            ).encryptor()
-            stream = cipher.update(b"\x00" * 4)
-            tag_bytes = bytes(a ^ b for a, b in zip(encrypted_tag, stream))
-        else:
-            tag_bytes = encrypted_tag
-        tag = int.from_bytes(tag_bytes, "little")
-        kind = next((k for k, value in h_tags.items() if value == tag), None)
+        # Header protection leaves the tag at the message-kind-specific offset.
+        # Try each configured offset and accept only a decoded known type tag.
+        candidates = [
+            (kind, payload[prefix_len:prefix_len + 4])
+            for kind, prefix_len in kind_prefixes.items()
+            if len(payload) >= prefix_len + 4
+        ]
+        kind = None
+        tag_bytes = None
+        for candidate_kind, encrypted_tag in candidates:
+            if hp_key is not None:
+                if len(payload) < 12:
+                    continue
+                nonce = payload[:12]
+                cipher = Cipher(
+                    algorithms.ChaCha20(hp_key, b"\x00" * 4 + nonce),
+                    mode=None,
+                ).encryptor()
+                stream = cipher.update(b"\x00" * 4)
+                candidate_tag = bytes(a ^ b for a, b in zip(encrypted_tag, stream))
+            else:
+                candidate_tag = encrypted_tag
+            decoded = int.from_bytes(candidate_tag, "little")
+            if decoded == h_tags[candidate_kind]:
+                kind = candidate_kind
+                tag_bytes = candidate_tag
+                break
         if kind is None:
             # Jc junk packets are not WireGuard message envelopes.
             continue
 
         packet_size = len(payload)
-        minimum = prefix + base_sizes[kind]
+        minimum = prefixes[kind] + base_sizes[kind]
         if packet_size < minimum:
             raise RuntimeError(
                 f"truncated type-{kind} envelope: {packet_size} < {minimum}"
