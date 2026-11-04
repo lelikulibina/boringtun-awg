@@ -255,7 +255,43 @@ Upstream формулы:
 | DisableCookies | Локальная interface-wide under-load policy принимающей стороны |
 | PersistentKeepalive | Локальная настройка peer |
 
-## 6. Риски и upstream edge cases
+## 6. Пример согласованного профиля AWG 3.1
+
+Ниже — иллюстративный профиль, который включает HP, CPA и RT, но сохраняет простые H tags. Один и тот же набор S/H/HP key и RT должен быть установлен на обоих интерфейсах.
+
+```ini
+# Common wire framing — одинаково на обеих сторонах
+s1=64
+s2=64
+s3=64
+s4=64
+h1=1
+h2=2
+h3=3
+h4=4
+header_protection_key=<64 hex characters, same key on both ends>
+random_trailers=true
+
+# Sender-side obfuscation — локально на каждом интерфейсе
+jc=4
+jmin=50
+jmax=1000
+content_padding_addition=16-64
+
+# Local DoS policy — оценить риск перед включением
+disable_cookies=false
+
+# Timer ranges — локальные defaults, не negotiation
+rekey_after_time=120
+rekey_timeout=5
+reject_after_time=180
+keepalive_timeout=10
+max_handshake_attempts=18
+```
+
+Это не универсальный «лучший» профиль: J/CPS и padding меняют трафик, расход CPU/сети и риск фрагментации. Для диагностики сначала следует проверить обычный WG/AWG профиль без HP/RT, затем включать механизмы по одному. Если `RandomTrailers=true`, BoringTun требует одинаковые S1-S4. Значение `jmax=1000` даёт размер до 999 байт, поскольку верхняя граница исключительная. `persistent_keepalive_interval` задаётся отдельно для каждого peer, а не в общем device profile.
+
+## 7. Риски и upstream edge cases
 
 1. **RandomTrailers + разные S — issue #186.** Разные offsets могут приводить к ложной handshake classification и потере transport. BoringTun требует одинаковые S1-S4.
 2. **ContentPaddingAddition не ограничивает handshake trailers — issue #185.** CPA влияет на transport; handshake и Cookie Reply всё ещё могут получить внешний RandomTrailers.
@@ -263,7 +299,7 @@ Upstream формулы:
 4. **Cookie Reply amplification.** Upstream не ограничивает размер Cookie Reply относительно вызвавшей handshake datagram. S3 и RT могут увеличить ответ; BoringTun сохраняет это wire behavior. На публичном endpoint требуется сетевой контроль и оценка reflection amplification risk.
 5. **Header Protection — не AEAD.** Он скрывает служебные поля, но не заменяет Noise MAC и transport AEAD. Повтор nonce при одном HP key недопустим.
 
-## 7. BoringTun-specific возможности и safety policy
+## 8. BoringTun-specific возможности и safety policy
 
 | Поле/функция | Статус |
 |---|---|
@@ -277,7 +313,7 @@ Upstream формулы:
 
 Имитация в S-prefix не должна подменять nonce Header Protection. При включённом HP BoringTun заполняет S-prefix случайными байтами; самостоятельные pre-handshake imitation datagrams остаются отдельным механизмом.
 
-## 8. Соответствие исходникам BoringTun
+## 9. Соответствие исходникам BoringTun
 
 | Область | Файл |
 |---|---|
@@ -303,7 +339,7 @@ Upstream формулы:
 11. Cookie Reply не сбрасывает обычные authenticated traversal timers; DisableCookies оставляет MAC1, но пропускает under-load MAC2/rate-limit gate.
 12. Timer ranges inclusive; 0-0 означает default; retry budget выбирается один раз на handshake cycle.
 
-## 9. Проверенные источники
+## 10. Проверенные источники
 
 - [Официальная документация AmneziaWG](https://docs.amnezia.org/documentation/amnezia-wg/)
 - [amneziawg-go v0.2.19](https://github.com/amnezia-vpn/amneziawg-go/tree/v0.2.19)
