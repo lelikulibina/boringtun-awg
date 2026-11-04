@@ -46,7 +46,7 @@ fail() {
 [[ $EUID -eq 0 ]] || fail "must run as root"
 [[ -x "$BIN" ]] || fail "btrouted binary not found at $BIN"
 [[ -c /dev/net/tun ]] || fail "/dev/net/tun is unavailable"
-for command in ip nft wg ping iperf3 python3; do
+for command in ip nft wg ping iperf3 python3 tcpdump timeout; do
     command -v "$command" >/dev/null || fail "$command is required"
 done
 
@@ -143,6 +143,19 @@ grep -q "dev wg-peer-test" <<<"$inner_route" || fail "inner routing mark did not
 # packet delivery over the veth-backed UDP underlay.
 ip netns exec "$CLIENT_NS" ping -n -c 5 -W 2 10.77.0.1 || fail "client-to-server tunnel traffic failed"
 ip netns exec "$SERVER_NS" ping -n -c 5 -W 2 10.77.0.2 || fail "server-to-client tunnel traffic failed"
+
+# Observe the real encrypted UDP transport: it must be visible on the physical
+# underlay veth and must never reappear as an outer packet on the TUN device.
+ip netns exec "$CLIENT_NS" timeout 5 tcpdump -nn -i "$CLIENT_VETH" -c 1 \
+    'udp and dst host 192.0.2.1 and dst port 51871' >"$TMP/underlay-udp.log" 2>&1 \
+    || fail "encrypted UDP transport was not observed on the underlay"
+set +e
+ip netns exec "$CLIENT_NS" timeout 3 tcpdump -nn -i wg-peer-test -c 1 \
+    'udp and dst host 192.0.2.1 and dst port 51871' >"$TMP/tun-outer-udp.log" 2>&1
+tun_capture_status=$?
+set -e
+[[ "$tun_capture_status" -eq 124 ]] || fail "outer encrypted UDP leaked into the TUN (tcpdump status $tun_capture_status)"
+
 
 # Exercise TCP streams and UDP datagrams over the encrypted TUN path.
 ip netns exec "$SERVER_NS" iperf3 -s >"$TMP/server-iperf.log" 2>&1 &
