@@ -154,11 +154,29 @@ pub struct AwgConfig {
     pub random_trailers: Option<bool>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RoutingConfig {
+    /// Base mark range reserved for inner packets classified by nftables.
+    /// This is intentionally separate from each interface socket_fwmark,
+    /// which marks the outer encrypted UDP packets.
+    #[serde(default = "default_routing_mark_base")]
+    pub mark_base: u32,
     #[serde(default)]
     pub rules: Vec<RoutingRule>,
+}
+
+impl Default for RoutingConfig {
+    fn default() -> Self {
+        Self {
+            mark_base: default_routing_mark_base(),
+            rules: Vec::new(),
+        }
+    }
+}
+
+fn default_routing_mark_base() -> u32 {
+    0x8000_0000
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -334,6 +352,30 @@ impl Config {
                     interface.name
                 ));
             }
+        }
+
+        let egress_count = self
+            .interfaces
+            .iter()
+            .filter(|interface| interface.role == InterfaceRole::Client)
+            .count();
+        if self.routing.mark_base == 0 {
+            return invalid("[routing].mark_base must be non-zero");
+        }
+        let last_routing_mark = self
+            .routing
+            .mark_base
+            .checked_add(egress_count.saturating_sub(1) as u32)
+            .ok_or_else(|| ConfigError::Validation(
+                "[routing].mark_base leaves no room for all client routing marks".to_owned()
+            ))?;
+        if fwmarks
+            .iter()
+            .any(|mark| (*mark >= self.routing.mark_base) && (*mark <= last_routing_mark))
+        {
+            return invalid(
+                "[routing].mark_base range overlaps an interface socket_fwmark; outer UDP and inner packet marks must be distinct",
+            );
         }
 
         let interfaces_by_name: std::collections::HashMap<_, _> = self
