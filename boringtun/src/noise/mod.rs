@@ -620,7 +620,7 @@ impl Tunn {
             Err(TunnResult::WriteToNetwork(cookie)) => {
                 let packet_size = cookie.len();
                 dst[..packet_size].copy_from_slice(cookie);
-                return self.write_to_network_bounded(dst, packet_size, request_datagram_size);
+                return self.write_to_network(dst, packet_size);
             }
             Err(TunnResult::Err(e)) => return TunnResult::Err(e),
             _ => unreachable!(),
