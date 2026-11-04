@@ -124,6 +124,13 @@ pub struct DeviceConfig {
     pub use_multi_queue: bool,
     #[cfg(target_os = "linux")]
     pub uapi_fd: i32,
+    /// Whether to create the userspace UAPI Unix socket when no file descriptor
+    /// is supplied. Defaults to true for compatibility with wg/awg tooling.
+    /// Embedding applications such as btrouted should set this to false and
+    /// manage the device through the typed control API instead.
+    pub enable_uapi: bool,
+    /// Optional UDP listen port. None preserves the historical ephemeral port.
+    pub listen_port: Option<u16>,
     /// Interface-wide AmneziaWG H1-H4 message-type tag ranges.
     ///
     /// These are device-scoped rather than per-peer because ingress must
@@ -188,6 +195,8 @@ impl Default for DeviceConfig {
             use_multi_queue: true,
             #[cfg(target_os = "linux")]
             uapi_fd: -1,
+            enable_uapi: true,
+            listen_port: None,
             // Vanilla WireGuard: no obfuscation, no junk. Exactly the behaviour
             // before AmneziaWG support existed.
             obf: ObfuscationRanges::default(),
@@ -333,8 +342,10 @@ fn require_key_pair(
 impl DeviceHandle {
     pub fn new(name: &str, config: DeviceConfig) -> Result<DeviceHandle, Error> {
         let n_threads = config.n_threads;
+        let listen_port = config.listen_port.unwrap_or(0);
         let mut wg_interface = Device::new(name, config)?;
-        wg_interface.open_listen_socket(0)?; // Start listening on a random port
+        // Port 0 retains the historical behaviour: let the OS choose one.
+        wg_interface.open_listen_socket(listen_port)?;
 
         let interface_lock = Arc::new(Lock::new(wg_interface));
 
@@ -661,6 +672,7 @@ impl Device {
         let iface = Arc::new(TunSocket::new(name)?.set_non_blocking()?);
         let mtu = iface.mtu()?;
 
+        let enable_uapi = config.enable_uapi;
         #[cfg(not(target_os = "linux"))]
         let uapi_fd = -1;
         #[cfg(target_os = "linux")]
@@ -700,7 +712,7 @@ impl Device {
 
         if uapi_fd >= 0 {
             device.register_api_fd(uapi_fd)?;
-        } else {
+        } else if enable_uapi {
             device.register_api_handler()?;
         }
         device.register_iface_handler(Arc::clone(&device.iface))?;
