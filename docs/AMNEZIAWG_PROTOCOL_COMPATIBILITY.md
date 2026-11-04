@@ -251,7 +251,7 @@ Upstream формулы:
 - Для Init/Response/Cookie Reply добавляет случайные байты **после** фиксированного WG-сообщения.
 - Для Transport Data добавляет нулевые байты внутрь AEAD plaintext.
 - Длина внешнего trailer выбирается по `fastrandn(udpWindow - packetSize)`; верхняя граница свободного места не включается. Если свободного места нет, trailer равен 0.
-- Upstream UDP window для peer начинается с 500 байт и увеличивается до high-water mark базовых исходящих transport datagrams до padding/trailer. BoringTun обновляет его по исходящему пакету и сбрасывает при смене endpoint. Окно нельзя обучать по входящему padded datagram или уже добавленному trailer.
+- Upstream UDP window для peer начинается с 500 байт. На отправке Go обновляет его по базовому transport datagram до CPA/RT: `S4 + 32 + plaintext_len`. На приёме после успешной AEAD-аутентификации Go обновляет его по формуле `S4 + 16 + decrypted_plaintext_len` (receive-side формула источника не включает AEAD tag). BoringTun должен зеркалировать обе формулы; неаутентифицированные пакеты и внешние trailers не должны обучать окно. Окно сбрасывается при смене endpoint.
 - Это high-water heuristic, а не Path MTU Discovery: если крупный базовый datagram ранее прошёл, padding меньших пакетов до такого размера всё ещё может фрагментироваться на маршруте с меньшим MTU.
 - Cookie Reply использует device-level `DefaultUdpWindow=500`, а не per-peer high-water mark.
 - Для transport CPA имеет приоритет, если задан; для handshake/cookie RT остаётся независим.
@@ -389,7 +389,7 @@ max_handshake_attempts=18
 3. При HP plaintext fallback запрещён.
 4. H1-H4 не пересекаются и читаются как little-endian u32.
 5. При RT одинаковые S1-S4 обязательны в BoringTun; fixed handshake envelopes принимают trailer только в RT режиме.
-6. UDP window обновляется по максимальному **исходящему базовому** transport datagram до padding/trailer, а не по входящему padded datagram.
+6. UDP window — high-water mark на peer: исходящая формула включает полный 32-байтовый transport overhead до CPA/RT; входящая обновляется только после AEAD-аутентификации и повторяет upstream `S4 + 16 + decrypted_plaintext_len` (без AEAD tag). Внешний handshake/cookie trailer в окно не включается.
 7. CPA/RT применяются к transport plaintext до AEAD; handshake-confirmation keepalive проходит тот же transport path.
 8. CPA имеет приоритет над RT для transport; handshake/cookie RT независим.
 9. Jmax — exclusive upper bound; Jmin>Jmax отклоняется; Jc/J sizes ограничены.
