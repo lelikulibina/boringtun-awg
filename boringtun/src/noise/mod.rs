@@ -2984,6 +2984,14 @@ mod tests {
 
     #[test]
     fn wireguard_mtu_padding_is_applied_inside_transport_aead() {
+        // MTU is an inner TUN property: preserve the upstream MTU=0 special
+        // case and do not clamp it to the outer IPv4 UDP datagram limit.
+        let (mut mtu_probe, _) = create_two_tuns_and_handshake();
+        mtu_probe.set_mtu(0);
+        assert_eq!(mtu_probe.mtu, 0);
+        mtu_probe.set_mtu(amnezia::MAX_SENDABLE_DATAGRAM + 1);
+        assert_eq!(mtu_probe.mtu, amnezia::MAX_SENDABLE_DATAGRAM + 1);
+
         // A 29-byte IPv4/UDP packet is padded to 32 bytes with the default
         // 1420-byte TUN MTU, and to the configured MTU of 30 bytes when set.
         for (mtu, expected_plaintext_len) in [(None, 32usize), (Some(30usize), 30usize)] {
