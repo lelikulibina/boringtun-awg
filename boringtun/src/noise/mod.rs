@@ -91,8 +91,9 @@ pub struct Tunn {
     rx_bytes: usize,
     amnezia: AmneziaConfig,
     /// Largest authenticated transport datagram observed for this peer.
-    /// Upstream-style high-water mark of base datagrams sent to this peer,
-    /// before transport padding or RandomTrailers are added.
+    /// Mirrors upstream's high-water mark: outbound base datagrams are counted
+    /// before padding, while inbound packets use upstream's decrypted-plaintext
+    /// accounting (which excludes the AEAD tag).
     udp_window: usize,
     /// TUN MTU used by upstream-equivalent fallback WireGuard padding.
     mtu: usize,
@@ -120,7 +121,9 @@ const DATA: MessageType = 4;
 const HANDSHAKE_INIT_SZ: usize = 148;
 const HANDSHAKE_RESP_SZ: usize = 92;
 const COOKIE_REPLY_SZ: usize = 64;
-const DATA_OVERHEAD_SZ: usize = 32;
+const DATA_HEADER_SZ: usize = 16;
+const DATA_AEAD_TAG_SZ: usize = 16;
+const DATA_OVERHEAD_SZ: usize = DATA_HEADER_SZ + DATA_AEAD_TAG_SZ;
 
 /// The wire sizes above, re-exported for the ingress tests in `device`.
 ///
@@ -795,6 +798,15 @@ impl Tunn {
             })?;
             session.receive_packet_data(packet, dst)?
         };
+
+        // Match amneziawg-go's receive-side peer.udpWindow update. The Go
+        // receiver accounts S4 + MessageTransportHeaderSize + decrypted
+        // plaintext length; unlike its send-side update, this omits the AEAD
+        // tag. Keep that source-level asymmetry for exact AWG 3.1 parity.
+        let inbound_udp_window = (self.amnezia.transport_packet_junk_size as usize)
+            .saturating_add(DATA_HEADER_SZ)
+            .saturating_add(decapsulated_packet.len());
+        self.udp_window = self.udp_window.max(inbound_udp_window);
 
         self.set_current_session(r_idx);
 
@@ -3942,7 +3954,7 @@ mod tests {
     }
 
     #[test]
-    fn random_trailers_learn_udp_window_from_outbound_base_size() {
+    fn random_trailers_learn_udp_window_from_authenticated_packets_in_both_directions() {
         let cfg = AmneziaConfig::new(600, 600, 600, 600).with_random_trailers(true);
         let (mut sender, mut receiver) = create_two_tuns_with_amnezia(cfg);
 
@@ -3979,9 +3991,10 @@ mod tests {
             TunnResult::WriteToTunnelV4(restored, _) => assert_eq!(restored, large_packet),
             other => panic!("expected restored IPv4 packet, got {:?}", other),
         }
+        let inbound_window = 600 + DATA_HEADER_SZ + large_packet.len();
         assert_eq!(
-            receiver.udp_window, 500,
-            "an inbound datagram must not redefine the sender-side UDP window"
+            receiver.udp_window, inbound_window,
+            "the receiver must learn the authenticated inbound high-water mark using upstream's receive-side accounting"
         );
 
         let small_packet = create_ipv4_udp_packet();
@@ -3989,19 +4002,38 @@ mod tests {
         let mut saw_padding = false;
         for _ in 0..64 {
             let mut reverse_buffer = vec![0u8; 4096];
-            let padded = match sender.encapsulate(&small_packet, &mut reverse_buffer) {
+            let padded = match receiver.encapsulate(&small_packet, &mut reverse_buffer) {
                 TunnResult::WriteToNetwork(datagram) => datagram.to_vec(),
                 other => panic!("expected transport datagram, got {:?}", other),
             };
             assert!(
-                padded.len() <= base_size,
-                "random trailers must stay within the outbound high-water mark"
+                padded.len() <= inbound_window,
+                "reverse-direction random trailers must stay within the learned inbound high-water mark"
             );
-            saw_padding |= padded.len() > small_base;
+            if padded.len() > small_base {
+                // Isolate the receive-side update: the sender learned a larger
+                // value from its own first transmission, so reset it to the
+                // default before authenticating this padded reverse packet.
+                sender.udp_window = 500;
+                let mut reverse_tunnel_buffer = vec![0u8; 4096];
+                match sender.decapsulate(None, &padded, &mut reverse_tunnel_buffer) {
+                    TunnResult::WriteToTunnelV4(restored, _) => {
+                        assert_eq!(restored, small_packet.as_slice())
+                    }
+                    other => panic!("expected restored reverse IPv4 packet, got {:?}", other),
+                }
+                assert_eq!(
+                    sender.udp_window,
+                    padded.len() - DATA_AEAD_TAG_SZ,
+                    "the receiver must account for S4 + transport header + decrypted padded plaintext, matching upstream"
+                );
+                saw_padding = true;
+                break;
+            }
         }
         assert!(
             saw_padding,
-            "the previously observed outbound high-water mark should permit padding"
+            "the receiver's learned high-water mark should permit reverse-direction padding"
         );
     }
 
@@ -4048,7 +4080,11 @@ mod tests {
             "the new high-water packet has no room for a trailer"
         );
         assert_eq!(sender.udp_window, base_size);
-        assert_eq!(receiver.udp_window, 500);
+        assert_eq!(
+            receiver.udp_window,
+            DATA_HEADER_SZ + packet.len(),
+            "the receiver learns the authenticated inbound size using upstream's header-plus-plaintext formula"
+        );
 
         let mut tunnel_buffer = vec![0u8; 4096];
         match receiver.decapsulate(None, &outbound, &mut tunnel_buffer) {
