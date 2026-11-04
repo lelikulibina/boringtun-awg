@@ -2344,7 +2344,11 @@ mod tests {
     #[cfg(feature = "mock-instant")]
     fn exhausted_rekey_keeps_an_established_session_usable() {
         let (mut my_tun, _their_tun) = create_two_tuns_and_handshake();
-        let sessions_before = my_tun.sessions.iter().filter(|session| session.is_some()).count();
+        let sessions_before = my_tun
+            .sessions
+            .iter()
+            .filter(|session| session.is_some())
+            .count();
         assert!(sessions_before > 0);
 
         let mut dst = [0u8; 2048];
@@ -2365,7 +2369,11 @@ mod tests {
         assert!(matches!(my_tun.update_timers(&mut dst), TunnResult::Done));
         assert!(!my_tun.is_expired());
         assert_eq!(
-            my_tun.sessions.iter().filter(|session| session.is_some()).count(),
+            my_tun
+                .sessions
+                .iter()
+                .filter(|session| session.is_some())
+                .count(),
             sessions_before,
             "retry exhaustion must not destroy an otherwise valid session"
         );
