@@ -5,7 +5,13 @@
 //! devices and is not part of this crate's management path.
 
 pub mod config;
+#[cfg(target_os = "linux")]
+pub mod linux;
 pub mod routing;
+#[cfg(target_os = "linux")]
+pub mod runtime;
 
 pub use config::{Config, ConfigError, EndpointHost, PeerEndpoint};
 pub use routing::{EgressPlan, NftRule, RoutingPlan};
+#[cfg(target_os = "linux")]
+pub use runtime::{Runtime, RuntimeError};
