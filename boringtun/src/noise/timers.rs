@@ -759,8 +759,9 @@ impl Tunn {
             // SendHandshakeInitiation(false) resets the attempt budget before
             // applying its minimum-interval throttle, even if it sends nothing.
             self.timers.select_new_handshake_budget();
-            let min_rekey_interval =
-                Duration::from_secs(self.timers.range_min(1, REKEY_TIMEOUT.as_secs() as u32) as u64);
+            let min_rekey_interval = Duration::from_secs(
+                self.timers.range_min(1, REKEY_TIMEOUT.as_secs() as u32) as u64,
+            );
             if now.saturating_sub(self.timers[TimeLastHandshakeStarted]) >= min_rekey_interval {
                 if self.handshake.is_in_progress() {
                     self.handshake.abort_initiation();
