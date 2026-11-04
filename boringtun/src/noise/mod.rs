@@ -2295,6 +2295,10 @@ mod tests {
         // background timer poll alone.
         mock_instant::MockClock::advance(REKEY_AFTER_TIME + Duration::from_millis(1));
         assert!(matches!(their_tun.update_timers(&mut []), TunnResult::Done));
+        assert!(
+            matches!(my_tun.update_timers(&mut my_dst), TunnResult::Done),
+            "RekeyAfterTime is checked on outbound data traversal, not a timer poll"
+        );
         let data = my_tun.encapsulate(&sent_packet_buf, &mut my_dst);
         assert!(matches!(data, TunnResult::WriteToNetwork(_)));
         update_timer_results_in_handshake(&mut my_tun);
@@ -2422,6 +2426,50 @@ mod tests {
         ));
         assert_eq!(tun.timers.handshake_attempts, 0);
         assert_eq!(tun.timers.max_handshake_attempts, 7);
+    }
+
+    #[test]
+    #[cfg(feature = "mock-instant")]
+    fn send_side_rekey_does_not_spin_after_retry_exhaustion() {
+        let config = AmneziaConfig::new(0, 0, 0, 0)
+            .with_rekey_after_time(1, 1)
+            .with_rekey_timeout(1, 1)
+            .with_keepalive_timeout(10, 10);
+        let (mut initiator, _responder) = create_two_tuns_and_handshake_with_amnezia(config);
+        let packet = create_ipv4_udp_packet();
+        let mut network = [0u8; 2048];
+
+        mock_instant::MockClock::advance(Duration::from_secs(2));
+        assert!(matches!(
+            initiator.encapsulate(&packet, &mut network),
+            TunnResult::WriteToNetwork(_)
+        ));
+        assert!(matches!(
+            initiator.update_timers(&mut network),
+            TunnResult::WriteToNetwork(_)
+        ));
+        // Zero permits the initial initiation and one retry, matching the
+        // upstream attempts-greater-than-budget check.
+        initiator.timers.max_handshake_attempts = 0;
+
+        mock_instant::MockClock::advance(Duration::from_millis(1334));
+        assert!(matches!(
+            initiator.update_timers(&mut network),
+            TunnResult::WriteToNetwork(_)
+        ));
+        mock_instant::MockClock::advance(Duration::from_millis(1334));
+        assert!(matches!(
+            initiator.update_timers(&mut network),
+            TunnResult::Done
+        ));
+        assert!(initiator.handshake.timer().is_none());
+
+        // The expired key is still usable and a timer poll alone must not
+        // start another retry cycle. A later outbound data traversal can.
+        assert!(matches!(
+            initiator.update_timers(&mut network),
+            TunnResult::Done
+        ));
     }
 
     #[test]
