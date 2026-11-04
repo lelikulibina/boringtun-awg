@@ -114,7 +114,7 @@ Private keys и PSK в TOML удобны для первого релиза, н�
 - peer/interface counters;
 - status CLI и JSON;
 - reload по SIGHUP с validate-then-apply;
-- Prometheus endpoint и метрики — после стабилизации базового API.
+- внутренний read-only snapshot API для будущих интеграций, без отдельного HTTP API.
 
 ### Этап 5 — отказоустойчивость и расширения
 - health checks и handshake timeout;
