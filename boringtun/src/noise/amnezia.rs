@@ -661,28 +661,14 @@ impl AmneziaConfig {
         Ok(())
     }
 
-    /// RandomTrailers makes handshake lengths variable. With different
-    /// S-prefix lengths, a transport packet can be examined at the wrong
-    /// offset by an earlier handshake classifier and be silently discarded
-    /// before its transport AEAD is tried (upstream amneziawg-go#186).
+    /// Validate RandomTrailers framing constraints.
     ///
-    /// Requiring one common S offset makes every classifier inspect the same
-    /// four-byte type field. Since ObfuscationRanges rejects overlapping H1-H4
-    /// ranges, a transport tag selected from H4 cannot match H1-H3. This is a
-    /// deterministic framing constraint, not a probabilistic width heuristic.
+    /// Keep the reference implementation's configuration semantics: upstream
+    /// accepts independently configured S1-S4 values when RandomTrailers is
+    /// enabled. Its receiver checks H1-H4 at each configured offset in order;
+    /// unequal S values therefore retain the same classifier trade-offs as
+    /// amneziawg-go rather than being rejected by a BAWG-only policy.
     pub(crate) fn validate_random_trailers(&self, _obf: ObfuscationRanges) -> Result<(), String> {
-        if self.random_trailers {
-            let s = self.init_packet_junk_size;
-            if self.response_packet_junk_size != s
-                || self.cookie_packet_junk_size != s
-                || self.transport_packet_junk_size != s
-            {
-                return Err(format!(
-                    "RandomTrailers requires S1 = S2 = S3 = S4 (all currently must equal {}); different offsets can misclassify and silently drop transport packets",
-                    s
-                ));
-            }
-        }
         Ok(())
     }
 
@@ -1818,9 +1804,7 @@ mod tests {
     }
 
     #[test]
-    fn random_trailers_require_equal_s_prefixes_with_disjoint_h_ranges() {
-        // This profile reproduces the structural ambiguity in upstream issue
-        // #186: the transport type at S4 can be re-read as a control tag at S2.
+    fn random_trailers_accept_independent_s_prefixes_like_upstream() {
         let obf = ObfuscationRanges::new(
             405_138_553,
             456_138_212,
@@ -1833,17 +1817,15 @@ mod tests {
         )
         .expect("all H ranges are disjoint");
 
-        let unequal = AmneziaConfig::new(97, 41, 133, 24).with_random_trailers(true);
-        let error = unequal
+        let unequal = AmneziaConfig::new(284, 659, 1045, 12).with_random_trailers(true);
+        unequal
             .validate_random_trailers(obf)
-            .expect_err("different offsets can misclassify valid transport packets");
-        assert!(error.contains("S1 = S2 = S3 = S4"));
-        assert!(error.contains("RandomTrailers"));
+            .expect("upstream accepts independently configured S1-S4 values");
 
         let equal = AmneziaConfig::new(24, 24, 24, 24).with_random_trailers(true);
         equal
             .validate_random_trailers(obf)
-            .expect("equal offsets plus disjoint H ranges make classification unambiguous");
+            .expect("equal S values remain valid too");
     }
 
     #[test]
