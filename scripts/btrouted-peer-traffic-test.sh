@@ -17,9 +17,11 @@ CLIENT_VETH="btc$SUFFIX"
 TMP="$(mktemp -d)"
 SERVER_PID=""
 CLIENT_PID=""
+SERVER_IPERF_PID=""
+CLIENT_IPERF_PID=""
 
 cleanup() {
-    for pid in "$CLIENT_PID" "$SERVER_PID"; do
+    for pid in "$CLIENT_IPERF_PID" "$SERVER_IPERF_PID" "$CLIENT_PID" "$SERVER_PID"; do
         if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
             kill -TERM "$pid" 2>/dev/null || true
             wait "$pid" 2>/dev/null || true
@@ -44,7 +46,7 @@ fail() {
 [[ $EUID -eq 0 ]] || fail "must run as root"
 [[ -x "$BIN" ]] || fail "btrouted binary not found at $BIN"
 [[ -c /dev/net/tun ]] || fail "/dev/net/tun is unavailable"
-for command in ip nft wg ping; do
+for command in ip nft wg ping iperf3 python3; do
     command -v "$command" >/dev/null || fail "$command is required"
 done
 
@@ -133,6 +135,43 @@ ip -n "$CLIENT_NS" link show dev wg-peer-test >/dev/null 2>&1 || fail "client TU
 # packet delivery over the veth-backed UDP underlay.
 ip netns exec "$CLIENT_NS" ping -n -c 5 -W 2 10.77.0.1 || fail "client-to-server tunnel traffic failed"
 ip netns exec "$SERVER_NS" ping -n -c 5 -W 2 10.77.0.2 || fail "server-to-client tunnel traffic failed"
+
+# Exercise TCP streams and UDP datagrams over the encrypted TUN path.
+ip netns exec "$SERVER_NS" iperf3 -s >"$TMP/server-iperf.log" 2>&1 &
+SERVER_IPERF_PID=$!
+ip netns exec "$CLIENT_NS" iperf3 -s >"$TMP/client-iperf.log" 2>&1 &
+CLIENT_IPERF_PID=$!
+sleep 1
+kill -0 "$SERVER_IPERF_PID" 2>/dev/null || fail "server iperf3 did not start"
+kill -0 "$CLIENT_IPERF_PID" 2>/dev/null || fail "client iperf3 did not start"
+
+run_iperf() {
+    local label="$1"
+    shift
+    local output="$TMP/$label.json"
+    ip netns exec "$CLIENT_NS" iperf3 "$@" --json >"$output" || fail "$label failed"
+    python3 - "$output" "$label" <<'PY'
+import json
+import sys
+with open(sys.argv[1], encoding="utf-8") as stream:
+    result = json.load(stream)
+received = result.get("end", {}).get("sum_received", {})
+byte_count = received.get("bytes", 0)
+if byte_count <= 0:
+    raise SystemExit(f"{sys.argv[2]} transferred no received payload")
+if "lost_percent" in received and received["lost_percent"] > 2.0:
+    raise SystemExit(f"{sys.argv[2]} UDP loss too high: {received['lost_percent']:.2f}%")
+print(f"{sys.argv[2]}: received={byte_count} bytes" + (f", UDP loss={received['lost_percent']:.2f}%" if "lost_percent" in received else ""))
+PY
+}
+
+# TCP: transfer 8 MiB in each direction with parallel streams.
+run_iperf tcp-client-to-server -c 10.77.0.1 -n 8M -P 2
+run_iperf tcp-server-to-client -c 10.77.0.1 -n 8M -P 2 -R
+
+# UDP: sustained datagrams with 1200-byte payloads in both directions.
+run_iperf udp-client-to-server -c 10.77.0.1 -u -b 3M -t 3 -l 1200
+run_iperf udp-server-to-client -c 10.77.0.1 -u -b 3M -t 3 -l 1200 -R
 
 sleep 2
 grep -q "peer statistics" "$TMP/server.log" || fail "server did not publish peer statistics"
