@@ -148,6 +148,14 @@ impl Runtime {
     }
 }
 
+
+impl Drop for Runtime {
+    fn drop(&mut self) {
+        linux::remove_policy_routing(&self.routing);
+        linux::remove_nft(&self.routing);
+    }
+}
+
 fn hex_key(key: &[u8; 32]) -> String {
     key.iter().map(|byte| format!("{byte:02x}")).collect()
 }
