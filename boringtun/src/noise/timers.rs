@@ -570,6 +570,8 @@ impl Tunn {
                 // Upstream starts this timer on the first data send after the
                 // last authenticated receive; later sends do not reset it.
                 if self.timers.new_handshake_deadline.is_none() {
+                    // Upstream newHandshakeTimeout uses KeepaliveTimeout.Hi,
+                    // plus a freshly sampled RekeyTimeout.
                     self.timers.keepalive_timeout_max = Duration::from_secs(
                         self.timers.range_max(3, KEEPALIVE_TIMEOUT.as_secs() as u32) as u64,
                     );
@@ -596,8 +598,6 @@ impl Tunn {
                 } else {
                     self.timers.need_another_keepalive = true;
                 }
-                // newHandshakeTimeout uses KeepaliveTimeout.Hi when the
-                // first outbound data packet arms its inactivity timer.
             }
             _ => {}
         }
