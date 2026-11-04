@@ -72,15 +72,15 @@ UAPI сверяется с `device/uapi.go` закреплённой верси�
 sudo python3 scripts/awg31-go-interop.py ./target/release/boringtun-cli ./amneziawg-go
 ```
 
-По умолчанию запускается короткая CI-матрица: 6 профилей × 2 роли (12 сценариев). Она покрывает vanilla WireGuard, AWG 2.x, объединённые AWG 3.0 и 3.1 с двусторонней передачей данных, восстановление rekey после потери пакета и CPS I1–I5. Это быстрый smoke/interoperability gate без повторения отдельных тестов каждого расширения и без длительного lifecycle soak.
+По умолчанию запускается короткая CI-матрица: 6 профилей × 2 роли (12 сценариев). Она покрывает vanilla WireGuard, AWG 2.x, accelerated rekey (один цикл), восстановление после потери rekey-пакета, полный объединённый профиль AWG 3.1 с двусторонней передачей данных и CPS I1–I5. Это быстрый smoke/interoperability gate без повторения отдельных тестов каждого расширения и без длительного lifecycle soak.
 
-Полная прежняя матрица из 22 профилей × 2 роли (44 сценария), включая одиночные расширения и 120 rekey cycles, запускается явно:
+Полная прежняя матрица из 22 профилей × 2 роли (44 сценария), включая одиночные расширения, 30 accelerated rekey cycles и 120 lifecycle-soak cycles, запускается явно:
 
 ```bash
 sudo python3 scripts/awg31-go-interop.py ./target/release/boringtun-cli ./amneziawg-go --full
 ```
 
-Режим `--performance` остаётся отдельным и несовместим с `--full`.
+В GitHub Actions полную матрицу можно также запустить через **Actions → PR Status Checks → Run workflow → full_matrix**. Режим `--performance` остаётся отдельным и несовместим с `--full`.
 
 Скрипт требует Linux, root, `iproute2`, `ping`, `tcpdump`, Python-пакет `cryptography`, BoringTun с feature `device` и официальный бинарник `amneziawg-go` из модуля `/v3`. CI собирает эталон из upstream commit `b5928efb6ca19f0153958460c3d141f04abc5c2e`. Каждый профиль запускается в двух ролях: BoringTun-сервер ↔ amneziawg-go-клиент и amneziawg-go-сервер ↔ BoringTun-клиент. Для каждого прогона создаются отдельные сетевые namespace с уникальными именами; хостовые маршруты и интерфейсы не перенастраиваются.
 
