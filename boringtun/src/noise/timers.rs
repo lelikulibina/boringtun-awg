@@ -744,6 +744,8 @@ impl Tunn {
                         // independently after RejectAfterTime * 3.
                         self.handshake.abort_initiation();
                         self.packet_queue.clear();
+                        self.timers.send_keepalive_deadline = None;
+                        self.timers.need_another_keepalive = false;
                         return TunnResult::Done;
                     }
 
