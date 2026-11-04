@@ -192,7 +192,9 @@ impl Config {
             return invalid("[daemon].stats_interval_secs must be greater than zero");
         }
         if !valid_nft_table_name(&self.daemon.nft_table) {
-            return invalid("[daemon].nft_table must contain only ASCII letters, digits, or underscores");
+            return invalid(
+                "[daemon].nft_table must contain only ASCII letters, digits, or underscores",
+            );
         }
         if !matches!(
             self.daemon.log_level.as_str(),
@@ -240,11 +242,15 @@ impl Config {
                     interface.name
                 ));
             }
-            decode_key(&interface.private_key, &format!("interfaces.{}.private_key", interface.name))?;
+            decode_key(
+                &interface.private_key,
+                &format!("interfaces.{}.private_key", interface.name),
+            )?;
 
             let mut has_ipv6 = false;
             for address in &interface.addresses {
-                let parsed = parse_prefix(address, &format!("interfaces.{}.addresses", interface.name))?;
+                let parsed =
+                    parse_prefix(address, &format!("interfaces.{}.addresses", interface.name))?;
                 has_ipv6 |= parsed.addr.is_ipv6();
             }
             if has_ipv6 && interface.mtu < 1280 {
@@ -254,14 +260,11 @@ impl Config {
                 ));
             }
 
-            match (interface.protocol, interface.awg.is_some()) {
-                (ProtocolVersion::Wg, true) => {
-                    return invalid(format!(
-                        "interfaces.{}.awg is not valid for protocol 'wg'",
-                        interface.name
-                    ));
-                }
-                (ProtocolVersion::Wg, false) | (_, true) | (_, false) => {}
+            if interface.protocol == ProtocolVersion::Wg && interface.awg.is_some() {
+                return invalid(format!(
+                    "interfaces.{}.awg is not valid for protocol 'wg'",
+                    interface.name
+                ));
             }
             if let Some(awg) = &interface.awg {
                 awg.validate(&interface.name)?;
@@ -280,7 +283,10 @@ impl Config {
                 }
                 let public_key = decode_key(
                     &peer.public_key,
-                    &format!("interfaces.{}.peers.{}.public_key", interface.name, peer.name),
+                    &format!(
+                        "interfaces.{}.peers.{}.public_key",
+                        interface.name, peer.name
+                    ),
                 )?;
                 if !peer_keys.insert(public_key) {
                     return invalid(format!(
@@ -291,7 +297,10 @@ impl Config {
                 if let Some(psk) = &peer.preshared_key {
                     decode_key(
                         psk,
-                        &format!("interfaces.{}.peers.{}.preshared_key", interface.name, peer.name),
+                        &format!(
+                            "interfaces.{}.peers.{}.preshared_key",
+                            interface.name, peer.name
+                        ),
                     )?;
                 }
                 if let Some(endpoint) = &peer.endpoint {
@@ -305,7 +314,10 @@ impl Config {
                 for prefix in &peer.allowed_ips {
                     let parsed = parse_prefix(
                         prefix,
-                        &format!("interfaces.{}.peers.{}.allowed_ips", interface.name, peer.name),
+                        &format!(
+                            "interfaces.{}.peers.{}.allowed_ips",
+                            interface.name, peer.name
+                        ),
                     )?;
                     has_ipv6 |= parsed.addr.is_ipv6();
                     if !owned_prefixes.insert((parsed.addr, parsed.cidr)) {
@@ -337,18 +349,22 @@ impl Config {
                     rule.priority, rule.ingress
                 ));
             }
-            let ingress = interfaces_by_name.get(rule.ingress.as_str()).ok_or_else(|| {
-                ConfigError::Validation(format!(
-                    "routing rule references unknown ingress '{}'",
-                    rule.ingress
-                ))
-            })?;
-            let egress = interfaces_by_name.get(rule.egress.as_str()).ok_or_else(|| {
-                ConfigError::Validation(format!(
-                    "routing rule references unknown egress '{}'",
-                    rule.egress
-                ))
-            })?;
+            let ingress = interfaces_by_name
+                .get(rule.ingress.as_str())
+                .ok_or_else(|| {
+                    ConfigError::Validation(format!(
+                        "routing rule references unknown ingress '{}'",
+                        rule.ingress
+                    ))
+                })?;
+            let egress = interfaces_by_name
+                .get(rule.egress.as_str())
+                .ok_or_else(|| {
+                    ConfigError::Validation(format!(
+                        "routing rule references unknown egress '{}'",
+                        rule.egress
+                    ))
+                })?;
             if rule.ingress == rule.egress {
                 return invalid(format!(
                     "routing rule cannot use '{}' as both ingress and egress",
@@ -410,10 +426,8 @@ impl AwgConfig {
                 header_ranges.push((name, range));
             }
         }
-        for i in 0..header_ranges.len() {
-            for j in (i + 1)..header_ranges.len() {
-                let (left_name, (left_start, left_end)) = header_ranges[i];
-                let (right_name, (right_start, right_end)) = header_ranges[j];
+        for (index, (left_name, (left_start, left_end))) in header_ranges.iter().enumerate() {
+            for (right_name, (right_start, right_end)) in header_ranges.iter().skip(index + 1) {
                 if left_start <= right_end && right_start <= left_end {
                     return invalid(format!(
                         "interfaces.{}.awg.{} and {} ranges overlap",
@@ -442,7 +456,10 @@ pub fn decode_key(value: &str, field: &str) -> Result<[u8; 32], ConfigError> {
 
 fn parse_prefix(value: &str, field: &str) -> Result<AllowedIP, ConfigError> {
     AllowedIP::from_str(value).map_err(|error| {
-        ConfigError::Validation(format!("{} contains invalid CIDR '{}': {}", field, value, error))
+        ConfigError::Validation(format!(
+            "{} contains invalid CIDR '{}': {}",
+            field, value, error
+        ))
     })
 }
 
