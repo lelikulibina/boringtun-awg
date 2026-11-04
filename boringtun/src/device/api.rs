@@ -523,9 +523,16 @@ impl Device {
                     return Action::Exit;
                 }
 
-                // Periodically read the mtu of the interface in case it changes
+                // Periodically read the MTU in case the interface changes.
+                // Existing peers own a Tunn snapshot, so propagate changes to
+                // every tunnel as well as updating the value used for new peers.
                 if let Ok(mtu) = d.iface.mtu() {
-                    d.mtu.store(mtu, Ordering::Relaxed);
+                    let previous = d.mtu.swap(mtu, Ordering::Relaxed);
+                    if previous != mtu {
+                        for peer in d.peers.values() {
+                            peer.lock().tunnel.set_mtu(mtu);
+                        }
+                    }
                 }
 
                 Action::Continue
