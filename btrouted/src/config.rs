@@ -681,17 +681,16 @@ egress = "awg-uplink"
             }
         );
         assert_eq!(
-            PeerEndpoint::parse("xn--bcher-kva.example:443").unwrap().port,
+            PeerEndpoint::parse("xn--bcher-kva.example:443")
+                .unwrap()
+                .port,
             443
         );
     }
 
     #[test]
     fn parses_ipv4_and_bracketed_ipv6_peer_endpoints() {
-        assert_eq!(
-            PeerEndpoint::parse("192.0.2.1:51820").unwrap().port,
-            51820
-        );
+        assert_eq!(PeerEndpoint::parse("192.0.2.1:51820").unwrap().port, 51820);
         assert_eq!(
             PeerEndpoint::parse("[2001:db8::1]:51820").unwrap().port,
             51820
