@@ -851,9 +851,7 @@ impl Tunn {
                 if self.timers.rekey_due_on_receive || self.timers.rekey_due_on_send {
                     handshake_initiation_required = true;
                 }
-
             }
-
         }
 
         if handshake_initiation_required {
