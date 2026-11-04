@@ -41,7 +41,7 @@ const MAX_JUNK_PACKET_DELAY_MS: u16 = 200;
 /// relative to the triggering handshake: upstream amneziawg-go emits the
 /// configured S3 prefix verbatim, and this implementation follows that wire
 /// behavior.
-const MAX_SENDABLE_DATAGRAM: usize = 65535 - 20 - 8;
+pub(crate) const MAX_SENDABLE_DATAGRAM: usize = 65535 - 20 - 8;
 const DNS_JUNK_SIZE_MIN: usize = 50;
 const DNS_JUNK_SIZE_MAX: usize = 200;
 const QUIC_JUNK_SIZE_MIN: usize = 1200;
@@ -1147,9 +1147,14 @@ impl AmneziaConfig {
             return self.content_padding_size(ip_packet_size, wire_packet_size, udp_window, rng);
         }
         if self.random_trailers {
-            return self.random_trailer_len(wire_packet_size, udp_window, MAX_SENDABLE_DATAGRAM, rng);
+            return self.random_trailer_len(
+                wire_packet_size,
+                udp_window,
+                MAX_SENDABLE_DATAGRAM,
+                rng,
+            );
         }
-        calculate_wg_padding_size(ip_packet_size, mtu)
+        Self::calculate_wg_padding_size(ip_packet_size, mtu)
     }
 
     /// Match upstream calculatePaddingSize(packetSize, tun.mtu).
