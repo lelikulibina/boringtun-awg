@@ -61,10 +61,14 @@ pub fn apply_policy_routing(plan: &RoutingPlan) -> Result<(), LinuxError> {
             // A stale rule from a previous daemon instance is removed first.
             let _ = run("ip", &[family.into(), "rule".into(), "del".into(), "priority".into(),
                 priority.clone(), "fwmark".into(), mark.clone(), "lookup".into(), table.clone()]);
-            run("ip", &[family.into(), "route".into(), "replace".into(), "default".into(),
-                "dev".into(), egress.interface.clone(), "table".into(), table.clone()])?;
-            run("ip", &[family.into(), "rule".into(), "add".into(), "priority".into(),
-                priority, "fwmark".into(), mark, "lookup".into(), table])?;
+            if let Err(error) = run("ip", &[family.into(), "route".into(), "replace".into(), "default".into(),
+                "dev".into(), egress.interface.clone(), "table".into(), table.clone()])
+                .and_then(|_| run("ip", &[family.into(), "rule".into(), "add".into(), "priority".into(),
+                    priority, "fwmark".into(), mark, "lookup".into(), table]))
+            {
+                remove_policy_routing(plan);
+                return Err(error);
+            }
         }
     }
     Ok(())
