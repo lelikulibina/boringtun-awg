@@ -2143,13 +2143,21 @@ mod tests {
         let mut rng = ChaCha8Rng::seed_from_u64(0xA030);
 
         // AWG 3.0 clamps against MTU - (packet_size % MTU), not UDP window.
-        assert_eq!(legacy.content_padding_size(1400, 1432, 2000, 1420, &mut rng), 20);
-        assert_eq!(legacy.content_padding_size(1421, 1453, 2000, 1420, &mut rng), 100);
+        assert_eq!(
+            legacy.content_padding_size(1400, 1432, 2000, 1420, &mut rng),
+            20
+        );
+        assert_eq!(
+            legacy.content_padding_size(1421, 1453, 2000, 1420, &mut rng),
+            100
+        );
         // Upstream's MTU=0 special case leaves CPA unbounded by MTU.
-        assert_eq!(legacy.content_padding_size(1400, 1432, 2000, 0, &mut rng), 100);
+        assert_eq!(
+            legacy.content_padding_size(1400, 1432, 2000, 0, &mut rng),
+            100
+        );
 
-        let modern = AmneziaConfig::new(0, 0, 0, 0)
-            .with_content_padding_addition(100, 100);
+        let modern = AmneziaConfig::new(0, 0, 0, 0).with_content_padding_addition(100, 100);
         assert_eq!(
             modern.content_padding_size(1400, 1432, 1450, 1420, &mut rng),
             18,
