@@ -1723,8 +1723,7 @@ mod ingress_tests {
     /// stands between it and 65 KB aimed at a stranger.
     #[test]
     fn large_s3_cookie_replies_follow_upstream_semantics() {
-        let config = AmneziaConfig::new(284, 659, 1045, 12)
-            .with_header_protection_key([0x42; 32]);
+        let config = AmneziaConfig::new(284, 659, 1045, 12).with_header_protection_key([0x42; 32]);
         config
             .validate()
             .expect("the reference AWG 3.1 S values must be accepted");
