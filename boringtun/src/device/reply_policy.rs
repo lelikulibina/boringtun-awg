@@ -1,3 +1,6 @@
+// Copyright (c) 2024 BoringTun contributors. All rights reserved.
+// SPDX-License-Identifier: BSD-3-Clause
+
 //! Source-address policy shared by unauthenticated probe replies and
 //! WireGuard cookie replies.
 //!
