@@ -1651,6 +1651,46 @@ mod tests {
 
     #[test]
     #[cfg(feature = "mock-instant")]
+    fn keepalive_timeout_is_serviced_while_rekey_is_pending() {
+        let config = AmneziaConfig::new(0, 0, 0, 0)
+            .with_rekey_after_time(120, 120)
+            .with_rekey_timeout(5, 5)
+            .with_reject_after_time(180, 180)
+            .with_keepalive_timeout(1, 1);
+        let (mut initiator, mut responder) = create_two_tuns_with_amnezia(config);
+
+        let init = create_handshake_init(&mut initiator);
+        let response = create_handshake_response(&mut responder, &init);
+        let keepalive = parse_handshake_resp(&mut initiator, &response);
+        parse_keepalive(&mut responder, &keepalive);
+
+        // Start a rekey first, then receive data while it is pending. The
+        // authenticated receive arms KeepaliveTimeout independently.
+        let _rekey_init = create_handshake_init(&mut initiator);
+        let packet = create_ipv4_udp_packet();
+        let mut network = [0u8; 2048];
+        let mut tunnel = [0u8; 2048];
+        let outbound = unwrap_network_packet(responder.encapsulate(&packet, &mut network));
+        assert!(matches!(
+            initiator.decapsulate(None, &outbound, &mut tunnel),
+            TunnResult::WriteToTunnelV4(_, _)
+        ));
+        assert!(initiator.handshake.timer().is_some());
+
+        mock_instant::MockClock::advance(Duration::from_millis(1001));
+        let keepalive = unwrap_network_packet(initiator.update_timers(&mut network));
+        assert!(matches!(
+            Tunn::parse_incoming_packet(initiator.handshake.obf, &keepalive),
+            Ok(Packet::Data(_))
+        ));
+        assert!(
+            initiator.handshake.timer().is_some(),
+            "KeepaliveTimeout must not cancel the pending handshake retransmission"
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "mock-instant")]
     fn authenticated_inbound_data_cancels_and_restarts_inactivity_deadline() {
         let config = AmneziaConfig::new(0, 0, 0, 0)
             .with_rekey_after_time(120, 120)
