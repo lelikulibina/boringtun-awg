@@ -1681,7 +1681,7 @@ mod tests {
         let keepalive = unwrap_network_packet(initiator.update_timers(&mut network));
         assert!(matches!(
             Tunn::parse_incoming_packet(initiator.handshake.obf, &keepalive),
-            Ok(Packet::Data(_))
+            Ok(Packet::PacketData(_))
         ));
         assert!(
             initiator.handshake.timer().is_some(),
