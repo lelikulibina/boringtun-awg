@@ -750,7 +750,9 @@ impl Device {
         #[cfg(not(target_os = "linux"))]
         let uapi_fd = -1;
         #[cfg(target_os = "linux")]
-        let uapi_fd = config.uapi_fd;
+        // Disabling UAPI is an absolute opt-out: do not register, poll, or
+        // otherwise attach even a caller-supplied UAPI descriptor.
+        let uapi_fd = if enable_uapi { config.uapi_fd } else { -1 };
 
         // Before `config` is moved into the device.
         // `filter(> 0)` so `Some(0)` and `None` cannot mean different things:
