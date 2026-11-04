@@ -264,12 +264,10 @@ fn build_awg_config(
             })
         })
         .collect::<Result<_, _>>()?;
-    let obf = ObfuscationRanges::from_explicit_ranges([
-        values[0], values[1], values[2], values[3],
-    ])
-    .map_err(|error| {
-        RuntimeError::Configuration(format!("invalid AWG header ranges: {error}"))
-    })?;
+    let obf = ObfuscationRanges::from_explicit_ranges([values[0], values[1], values[2], values[3]])
+        .map_err(|error| {
+            RuntimeError::Configuration(format!("invalid AWG header ranges: {error}"))
+        })?;
 
     let value = |pick: fn(&crate::config::AwgConfig) -> Option<u16>| -> u16 {
         awg.and_then(pick).unwrap_or(0)
@@ -295,9 +293,9 @@ fn build_awg_config(
             .with_disable_cookies(awg.disable_cookies.unwrap_or(false))
             .with_random_trailers(awg.random_trailers.unwrap_or(false));
     }
-    amnezia.validate().map_err(|error| {
-        RuntimeError::Configuration(format!("invalid AWG settings: {error}"))
-    })?;
+    amnezia
+        .validate()
+        .map_err(|error| RuntimeError::Configuration(format!("invalid AWG settings: {error}")))?;
     Ok((obf, amnezia))
 }
 
@@ -313,12 +311,11 @@ fn parse_tag_range(value: &str) -> Option<(u32, u32)> {
 }
 
 fn resolve_endpoint(value: &str) -> Result<SocketAddr, RuntimeError> {
-    let parsed = crate::config::PeerEndpoint::parse(value).map_err(|reason| {
-        RuntimeError::Endpoint {
+    let parsed =
+        crate::config::PeerEndpoint::parse(value).map_err(|reason| RuntimeError::Endpoint {
             endpoint: value.into(),
             reason,
-        }
-    })?;
+        })?;
     match parsed.host {
         EndpointHost::Ip(ip) => Ok(SocketAddr::new(ip, parsed.port)),
         EndpointHost::Dns(host) => (host.as_str(), parsed.port)

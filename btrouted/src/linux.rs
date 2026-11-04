@@ -92,10 +92,12 @@ pub fn apply_nft(plan: &RoutingPlan) -> Result<(), LinuxError> {
             program: "nft stdin".into(),
             source,
         })?;
-    let output = child.wait_with_output().map_err(|source| LinuxError::Spawn {
-        program: "nft".into(),
-        source,
-    })?;
+    let output = child
+        .wait_with_output()
+        .map_err(|source| LinuxError::Spawn {
+            program: "nft".into(),
+            source,
+        })?;
     if output.status.success() {
         return Ok(());
     }
@@ -114,8 +116,7 @@ pub fn remove_nft(plan: &RoutingPlan) {
         return;
     };
     if !existing.status.success()
-        || !String::from_utf8_lossy(&existing.stdout)
-            .contains("comment \"managed by btrouted\"")
+        || !String::from_utf8_lossy(&existing.stdout).contains("comment \"managed by btrouted\"")
     {
         return;
     }
@@ -151,8 +152,7 @@ fn ensure_policy_slots_available(plan: &RoutingPlan) -> Result<(), LinuxError> {
             };
             if priority == 9_000 {
                 let ours = plan.socket_marks.iter().any(|mark| {
-                    line.contains(&format!("fwmark 0x{mark:x}"))
-                        && line.ends_with("lookup main")
+                    line.contains(&format!("fwmark 0x{mark:x}")) && line.ends_with("lookup main")
                 });
                 if !ours {
                     return Err(LinuxError::Conflict {
@@ -187,10 +187,16 @@ fn ensure_policy_slots_available(plan: &RoutingPlan) -> Result<(), LinuxError> {
             ];
             let routes = output("ip", &args)?;
             if !routes.status.success() {
+                let stderr = String::from_utf8_lossy(&routes.stderr);
+                // iproute2 returns status 2 when a routing table has not been
+                // created yet. That is the normal first-start state.
+                if stderr.contains("FIB table does not exist") {
+                    continue;
+                }
                 return Err(LinuxError::Command {
                     program: format!("ip {}", args.join(" ")),
                     status: routes.status.to_string(),
-                    stderr: String::from_utf8_lossy(&routes.stderr).trim().to_owned(),
+                    stderr: stderr.trim().to_owned(),
                 });
             }
             for line in String::from_utf8_lossy(&routes.stdout).lines() {
@@ -349,11 +355,7 @@ pub fn remove_policy_routing(plan: &RoutingPlan) {
     }
 }
 
-pub fn configure_interface(
-    name: &str,
-    mtu: u16,
-    addresses: &[String],
-) -> Result<(), LinuxError> {
+pub fn configure_interface(name: &str, mtu: u16, addresses: &[String]) -> Result<(), LinuxError> {
     run(
         "ip",
         &[
