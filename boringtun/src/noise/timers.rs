@@ -69,11 +69,11 @@ pub struct Timers {
     pub(super) send_keepalive_deadline: Option<Duration>,
     need_another_keepalive: bool,
     /// Mirrors upstream's one-shot keepKeyFreshReceiving guard.
-    sent_last_minute_handshake: bool,
+    pub(super) sent_last_minute_handshake: bool,
     /// Deferred until update_timers can emit the handshake datagram.
-    rekey_due_on_receive: bool,
+    pub(super) rekey_due_on_receive: bool,
     /// Send-side freshness is evaluated on outbound data traversal, not each timer poll.
-    rekey_due_on_send: bool,
+    pub(super) rekey_due_on_send: bool,
     persistent_keepalive_range: (u32, u32),
     persistent_keepalive_interval: u32,
     persistent_keepalive_deadline: Option<Duration>,
