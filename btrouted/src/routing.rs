@@ -105,7 +105,7 @@ impl RoutingPlan {
     /// emitted first; each rule assigns a mark consumed by an ip rule fwmark.
     pub fn nft_script(&self) -> String {
         let mut output = format!(
-            "add table {} {}\nadd chain {} {} prerouting {{ type filter hook prerouting priority mangle; policy accept; }}\n",
+            "add table {} {} {{ comment \"managed by btrouted\"; }}\nadd chain {} {} prerouting {{ type filter hook prerouting priority mangle; policy accept; }}\n",
             self.nft_family, self.nft_table, self.nft_family, self.nft_table
         );
         for rule in &self.nft_rules {
