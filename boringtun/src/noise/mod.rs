@@ -89,6 +89,8 @@ pub struct Tunn {
     rx_bytes: usize,
     amnezia: AmneziaConfig,
     /// Largest authenticated transport datagram observed for this peer.
+    /// Upstream-style high-water mark of base datagrams sent to this peer,
+    /// before transport padding or RandomTrailers are added.
     udp_window: usize,
     pending_amnezia_junk: Option<PendingAmneziaJunk>,
     rate_limiter: Arc<RateLimiter>,
@@ -470,7 +472,7 @@ impl Tunn {
             .set_persistent_keepalive_range(range.unwrap_or((0, 0)));
     }
 
-    /// Reset the peer's learned UDP datagram window after endpoint roaming.
+    /// Reset the peer's outbound UDP datagram high-water mark after endpoint roaming.
     pub(crate) fn reset_udp_window(&mut self) {
         self.udp_window = amnezia::DEFAULT_UDP_WINDOW;
     }
