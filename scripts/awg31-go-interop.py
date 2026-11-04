@@ -5,7 +5,7 @@ Requires Linux, root, iproute2, ping, Python `cryptography`, boringtun-cli built
 with the device feature, and the official amneziawg-go v3 binary. All interfaces and links live
 in uniquely named disposable network namespaces; host routes are not changed.
 
-Usage: sudo python3 scripts/awg31-go-interop.py ./target/release/boringtun-cli ./amneziawg-go [--full] [--performance] [--awg30 ./amneziawg-go-3.0]
+Usage: sudo python3 scripts/awg31-go-interop.py ./target/release/boringtun-cli ./amneziawg-go [--full] [--performance] [--awg30 ./amneziawg-go-3.0] [--wireguard ./wireguard-go]
 """
 from __future__ import annotations
 
@@ -807,6 +807,7 @@ def run_profile(
     awg_enabled: bool, bt_is_server: bool, performance: bool = False,
     same_implementation: str | None = None,
     extended_matrix: bool = False, legacy_cpa: bool = False,
+    reference_name: str = "amneziawg-go",
 ) -> None:
     token = uuid.uuid4().hex[:10]
     ns_server, ns_client = f"awg31s{token}", f"awg31c{token}"
@@ -833,8 +834,8 @@ def run_profile(
         server_is_bt = client_is_bt = same_implementation == "boringtun"
     server_iface = bt_iface if server_is_bt else go_iface
     client_iface = bt_client_iface if client_is_bt else go_client_iface
-    server_name = "boringtun" if server_is_bt else "amneziawg-go"
-    client_name = "boringtun" if client_is_bt else "amneziawg-go"
+    server_name = "boringtun" if server_is_bt else reference_name
+    client_name = "boringtun" if client_is_bt else reference_name
     role = f"{server_name}-to-{client_name}" if same_implementation else f"{server_name} server"
     capture_dir = Path("target/awg31-wire-pcaps")
     capture_dir.mkdir(parents=True, exist_ok=True)
@@ -1045,12 +1046,20 @@ def main() -> int:
         return 2
     options = list(sys.argv[3:])
     awg30 = None
+    wireguard = None
     if "--awg30" in options:
         index = options.index("--awg30")
         if index + 1 >= len(options):
             print("--awg30 requires a path to the official AWG 3.0 binary", file=sys.stderr)
             return 2
         awg30 = str(Path(options[index + 1]).resolve())
+        del options[index:index + 2]
+    if "--wireguard" in options:
+        index = options.index("--wireguard")
+        if index + 1 >= len(options):
+            print("--wireguard requires a path to the official wireguard-go binary", file=sys.stderr)
+            return 2
+        wireguard = str(Path(options[index + 1]).resolve())
         del options[index:index + 2]
     if set(options) - {"--performance", "--full"} or ("--performance" in options and "--full" in options) or len(options) != len(set(options)):
         print(__doc__.split("Usage:", 1)[1].strip(), file=sys.stderr)
@@ -1061,7 +1070,7 @@ def main() -> int:
     if performance and shutil.which("iperf3") is None:
         print("iperf3 is required for --performance mode", file=sys.stderr)
         return 2
-    for binary in (bt, go, *((awg30,) if awg30 else ())):
+    for binary in (bt, go, *((awg30,) if awg30 else ()), *((wireguard,) if wireguard else ())):
         if not os.path.isfile(binary) or not os.access(binary, os.X_OK):
             print(f"not an executable file: {binary}", file=sys.stderr)
             return 2
@@ -1110,11 +1119,25 @@ def main() -> int:
                     run_profile(
                         bt, awg30, name, extra, awg_enabled, bt_is_server,
                         legacy_cpa=True,
+                        reference_name="amneziawg-go-v3.0.0",
                     )
                 except Exception as error:
                     failures += 1
                     role = "BoringTun server" if bt_is_server else "amneziawg-go v3.0.0 server"
                     print(f"FAIL AWG 3.0.0 / {name} ({role}): {error}", file=sys.stderr)
+    if wireguard is not None and not performance:
+        print("MODE: official WireGuard reference suite (2 directional scenarios)")
+        for bt_is_server in (True, False):
+            total += 1
+            try:
+                run_profile(
+                    bt, wireguard, PROFILES[0][0], "", False, bt_is_server,
+                    reference_name="wireguard-go",
+                )
+            except Exception as error:
+                failures += 1
+                role = "BoringTun server" if bt_is_server else "wireguard-go server"
+                print(f"FAIL vanilla WireGuard ({role}): {error}", file=sys.stderr)
     print(f"SUMMARY: {total - failures}/{total} passed, {failures} failed")
     return 1 if failures else 0
 
