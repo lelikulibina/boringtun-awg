@@ -5,10 +5,6 @@ use std::path::PathBuf;
 
 #[cfg(target_os = "linux")]
 fn main() {
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .init();
-
     if let Err(error) = run() {
         eprintln!("btrouted: {error}");
         std::process::exit(1);
@@ -47,6 +43,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         println!("configuration is valid: {}", config_path.display());
         return Ok(());
     }
+
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(config.daemon.log_level.clone()));
+    tracing_subscriber::fmt().with_env_filter(filter).init();
 
     tracing::info!(path = %config_path.display(), "starting btrouted");
     let runtime = Runtime::start(config)?;
