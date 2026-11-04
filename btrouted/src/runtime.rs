@@ -101,9 +101,17 @@ impl Runtime {
         } else {
             None
         };
-        linux::apply_nft(&routing)?;
+        if let Err(error) = linux::apply_nft(&routing) {
+            if let Some(state) = &forwarding_state {
+                restore_forwarding(state);
+            }
+            return Err(error.into());
+        }
         if let Err(error) = linux::apply_policy_routing(&routing) {
             linux::remove_nft(&routing);
+            if let Some(state) = &forwarding_state {
+                restore_forwarding(state);
+            }
             return Err(error.into());
         }
 
