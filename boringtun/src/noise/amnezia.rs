@@ -2224,7 +2224,7 @@ mod tests {
 
         let fixed_max = AmneziaConfig::new(0, 0, 0, 0).with_content_padding_addition(12, 12);
         assert_eq!(
-            fixed_max.content_padding_size(100, 132, 500, &mut rng),
+            fixed_max.content_padding_size(100, 132, 500, 1420, &mut rng),
             12,
             "the configured maximum is inclusive"
         );
