@@ -2837,7 +2837,9 @@ mod tests {
     /// the resulting Cookie Reply without an amplification-size restriction.
     #[test]
     fn reference_s_parameters_with_header_protection_are_accepted() {
-        let config = AmneziaConfig::new(284, 659, 1045, 12).with_header_protection_key([0x42; 32]);
+        let config = AmneziaConfig::new(284, 659, 1045, 12)
+            .with_header_protection_key([0x42; 32])
+            .with_random_trailers(true);
         config
             .validate()
             .expect("reference S1-S4 and HP key must be valid");
