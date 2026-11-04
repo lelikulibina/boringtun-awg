@@ -10,6 +10,7 @@ use std::net::IpAddr;
 
 const FIRST_ROUTING_TABLE: u32 = 10_000;
 const FIRST_IP_RULE_PRIORITY: u32 = 10_000;
+const SOCKET_MAIN_RULE_PRIORITY: u32 = 9_000;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EgressPlan {
@@ -34,6 +35,8 @@ pub struct RoutingPlan {
     pub nft_table: String,
     pub egresses: Vec<EgressPlan>,
     pub nft_rules: Vec<NftRule>,
+    /// Socket marks that force outer encrypted UDP through the main table.
+    pub socket_marks: Vec<u32>,
 }
 
 impl RoutingPlan {
@@ -76,6 +79,7 @@ impl RoutingPlan {
             nft_table: config.daemon.nft_table.clone(),
             egresses,
             nft_rules,
+            socket_marks: { let mut marks: Vec<_> = config.interfaces.iter().map(|i| i.socket_fwmark).collect(); marks.sort_unstable(); marks },
         }
     }
 
@@ -105,7 +109,14 @@ impl RoutingPlan {
     /// Commands needed to populate each egress routing table and select it by
     /// packet mark. The caller is responsible for executing them and rollback.
     pub fn ip_commands(&self) -> Vec<Vec<String>> {
-        let mut commands = Vec::with_capacity(self.egresses.len() * 4);
+        let mut commands = Vec::with_capacity(self.egresses.len() * 4 + self.socket_marks.len() * 2);
+        for mark in &self.socket_marks {
+            for family in ["-4", "-6"] {
+                commands.push(vec![family.into(), "rule".into(), "add".into(), "priority".into(),
+                    SOCKET_MAIN_RULE_PRIORITY.to_string(), "fwmark".into(), format!("0x{:x}", mark),
+                    "lookup".into(), "main".into()]);
+            }
+        }
         for egress in &self.egresses {
             for family in ["-4", "-6"] {
                 commands.push(vec![
@@ -220,8 +231,9 @@ egress = "awg-primary"
     fn creates_ipv4_and_ipv6_policy_rules_for_each_uplink() {
         let plan = RoutingPlan::from_config(&sample_config());
         let commands = plan.ip_commands();
-        assert_eq!(commands.len(), 8);
+        assert_eq!(commands.len(), 14);
         assert!(commands.iter().any(|args| args.first().is_some_and(|arg| arg == "-6")));
         assert!(commands.iter().any(|args| args.iter().any(|arg| arg == "0x80000000")));
+        assert!(commands.iter().any(|args| args.iter().any(|arg| arg == "main")));
     }
 }
