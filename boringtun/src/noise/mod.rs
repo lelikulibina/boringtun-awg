@@ -2247,7 +2247,7 @@ mod tests {
         assert!(matches!(data, TunnResult::WriteToNetwork(_)));
 
         //Advance to timeout
-        mock_instant::MockClock::advance(REKEY_AFTER_TIME);
+        mock_instant::MockClock::advance(REKEY_AFTER_TIME + Duration::from_millis(1));
         assert!(matches!(their_tun.update_timers(&mut []), TunnResult::Done));
         update_timer_results_in_handshake(&mut my_tun);
     }

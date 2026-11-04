@@ -776,10 +776,6 @@ impl Tunn {
                         handshake_initiation_required = true;
                     }
 
-                    // After receiving a packet, if the receiver was the original initiator
-                    // of the handshake and if the current session key is REJECT_AFTER_TIME
-                    // - KEEPALIVE_TIMEOUT - REKEY_TIMEOUT ms old, we initiate a new
-                    // handshake.
                 }
 
                 // If we have sent a packet to a given peer but have not received a
