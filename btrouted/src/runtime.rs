@@ -8,6 +8,7 @@ use boringtun::noise::handshake::ObfuscationRanges;
 use boringtun::x25519;
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::str::FromStr;
+use std::time::Duration;
 
 #[derive(Debug, thiserror::Error)]
 pub enum RuntimeError {
@@ -26,6 +27,7 @@ pub enum RuntimeError {
 pub struct Runtime {
     devices: Vec<DeviceHandle>,
     routing: RoutingPlan,
+    stats_interval: Duration,
 }
 
 impl Runtime {
@@ -73,7 +75,7 @@ impl Runtime {
         linux::apply_policy_routing(&routing)?;
         linux::apply_nft(&routing)?;
         tracing::info!(interfaces = devices.len(), "btrouted runtime started");
-        Ok(Self { devices, routing })
+        Ok(Self { devices, routing, stats_interval: Duration::from_secs(config.daemon.stats_interval_secs) })
     }
 
     pub fn routing_plan(&self) -> &RoutingPlan { &self.routing }
@@ -83,10 +85,33 @@ impl Runtime {
         self.devices.iter().map(|device| device.snapshot().map_err(RuntimeError::from)).collect()
     }
 
-    /// Keep the daemon alive while its BoringTun event loops are running.
-    pub fn wait(mut self) {
-        for device in &mut self.devices { device.wait(); }
+    /// Keep the daemon alive and periodically publish peer counters.
+    pub fn run(self) -> ! {
+        loop {
+            std::thread::sleep(self.stats_interval);
+            match self.snapshots() {
+                Ok(snapshots) => {
+                    for device in snapshots {
+                        for peer in device.peers {
+                            tracing::info!(
+                                interface = %device.name,
+                                peer = %hex_key(&peer.public_key),
+                                tx_bytes = peer.tx_bytes,
+                                rx_bytes = peer.rx_bytes,
+                                handshake_age_secs = peer.time_since_last_handshake.map(|age| age.as_secs()),
+                                "peer statistics"
+                            );
+                        }
+                    }
+                }
+                Err(error) => tracing::error!(%error, "failed to collect device statistics"),
+            }
+        }
     }
+}
+
+fn hex_key(key: &[u8; 32]) -> String {
+    key.iter().map(|byte| format!("{:02x}", byte)).collect()
 }
 
 fn create_device(interface: &InterfaceConfig) -> Result<DeviceHandle, RuntimeError> {
