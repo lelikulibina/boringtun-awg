@@ -2313,7 +2313,14 @@ mod tests {
             None,
             1,
             None,
-            0, 0, 0, 0, 0, 0, 0, 0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
             config.clone(),
         )
         .unwrap();
@@ -2324,7 +2331,14 @@ mod tests {
             None,
             2,
             Some(rate_limiter),
-            0, 0, 0, 0, 0, 0, 0, 0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
             config,
         )
         .unwrap();
@@ -2348,8 +2362,7 @@ mod tests {
             TunnResult::Done
         ));
         assert_eq!(
-            initiator.timers[TimeLastPacketReceived],
-            last_authenticated_receive,
+            initiator.timers[TimeLastPacketReceived], last_authenticated_receive,
             "Cookie Reply updates cookie state but must not reset authenticated traversal timers"
         );
         assert!(
