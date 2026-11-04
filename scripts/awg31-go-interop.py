@@ -30,6 +30,7 @@ PORT = 51820
 SERVER_LINK, CLIENT_LINK = "10.55.0.1", "10.55.0.2"
 SERVER_TUN, CLIENT_TUN = "10.77.0.1", "10.77.0.2"
 S1, S2, S3, S4 = 284, 659, 1045, 12
+RT_S_PREFIX = 64
 S_AND_H = f"""jc=4
 jmin=50
 jmax=1000
@@ -45,7 +46,12 @@ h4=1526332224
 HPK = "42" * 32
 # RandomTrailers needs identical S offsets to avoid the upstream first-match
 # classifier mistaking transport packets for fixed-size handshake messages.
-S_AND_H_RT = "s1=64\ns2=64\ns3=64\ns4=64\nh1=" + S_AND_H.split("h1=", 1)[1]
+S_AND_H_RT = (
+    f"jc=4\njmin=50\njmax=1000\n"
+    f"s1={RT_S_PREFIX}\ns2={RT_S_PREFIX}\n"
+    f"s3={RT_S_PREFIX}\ns4={RT_S_PREFIX}\n"
+    + "h1=" + S_AND_H.split("h1=", 1)[1]
+)
 
 PROFILES = [
     ("vanilla WireGuard baseline", "", False),
@@ -623,10 +629,15 @@ def verify_wire_pcap(
     if link_type != 1:
         raise RuntimeError(f"expected Ethernet pcap (link type 1), got {link_type}")
 
-    prefixes = (
-        {1: S1, 2: S2, 3: S3, 4: S4}
-        if awg_enabled else {1: 0, 2: 0, 3: 0, 4: 0}
-    )
+    if awg_enabled:
+        # The RandomTrailers profiles deliberately use a separate equal-S
+        # profile (64 bytes) to avoid upstream's ambiguous first-match parser.
+        # Decode at the offsets actually configured for this run, not the
+        # default S1-S4 values used by the non-RT interoperability profiles.
+        s_values = (RT_S_PREFIX,) * 4 if random_trailers else (S1, S2, S3, S4)
+        prefixes = dict(zip((1, 2, 3, 4), s_values))
+    else:
+        prefixes = {1: 0, 2: 0, 3: 0, 4: 0}
     h_tags = (
         {1: 169887817, 2: 390382747, 3: 1033691040, 4: 1526332224}
         if awg_enabled else {1: 1, 2: 2, 3: 3, 4: 4}
