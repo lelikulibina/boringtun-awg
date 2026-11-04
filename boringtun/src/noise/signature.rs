@@ -11,6 +11,7 @@ use rand_core::RngCore;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const MAX_SIGNATURE_DATAGRAM: usize = 65_507;
+const MAX_SIGNATURE_RANDOM_FIELD: usize = 1_000;
 const LETTERS: &[u8; 52] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
 const DIGITS: &[u8; 10] = b"0123456789";
 
@@ -82,9 +83,9 @@ impl SignatureChain {
                     SignatureOperation::Bytes(bytes)
                 }
                 "t" => SignatureOperation::Timestamp,
-                "r" => SignatureOperation::RandomBytes(parse_length(value, name)?),
-                "rc" => SignatureOperation::RandomLetters(parse_length(value, name)?),
-                "rd" => SignatureOperation::RandomDigits(parse_length(value, name)?),
+                "r" => SignatureOperation::RandomBytes(parse_random_field_length(value, name)?),
+                "rc" => SignatureOperation::RandomLetters(parse_random_field_length(value, name)?),
+                "rd" => SignatureOperation::RandomDigits(parse_random_field_length(value, name)?),
                 // In the upstream sender the source is nil, so <d> and <ds>
                 // contribute zero bytes. <dz N> writes the big-endian source
                 // length, which is therefore N zero bytes.
@@ -167,6 +168,17 @@ impl SignatureChain {
     }
 }
 
+fn parse_random_field_length(value: &str, tag: &str) -> Result<usize, String> {
+    let len = parse_length(value, tag)?;
+    if len > MAX_SIGNATURE_RANDOM_FIELD {
+        return Err(format!(
+            "signature <{}> length exceeds the documented 1000-byte limit",
+            tag
+        ));
+    }
+    Ok(len)
+}
+
 fn parse_length(value: &str, tag: &str) -> Result<usize, String> {
     let len = value
         .parse::<usize>()
@@ -206,6 +218,9 @@ mod tests {
         assert!(SignatureChain::parse("<b 0>").is_err());
         assert!(SignatureChain::parse("<b abc>").is_err());
         assert!(SignatureChain::parse("<r -1>").is_err());
+        assert!(SignatureChain::parse("<r 1001>").is_err());
+        assert!(SignatureChain::parse("<rc 1001>").is_err());
+        assert!(SignatureChain::parse("<rd 1001>").is_err());
         assert!(SignatureChain::parse("<unknown 1>").is_err());
         assert!(SignatureChain::parse("<r 1").is_err());
     }
