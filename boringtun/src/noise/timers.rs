@@ -520,13 +520,11 @@ impl Tunn {
     pub(super) fn timer_check_key_fresh_sending(&mut self) {
         let now = Instant::now().duration_since(self.timers.time_started);
         self.timers.rekey_after_time = Duration::from_secs(
-            self.timers
-                .pick_range(0, REKEY_AFTER_TIME.as_secs() as u32) as u64,
+            self.timers.pick_range(0, REKEY_AFTER_TIME.as_secs() as u32) as u64,
         );
         let established = self.timers[TimeSessionEstablished];
-        let min_rekey_interval = Duration::from_secs(
-            self.timers.range_min(1, REKEY_TIMEOUT.as_secs() as u32) as u64,
-        );
+        let min_rekey_interval =
+            Duration::from_secs(self.timers.range_min(1, REKEY_TIMEOUT.as_secs() as u32) as u64);
         if self.timers.is_initiator()
             && established < now
             && now - established > self.timers.rekey_after_time
