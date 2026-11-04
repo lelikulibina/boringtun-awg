@@ -1656,17 +1656,20 @@ mod ingress_tests {
             TunnResult::WriteToNetwork(d) => d.to_vec(),
             other => panic!("expected an initiation, got {:?}", other),
         };
-        // Tunn::new creates the vanilla H-tagged handshake. The device-level
-        // ingress path strips the configured S1 prefix before MAC validation,
-        // so model that prefix explicitly here; using S1-S4 as H-tag values
-        // would produce a different (and invalid) wire format.
-        let mut datagram = vec![0u8; amnezia.init_packet_junk_size as usize];
-        datagram.extend_from_slice(&raw_datagram);
+        // Apply the configured S1 prefix and Header Protection exactly as
+        // the outbound path does, then decode it as the anonymous UDP ingress
+        // path does before MAC1 validation.
+        let mut wire_buffer = vec![0u8; MAX_UDP_SIZE];
+        wire_buffer[..raw_datagram.len()].copy_from_slice(&raw_datagram);
+        let datagram = amnezia
+            .prepend_outbound(obf, &mut wire_buffer, raw_datagram.len(), &mut OsRng)
+            .expect("reference S1 and Header Protection must fit")
+            .to_vec();
 
         let limiter = RateLimiter::new(&server_public, HANDSHAKE_RATE_LIMIT);
         let stripped = amnezia
-            .strip_inbound(obf, &datagram)
-            .expect("our own initiation must match our own shape");
+            .decrypt_inbound(obf, &datagram)
+            .expect("our own protected initiation must match its S1/H1 shape");
         let src = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 1));
         let mut scratch = vec![0u8; MAX_UDP_SIZE];
 
