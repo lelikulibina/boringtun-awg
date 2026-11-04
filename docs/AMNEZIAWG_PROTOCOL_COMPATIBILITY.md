@@ -138,6 +138,8 @@ Upstream 3.1 вычисляет размер как `Jmin + fastrandn(Jmax - Jmi
 
 В I1-I5 upstream вызывает `Obfuscate(buf, nil)`, то есть source buffer пустой. Поэтому `<d>` и `<ds>` добавляют 0 байт, а `<dz N>` записывает N байт нулевой длины.
 
+Публичная таблица описывает `<t>` как уникальный timestamp внутри sequence, но Go builder просто записывает `time.Now().Unix()` в 32-bit поле для каждого пакета. При отправке I-пакетов в пределах одной секунды значения могут совпасть; монотонного sequence counter в этом теге нет. BoringTun повторяет source semantics.
+
 **Лимиты и различия:**
 
 - Публичная документация указывает N ≤ 1000 для `r/rc/rd`, однако upstream Go tag builders в `v3.1.20260828` не обеспечивают этот предел и не отклоняют отрицательные значения. Отрицательные N могут привести к panic при следующей отправке handshake; см. [issue #189](https://github.com/amnezia-vpn/amneziawg-go/issues/189).
