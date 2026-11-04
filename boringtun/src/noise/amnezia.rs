@@ -37,11 +37,10 @@ const MAX_JUNK_PACKET_DELAY_MS: u16 = 200;
 /// front is not a parity break: nothing that *functions* on the kernel module
 /// is refused on size grounds here.
 ///
-/// That is a claim about size only. [`AmneziaConfig::validate`] refuses a
-/// configuration whose enabled under-load cookie replies would amplify; this
-/// guard is skipped when DisableCookies prevents those replies. The kernel
-/// accepts amplifying configurations, so the guard is a deliberate parity
-/// break when cookie replies are enabled. The argument for it is at the check.
+/// This is only a datagram-size bound. Cookie Reply size is not constrained
+/// relative to the triggering handshake: upstream amneziawg-go emits the
+/// configured S3 prefix verbatim, and this implementation follows that wire
+/// behavior.
 const MAX_SENDABLE_DATAGRAM: usize = 65535 - 20 - 8;
 const DNS_JUNK_SIZE_MIN: usize = 50;
 const DNS_JUNK_SIZE_MAX: usize = 200;
@@ -992,28 +991,10 @@ impl AmneziaConfig {
         }
     }
 
-    /// How many bytes a `cookie_len`-byte cookie reply will occupy on the wire,
-    /// S3 prefix included.
+    /// Return the wire size of a cookie reply after applying the configured S3 prefix.
     ///
-    /// Exists so the ingress path can decide whether the reply is an amplifier
-    /// *before* [`Self::prepend_outbound`] generates junk for it. With S3 near
-    /// its 65443-byte maximum, filling a prefix for a reply that policy then
-    /// refuses would itself be the flood — one forged 148-byte initiation per
-    /// 65 KB of keystream, which is a cheaper attack than the amplification it
-    /// was meant to prevent.
-    ///
-    /// Reads the prefix size through [`Self::outbound_junk_size`], the same
-    /// accessor `prepend_outbound` uses, so the prediction cannot drift from
-    /// the production by way of two spellings of one lookup. What it still has
-    /// to assume is the packet *kind*, which `prepend_outbound` derives from
-    /// the tag on the wire, so
-    /// [`tests::the_predicted_cookie_reply_length_is_the_one_actually_produced`]
-    /// pins the two together.
-    ///
-    /// Gated because the ingress path is the only caller: without `device` this
-    /// is dead code, and a crate built without the feature would carry a
-    /// `dead_code` warning for it. `test` is in the list so the test above still
-    /// runs on a default-feature `cargo test`.
+    /// Kept as a test helper so the S3 framing length is pinned to the same
+    /// accessor used by outbound packet construction.
     #[cfg(test)]
     pub(crate) fn cookie_reply_len(&self, cookie_len: usize) -> usize {
         cookie_len.saturating_add(self.outbound_junk_size(PacketKind::CookieReply))
