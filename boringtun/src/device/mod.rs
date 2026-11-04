@@ -1752,13 +1752,9 @@ mod ingress_tests {
         assert_eq!(request_len, 120 + HANDSHAKE_INIT_SZ);
         assert_eq!(reply_len, 110 + COOKIE_REPLY_SZ);
         assert_eq!(
-            reply_policy::cookie_verdict(
-                "203.0.113.5:40000".parse().unwrap(),
-                request_len,
-                reply_len
-            ),
+            reply_policy::cookie_verdict("203.0.113.5:40000".parse().unwrap()),
             reply_policy::CookieVerdict::Send,
-            "an attenuating cookie reply is WireGuard's DoS defence working"
+            "upstream cookie replies remain WireGuard's DoS defence"
         );
     }
 
