@@ -962,6 +962,13 @@ impl Tunn {
     fn validate_decapsulated_packet<'a>(&mut self, packet: &'a mut [u8]) -> TunnResult<'a> {
         let (computed_len, src_ip_address) = match packet.len() {
             0 => return TunnResult::Done, // This is keepalive, and not an error
+            _ if packet[0] == 0 => {
+                // AWG ContentPaddingAddition and RandomTrailers can turn an
+                // empty keepalive into an authenticated all-zero plaintext.
+                // Upstream treats zero-prefixed transport plaintext as a
+                // keepalive rather than attempting to parse it as an IP packet.
+                return TunnResult::Done;
+            }
             _ if packet[0] >> 4 == 4 && packet.len() >= IPV4_MIN_HEADER_SIZE => {
                 let len_bytes: [u8; IP_LEN_SZ] = packet[IPV4_LEN_OFF..IPV4_LEN_OFF + IP_LEN_SZ]
                     .try_into()
@@ -2226,6 +2233,30 @@ mod tests {
         assert_eq!(responder.timers.handshake_attempts, 0);
         assert_eq!(initiator.timers.max_handshake_attempts, 7);
         assert_eq!(responder.timers.max_handshake_attempts, 7);
+    }
+
+    #[test]
+    fn content_padding_addition_preserves_padded_keepalive_semantics() {
+        let config = AmneziaConfig::new(0, 0, 0, 0).with_content_padding_addition(10, 100);
+        let (mut sender, mut receiver) = create_two_tuns_and_handshake_with_amnezia(config);
+        let mut network = [0u8; 2048];
+        let mut tunnel = [0u8; 2048];
+
+        let keepalive = match sender.encapsulate(&[], &mut network) {
+            TunnResult::WriteToNetwork(packet) => packet.to_vec(),
+            other => panic!("expected padded keepalive, got {:?}", other),
+        };
+        assert!(
+            (DATA_OVERHEAD_SZ + 10..=DATA_OVERHEAD_SZ + 100).contains(&keepalive.len()),
+            "ContentPaddingAddition must also pad an empty transport keepalive"
+        );
+        assert!(
+            matches!(
+                receiver.decapsulate(None, &keepalive, &mut tunnel),
+                TunnResult::Done
+            ),
+            "an authenticated zero-prefixed keepalive must not be rejected as an invalid IP packet"
+        );
     }
 
     #[test]

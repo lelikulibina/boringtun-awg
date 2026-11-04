@@ -534,17 +534,18 @@ impl AmneziaConfig {
 
     /// Select a random ContentPaddingAddition value and clamp it to the
     /// remaining peer UDP window, matching upstream's randomPaddingAddition.
-    /// Empty keepalives and packets that already fill the window are not padded.
+    /// Empty keepalives are padded too; the receiver recognizes their zero
+    /// plaintext prefix and does not deliver them to the TUN device.
     pub(crate) fn content_padding_size(
         &self,
-        packet_size: usize,
+        _packet_size: usize,
         wire_packet_size: usize,
         udp_window: usize,
         rng: &mut impl RngCore,
     ) -> usize {
         let (min, max) = self.content_padding_addition;
         let available = udp_window.saturating_sub(wire_packet_size);
-        if (min == 0 && max == 0) || min > max || packet_size == 0 || available == 0 {
+        if (min == 0 && max == 0) || min > max || available == 0 {
             return 0;
         }
         let selected = loop {
@@ -2199,10 +2200,10 @@ mod tests {
             0,
             "a full UDP window leaves no room for padding"
         );
-        assert_eq!(
-            ranged.content_padding_size(0, 32, 500, &mut rng),
-            0,
-            "empty keepalives must not receive content padding"
+        let keepalive_padding = ranged.content_padding_size(0, 32, 500, &mut rng);
+        assert!(
+            (4..=12).contains(&keepalive_padding),
+            "upstream also applies ContentPaddingAddition to empty keepalives"
         );
     }
 
