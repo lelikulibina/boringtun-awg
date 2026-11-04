@@ -524,9 +524,9 @@ impl Tunn {
         if self.timers.is_initiator() && !self.timers.sent_last_minute_handshake {
             let refresh_threshold = self.timers.reject_after_time.saturating_sub(
                 Duration::from_secs(
-                    self.timers.range_min(3, KEEPALIVE_TIMEOUT.as_secs() as u32) as u64,
+                    self.timers.range_min(3, KEEPALIVE_TIMEOUT.as_secs() as u32) as u64
                 ) + Duration::from_secs(
-                    self.timers.range_min(1, REKEY_TIMEOUT.as_secs() as u32) as u64,
+                    self.timers.range_min(1, REKEY_TIMEOUT.as_secs() as u32) as u64
                 ),
             );
             let established = self.timers[TimeSessionEstablished];
@@ -777,7 +777,6 @@ impl Tunn {
                         tracing::debug!("HANDSHAKE(REKEY_AFTER_TIME (on send))");
                         handshake_initiation_required = true;
                     }
-
                 }
 
                 // If we have sent a packet to a given peer but have not received a
