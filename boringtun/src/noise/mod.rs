@@ -2354,7 +2354,7 @@ mod tests {
         };
 
         initiator.timer_tick(TimerName::TimeLastPacketReceived);
-        let last_authenticated_receive = initiator.timers[TimeLastPacketReceived];
+        let last_authenticated_receive = initiator.timers[TimerName::TimeLastPacketReceived];
         advance_past_pacing_gate(Duration::from_millis(2));
 
         assert!(matches!(
@@ -2362,11 +2362,11 @@ mod tests {
             TunnResult::Done
         ));
         assert_eq!(
-            initiator.timers[TimeLastPacketReceived], last_authenticated_receive,
+            initiator.timers[TimerName::TimeLastPacketReceived], last_authenticated_receive,
             "Cookie Reply updates cookie state but must not reset authenticated traversal timers"
         );
         assert!(
-            initiator.timers[TimeCookieReceived] > last_authenticated_receive,
+            initiator.timers[TimerName::TimeCookieReceived] > last_authenticated_receive,
             "the cookie expiry clock must still be updated"
         );
     }
