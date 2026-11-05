@@ -244,18 +244,21 @@ persistent_keepalive_secs = 1
 [[routing.rules]]
 priority = 10
 ingress = "wg-ingress"
+source = "10.77.0.2/32"
 destination = "195.142.0.0/16"
 egress = "awg-secondary"
 
 [[routing.rules]]
 priority = 20
 ingress = "wg-ingress"
+source = "10.77.0.2/32"
 destination = "79.100.22.0/24"
 egress = "awg-secondary"
 
 [[routing.rules]]
 priority = 100
 ingress = "wg-ingress"
+source = "10.77.0.2/32"
 destination = "0.0.0.0/0"
 egress = "awg-primary"
 nat = "masquerade"
@@ -263,12 +266,14 @@ nat = "masquerade"
 [[routing.rules]]
 priority = 30
 ingress = "wg-ingress"
+source = "fd77::2/128"
 destination = "2001:db8:195::/48"
 egress = "awg-secondary"
 
 [[routing.rules]]
 priority = 200
 ingress = "wg-ingress"
+source = "fd77::2/128"
 destination = "::/0"
 egress = "awg-primary"
 TOML
@@ -368,13 +373,13 @@ forward_chain="$(ip netns exec "$ROUTER_NS" nft list chain inet "btrouted_mu_rou
 nat_chain="$(ip netns exec "$ROUTER_NS" nft list chain inet "btrouted_mu_router_$SUFFIX" postrouting)"
 grep -Fq 'iifname @managed_interfaces drop' <<<"$forward_chain" || fail "managed ingress isolation drop is missing"
 grep -Fq 'oifname @managed_interfaces drop' <<<"$forward_chain" || fail "managed egress isolation drop is missing"
-grep -Fq 'iifname "wg-ingress" oifname "awg-primary" ct mark 0x80000000 ip daddr 0.0.0.0/0 masquerade return' <<<"$nat_chain" || fail "primary masquerade rule is missing"
+grep -Fq 'iifname "wg-ingress" oifname "awg-primary" ct mark 0x80000000 ip saddr 10.77.0.2/32 ip daddr 0.0.0.0/0 masquerade return' <<<"$nat_chain" || fail "primary masquerade rule is missing"
 
-grep -Fq 'iifname "wg-ingress" ip daddr 195.142.0.0/16 meta mark set 0x80000001 ct mark set meta mark return' <<<"$chain" || fail "secondary /16 classifier is missing"
-grep -Fq 'iifname "wg-ingress" ip daddr 79.100.22.0/24 meta mark set 0x80000001 ct mark set meta mark return' <<<"$chain" || fail "secondary /24 classifier is missing"
-grep -Fq 'iifname "wg-ingress" ip daddr 0.0.0.0/0 meta mark set 0x80000000 ct mark set meta mark return' <<<"$chain" || fail "primary default classifier is missing"
-grep -Fq 'iifname "wg-ingress" ip6 daddr 2001:db8:195::/48 meta mark set 0x80000001 ct mark set meta mark return' <<<"$chain" || fail "IPv6 secondary exception classifier is missing"
-grep -Fq 'iifname "wg-ingress" ip6 daddr ::/0 meta mark set 0x80000000 ct mark set meta mark return' <<<"$chain" || fail "IPv6 primary default classifier is missing"
+grep -Fq 'iifname "wg-ingress" ct state new ip saddr 10.77.0.2/32 ip daddr 195.142.0.0/16 meta mark set 0x80000001 ct mark set meta mark return' <<<"$chain" || fail "secondary /16 classifier is missing"
+grep -Fq 'iifname "wg-ingress" ct state new ip saddr 10.77.0.2/32 ip daddr 79.100.22.0/24 meta mark set 0x80000001 ct mark set meta mark return' <<<"$chain" || fail "secondary /24 classifier is missing"
+grep -Fq 'iifname "wg-ingress" ct state new ip saddr 10.77.0.2/32 ip daddr 0.0.0.0/0 meta mark set 0x80000000 ct mark set meta mark return' <<<"$chain" || fail "primary default classifier is missing"
+grep -Fq 'iifname "wg-ingress" ct state new ip6 saddr fd77::2/128 ip6 daddr 2001:db8:195::/48 meta mark set 0x80000001 ct mark set meta mark return' <<<"$chain" || fail "IPv6 secondary exception classifier is missing"
+grep -Fq 'iifname "wg-ingress" ct state new ip6 saddr fd77::2/128 ip6 daddr ::/0 meta mark set 0x80000000 ct mark set meta mark return' <<<"$chain" || fail "IPv6 primary default classifier is missing"
 
 ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -c 3 -W 2 10.77.0.1 \
     || fail "client could not establish the ingress WG tunnel"
