@@ -408,6 +408,9 @@ egress = "awg-primary"
         let mut config = sample_config();
         config.routing.rules[0].source = None;
         config.routing.rules[0].destination = None;
+        // Keep this test focused on the selector-free rule. Other rules on
+        // the same ingress legitimately contain destination selectors.
+        config.routing.rules.truncate(1);
         let script = RoutingPlan::from_config(&config).nft_script();
         assert!(script.contains(
             "prerouting iifname \"wg-server\" ct state new meta mark set 0x80000001 ct mark set meta mark return"
