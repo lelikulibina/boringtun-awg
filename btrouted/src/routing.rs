@@ -371,7 +371,7 @@ egress = "awg-primary"
         assert_eq!(plan.nft_rules[0].mark, 0x8000_0001);
         assert_eq!(plan.nft_rules[2].mark, 0x8000_0000);
         let script = plan.nft_script();
-        assert!(script.contains("ip daddr 195.142.0.0/16 meta mark set 0x80000001 return"));
+        assert!(script.contains("ip daddr 195.142.0.0/16 meta mark set 0x80000001 ct mark set meta mark return"));
         assert!(script.contains("iifname \"wg-server\""));
     }
 
