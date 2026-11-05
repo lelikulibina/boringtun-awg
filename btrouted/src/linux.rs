@@ -138,8 +138,7 @@ fn rule_has_owned_identity(line: &str, mark: u32, table: &str) -> bool {
     let Some((_, selector)) = line.split_once(':') else {
         return false;
     };
-    selector.trim()
-        == format!("from all fwmark 0x{mark:x} lookup {table} proto {ROUTING_PROTOCOL}")
+    selector.trim() == format!("from all fwmark 0x{mark:x} lookup {table} proto {ROUTING_PROTOCOL}")
 }
 
 fn route_has_owned_identity(line: &str, interface: &str) -> bool {
@@ -161,7 +160,11 @@ fn route_has_owned_identity(line: &str, interface: &str) -> bool {
     while index < fields.len() {
         match fields[index] {
             "scope" if fields.get(index + 1) == Some(&"link") => index += 2,
-            "metric" if fields.get(index + 1).is_some_and(|value| value.parse::<u32>().is_ok()) => {
+            "metric"
+                if fields
+                    .get(index + 1)
+                    .is_some_and(|value| value.parse::<u32>().is_ok()) =>
+            {
                 index += 2;
             }
             "pref"
