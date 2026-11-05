@@ -120,11 +120,11 @@ impl RoutingPlan {
             .join(", ");
 
         let mut output = format!(
-            "add table {} {} {{ comment \"managed by btrouted\"; }}\\n\
-             add set {} {} managed_interfaces {{ type ifname; elements = {{ {} }}; }}\\n\
-             add chain {} {} prerouting {{ type filter hook prerouting priority mangle; policy accept; }}\\n\
-             add chain {} {} forward {{ type filter hook forward priority filter; policy accept; }}\\n\
-             add chain {} {} postrouting {{ type nat hook postrouting priority srcnat; policy accept; }}\\n",
+            "add table {} {} {{ comment \"managed by btrouted\"; }}\n\
+             add set {} {} managed_interfaces {{ type ifname; elements = {{ {} }}; }}\n\
+             add chain {} {} prerouting {{ type filter hook prerouting priority mangle; policy accept; }}\n\
+             add chain {} {} forward {{ type filter hook forward priority filter; policy accept; }}\n\
+             add chain {} {} postrouting {{ type nat hook postrouting priority srcnat; policy accept; }}\n",
             self.nft_family, self.nft_table,
             self.nft_family, self.nft_table, interfaces,
             self.nft_family, self.nft_table,
@@ -136,8 +136,8 @@ impl RoutingPlan {
         // Original-direction packets restore the egress mark saved on the first
         // packet of the connection.
         output.push_str(&format!(
-            "add rule {} {} prerouting iifname @managed_interfaces ct state established,related ct direction reply meta mark set 0 return\\n\
-             add rule {} {} prerouting iifname @managed_interfaces ct state established,related ct direction original ct mark != 0 meta mark set ct mark return\\n",
+            "add rule {} {} prerouting iifname @managed_interfaces ct state established,related ct direction reply meta mark set 0 return\n\
+             add rule {} {} prerouting iifname @managed_interfaces ct state established,related ct direction original ct mark != 0 meta mark set ct mark return\n",
             self.nft_family, self.nft_table,
             self.nft_family, self.nft_table
         ));
@@ -150,30 +150,30 @@ impl RoutingPlan {
             }
             selectors.push_str(&format!("{} daddr {}", family, rule.destination));
             output.push_str(&format!(
-                "add rule {} {} prerouting {} meta mark set 0x{:x} ct mark set meta mark return\\n",
+                "add rule {} {} prerouting {} meta mark set 0x{:x} ct mark set meta mark return\n",
                 self.nft_family, self.nft_table, selectors, rule.mark
             ));
         }
 
         output.push_str(&format!(
-            "add rule {} {} forward iifname @managed_interfaces ct state invalid drop\\n",
+            "add rule {} {} forward iifname @managed_interfaces ct state invalid drop\n",
             self.nft_family, self.nft_table
         ));
         for rule in &self.nft_rules {
             output.push_str(&format!(
-                "add rule {} {} forward iifname \"{}\" oifname \"{}\" ct state new,established,related meta mark 0x{:x} accept\\n",
+                "add rule {} {} forward iifname \"{}\" oifname \"{}\" ct state new,established,related meta mark 0x{:x} accept\n",
                 self.nft_family, self.nft_table, rule.ingress, rule.egress, rule.mark
             ));
         }
         for rule in &self.nft_rules {
             output.push_str(&format!(
-                "add rule {} {} forward iifname \"{}\" oifname \"{}\" ct state established,related ct mark 0x{:x} accept\\n",
+                "add rule {} {} forward iifname \"{}\" oifname \"{}\" ct state established,related ct mark 0x{:x} accept\n",
                 self.nft_family, self.nft_table, rule.egress, rule.ingress, rule.mark
             ));
         }
         output.push_str(&format!(
-            "add rule {} {} forward iifname @managed_interfaces drop\\n\
-             add rule {} {} forward oifname @managed_interfaces drop\\n",
+            "add rule {} {} forward iifname @managed_interfaces drop\n\
+             add rule {} {} forward oifname @managed_interfaces drop\n",
             self.nft_family, self.nft_table,
             self.nft_family, self.nft_table
         ));
@@ -196,11 +196,11 @@ impl RoutingPlan {
             ));
             match rule.nat {
                 NatMode::None => output.push_str(&format!(
-                    "add rule {} {} postrouting {} return\\n",
+                    "add rule {} {} postrouting {} return\n",
                     self.nft_family, self.nft_table, selectors
                 )),
                 NatMode::Masquerade => output.push_str(&format!(
-                    "add rule {} {} postrouting {} masquerade return\\n",
+                    "add rule {} {} postrouting {} masquerade return\n",
                     self.nft_family, self.nft_table, selectors
                 )),
             }
