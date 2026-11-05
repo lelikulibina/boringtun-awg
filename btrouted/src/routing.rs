@@ -135,8 +135,10 @@ impl RoutingPlan {
         // Original-direction packets restore the egress mark saved on the first
         // packet of the connection.
         output.push_str(&format!(
-            "add rule {} {} prerouting iifname @managed_interfaces ct state established,related ct direction reply meta mark set 0 return\n\
-             add rule {} {} prerouting iifname @managed_interfaces ct state established,related ct direction original ct mark != 0 meta mark set ct mark return\n",
+            "add rule {} {} prerouting iifname @managed_interfaces ct state new meta mark set 0\\n\
+             add rule {} {} prerouting iifname @managed_interfaces ct state established,related ct direction reply meta mark set 0 return\\n\
+             add rule {} {} prerouting iifname @managed_interfaces ct state established,related ct direction original ct mark != 0 meta mark set ct mark return\\n",
+            self.nft_family, self.nft_table,
             self.nft_family, self.nft_table,
             self.nft_family, self.nft_table
         ));
@@ -322,8 +324,20 @@ egress = "awg-primary"
         assert!(script.contains("elements = { \"awg-primary\", \"awg-secondary\", \"wg-server\" }"));
         assert!(script.contains("forward iifname @managed_interfaces drop"));
         assert!(script.contains("forward oifname @managed_interfaces drop"));
+        assert!(script.contains("ct state new meta mark set 0"));
         assert!(script.contains("ct direction reply meta mark set 0"));
         assert!(script.contains("ct direction original ct mark != 0 meta mark set ct mark"));
+    }
+
+    #[test]
+    fn nft_masquerade_is_limited_to_the_selected_rule() {
+        let mut config = sample_config();
+        config.routing.rules[0].source = Some("10.0.0.0/24".to_owned());
+        config.routing.rules[0].nat = NatMode::Masquerade;
+        let script = RoutingPlan::from_config(&config).nft_script();
+        assert!(script.contains(
+            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark 0x80000001 ip saddr 10.0.0.0/24 ip daddr 195.142.0.0/16 masquerade return"
+        ));
     }
 
     #[test]
