@@ -451,3 +451,60 @@ pub fn configure_interface(name: &str, mtu: u16, addresses: &[String]) -> Result
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recognizes_only_exact_daemon_owned_ip_rules() {
+        assert!(rule_has_owned_identity(
+            "10000: from all fwmark 0x80000000 lookup 10000 proto 242",
+            0x8000_0000,
+            "10000"
+        ));
+        assert!(!rule_has_owned_identity(
+            "10000: from all fwmark 0x80000000 lookup 10000",
+            0x8000_0000,
+            "10000"
+        ));
+        assert!(!rule_has_owned_identity(
+            "10000: from all fwmark 0x80000001 lookup 10000 proto 242",
+            0x8000_0000,
+            "10000"
+        ));
+        assert!(!rule_has_owned_identity(
+            "10000: from all fwmark 0x80000000 lookup 10001 proto 242",
+            0x8000_0000,
+            "10000"
+        ));
+    }
+
+    #[test]
+    fn recognizes_owned_default_routes_and_kernel_metadata() {
+        assert!(route_has_owned_identity(
+            "default dev awg-primary proto 242",
+            "awg-primary"
+        ));
+        assert!(route_has_owned_identity(
+            "default dev awg-primary proto 242 metric 1024 pref medium",
+            "awg-primary"
+        ));
+        assert!(!route_has_owned_identity(
+            "default dev awg-primary",
+            "awg-primary"
+        ));
+        assert!(!route_has_owned_identity(
+            "default via 192.0.2.1 dev awg-primary proto 242",
+            "awg-primary"
+        ));
+        assert!(!route_has_owned_identity(
+            "default dev awg-secondary proto 242",
+            "awg-primary"
+        ));
+        assert!(!route_has_owned_identity(
+            "default dev awg-primary proto 242 mtu 1400",
+            "awg-primary"
+        ));
+    }
+}
