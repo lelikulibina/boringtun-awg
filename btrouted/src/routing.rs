@@ -6,7 +6,6 @@
 
 use crate::config::{Config, InterfaceRole, NatMode};
 use std::collections::BTreeMap;
-use std::net::IpAddr;
 
 const FIRST_ROUTING_TABLE: u32 = 10_000;
 const FIRST_IP_RULE_PRIORITY: u32 = 10_000;
