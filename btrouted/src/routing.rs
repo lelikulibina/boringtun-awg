@@ -142,12 +142,16 @@ impl RoutingPlan {
         // packet of the connection.
         output.push_str(&format!(
             "add rule {} {} prerouting iifname @managed_interfaces meta mark set 0\n\
-             add rule {} {} prerouting iifname @managed_interfaces ct state established,related ct direction reply meta mark set 0 return\n\
-             add rule {} {} prerouting iifname @managed_interfaces ct state established,related ct direction original ct mark != 0 meta mark set ct mark return\n",
-            self.nft_family, self.nft_table,
+             add rule {} {} prerouting iifname @managed_interfaces ct state established,related ct direction reply meta mark set 0 return\n",
             self.nft_family, self.nft_table,
             self.nft_family, self.nft_table
         ));
+        for egress in &self.egresses {
+            output.push_str(&format!(
+                "add rule {} {} prerouting iifname @managed_interfaces ct state established,related ct direction original ct mark 0x{:x} meta mark set ct mark return\n",
+                self.nft_family, self.nft_table, egress.mark
+            ));
+        }
 
         for rule in &self.nft_rules {
             let family = nft_family_match(&rule.destination);
@@ -338,7 +342,7 @@ egress = "awg-primary"
         assert!(script.contains("forward oifname @managed_interfaces drop"));
         assert!(script.contains("iifname @managed_interfaces meta mark set 0"));
         assert!(script.contains("ct direction reply meta mark set 0"));
-        assert!(script.contains("ct direction original ct mark != 0 meta mark set ct mark"));
+        assert!(script.contains("ct direction original ct mark 0x80000000 meta mark set ct mark"));
     }
 
     #[test]
