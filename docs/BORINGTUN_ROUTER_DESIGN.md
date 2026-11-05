@@ -172,12 +172,15 @@ Private keys и PSK в TOML удобны для первого релиза, н�
 - конфигурация без UAPI;
 - systemd unit, foreground mode, корректное завершение и очистка TUN.
 
-### Этап 3 — маршрутизация Linux
-- генерация nft batch для классификации forwarded traffic;
-- управление ip rule и routing tables;
-- защита от routing loop для UDP endpoints;
+### Этап 3 — маршрутизация Linux и изоляция
+- nft batch с fail-closed фильтрацией для всех управляемых TUN-интерфейсов;
+- классификация новых потоков по ingress/source/destination и выбор egress через packet mark;
+- conntrack mark для сохранения направления и безопасной обратной маршрутизации;
+- NAT none/masquerade на уровне routing rule в postrouting;
+- запрет неописанного транзита между интерфейсами, включая пиры одного интерфейса;
+- управление ip rule и routing tables, защита от routing loop для UDP endpoints;
 - rollback при частичной ошибке применения;
-- network namespace integration tests.
+- network namespace integration tests для разрешённого/запрещённого транзита, NAT и обратных потоков.
 
 ### Этап 4 — статистика и эксплуатация
 - peer/interface counters;
@@ -207,3 +210,4 @@ Private keys и PSK в TOML удобны для первого релиза, н�
 5. Счётчики по каждому peer корректно растут в обе стороны.
 6. Невалидный TOML или ошибка nft/ip не оставляют систему в частично настроенном состоянии.
 7. Тесты маршрутизации выполняются в изолированных network namespaces и не требуют изменения firewall хоста.
+8. Без routing rule связность между управляемыми интерфейсами отсутствует; NAT применяется только по выбранному правилу и выключен по умолчанию.
