@@ -35,6 +35,7 @@ pub struct NftRule {
 pub struct RoutingPlan {
     pub nft_family: String,
     pub nft_table: String,
+    pub managed_interfaces: Vec<String>,
     pub egresses: Vec<EgressPlan>,
     pub nft_rules: Vec<NftRule>,
     /// Socket marks that force outer encrypted UDP through the main table.
@@ -96,9 +97,13 @@ impl RoutingPlan {
             .collect();
         socket_marks.sort_unstable();
 
+        let mut managed_interfaces: Vec<_> = config.interfaces.iter().map(|interface| interface.name.clone()).collect();
+        managed_interfaces.sort();
+
         Self {
             nft_family: "inet".to_owned(),
             nft_table: config.daemon.nft_table.clone(),
+            managed_interfaces,
             egresses,
             nft_rules,
             socket_marks,
@@ -109,11 +114,8 @@ impl RoutingPlan {
     /// ingress/destination/egress rule; conntrack permits only their replies.
     /// Unmatched packets entering or leaving a managed TUN are dropped.
     pub fn nft_script(&self) -> String {
-        let interfaces = self.egresses.iter()
-            .map(|egress| format!("\"{}\"", egress.interface))
-            .chain(self.nft_rules.iter().map(|rule| format!("\"{}\"", rule.ingress)))
-            .collect::<std::collections::BTreeSet<_>>()
-            .into_iter()
+        let interfaces = self.managed_interfaces.iter()
+            .map(|interface| format!("\"{}\"", interface))
             .collect::<Vec<_>>()
             .join(", ");
 
@@ -134,8 +136,8 @@ impl RoutingPlan {
         // Original-direction packets restore the egress mark saved on the first
         // packet of the connection.
         output.push_str(&format!(
-            "add rule {} {} prerouting ct state established,related ct direction reply meta mark set 0 return\\n\
-             add rule {} {} prerouting ct state established,related ct direction original ct mark != 0 meta mark set ct mark return\\n",
+            "add rule {} {} prerouting iifname @managed_interfaces ct state established,related ct direction reply meta mark set 0 return\\n\
+             add rule {} {} prerouting iifname @managed_interfaces ct state established,related ct direction original ct mark != 0 meta mark set ct mark return\\n",
             self.nft_family, self.nft_table,
             self.nft_family, self.nft_table
         ));
@@ -154,7 +156,7 @@ impl RoutingPlan {
         }
 
         output.push_str(&format!(
-            "add rule {} {} forward ct state invalid drop\\n",
+            "add rule {} {} forward iifname @managed_interfaces ct state invalid drop\\n",
             self.nft_family, self.nft_table
         ));
         for rule in &self.nft_rules {
@@ -311,6 +313,27 @@ egress = "awg-primary"
 "#
         );
         Config::parse_toml(&toml).unwrap()
+    }
+
+
+    #[test]
+    fn nft_policy_drops_unmatched_managed_interface_transit() {
+        let plan = RoutingPlan::from_config(&sample_config());
+        let script = plan.nft_script();
+        assert!(script.contains("elements = { \"awg-primary\", \"awg-secondary\", \"wg-server\" }"));
+        assert!(script.contains("forward iifname @managed_interfaces drop"));
+        assert!(script.contains("forward oifname @managed_interfaces drop"));
+        assert!(script.contains("ct direction reply meta mark set 0"));
+        assert!(script.contains("ct direction original ct mark != 0 meta mark set ct mark"));
+    }
+
+    #[test]
+    fn nft_nat_is_rule_scoped_and_disabled_by_default() {
+        let plan = RoutingPlan::from_config(&sample_config());
+        let script = plan.nft_script();
+        assert!(script.contains("postrouting iifname \"wg-server\" oifname \"awg-secondary\""));
+        assert!(script.contains("postrouting iifname \"wg-server\" oifname \"awg-primary\""));
+        assert!(!script.contains(" masquerade "));
     }
 
     #[test]
