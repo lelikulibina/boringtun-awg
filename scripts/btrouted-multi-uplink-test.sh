@@ -320,7 +320,7 @@ public_key = "$ROUTER_SECONDARY_PUBLIC"
 allowed_ips = ["10.77.0.2/32", "fd77::2/128"]
 TOML
 
-for config in client router primary secondary; do
+for config in client second-client router primary secondary; do
     "$BIN" --config "$TMP/$config.toml" --check >/dev/null || fail "$config configuration validation failed"
 done
 
