@@ -133,7 +133,7 @@ nftables не должен переписывать чужие таблицы и
 
 Первый слой парсера находится в crate `btrouted`:
 - TOML десериализуется в типизированные структуры; неизвестные поля отклоняются;
-- до создания системных ресурсов проверяются имена интерфейсов, уникальность UDP-портов и socket fwmark, ключи Base64 (ровно 32 байта), CIDR, endpoint, MTU, роли ingress/egress и приоритеты правил;
+- до создания системных ресурсов проверяются имена интерфейсов, уникальность UDP-портов и socket fwmark, ключи Base64 (ровно 32 байта), CIDR, endpoint, MTU, роли ingress/egress, source/destination address family, NAT mode и приоритеты правил;
 - endpoint поддерживает IPv4, IPv6 в формате `[address]:port` и ASCII DNS-имена (включая IDN в punycode); TOML parsing проверяет имя и порт, но не выполняет DNS-запросы — разрешение имени относится к запуску/переподключению демона;
 - проверяются дубликаты peer names/public keys и одинаковые AllowedIPs, назначенные разным пирам одного интерфейса;
 - AWG H1-H4 проверяются на корректность uint32-диапазонов и взаимное пересечение; Jmin/Jmax должны задаваться парой;
@@ -147,8 +147,8 @@ nftables не должен переписывать чужие таблицы и
 - [[interfaces]]: имя, протокол/версия, роль, адреса TUN, MTU, listen port, private key, socket mark.
 - [[interfaces.peers]]: public key, PSK, endpoint, AllowedIPs, keepalive.
 - [interfaces.awg]: параметры конкретной версии AWG.
-- [[routing.rules]]: ingress, destination CIDR, egress, priority.
-- [routing]: nft table name, базовые настройки и политика управления forwarding/NAT.
+- [[routing.rules]]: ingress, optional source CIDR, destination CIDR, egress, priority и NAT mode (`none`/`masquerade`).
+- [routing]: nft table name, mark base и политика управления forwarding.
 
 Private keys и PSK в TOML удобны для первого релиза, но файл должен иметь права 0600. В будущем добавить *_file/secret provider, не печатать секреты в логах и поддержать атомарную ротацию.
 
@@ -188,7 +188,7 @@ Private keys и PSK в TOML удобны для первого релиза, н�
 ### Этап 5 — отказоустойчивость и расширения
 - health checks и handshake timeout;
 - приоритетные uplinks/failover;
-- per-source/per-peer policy, IPv6, selective NAT;
+- статический SNAT, расширенные per-source/per-peer selectors, дополнительные IPv6-политики;
 - rate limits, audit log, конфигурация секретов.
 
 ### Этап 6 — Telegram Bot API (отдалённый, необязательный приоритет)
