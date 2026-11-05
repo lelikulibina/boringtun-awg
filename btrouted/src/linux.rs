@@ -144,27 +144,37 @@ fn rule_has_owned_identity(line: &str, mark: u32, table: &str) -> bool {
 
 fn route_has_owned_identity(line: &str, interface: &str) -> bool {
     let fields: Vec<_> = line.split_whitespace().collect();
-    let base = ["default", "dev", interface, "proto", ROUTING_PROTOCOL];
-    if fields.len() == base.len() && fields == base {
-        return true;
+    if fields.len() < 5
+        || fields[0] != "default"
+        || fields[1] != "dev"
+        || fields[2] != interface
+        || fields[3] != "proto"
+        || fields[4] != ROUTING_PROTOCOL
+    {
+        return false;
     }
-    fields == [
-        "default",
-        "dev",
-        interface,
-        "proto",
-        ROUTING_PROTOCOL,
-        "scope",
-        "link",
-    ] || fields == [
-        "default",
-        "dev",
-        interface,
-        "scope",
-        "link",
-        "proto",
-        ROUTING_PROTOCOL,
-    ]
+
+    // iproute2 may display kernel-default IPv6 metric/preference attributes.
+    // Accept only those metadata fields; a gateway or other route mutation is
+    // not part of the daemon-owned default route identity.
+    let mut index = 5;
+    while index < fields.len() {
+        match fields[index] {
+            "scope" if fields.get(index + 1) == Some(&"link") => index += 2,
+            "metric" if fields.get(index + 1).is_some_and(|value| value.parse::<u32>().is_ok()) => {
+                index += 2;
+            }
+            "pref"
+                if fields
+                    .get(index + 1)
+                    .is_some_and(|value| matches!(*value, "low" | "medium" | "high")) =>
+            {
+                index += 2;
+            }
+            _ => return false,
+        }
+    }
+    true
 }
 
 fn ensure_policy_slots_available(plan: &RoutingPlan) -> Result<(), LinuxError> {
