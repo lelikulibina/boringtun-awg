@@ -1,0 +1,350 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+BIN="${BTRouted_BIN:-$ROOT/target/debug/btrouted}"
+SUFFIX="$$"
+CLIENT_NS="btr-mc-$SUFFIX"
+ROUTER_NS="btr-mr-$SUFFIX"
+PRIMARY_NS="btr-mp-$SUFFIX"
+SECONDARY_NS="btr-ms-$SUFFIX"
+CLIENT_VETH="mc$SUFFIX"
+ROUTER_CLIENT_VETH="rc$SUFFIX"
+ROUTER_PRIMARY_VETH="rp$SUFFIX"
+PRIMARY_VETH="pu$SUFFIX"
+ROUTER_SECONDARY_VETH="rs$SUFFIX"
+SECONDARY_VETH="su$SUFFIX"
+TMP="$(mktemp -d)"
+CLIENT_PID=""
+ROUTER_PID=""
+PRIMARY_PID=""
+SECONDARY_PID=""
+IPERF_PIDS=()
+
+cleanup() {
+    for pid in "${IPERF_PIDS[@]}" "$CLIENT_PID" "$ROUTER_PID" "$PRIMARY_PID" "$SECONDARY_PID"; do
+        if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+            kill -TERM "$pid" 2>/dev/null || true
+            wait "$pid" 2>/dev/null || true
+        fi
+    done
+    ip netns del "$CLIENT_NS" 2>/dev/null || true
+    ip netns del "$ROUTER_NS" 2>/dev/null || true
+    ip netns del "$PRIMARY_NS" 2>/dev/null || true
+    ip netns del "$SECONDARY_NS" 2>/dev/null || true
+    rm -rf "$TMP"
+}
+trap cleanup EXIT
+
+dump_namespace() {
+    local ns="$1"
+    echo "--- namespace $ns ---" >&2
+    ip -n "$ns" -details link show >&2 || true
+    ip -n "$ns" address show >&2 || true
+    ip -n "$ns" -4 rule show >&2 || true
+    ip -n "$ns" -4 route show table all >&2 || true
+    ip netns exec "$ns" nft -a list ruleset >&2 || true
+}
+
+fail() {
+    echo "btrouted multi-uplink test: $*" >&2
+    for ns in "$CLIENT_NS" "$ROUTER_NS" "$PRIMARY_NS" "$SECONDARY_NS"; do
+        if ip netns list | awk '{print $1}' | grep -Fxq "$ns"; then
+            dump_namespace "$ns"
+        fi
+    done
+    for log in "$TMP"/*.log; do
+        if [[ -f "$log" ]]; then
+            echo "--- $log ---" >&2
+            cat "$log" >&2
+        fi
+    done
+    exit 1
+}
+
+[[ $EUID -eq 0 ]] || fail "must run as root"
+[[ -x "$BIN" ]] || fail "btrouted binary not found at $BIN"
+[[ -c /dev/net/tun ]] || fail "/dev/net/tun is unavailable"
+for command in ip nft wg ping iperf3 python3; do
+    command -v "$command" >/dev/null || fail "$command is required"
+done
+
+CLIENT_PRIVATE="$(wg genkey)"
+CLIENT_PUBLIC="$(printf '%s' "$CLIENT_PRIVATE" | wg pubkey)"
+ROUTER_INGRESS_PRIVATE="$(wg genkey)"
+ROUTER_INGRESS_PUBLIC="$(printf '%s' "$ROUTER_INGRESS_PRIVATE" | wg pubkey)"
+ROUTER_PRIMARY_PRIVATE="$(wg genkey)"
+ROUTER_PRIMARY_PUBLIC="$(printf '%s' "$ROUTER_PRIMARY_PRIVATE" | wg pubkey)"
+PRIMARY_PRIVATE="$(wg genkey)"
+PRIMARY_PUBLIC="$(printf '%s' "$PRIMARY_PRIVATE" | wg pubkey)"
+ROUTER_SECONDARY_PRIVATE="$(wg genkey)"
+ROUTER_SECONDARY_PUBLIC="$(printf '%s' "$ROUTER_SECONDARY_PRIVATE" | wg pubkey)"
+SECONDARY_PRIVATE="$(wg genkey)"
+SECONDARY_PUBLIC="$(printf '%s' "$SECONDARY_PRIVATE" | wg pubkey)"
+
+for ns in "$CLIENT_NS" "$ROUTER_NS" "$PRIMARY_NS" "$SECONDARY_NS"; do
+    ip netns add "$ns"
+    ip -n "$ns" link set lo up
+    ip netns exec "$ns" sysctl -qw net.ipv4.conf.all.rp_filter=0
+    ip netns exec "$ns" sysctl -qw net.ipv4.conf.default.rp_filter=0
+done
+
+ip link add "$CLIENT_VETH" type veth peer name "$ROUTER_CLIENT_VETH"
+ip link set "$CLIENT_VETH" netns "$CLIENT_NS"
+ip link set "$ROUTER_CLIENT_VETH" netns "$ROUTER_NS"
+ip -n "$CLIENT_NS" address add 192.0.2.2/24 dev "$CLIENT_VETH"
+ip -n "$ROUTER_NS" address add 192.0.2.1/24 dev "$ROUTER_CLIENT_VETH"
+ip -n "$CLIENT_NS" link set "$CLIENT_VETH" up
+ip -n "$ROUTER_NS" link set "$ROUTER_CLIENT_VETH" up
+
+ip link add "$ROUTER_PRIMARY_VETH" type veth peer name "$PRIMARY_VETH"
+ip link set "$ROUTER_PRIMARY_VETH" netns "$ROUTER_NS"
+ip link set "$PRIMARY_VETH" netns "$PRIMARY_NS"
+ip -n "$ROUTER_NS" address add 198.18.1.1/30 dev "$ROUTER_PRIMARY_VETH"
+ip -n "$PRIMARY_NS" address add 198.18.1.2/30 dev "$PRIMARY_VETH"
+ip -n "$ROUTER_NS" link set "$ROUTER_PRIMARY_VETH" up
+ip -n "$PRIMARY_NS" link set "$PRIMARY_VETH" up
+
+ip link add "$ROUTER_SECONDARY_VETH" type veth peer name "$SECONDARY_VETH"
+ip link set "$ROUTER_SECONDARY_VETH" netns "$ROUTER_NS"
+ip link set "$SECONDARY_VETH" netns "$SECONDARY_NS"
+ip -n "$ROUTER_NS" address add 198.18.2.1/30 dev "$ROUTER_SECONDARY_VETH"
+ip -n "$SECONDARY_NS" address add 198.18.2.2/30 dev "$SECONDARY_VETH"
+ip -n "$ROUTER_NS" link set "$ROUTER_SECONDARY_VETH" up
+ip -n "$SECONDARY_NS" link set "$SECONDARY_VETH" up
+
+# The destination addresses exist only behind their intended uplink. A packet
+# sent through the wrong tunnel cannot succeed, so successful replies prove
+# the complete nftables -> fwmark -> policy route -> peer path.
+ip -n "$PRIMARY_NS" address add 203.0.113.1/32 dev lo
+ip -n "$SECONDARY_NS" address add 195.142.1.1/32 dev lo
+ip -n "$SECONDARY_NS" address add 79.100.22.1/32 dev lo
+
+cat >"$TMP/client.toml" <<TOML
+[daemon]
+log_level = "debug"
+stats_interval_secs = 1
+nft_table = "btrouted_mu_client_$SUFFIX"
+
+[[interfaces]]
+name = "wg-client"
+protocol = "wg"
+role = "client"
+addresses = ["10.77.0.2/24"]
+listen_port = 51876
+private_key = "$CLIENT_PRIVATE"
+socket_fwmark = 5004
+
+[[interfaces.peers]]
+name = "router"
+public_key = "$ROUTER_INGRESS_PUBLIC"
+endpoint = "192.0.2.1:51871"
+allowed_ips = ["0.0.0.0/0"]
+persistent_keepalive_secs = 1
+TOML
+
+cat >"$TMP/router.toml" <<TOML
+[daemon]
+log_level = "debug"
+stats_interval_secs = 1
+nft_table = "btrouted_mu_router_$SUFFIX"
+manage_ip_forwarding = true
+
+[[interfaces]]
+name = "wg-ingress"
+protocol = "wg"
+role = "server"
+addresses = ["10.77.0.1/24"]
+listen_port = 51871
+private_key = "$ROUTER_INGRESS_PRIVATE"
+socket_fwmark = 5001
+
+[[interfaces.peers]]
+name = "client"
+public_key = "$CLIENT_PUBLIC"
+allowed_ips = ["10.77.0.2/32"]
+
+[[interfaces]]
+name = "awg-primary"
+protocol = "awg3_1"
+role = "client"
+addresses = ["10.20.0.1/24"]
+listen_port = 51872
+private_key = "$ROUTER_PRIMARY_PRIVATE"
+socket_fwmark = 5002
+
+[[interfaces.peers]]
+name = "primary-server"
+public_key = "$PRIMARY_PUBLIC"
+endpoint = "198.18.1.2:51873"
+allowed_ips = ["0.0.0.0/0"]
+persistent_keepalive_secs = 1
+
+[[interfaces]]
+name = "awg-secondary"
+protocol = "awg2"
+role = "client"
+addresses = ["10.30.0.1/24"]
+listen_port = 51874
+private_key = "$ROUTER_SECONDARY_PRIVATE"
+socket_fwmark = 5003
+
+[[interfaces.peers]]
+name = "secondary-server"
+public_key = "$SECONDARY_PUBLIC"
+endpoint = "198.18.2.2:51875"
+allowed_ips = ["0.0.0.0/0"]
+persistent_keepalive_secs = 1
+
+[[routing.rules]]
+priority = 10
+ingress = "wg-ingress"
+destination = "195.142.0.0/16"
+egress = "awg-secondary"
+
+[[routing.rules]]
+priority = 20
+ingress = "wg-ingress"
+destination = "79.100.22.0/24"
+egress = "awg-secondary"
+
+[[routing.rules]]
+priority = 100
+ingress = "wg-ingress"
+destination = "0.0.0.0/0"
+egress = "awg-primary"
+TOML
+
+cat >"$TMP/primary.toml" <<TOML
+[daemon]
+log_level = "debug"
+stats_interval_secs = 1
+nft_table = "btrouted_mu_primary_$SUFFIX"
+
+[[interfaces]]
+name = "up-primary"
+protocol = "awg3_1"
+role = "server"
+addresses = ["10.20.0.2/24"]
+listen_port = 51873
+private_key = "$PRIMARY_PRIVATE"
+socket_fwmark = 6001
+
+[[interfaces.peers]]
+name = "router"
+public_key = "$ROUTER_PRIMARY_PUBLIC"
+allowed_ips = ["10.77.0.2/32"]
+TOML
+
+cat >"$TMP/secondary.toml" <<TOML
+[daemon]
+log_level = "debug"
+stats_interval_secs = 1
+nft_table = "btrouted_mu_secondary_$SUFFIX"
+
+[[interfaces]]
+name = "up-secondary"
+protocol = "awg2"
+role = "server"
+addresses = ["10.30.0.2/24"]
+listen_port = 51875
+private_key = "$SECONDARY_PRIVATE"
+socket_fwmark = 6002
+
+[[interfaces.peers]]
+name = "router"
+public_key = "$ROUTER_SECONDARY_PUBLIC"
+allowed_ips = ["10.77.0.2/32"]
+TOML
+
+for config in client router primary secondary; do
+    "$BIN" --config "$TMP/$config.toml" --check >/dev/null || fail "$config configuration validation failed"
+done
+
+ip -n "$PRIMARY_NS" route replace 10.77.0.2/32 dev up-primary
+ip -n "$SECONDARY_NS" route replace 10.77.0.2/32 dev up-secondary
+
+ip netns exec "$PRIMARY_NS" "$BIN" --config "$TMP/primary.toml" >"$TMP/primary.log" 2>&1 &
+PRIMARY_PID=$!
+ip netns exec "$SECONDARY_NS" "$BIN" --config "$TMP/secondary.toml" >"$TMP/secondary.log" 2>&1 &
+SECONDARY_PID=$!
+ip netns exec "$ROUTER_NS" "$BIN" --config "$TMP/router.toml" >"$TMP/router.log" 2>&1 &
+ROUTER_PID=$!
+ip netns exec "$CLIENT_NS" "$BIN" --config "$TMP/client.toml" >"$TMP/client.log" 2>&1 &
+CLIENT_PID=$!
+
+wait_interface() {
+    local ns="$1" iface="$2" pid="$3" table="$4"
+    for _ in $(seq 1 40); do
+        kill -0 "$pid" 2>/dev/null || fail "daemon for $iface exited during startup"
+        if ip -n "$ns" link show dev "$iface" >/dev/null 2>&1 \
+            && ip netns exec "$ns" nft list table inet "$table" >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 0.25
+    done
+    fail "interface or nftables table for $iface did not become ready"
+}
+wait_interface "$PRIMARY_NS" up-primary "$PRIMARY_PID" "btrouted_mu_primary_$SUFFIX"
+wait_interface "$SECONDARY_NS" up-secondary "$SECONDARY_PID" "btrouted_mu_secondary_$SUFFIX"
+wait_interface "$ROUTER_NS" wg-ingress "$ROUTER_PID" "btrouted_mu_router_$SUFFIX"
+wait_interface "$ROUTER_NS" awg-primary "$ROUTER_PID" "btrouted_mu_router_$SUFFIX"
+wait_interface "$ROUTER_NS" awg-secondary "$ROUTER_PID" "btrouted_mu_router_$SUFFIX"
+wait_interface "$CLIENT_NS" wg-client "$CLIENT_PID" "btrouted_mu_client_$SUFFIX"
+
+ip -n "$CLIENT_NS" route replace 203.0.113.1/32 dev wg-client
+ip -n "$CLIENT_NS" route replace 195.142.1.1/32 dev wg-client
+ip -n "$CLIENT_NS" route replace 79.100.22.1/32 dev wg-client
+
+# Assert the daemon installed the intended classifier and mark mapping.
+chain="$(ip netns exec "$ROUTER_NS" nft list chain inet "btrouted_mu_router_$SUFFIX" prerouting)"
+grep -Fq 'iifname "wg-ingress" ip daddr 195.142.0.0/16 meta mark set 0x80000001 return' <<<"$chain" || fail "secondary /16 classifier is missing"
+grep -Fq 'iifname "wg-ingress" ip daddr 79.100.22.0/24 meta mark set 0x80000001 return' <<<"$chain" || fail "secondary /24 classifier is missing"
+grep -Fq 'iifname "wg-ingress" ip daddr 0.0.0.0/0 meta mark set 0x80000000 return' <<<"$chain" || fail "primary default classifier is missing"
+
+ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -c 3 -W 2 10.77.0.1 \
+    || fail "client could not establish the ingress WG tunnel"
+
+# Each address is hosted only by its intended remote uplink server.
+ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -c 4 -W 2 203.0.113.1 \
+    || fail "default traffic did not traverse awg-primary"
+ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -c 4 -W 2 195.142.1.1 \
+    || fail "195.142.0.0/16 traffic did not traverse awg-secondary"
+ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -c 4 -W 2 79.100.22.1 \
+    || fail "79.100.22.0/24 traffic did not traverse awg-secondary"
+
+# Add TCP listeners behind each uplink and verify forward and reverse streams.
+ip netns exec "$PRIMARY_NS" iperf3 -s -B 203.0.113.1 -p 5201 >"$TMP/iperf-primary.log" 2>&1 &
+IPERF_PIDS+=("$!")
+ip netns exec "$SECONDARY_NS" iperf3 -s -B 195.142.1.1 -p 5202 >"$TMP/iperf-secondary-16.log" 2>&1 &
+IPERF_PIDS+=("$!")
+ip netns exec "$SECONDARY_NS" iperf3 -s -B 79.100.22.1 -p 5203 >"$TMP/iperf-secondary-24.log" 2>&1 &
+IPERF_PIDS+=("$!")
+sleep 1
+
+run_tcp() {
+    local label="$1" target="$2" port="$3"
+    for direction in forward reverse; do
+        local output="$TMP/$label-$direction.json"
+        local args=(-c "$target" -p "$port" -n 1M --json)
+        [[ "$direction" == reverse ]] && args+=(-R)
+        ip netns exec "$CLIENT_NS" iperf3 "${args[@]}" >"$output" \
+            || fail "$label $direction TCP stream failed"
+        python3 - "$output" "$label $direction" <<'PY'
+import json
+import sys
+with open(sys.argv[1], encoding="utf-8") as stream:
+    result = json.load(stream)
+received = result.get("end", {}).get("sum_received", {}).get("bytes", 0)
+if received < 500_000:
+    raise SystemExit(f"{sys.argv[2]} received only {received} TCP bytes")
+print(f"{sys.argv[2]}: received={received} bytes")
+PY
+    done
+}
+
+run_tcp primary-default 203.0.113.1 5201
+run_tcp secondary-16 195.142.1.1 5202
+run_tcp secondary-24 79.100.22.1 5203
+
+echo "btrouted multi-uplink test passed: default via awg-primary; 195.142.0.0/16 and 79.100.22.0/24 via awg-secondary; bidirectional ICMP/TCP"
