@@ -276,9 +276,7 @@ fn nft_family_match(prefix: &str) -> &'static str {
     }
 }
 
-fn rule_family_variants(
-    rule: &NftRule,
-) -> Vec<(Option<&'static str>, Vec<String>, Vec<String>)> {
+fn rule_family_variants(rule: &NftRule) -> Vec<(Option<&'static str>, Vec<String>, Vec<String>)> {
     let families = |prefixes: &Option<Vec<String>>| -> Vec<&'static str> {
         prefixes
             .as_ref()
@@ -289,18 +287,16 @@ fn rule_family_variants(
     };
     let source_families = families(&rule.source);
     let destination_families = families(&rule.destination);
-    let selected: Vec<&'static str> = match (
-        source_families.is_empty(),
-        destination_families.is_empty(),
-    ) {
-        (true, true) => return vec![(None, Vec::new(), Vec::new())],
-        (false, true) => source_families,
-        (true, false) => destination_families,
-        (false, false) => source_families
-            .into_iter()
-            .filter(|family| destination_families.contains(family))
-            .collect(),
-    };
+    let selected: Vec<&'static str> =
+        match (source_families.is_empty(), destination_families.is_empty()) {
+            (true, true) => return vec![(None, Vec::new(), Vec::new())],
+            (false, true) => source_families,
+            (true, false) => destination_families,
+            (false, false) => source_families
+                .into_iter()
+                .filter(|family| destination_families.contains(family))
+                .collect(),
+        };
 
     selected
         .into_iter()
@@ -426,10 +422,8 @@ egress = "awg-primary"
     #[test]
     fn nft_rule_supports_multiple_cidrs_for_both_selectors() {
         let mut config = sample_config();
-        config.routing.rules[0].source = Some(vec![
-            "10.0.0.0/24".to_owned(),
-            "10.1.0.0/24".to_owned(),
-        ]);
+        config.routing.rules[0].source =
+            Some(vec!["10.0.0.0/24".to_owned(), "10.1.0.0/24".to_owned()]);
         config.routing.rules[0].destination = Some(vec![
             "195.142.0.0/16".to_owned(),
             "79.100.22.0/24".to_owned(),
