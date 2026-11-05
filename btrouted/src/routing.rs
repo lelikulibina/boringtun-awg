@@ -181,8 +181,7 @@ impl RoutingPlan {
         output.push_str(&format!(
             "add rule {} {} forward iifname @managed_interfaces drop\n\
              add rule {} {} forward oifname @managed_interfaces drop\n",
-            self.nft_family, self.nft_table,
-            self.nft_family, self.nft_table
+            self.nft_family, self.nft_table, self.nft_family, self.nft_table
         ));
 
         // Evaluate NAT rules in the same priority order as routing rules. A
@@ -321,7 +320,6 @@ egress = "awg-primary"
         );
         Config::parse_toml(&toml).unwrap()
     }
-
 
     #[test]
     fn nft_policy_drops_unmatched_managed_interface_transit() {
