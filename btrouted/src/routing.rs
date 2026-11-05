@@ -24,7 +24,7 @@ pub struct NftRule {
     pub priority: u32,
     pub ingress: String,
     pub source: Option<Vec<String>>,
-    pub destination: Option<Vec<String>>, 
+    pub destination: Option<Vec<String>>,
     pub egress: String,
     pub mark: u32,
     pub nat: NatMode,
@@ -114,8 +114,9 @@ impl RoutingPlan {
     }
 
     /// Render a fail-closed transit policy. New flows require an explicit
-    /// ingress/egress rule and any configured IP selectors; conntrack permits only their replies.
-    /// Unmatched packets entering or leaving a managed TUN are dropped.
+    /// ingress/egress rule and any configured IP selectors; conntrack permits
+    /// only their replies. Unmatched packets entering or leaving a managed TUN
+    /// are dropped.
     pub fn nft_script(&self) -> String {
         let interfaces = self
             .managed_interfaces
@@ -266,34 +267,83 @@ impl RoutingPlan {
 }
 
 fn nft_family_match(prefix: &str) -> &'static str {
-    if prefix.contains(':') { "ip6" } else { "ip" }
+    if prefix.contains(':') {
+        "ip6"
+    } else {
+        "ip"
+    }
 }
 
-fn rule_family_variants(rule: &NftRule) -> Vec<(Option<&'static str>, Vec<String>, Vec<String>)> {
+fn rule_family_variants(
+    rule: &NftRule,
+) -> Vec<(Option<&'static str>, Vec<String>, Vec<String>)> {
     let families = |prefixes: &Option<Vec<String>>| -> Vec<&'static str> {
-        prefixes.as_ref().into_iter().flatten().map(|p| nft_family_match(p)).collect()
+        prefixes
+            .as_ref()
+            .into_iter()
+            .flatten()
+            .map(|prefix| nft_family_match(prefix))
+            .collect()
     };
     let source_families = families(&rule.source);
     let destination_families = families(&rule.destination);
-    let selected: Vec<&'static str> = match (source_families.is_empty(), destination_families.is_empty()) {
+    let selected: Vec<&'static str> = match (
+        source_families.is_empty(),
+        destination_families.is_empty(),
+    ) {
         (true, true) => return vec![(None, Vec::new(), Vec::new())],
         (false, true) => source_families,
         (true, false) => destination_families,
-        (false, false) => source_families.into_iter().filter(|f| destination_families.contains(f)).collect(),
+        (false, false) => source_families
+            .into_iter()
+            .filter(|family| destination_families.contains(family))
+            .collect(),
     };
-    selected.into_iter().collect::<std::collections::BTreeSet<_>>().into_iter().map(|family| {
-        let sources = rule.source.as_ref().into_iter().flatten().filter(|p| nft_family_match(p) == family).cloned().collect();
-        let destinations = rule.destination.as_ref().into_iter().flatten().filter(|p| nft_family_match(p) == family).cloned().collect();
-        (Some(family), sources, destinations)
-    }).collect()
+
+    selected
+        .into_iter()
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .map(|family| {
+            let sources = rule
+                .source
+                .as_ref()
+                .into_iter()
+                .flatten()
+                .filter(|prefix| nft_family_match(prefix) == family)
+                .cloned()
+                .collect();
+            let destinations = rule
+                .destination
+                .as_ref()
+                .into_iter()
+                .flatten()
+                .filter(|prefix| nft_family_match(prefix) == family)
+                .cloned()
+                .collect();
+            (Some(family), sources, destinations)
+        })
+        .collect()
 }
 
-fn append_cidr_selector(selectors: &mut String, family: &str, direction: &str, prefixes: &[String]) {
-    if prefixes.is_empty() { return; }
+fn append_cidr_selector(
+    selectors: &mut String,
+    family: &str,
+    direction: &str,
+    prefixes: &[String],
+) {
+    if prefixes.is_empty() {
+        return;
+    }
     if prefixes.len() == 1 {
         selectors.push_str(&format!(" {} {} {}", family, direction, prefixes[0]));
     } else {
-        selectors.push_str(&format!(" {} {} {{ {} }}", family, direction, prefixes.join(", ")));
+        selectors.push_str(&format!(
+            " {} {} {{ {} }}",
+            family,
+            direction,
+            prefixes.join(", ")
+        ));
     }
 }
 
