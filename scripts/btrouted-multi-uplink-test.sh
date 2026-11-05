@@ -65,7 +65,7 @@ fail() {
 [[ $EUID -eq 0 ]] || fail "must run as root"
 [[ -x "$BIN" ]] || fail "btrouted binary not found at $BIN"
 [[ -c /dev/net/tun ]] || fail "/dev/net/tun is unavailable"
-for command in ip nft wg ping iperf3 python3; do
+for command in ip nft wg ping iperf3 python3 tcpdump timeout; do
     command -v "$command" >/dev/null || fail "$command is required"
 done
 
@@ -348,4 +348,91 @@ run_tcp primary-default 203.0.113.1 5201
 run_tcp secondary-16 195.142.1.1 5202
 run_tcp secondary-24 79.100.22.1 5203
 
-echo "btrouted multi-uplink test passed: default via awg-primary; 195.142.0.0/16 and 79.100.22.0/24 via awg-secondary; bidirectional ICMP/TCP"
+run_udp() {
+    local label="$1" target="$2" port="$3"
+    for direction in forward reverse; do
+        local output="$TMP/$label-$direction-udp.json"
+        local args=(-c "$target" -p "$port" -u -b 1M -t 2 -l 1200 --json)
+        [[ "$direction" == reverse ]] && args+=(-R)
+        ip netns exec "$CLIENT_NS" iperf3 "${args[@]}" >"$output" \
+            || fail "$label $direction UDP stream failed"
+        python3 - "$output" "$label $direction" <<'PY'
+import json
+import sys
+with open(sys.argv[1], encoding="utf-8") as stream:
+    result = json.load(stream)
+received = result.get("end", {}).get("sum_received", {})
+byte_count = received.get("bytes", 0)
+loss = received.get("lost_percent", 0.0)
+if byte_count < 100_000:
+    raise SystemExit(f"{sys.argv[2]} received only {byte_count} UDP bytes")
+if loss > 5.0:
+    raise SystemExit(f"{sys.argv[2]} UDP loss too high: {loss:.2f}%")
+print(f"{sys.argv[2]} UDP: received={byte_count} bytes, loss={loss:.2f}%")
+PY
+    done
+}
+
+run_udp primary-default 203.0.113.1 5201
+run_udp secondary-16 195.142.1.1 5202
+run_udp secondary-24 79.100.22.1 5203
+
+# Encrypted outer UDP must use each underlay veth and must never appear on
+# either AWG TUN. Keepalives and the traffic above keep the sockets active.
+ip netns exec "$ROUTER_NS" timeout 5 tcpdump -nn -i "$ROUTER_PRIMARY_VETH" -c 1 \
+    'udp and dst host 198.18.1.2 and dst port 51873' >"$TMP/primary-underlay.log" 2>&1 \
+    || fail "primary encrypted UDP was not observed on its underlay"
+ip netns exec "$ROUTER_NS" timeout 5 tcpdump -nn -i "$ROUTER_SECONDARY_VETH" -c 1 \
+    'udp and dst host 198.18.2.2 and dst port 51875' >"$TMP/secondary-underlay.log" 2>&1 \
+    || fail "secondary encrypted UDP was not observed on its underlay"
+
+set +e
+ip netns exec "$ROUTER_NS" timeout 3 tcpdump -nn -i awg-primary -c 1 \
+    'udp and dst host 198.18.1.2 and dst port 51873' >"$TMP/primary-tun-outer-udp.log" 2>&1
+primary_tun_status=$?
+ip netns exec "$ROUTER_NS" timeout 3 tcpdump -nn -i awg-secondary -c 1 \
+    'udp and dst host 198.18.2.2 and dst port 51875' >"$TMP/secondary-tun-outer-udp.log" 2>&1
+secondary_tun_status=$?
+set -e
+[[ "$primary_tun_status" -eq 124 ]] || fail "primary outer encrypted UDP leaked into awg-primary (tcpdump status $primary_tun_status)"
+[[ "$secondary_tun_status" -eq 124 ]] || fail "secondary outer encrypted UDP leaked into awg-secondary (tcpdump status $secondary_tun_status)"
+
+# Restart each remote uplink server independently. The router's persistent
+# keepalive must force a fresh handshake and restore traffic without restarting
+# the router or client.
+kill -TERM "$PRIMARY_PID" || fail "could not stop primary uplink server"
+wait "$PRIMARY_PID" || fail "primary uplink server failed during shutdown"
+PRIMARY_PID=""
+ip netns exec "$PRIMARY_NS" "$BIN" --config "$TMP/primary.toml" >"$TMP/primary-restarted.log" 2>&1 &
+PRIMARY_PID=$!
+wait_interface "$PRIMARY_NS" up-primary "$PRIMARY_PID" "btrouted_mu_primary_$SUFFIX"
+ip -n "$PRIMARY_NS" route replace 10.77.0.2/32 dev up-primary
+primary_recovered=0
+for _ in $(seq 1 40); do
+    if ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -c 1 -W 1 203.0.113.1 >/dev/null 2>&1; then
+        primary_recovered=1
+        break
+    fi
+    sleep 0.25
+done
+[[ "$primary_recovered" -eq 1 ]] || fail "primary uplink did not recover traffic after remote daemon restart"
+
+kill -TERM "$SECONDARY_PID" || fail "could not stop secondary uplink server"
+wait "$SECONDARY_PID" || fail "secondary uplink server failed during shutdown"
+SECONDARY_PID=""
+ip netns exec "$SECONDARY_NS" "$BIN" --config "$TMP/secondary.toml" >"$TMP/secondary-restarted.log" 2>&1 &
+SECONDARY_PID=$!
+wait_interface "$SECONDARY_NS" up-secondary "$SECONDARY_PID" "btrouted_mu_secondary_$SUFFIX"
+ip -n "$SECONDARY_NS" route replace 10.77.0.2/32 dev up-secondary
+secondary_recovered=0
+for _ in $(seq 1 40); do
+    if ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -c 1 -W 1 195.142.1.1 >/dev/null 2>&1 \
+        && ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -c 1 -W 1 79.100.22.1 >/dev/null 2>&1; then
+        secondary_recovered=1
+        break
+    fi
+    sleep 0.25
+done
+[[ "$secondary_recovered" -eq 1 ]] || fail "secondary uplink did not recover both exception routes after remote daemon restart"
+
+echo "btrouted multi-uplink test passed: static default/exceptions, bidirectional ICMP/TCP/UDP, outer UDP underlay isolation, independent uplink handshake recovery"
