@@ -250,6 +250,8 @@ pub fn apply_policy_routing(plan: &RoutingPlan) -> Result<(), LinuxError> {
                 format!("0x{:x}", mark),
                 "lookup".into(),
                 "main".into(),
+                "protocol".into(),
+                ROUTING_PROTOCOL.into(),
             ];
             let _ = run("ip", &args);
             let args = vec![
@@ -262,6 +264,8 @@ pub fn apply_policy_routing(plan: &RoutingPlan) -> Result<(), LinuxError> {
                 format!("0x{:x}", mark),
                 "lookup".into(),
                 "main".into(),
+                "protocol".into(),
+                ROUTING_PROTOCOL.into(),
             ];
             if let Err(error) = run("ip", &args) {
                 remove_policy_routing(plan);
