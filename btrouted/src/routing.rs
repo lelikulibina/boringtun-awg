@@ -96,7 +96,11 @@ impl RoutingPlan {
             .collect();
         socket_marks.sort_unstable();
 
-        let mut managed_interfaces: Vec<_> = config.interfaces.iter().map(|interface| interface.name.clone()).collect();
+        let mut managed_interfaces: Vec<_> = config
+            .interfaces
+            .iter()
+            .map(|interface| interface.name.clone())
+            .collect();
         managed_interfaces.sort();
 
         Self {
@@ -113,7 +117,9 @@ impl RoutingPlan {
     /// ingress/destination/egress rule; conntrack permits only their replies.
     /// Unmatched packets entering or leaving a managed TUN are dropped.
     pub fn nft_script(&self) -> String {
-        let interfaces = self.managed_interfaces.iter()
+        let interfaces = self
+            .managed_interfaces
+            .iter()
             .map(|interface| format!("\"{}\"", interface))
             .collect::<Vec<_>>()
             .join(", ");
@@ -371,7 +377,9 @@ egress = "awg-primary"
         assert_eq!(plan.nft_rules[0].mark, 0x8000_0001);
         assert_eq!(plan.nft_rules[2].mark, 0x8000_0000);
         let script = plan.nft_script();
-        assert!(script.contains("ip daddr 195.142.0.0/16 meta mark set 0x80000001 ct mark set meta mark return"));
+        assert!(script.contains(
+            "ip daddr 195.142.0.0/16 meta mark set 0x80000001 ct mark set meta mark return"
+        ));
         assert!(script.contains("iifname \"wg-server\""));
     }
 
