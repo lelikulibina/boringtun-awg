@@ -92,6 +92,15 @@ pub enum InterfaceRole {
     Client,
 }
 
+/// Source NAT is a property of a selected routing rule, not of an interface.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum NatMode {
+    #[default]
+    None,
+    Masquerade,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct InterfaceConfig {
@@ -186,8 +195,12 @@ fn default_routing_mark_base() -> u32 {
 pub struct RoutingRule {
     pub priority: u32,
     pub ingress: String,
+    #[serde(default)]
+    pub source: Option<String>,
     pub destination: String,
     pub egress: String,
+    #[serde(default)]
+    pub nat: NatMode,
 }
 
 impl Config {
@@ -429,7 +442,13 @@ impl Config {
                     rule.egress
                 ));
             }
-            parse_prefix(&rule.destination, "routing.rules.destination")?;
+            let destination = parse_prefix(&rule.destination, "routing.rules.destination")?;
+            if let Some(source) = &rule.source {
+                let source = parse_prefix(source, "routing.rules.source")?;
+                if source.addr.is_ipv4() != destination.addr.is_ipv4() {
+                    return invalid("routing.rules.source and destination must use the same address family");
+                }
+            }
         }
 
         Ok(())
