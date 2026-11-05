@@ -209,7 +209,7 @@ impl RoutingPlan {
                         self.nft_family, self.nft_table, selectors
                     )),
                     NatMode::Masquerade => output.push_str(&format!(
-                        "add rule {} {} postrouting {} masquerade return\n",
+                        "add rule {} {} postrouting {} masquerade\n",
                         self.nft_family, self.nft_table, selectors
                     )),
                 }
@@ -475,8 +475,9 @@ egress = "awg-primary"
         config.routing.rules[0].nat = NatMode::Masquerade;
         let script = RoutingPlan::from_config(&config).nft_script();
         assert!(script.contains(
-            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark 0x80000001 ip saddr 10.0.0.0/24 ip daddr 195.142.0.0/16 masquerade return"
+            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark 0x80000001 ip saddr 10.0.0.0/24 ip daddr 195.142.0.0/16 masquerade"
         ));
+        assert!(!script.contains("masquerade return"));
     }
 
     #[test]
