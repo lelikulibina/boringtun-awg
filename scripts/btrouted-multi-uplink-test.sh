@@ -261,9 +261,6 @@ for config in client router primary secondary; do
     "$BIN" --config "$TMP/$config.toml" --check >/dev/null || fail "$config configuration validation failed"
 done
 
-ip -n "$PRIMARY_NS" route replace 10.77.0.2/32 dev up-primary
-ip -n "$SECONDARY_NS" route replace 10.77.0.2/32 dev up-secondary
-
 ip netns exec "$PRIMARY_NS" "$BIN" --config "$TMP/primary.toml" >"$TMP/primary.log" 2>&1 &
 PRIMARY_PID=$!
 ip netns exec "$SECONDARY_NS" "$BIN" --config "$TMP/secondary.toml" >"$TMP/secondary.log" 2>&1 &
@@ -291,6 +288,10 @@ wait_interface "$ROUTER_NS" wg-ingress "$ROUTER_PID" "btrouted_mu_router_$SUFFIX
 wait_interface "$ROUTER_NS" awg-primary "$ROUTER_PID" "btrouted_mu_router_$SUFFIX"
 wait_interface "$ROUTER_NS" awg-secondary "$ROUTER_PID" "btrouted_mu_router_$SUFFIX"
 wait_interface "$CLIENT_NS" wg-client "$CLIENT_PID" "btrouted_mu_client_$SUFFIX"
+
+# Install the return routes only after the daemon has created the remote TUNs.
+ip -n "$PRIMARY_NS" route replace 10.77.0.2/32 dev up-primary
+ip -n "$SECONDARY_NS" route replace 10.77.0.2/32 dev up-secondary
 
 ip -n "$CLIENT_NS" route replace 203.0.113.1/32 dev wg-client
 ip -n "$CLIENT_NS" route replace 195.142.1.1/32 dev wg-client
