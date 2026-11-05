@@ -263,6 +263,14 @@ impl RoutingPlan {
     }
 }
 
+fn nft_family_match(prefix: &str) -> &'static str {
+    if prefix.contains(':') {
+        "ip6"
+    } else {
+        "ip"
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
