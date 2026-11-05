@@ -373,7 +373,7 @@ forward_chain="$(ip netns exec "$ROUTER_NS" nft list chain inet "btrouted_mu_rou
 nat_chain="$(ip netns exec "$ROUTER_NS" nft list chain inet "btrouted_mu_router_$SUFFIX" postrouting)"
 grep -Fq 'iifname @managed_interfaces drop' <<<"$forward_chain" || fail "managed ingress isolation drop is missing"
 grep -Fq 'oifname @managed_interfaces drop' <<<"$forward_chain" || fail "managed egress isolation drop is missing"
-grep -Fq 'iifname "wg-ingress" oifname "awg-primary" ct mark 0x80000000 ip saddr 10.77.0.2/32 ip daddr 0.0.0.0/0 masquerade' <<<"$nat_chain" || fail "primary masquerade rule is missing"
+grep -Fq 'iifname "wg-ingress" oifname "awg-primary" ct mark 0x80000000 ip saddr 10.77.0.2 ip daddr 0.0.0.0/0 masquerade' <<<"$nat_chain" || fail "primary masquerade rule is missing"
 
 grep -Fq 'iifname "wg-ingress" ct state new ip saddr 10.77.0.2/32 ip daddr 195.142.0.0/16 meta mark set 0x80000001 ct mark set meta mark return' <<<"$chain" || fail "secondary /16 classifier is missing"
 grep -Fq 'iifname "wg-ingress" ct state new ip saddr 10.77.0.2/32 ip daddr 79.100.22.0/24 meta mark set 0x80000001 ct mark set meta mark return' <<<"$chain" || fail "secondary /24 classifier is missing"
