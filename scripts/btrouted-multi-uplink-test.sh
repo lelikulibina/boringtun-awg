@@ -89,7 +89,7 @@ ROUTER_SECONDARY_PUBLIC="$(printf '%s' "$ROUTER_SECONDARY_PRIVATE" | wg pubkey)"
 SECONDARY_PRIVATE="$(wg genkey)"
 SECONDARY_PUBLIC="$(printf '%s' "$SECONDARY_PRIVATE" | wg pubkey)"
 
-for ns in "$CLIENT_NS" "$ROUTER_NS" "$PRIMARY_NS" "$SECONDARY_NS"; do
+for ns in "$CLIENT_NS" "$SECOND_CLIENT_NS" "$ROUTER_NS" "$PRIMARY_NS" "$SECONDARY_NS"; do
     ip netns add "$ns"
     ip -n "$ns" link set lo up
     ip netns exec "$ns" sysctl -qw net.ipv4.conf.all.rp_filter=0
