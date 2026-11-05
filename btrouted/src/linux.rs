@@ -135,17 +135,36 @@ pub fn remove_nft(plan: &RoutingPlan) {
 }
 
 fn rule_has_owned_identity(line: &str, mark: u32, table: &str) -> bool {
+    let Some((_, selector)) = line.split_once(':') else {
+        return false;
+    };
+    selector.trim()
+        == format!("from all fwmark 0x{mark:x} lookup {table} proto {ROUTING_PROTOCOL}")
+}
+
+fn route_has_owned_identity(line: &str, interface: &str) -> bool {
     let fields: Vec<_> = line.split_whitespace().collect();
-    let has_mark = fields
-        .windows(2)
-        .any(|pair| pair[0] == "fwmark" && pair[1] == format!("0x{mark:x}"));
-    let has_table = fields
-        .windows(2)
-        .any(|pair| pair[0] == "lookup" && pair[1] == table);
-    let has_protocol = fields
-        .windows(2)
-        .any(|pair| pair[0] == "proto" && pair[1] == ROUTING_PROTOCOL);
-    has_mark && has_table && has_protocol
+    let base = ["default", "dev", interface, "proto", ROUTING_PROTOCOL];
+    if fields.len() == base.len() && fields == base {
+        return true;
+    }
+    fields == [
+        "default",
+        "dev",
+        interface,
+        "proto",
+        ROUTING_PROTOCOL,
+        "scope",
+        "link",
+    ] || fields == [
+        "default",
+        "dev",
+        interface,
+        "scope",
+        "link",
+        "proto",
+        ROUTING_PROTOCOL,
+    ]
 }
 
 fn ensure_policy_slots_available(plan: &RoutingPlan) -> Result<(), LinuxError> {
@@ -218,12 +237,7 @@ fn ensure_policy_slots_available(plan: &RoutingPlan) -> Result<(), LinuxError> {
                 });
             }
             for line in String::from_utf8_lossy(&routes.stdout).lines() {
-                let owned_route = line.starts_with(&format!("default dev {}", egress.interface))
-                    && line
-                        .split_whitespace()
-                        .collect::<Vec<_>>()
-                        .windows(2)
-                        .any(|fields| fields[0] == "proto" && fields[1] == ROUTING_PROTOCOL);
+                let owned_route = route_has_owned_identity(line, &egress.interface);
                 if !owned_route {
                     return Err(LinuxError::Conflict {
                         resource: format!("IPv{family} route table {}", egress.table_id),
