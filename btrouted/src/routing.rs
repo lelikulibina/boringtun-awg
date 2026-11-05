@@ -438,6 +438,26 @@ egress = "awg-primary"
     }
 
     #[test]
+    fn nft_rule_generates_separate_ipv4_and_ipv6_selector_variants() {
+        let mut config = sample_config();
+        config.routing.rules[0].source = Some(vec![
+            "10.0.0.0/24".to_owned(),
+            "2001:db8:10::/48".to_owned(),
+        ]);
+        config.routing.rules[0].destination = Some(vec![
+            "195.142.0.0/16".to_owned(),
+            "2001:db8:20::/48".to_owned(),
+        ]);
+
+        let script = RoutingPlan::from_config(&config).nft_script();
+
+        assert!(script.contains("ip saddr 10.0.0.0/24 ip daddr 195.142.0.0/16"));
+        assert!(script.contains("ip6 saddr 2001:db8:10::/48 ip6 daddr 2001:db8:20::/48"));
+        assert!(!script.contains("ip saddr 10.0.0.0/24 ip6 daddr"));
+        assert!(!script.contains("ip6 saddr 2001:db8:10::/48 ip daddr"));
+    }
+
+    #[test]
     fn nft_policy_drops_unmatched_managed_interface_transit() {
         let plan = RoutingPlan::from_config(&sample_config());
         let script = plan.nft_script();
@@ -485,9 +505,18 @@ egress = "awg-primary"
     #[test]
     fn nft_rules_preserve_explicit_priority_and_mark_selection() {
         let plan = RoutingPlan::from_config(&sample_config());
-        assert_eq!(plan.nft_rules[0].destination, "195.142.0.0/16");
-        assert_eq!(plan.nft_rules[1].destination, "79.100.22.0/24");
-        assert_eq!(plan.nft_rules[2].destination, "0.0.0.0/0");
+        assert_eq!(
+            plan.nft_rules[0].destination.as_deref(),
+            Some(&["195.142.0.0/16".to_owned()][..])
+        );
+        assert_eq!(
+            plan.nft_rules[1].destination.as_deref(),
+            Some(&["79.100.22.0/24".to_owned()][..])
+        );
+        assert_eq!(
+            plan.nft_rules[2].destination.as_deref(),
+            Some(&["0.0.0.0/0".to_owned()][..])
+        );
         assert_eq!(plan.nft_rules[0].mark, 0x8000_0001);
         assert_eq!(plan.nft_rules[2].mark, 0x8000_0000);
         let script = plan.nft_script();
