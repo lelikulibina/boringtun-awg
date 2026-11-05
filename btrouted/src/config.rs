@@ -490,13 +490,11 @@ impl Config {
                 })
                 .transpose()?;
 
-            if let (Some(sources), Some(destinations)) =
-                (&source_prefixes, &destination_prefixes)
-            {
+            if let (Some(sources), Some(destinations)) = (&source_prefixes, &destination_prefixes) {
                 let has_common_family = sources.iter().any(|source| {
-                    destinations.iter().any(|destination| {
-                        source.addr.is_ipv4() == destination.addr.is_ipv4()
-                    })
+                    destinations
+                        .iter()
+                        .any(|destination| source.addr.is_ipv4() == destination.addr.is_ipv4())
                 });
                 if !has_common_family {
                     return invalid(
@@ -835,7 +833,9 @@ egress = "awg-uplink"
             "source = \"2001:db8::/32\"\ndestination = \"0.0.0.0/0\"",
         );
         let error = Config::parse_toml(&input).unwrap_err();
-        assert!(error.to_string().contains("share at least one address family"));
+        assert!(error
+            .to_string()
+            .contains("share at least one address family"));
     }
 
     #[test]
@@ -858,7 +858,10 @@ egress = "awg-uplink"
         );
         let config = Config::parse_toml(&input).unwrap();
         assert_eq!(config.routing.rules[0].source.as_ref().unwrap().len(), 2);
-        assert_eq!(config.routing.rules[0].destination.as_ref().unwrap().len(), 2);
+        assert_eq!(
+            config.routing.rules[0].destination.as_ref().unwrap().len(),
+            2
+        );
     }
 
     #[test]
