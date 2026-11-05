@@ -759,6 +759,28 @@ egress = "awg-uplink"
     }
 
     #[test]
+    fn routing_rule_nat_defaults_to_none_and_supports_source_selector() {
+        let input = valid_config().replace(
+            "destination = \"0.0.0.0/0\"",
+            "source = \"10.10.0.0/24\"\ndestination = \"0.0.0.0/0\"\nnat = \"masquerade\"",
+        );
+        let config = Config::parse_toml(&input).unwrap();
+        assert_eq!(config.routing.rules[0].source.as_deref(), Some("10.10.0.0/24"));
+        assert_eq!(config.routing.rules[0].nat, NatMode::Masquerade);
+        assert_eq!(config.routing.rules[1].nat, NatMode::None);
+    }
+
+    #[test]
+    fn rejects_source_and_destination_address_family_mismatch() {
+        let input = valid_config().replace(
+            "destination = \"0.0.0.0/0\"",
+            "source = \"2001:db8::/32\"\ndestination = \"0.0.0.0/0\"",
+        );
+        let error = Config::parse_toml(&input).unwrap_err();
+        assert!(error.to_string().contains("same address family"));
+    }
+
+    #[test]
     fn parses_and_validates_a_complete_multi_tunnel_config() {
         let config = Config::parse_toml(&valid_config()).unwrap();
         assert_eq!(config.interfaces.len(), 2);
