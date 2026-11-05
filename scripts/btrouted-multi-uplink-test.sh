@@ -117,8 +117,10 @@ ip -n "$SECONDARY_NS" link set "$SECONDARY_VETH" up
 # sent through the wrong tunnel cannot succeed, so successful replies prove
 # the complete nftables -> fwmark -> policy route -> peer path.
 ip -n "$PRIMARY_NS" address add 203.0.113.1/32 dev lo
+ip -n "$PRIMARY_NS" -6 address add 2001:db8:1::1/128 dev lo
 ip -n "$SECONDARY_NS" address add 195.142.1.1/32 dev lo
 ip -n "$SECONDARY_NS" address add 79.100.22.1/32 dev lo
+ip -n "$SECONDARY_NS" -6 address add 2001:db8:195:1::1/128 dev lo
 
 cat >"$TMP/client.toml" <<TOML
 [daemon]
@@ -130,7 +132,7 @@ nft_table = "btrouted_mu_client_$SUFFIX"
 name = "wg-client"
 protocol = "wg"
 role = "client"
-addresses = ["10.77.0.2/24"]
+addresses = ["10.77.0.2/24", "fd77::2/64"]
 listen_port = 51876
 private_key = "$CLIENT_PRIVATE"
 socket_fwmark = 5004
@@ -139,7 +141,7 @@ socket_fwmark = 5004
 name = "router"
 public_key = "$ROUTER_INGRESS_PUBLIC"
 endpoint = "192.0.2.1:51871"
-allowed_ips = ["0.0.0.0/0"]
+allowed_ips = ["0.0.0.0/0", "::/0"]
 persistent_keepalive_secs = 1
 TOML
 
@@ -154,7 +156,7 @@ manage_ip_forwarding = true
 name = "wg-ingress"
 protocol = "wg"
 role = "server"
-addresses = ["10.77.0.1/24"]
+addresses = ["10.77.0.1/24", "fd77::1/64"]
 listen_port = 51871
 private_key = "$ROUTER_INGRESS_PRIVATE"
 socket_fwmark = 5001
@@ -162,13 +164,13 @@ socket_fwmark = 5001
 [[interfaces.peers]]
 name = "client"
 public_key = "$CLIENT_PUBLIC"
-allowed_ips = ["10.77.0.2/32"]
+allowed_ips = ["10.77.0.2/32", "fd77::2/128"]
 
 [[interfaces]]
 name = "awg-primary"
 protocol = "awg3_1"
 role = "client"
-addresses = ["10.20.0.1/24"]
+addresses = ["10.20.0.1/24", "fd20::1/64"]
 listen_port = 51872
 private_key = "$ROUTER_PRIMARY_PRIVATE"
 socket_fwmark = 5002
@@ -177,14 +179,14 @@ socket_fwmark = 5002
 name = "primary-server"
 public_key = "$PRIMARY_PUBLIC"
 endpoint = "198.18.1.2:51873"
-allowed_ips = ["0.0.0.0/0"]
+allowed_ips = ["0.0.0.0/0", "::/0"]
 persistent_keepalive_secs = 1
 
 [[interfaces]]
 name = "awg-secondary"
 protocol = "awg2"
 role = "client"
-addresses = ["10.30.0.1/24"]
+addresses = ["10.30.0.1/24", "fd30::1/64"]
 listen_port = 51874
 private_key = "$ROUTER_SECONDARY_PRIVATE"
 socket_fwmark = 5003
@@ -193,7 +195,7 @@ socket_fwmark = 5003
 name = "secondary-server"
 public_key = "$SECONDARY_PUBLIC"
 endpoint = "198.18.2.2:51875"
-allowed_ips = ["0.0.0.0/0"]
+allowed_ips = ["0.0.0.0/0", "::/0"]
 persistent_keepalive_secs = 1
 
 [[routing.rules]]
@@ -213,6 +215,18 @@ priority = 100
 ingress = "wg-ingress"
 destination = "0.0.0.0/0"
 egress = "awg-primary"
+
+[[routing.rules]]
+priority = 30
+ingress = "wg-ingress"
+destination = "2001:db8:195::/48"
+egress = "awg-secondary"
+
+[[routing.rules]]
+priority = 200
+ingress = "wg-ingress"
+destination = "::/0"
+egress = "awg-primary"
 TOML
 
 cat >"$TMP/primary.toml" <<TOML
@@ -225,7 +239,7 @@ nft_table = "btrouted_mu_primary_$SUFFIX"
 name = "up-primary"
 protocol = "awg3_1"
 role = "server"
-addresses = ["10.20.0.2/24"]
+addresses = ["10.20.0.2/24", "fd20::2/64"]
 listen_port = 51873
 private_key = "$PRIMARY_PRIVATE"
 socket_fwmark = 6001
@@ -233,7 +247,7 @@ socket_fwmark = 6001
 [[interfaces.peers]]
 name = "router"
 public_key = "$ROUTER_PRIMARY_PUBLIC"
-allowed_ips = ["10.77.0.2/32"]
+allowed_ips = ["10.77.0.2/32", "fd77::2/128"]
 TOML
 
 cat >"$TMP/secondary.toml" <<TOML
@@ -246,7 +260,7 @@ nft_table = "btrouted_mu_secondary_$SUFFIX"
 name = "up-secondary"
 protocol = "awg2"
 role = "server"
-addresses = ["10.30.0.2/24"]
+addresses = ["10.30.0.2/24", "fd30::2/64"]
 listen_port = 51875
 private_key = "$SECONDARY_PRIVATE"
 socket_fwmark = 6002
@@ -254,7 +268,7 @@ socket_fwmark = 6002
 [[interfaces.peers]]
 name = "router"
 public_key = "$ROUTER_SECONDARY_PUBLIC"
-allowed_ips = ["10.77.0.2/32"]
+allowed_ips = ["10.77.0.2/32", "fd77::2/128"]
 TOML
 
 for config in client router primary secondary; do
@@ -291,17 +305,23 @@ wait_interface "$CLIENT_NS" wg-client "$CLIENT_PID" "btrouted_mu_client_$SUFFIX"
 
 # Install the return routes only after the daemon has created the remote TUNs.
 ip -n "$PRIMARY_NS" route replace 10.77.0.2/32 dev up-primary
+ip -n "$PRIMARY_NS" -6 route replace fd77::2/128 dev up-primary
 ip -n "$SECONDARY_NS" route replace 10.77.0.2/32 dev up-secondary
+ip -n "$SECONDARY_NS" -6 route replace fd77::2/128 dev up-secondary
 
 ip -n "$CLIENT_NS" route replace 203.0.113.1/32 dev wg-client
 ip -n "$CLIENT_NS" route replace 195.142.1.1/32 dev wg-client
 ip -n "$CLIENT_NS" route replace 79.100.22.1/32 dev wg-client
+ip -n "$CLIENT_NS" -6 route replace 2001:db8:1::1/128 dev wg-client
+ip -n "$CLIENT_NS" -6 route replace 2001:db8:195:1::1/128 dev wg-client
 
 # Assert the daemon installed the intended classifier and mark mapping.
 chain="$(ip netns exec "$ROUTER_NS" nft list chain inet "btrouted_mu_router_$SUFFIX" prerouting)"
 grep -Fq 'iifname "wg-ingress" ip daddr 195.142.0.0/16 meta mark set 0x80000001 return' <<<"$chain" || fail "secondary /16 classifier is missing"
 grep -Fq 'iifname "wg-ingress" ip daddr 79.100.22.0/24 meta mark set 0x80000001 return' <<<"$chain" || fail "secondary /24 classifier is missing"
 grep -Fq 'iifname "wg-ingress" ip daddr 0.0.0.0/0 meta mark set 0x80000000 return' <<<"$chain" || fail "primary default classifier is missing"
+grep -Fq 'iifname "wg-ingress" ip6 daddr 2001:db8:195::/48 meta mark set 0x80000001 return' <<<"$chain" || fail "IPv6 secondary exception classifier is missing"
+grep -Fq 'iifname "wg-ingress" ip6 daddr ::/0 meta mark set 0x80000000 return' <<<"$chain" || fail "IPv6 primary default classifier is missing"
 
 ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -c 3 -W 2 10.77.0.1 \
     || fail "client could not establish the ingress WG tunnel"
@@ -313,6 +333,10 @@ ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -c 4 -W 2 195.142.1.1 \
     || fail "195.142.0.0/16 traffic did not traverse awg-secondary"
 ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -c 4 -W 2 79.100.22.1 \
     || fail "79.100.22.0/24 traffic did not traverse awg-secondary"
+ip netns exec "$CLIENT_NS" ping -6 -n -I fd77::2 -c 4 -W 2 2001:db8:1::1 \
+    || fail "IPv6 default traffic did not traverse awg-primary"
+ip netns exec "$CLIENT_NS" ping -6 -n -I fd77::2 -c 4 -W 2 2001:db8:195:1::1 \
+    || fail "IPv6 exception traffic did not traverse awg-secondary"
 
 # Add TCP listeners behind each uplink and verify forward and reverse streams.
 ip netns exec "$PRIMARY_NS" iperf3 -s -B 203.0.113.1 -p 5201 >"$TMP/iperf-primary.log" 2>&1 &
@@ -320,6 +344,10 @@ IPERF_PIDS+=("$!")
 ip netns exec "$SECONDARY_NS" iperf3 -s -B 195.142.1.1 -p 5202 >"$TMP/iperf-secondary-16.log" 2>&1 &
 IPERF_PIDS+=("$!")
 ip netns exec "$SECONDARY_NS" iperf3 -s -B 79.100.22.1 -p 5203 >"$TMP/iperf-secondary-24.log" 2>&1 &
+IPERF_PIDS+=("$!")
+ip netns exec "$PRIMARY_NS" iperf3 -s -6 -B 2001:db8:1::1 -p 5204 >"$TMP/iperf-primary-v6.log" 2>&1 &
+IPERF_PIDS+=("$!")
+ip netns exec "$SECONDARY_NS" iperf3 -s -6 -B 2001:db8:195:1::1 -p 5205 >"$TMP/iperf-secondary-v6.log" 2>&1 &
 IPERF_PIDS+=("$!")
 sleep 1
 
@@ -347,6 +375,8 @@ PY
 run_tcp primary-default 203.0.113.1 5201
 run_tcp secondary-16 195.142.1.1 5202
 run_tcp secondary-24 79.100.22.1 5203
+run_tcp primary-v6 2001:db8:1::1 5204
+run_tcp secondary-v6 2001:db8:195:1::1 5205
 
 run_udp() {
     local label="$1" target="$2" port="$3"
@@ -376,6 +406,8 @@ PY
 run_udp primary-default 203.0.113.1 5201
 run_udp secondary-16 195.142.1.1 5202
 run_udp secondary-24 79.100.22.1 5203
+run_udp primary-v6 2001:db8:1::1 5204
+run_udp secondary-v6 2001:db8:195:1::1 5205
 
 # Encrypted outer UDP must use each underlay veth and must never appear on
 # either AWG TUN. Keepalives and the traffic above keep the sockets active.
@@ -407,9 +439,11 @@ ip netns exec "$PRIMARY_NS" "$BIN" --config "$TMP/primary.toml" >"$TMP/primary-r
 PRIMARY_PID=$!
 wait_interface "$PRIMARY_NS" up-primary "$PRIMARY_PID" "btrouted_mu_primary_$SUFFIX"
 ip -n "$PRIMARY_NS" route replace 10.77.0.2/32 dev up-primary
+ip -n "$PRIMARY_NS" -6 route replace fd77::2/128 dev up-primary
 primary_recovered=0
 for _ in $(seq 1 40); do
-    if ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -c 1 -W 1 203.0.113.1 >/dev/null 2>&1; then
+    if ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -c 1 -W 1 203.0.113.1 >/dev/null 2>&1 \
+        && ip netns exec "$CLIENT_NS" ping -6 -I fd77::2 -c 1 -W 1 2001:db8:1::1 >/dev/null 2>&1; then
         primary_recovered=1
         break
     fi
@@ -424,10 +458,12 @@ ip netns exec "$SECONDARY_NS" "$BIN" --config "$TMP/secondary.toml" >"$TMP/secon
 SECONDARY_PID=$!
 wait_interface "$SECONDARY_NS" up-secondary "$SECONDARY_PID" "btrouted_mu_secondary_$SUFFIX"
 ip -n "$SECONDARY_NS" route replace 10.77.0.2/32 dev up-secondary
+ip -n "$SECONDARY_NS" -6 route replace fd77::2/128 dev up-secondary
 secondary_recovered=0
 for _ in $(seq 1 40); do
     if ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -c 1 -W 1 195.142.1.1 >/dev/null 2>&1 \
-        && ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -c 1 -W 1 79.100.22.1 >/dev/null 2>&1; then
+        && ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -c 1 -W 1 79.100.22.1 >/dev/null 2>&1 \
+        && ip netns exec "$CLIENT_NS" ping -6 -I fd77::2 -c 1 -W 1 2001:db8:195:1::1 >/dev/null 2>&1; then
         secondary_recovered=1
         break
     fi
@@ -435,4 +471,4 @@ for _ in $(seq 1 40); do
 done
 [[ "$secondary_recovered" -eq 1 ]] || fail "secondary uplink did not recover both exception routes after remote daemon restart"
 
-echo "btrouted multi-uplink test passed: static default/exceptions, bidirectional ICMP/TCP/UDP, outer UDP underlay isolation, independent uplink handshake recovery"
+echo "btrouted multi-uplink test passed: IPv4/IPv6 static default/exceptions, bidirectional ICMP/TCP/UDP, outer UDP underlay isolation, independent uplink handshake recovery"
