@@ -94,5 +94,7 @@ egress = "awg-secondary"
 [[routing.rules]]
 priority = 100
 ingress = "wg-server"
+source = "10.10.0.0/24"
 destination = "0.0.0.0/0"
 egress = "awg-primary"
+nat = "masquerade"
