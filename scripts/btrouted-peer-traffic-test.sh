@@ -154,12 +154,30 @@ done
 ip -n "$SERVER_NS" link show dev wg-peer-test >/dev/null 2>&1 || fail "server TUN did not appear"
 ip -n "$CLIENT_NS" link show dev wg-peer-test >/dev/null 2>&1 || fail "client TUN did not appear"
 
+# TUN creation happens before policy routing and nftables installation. Wait
+# for the daemon's externally observable routing state instead of racing the
+# short interval between interface creation and Runtime::start completion.
+socket_route=""
+inner_route=""
+routing_ready=0
+for _ in $(seq 1 40); do
+    socket_route="$(ip -n "$CLIENT_NS" route get 192.0.2.1 mark 5002 2>&1 || true)"
+    inner_route="$(ip -n "$CLIENT_NS" route get 192.0.2.1 mark 0x80000000 2>&1 || true)"
+    if grep -q "dev $CLIENT_VETH" <<<"$socket_route" \
+        && grep -q "dev wg-peer-test" <<<"$inner_route" \
+        && ip netns exec "$CLIENT_NS" nft list table inet "btrouted_peer_cli_$SUFFIX" >/dev/null 2>&1 \
+        && ip netns exec "$SERVER_NS" nft list table inet "btrouted_peer_srv_$SUFFIX" >/dev/null 2>&1; then
+        routing_ready=1
+        break
+    fi
+    sleep 0.25
+done
+[[ "$routing_ready" -eq 1 ]] || fail "daemon routing setup did not become ready (socket: $socket_route; inner: $inner_route)"
+
 # Outer encrypted UDP sockets must use the main underlay route, while packets
 # carrying the inner-routing mark must use the TUN egress table. This catches
 # accidental mark overlap and the most common tunnel-loop regression.
-socket_route="$(ip -n "$CLIENT_NS" route get 192.0.2.1 mark 5002)"
 grep -q "dev $CLIENT_VETH" <<<"$socket_route" || fail "outer UDP socket mark escaped the underlay route: $socket_route"
-inner_route="$(ip -n "$CLIENT_NS" route get 192.0.2.1 mark 0x80000000)"
 grep -q "dev wg-peer-test" <<<"$inner_route" || fail "inner routing mark did not select the TUN egress: $inner_route"
 
 # A successful ping requires an authenticated handshake and real encrypted
