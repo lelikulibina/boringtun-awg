@@ -5,10 +5,13 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BIN="${BTRouted_BIN:-$ROOT/target/debug/btrouted}"
 SUFFIX="$$"
 CLIENT_NS="btr-mc-$SUFFIX"
+SECOND_CLIENT_NS="btr-mc2-$SUFFIX"
 ROUTER_NS="btr-mr-$SUFFIX"
 PRIMARY_NS="btr-mp-$SUFFIX"
 SECONDARY_NS="btr-ms-$SUFFIX"
 CLIENT_VETH="mc$SUFFIX"
+SECOND_CLIENT_VETH="m2c$SUFFIX"
+ROUTER_SECOND_CLIENT_VETH="r2c$SUFFIX"
 ROUTER_CLIENT_VETH="rc$SUFFIX"
 ROUTER_PRIMARY_VETH="rp$SUFFIX"
 PRIMARY_VETH="pu$SUFFIX"
@@ -16,19 +19,21 @@ ROUTER_SECONDARY_VETH="rs$SUFFIX"
 SECONDARY_VETH="su$SUFFIX"
 TMP="$(mktemp -d)"
 CLIENT_PID=""
+SECOND_CLIENT_PID=""
 ROUTER_PID=""
 PRIMARY_PID=""
 SECONDARY_PID=""
 IPERF_PIDS=()
 
 cleanup() {
-    for pid in "${IPERF_PIDS[@]}" "$CLIENT_PID" "$ROUTER_PID" "$PRIMARY_PID" "$SECONDARY_PID"; do
+    for pid in "${IPERF_PIDS[@]}" "$CLIENT_PID" "$SECOND_CLIENT_PID" "$ROUTER_PID" "$PRIMARY_PID" "$SECONDARY_PID"; do
         if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
             kill -TERM "$pid" 2>/dev/null || true
             wait "$pid" 2>/dev/null || true
         fi
     done
     ip netns del "$CLIENT_NS" 2>/dev/null || true
+    ip netns del "$SECOND_CLIENT_NS" 2>/dev/null || true
     ip netns del "$ROUTER_NS" 2>/dev/null || true
     ip netns del "$PRIMARY_NS" 2>/dev/null || true
     ip netns del "$SECONDARY_NS" 2>/dev/null || true
@@ -48,7 +53,7 @@ dump_namespace() {
 
 fail() {
     echo "btrouted multi-uplink test: $*" >&2
-    for ns in "$CLIENT_NS" "$ROUTER_NS" "$PRIMARY_NS" "$SECONDARY_NS"; do
+    for ns in "$CLIENT_NS" "$SECOND_CLIENT_NS" "$ROUTER_NS" "$PRIMARY_NS" "$SECONDARY_NS"; do
         if ip netns list | awk '{print $1}' | grep -Fxq "$ns"; then
             dump_namespace "$ns"
         fi
@@ -71,6 +76,8 @@ done
 
 CLIENT_PRIVATE="$(wg genkey)"
 CLIENT_PUBLIC="$(printf '%s' "$CLIENT_PRIVATE" | wg pubkey)"
+SECOND_CLIENT_PRIVATE="$(wg genkey)"
+SECOND_CLIENT_PUBLIC="$(printf '%s' "$SECOND_CLIENT_PRIVATE" | wg pubkey)"
 ROUTER_INGRESS_PRIVATE="$(wg genkey)"
 ROUTER_INGRESS_PUBLIC="$(printf '%s' "$ROUTER_INGRESS_PRIVATE" | wg pubkey)"
 ROUTER_PRIMARY_PRIVATE="$(wg genkey)"
@@ -96,6 +103,14 @@ ip -n "$CLIENT_NS" address add 192.0.2.2/24 dev "$CLIENT_VETH"
 ip -n "$ROUTER_NS" address add 192.0.2.1/24 dev "$ROUTER_CLIENT_VETH"
 ip -n "$CLIENT_NS" link set "$CLIENT_VETH" up
 ip -n "$ROUTER_NS" link set "$ROUTER_CLIENT_VETH" up
+
+ip link add "$SECOND_CLIENT_VETH" type veth peer name "$ROUTER_SECOND_CLIENT_VETH"
+ip link set "$SECOND_CLIENT_VETH" netns "$SECOND_CLIENT_NS"
+ip link set "$ROUTER_SECOND_CLIENT_VETH" netns "$ROUTER_NS"
+ip -n "$SECOND_CLIENT_NS" address add 192.0.3.2/24 dev "$SECOND_CLIENT_VETH"
+ip -n "$ROUTER_NS" address add 192.0.3.1/24 dev "$ROUTER_SECOND_CLIENT_VETH"
+ip -n "$SECOND_CLIENT_NS" link set "$SECOND_CLIENT_VETH" up
+ip -n "$ROUTER_NS" link set "$ROUTER_SECOND_CLIENT_VETH" up
 
 ip link add "$ROUTER_PRIMARY_VETH" type veth peer name "$PRIMARY_VETH"
 ip link set "$ROUTER_PRIMARY_VETH" netns "$ROUTER_NS"
@@ -145,6 +160,29 @@ allowed_ips = ["0.0.0.0/0", "::/0"]
 persistent_keepalive_secs = 1
 TOML
 
+cat >"$TMP/second-client.toml" <<TOML
+[daemon]
+log_level = "debug"
+stats_interval_secs = 1
+nft_table = "btrouted_mu_client2_$SUFFIX"
+
+[[interfaces]]
+name = "wg-client-2"
+protocol = "wg"
+role = "client"
+addresses = ["10.77.0.3/24", "fd77::3/64"]
+listen_port = 51877
+private_key = "$SECOND_CLIENT_PRIVATE"
+socket_fwmark = 5005
+
+[[interfaces.peers]]
+name = "router"
+public_key = "$ROUTER_INGRESS_PUBLIC"
+endpoint = "192.0.3.1:51871"
+allowed_ips = ["10.77.0.0/24", "fd77::/64"]
+persistent_keepalive_secs = 1
+TOML
+
 cat >"$TMP/router.toml" <<TOML
 [daemon]
 log_level = "debug"
@@ -165,6 +203,11 @@ socket_fwmark = 5001
 name = "client"
 public_key = "$CLIENT_PUBLIC"
 allowed_ips = ["10.77.0.2/32", "fd77::2/128"]
+
+[[interfaces.peers]]
+name = "client-2"
+public_key = "$SECOND_CLIENT_PUBLIC"
+allowed_ips = ["10.77.0.3/32", "fd77::3/128"]
 
 [[interfaces]]
 name = "awg-primary"
@@ -284,6 +327,8 @@ ip netns exec "$ROUTER_NS" "$BIN" --config "$TMP/router.toml" >"$TMP/router.log"
 ROUTER_PID=$!
 ip netns exec "$CLIENT_NS" "$BIN" --config "$TMP/client.toml" >"$TMP/client.log" 2>&1 &
 CLIENT_PID=$!
+ip netns exec "$SECOND_CLIENT_NS" "$BIN" --config "$TMP/second-client.toml" >"$TMP/second-client.log" 2>&1 &
+SECOND_CLIENT_PID=$!
 
 wait_interface() {
     local ns="$1" iface="$2" pid="$3" table="$4"
@@ -303,6 +348,7 @@ wait_interface "$ROUTER_NS" wg-ingress "$ROUTER_PID" "btrouted_mu_router_$SUFFIX
 wait_interface "$ROUTER_NS" awg-primary "$ROUTER_PID" "btrouted_mu_router_$SUFFIX"
 wait_interface "$ROUTER_NS" awg-secondary "$ROUTER_PID" "btrouted_mu_router_$SUFFIX"
 wait_interface "$CLIENT_NS" wg-client "$CLIENT_PID" "btrouted_mu_client_$SUFFIX"
+wait_interface "$SECOND_CLIENT_NS" wg-client-2 "$SECOND_CLIENT_PID" "btrouted_mu_client2_$SUFFIX"
 
 # Install the return routes only after the daemon has created the remote TUNs.
 ip -n "$PRIMARY_NS" route replace 10.77.0.2/32 dev up-primary
@@ -332,6 +378,15 @@ grep -Fq 'iifname "wg-ingress" ip6 daddr ::/0 meta mark set 0x80000000 ct mark s
 
 ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -c 3 -W 2 10.77.0.1 \
     || fail "client could not establish the ingress WG tunnel"
+
+ip netns exec "$SECOND_CLIENT_NS" ping -n -I 10.77.0.3 -c 3 -W 2 10.77.0.1 \
+    || fail "second client could not establish the ingress WG tunnel"
+
+# Peers on the same WG server are isolated from one another. The kernel has
+# a connected route back through the same TUN, but there is no explicit rule.
+if ip netns exec "$SECOND_CLIENT_NS" ping -n -I 10.77.0.3 -c 2 -W 1 10.77.0.2 >/dev/null 2>&1; then
+    fail "two peers on one WG server communicated without a routing rule"
+fi
 
 # Each address is hosted only by its intended remote uplink server.
 ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -c 4 -W 2 203.0.113.1 \
