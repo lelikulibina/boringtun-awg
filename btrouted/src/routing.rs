@@ -374,7 +374,7 @@ egress = "awg-primary"
         config.routing.rules[0].nat = NatMode::Masquerade;
         let script = RoutingPlan::from_config(&config).nft_script();
         assert!(script.contains(
-            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark 0x80000001 ip saddr 10.0.0.0/24 masquerade return"
+            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark 0x80000001 ip saddr 10.0.0.0/24 ip daddr 195.142.0.0/16 masquerade return"
         ));
     }
 
