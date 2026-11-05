@@ -283,33 +283,3 @@ done
 ip netns exec "$SERVER_NS" ping -n -c 3 -W 2 10.77.0.2 || fail "reverse traffic failed after reconnect"
 
 echo "btrouted peer traffic test passed: protocol=$PROTO, bidirectional ICMP/TCP/UDP, socket-mark routing, reconnect/handshake recovery"
-s/\\x1B\\[[0-9;]*[[:alpha:]]//g' "$log" | grep "peer statistics" || true)"
-    [[ -n "$stats" ]] || fail "$side did not publish peer statistics"
-    grep -Eq 'tx_bytes=[1-9][0-9]*.*rx_bytes=[1-9][0-9]*|rx_bytes=[1-9][0-9]*.*tx_bytes=[1-9][0-9]*' <<<"$stats" \
-        || fail "$side peer TX/RX byte counters did not both increase"
-}
-
-assert_peer_counters server "$TMP/server.log"
-assert_peer_counters client "$TMP/client.log"
-
-# Restart the remote daemon without restarting the local peer. Persistent
-# keepalive must re-establish the session and restore bidirectional delivery.
-kill -TERM "$SERVER_PID" || fail "could not stop server daemon for reconnect test"
-wait "$SERVER_PID" || fail "server daemon failed during reconnect shutdown"
-SERVER_PID=""
-sleep 1
-ip netns exec "$SERVER_NS" "$BIN" --config "$TMP/server.toml" >"$TMP/server-restarted.log" 2>&1 &
-SERVER_PID=$!
-recovered=0
-for _ in $(seq 1 40); do
-    kill -0 "$SERVER_PID" 2>/dev/null || fail "server daemon exited after restart"
-    if ip netns exec "$CLIENT_NS" ping -n -c 1 -W 1 10.77.0.1 >/dev/null 2>&1; then
-        recovered=1
-        break
-    fi
-    sleep 0.5
-done
-[[ "$recovered" -eq 1 ]] || fail "peer did not recover encrypted traffic after remote daemon restart"
-ip netns exec "$SERVER_NS" ping -n -c 3 -W 2 10.77.0.2 || fail "reverse traffic failed after reconnect"
-
-echo "btrouted peer traffic test passed: protocol=$PROTO, bidirectional ICMP/TCP/UDP, socket-mark routing, reconnect/handshake recovery"
