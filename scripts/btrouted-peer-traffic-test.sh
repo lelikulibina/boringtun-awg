@@ -238,9 +238,19 @@ run_iperf udp-client-to-server 1000 -c 10.77.0.1 -u -b 3M -t 3 -l 1200
 run_iperf udp-server-to-client 1000 -c 10.77.0.1 -u -b 3M -t 3 -l 1200 -R
 
 sleep 2
-grep -q "peer statistics" "$TMP/server.log" || fail "server did not publish peer statistics"
 
-grep -q "peer statistics" "$TMP/client.log" || fail "client did not publish peer statistics"
+assert_peer_counters() {
+    local side="$1"
+    local log="$2"
+    local stats
+    stats="$(grep "peer statistics" "$log" || true)"
+    [[ -n "$stats" ]] || fail "$side did not publish peer statistics"
+    grep -Eq 'tx_bytes=[1-9][0-9]*.*rx_bytes=[1-9][0-9]*|rx_bytes=[1-9][0-9]*.*tx_bytes=[1-9][0-9]*' <<<"$stats" \
+        || fail "$side peer TX/RX byte counters did not both increase"
+}
+
+assert_peer_counters server "$TMP/server.log"
+assert_peer_counters client "$TMP/client.log"
 
 # Restart the remote daemon without restarting the local peer. Persistent
 # keepalive must re-establish the session and restore bidirectional delivery.
