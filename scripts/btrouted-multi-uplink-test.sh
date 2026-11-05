@@ -215,6 +215,7 @@ priority = 100
 ingress = "wg-ingress"
 destination = "0.0.0.0/0"
 egress = "awg-primary"
+nat = "masquerade"
 
 [[routing.rules]]
 priority = 30
@@ -247,7 +248,7 @@ socket_fwmark = 6001
 [[interfaces.peers]]
 name = "router"
 public_key = "$ROUTER_PRIMARY_PUBLIC"
-allowed_ips = ["10.77.0.2/32", "fd77::2/128"]
+allowed_ips = ["10.20.0.1/32", "fd77::2/128"]
 TOML
 
 cat >"$TMP/secondary.toml" <<TOML
@@ -337,6 +338,13 @@ ip netns exec "$CLIENT_NS" ping -6 -n -I fd77::2 -c 4 -W 2 2001:db8:1::1 \
     || fail "IPv6 default traffic did not traverse awg-primary"
 ip netns exec "$CLIENT_NS" ping -6 -n -I fd77::2 -c 4 -W 2 2001:db8:195:1::1 \
     || fail "IPv6 exception traffic did not traverse awg-secondary"
+
+# AWG-secondary has no ingress routing rule. Even though the kernel has a
+# connected route to the WG client subnet, an AWG server must not initiate a
+# new connection through the router to a WG client.
+if ip netns exec "$SECONDARY_NS" ping -n -I 10.30.0.2 -c 2 -W 1 10.77.0.2 >/dev/null 2>&1; then
+    fail "AWG-secondary initiated traffic reached a WG client without a routing rule"
+fi
 
 # Add TCP listeners behind each uplink and verify forward and reverse streams.
 ip netns exec "$PRIMARY_NS" iperf3 -s -B 203.0.113.1 -p 5201 >"$TMP/iperf-primary.log" 2>&1 &
