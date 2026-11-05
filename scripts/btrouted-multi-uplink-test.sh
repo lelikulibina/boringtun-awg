@@ -318,6 +318,12 @@ ip -n "$CLIENT_NS" -6 route replace 2001:db8:195:1::1/128 dev wg-client
 
 # Assert the daemon installed the intended classifier and mark mapping.
 chain="$(ip netns exec "$ROUTER_NS" nft list chain inet "btrouted_mu_router_$SUFFIX" prerouting)"
+forward_chain="$(ip netns exec "$ROUTER_NS" nft list chain inet "btrouted_mu_router_$SUFFIX" forward)"
+nat_chain="$(ip netns exec "$ROUTER_NS" nft list chain inet "btrouted_mu_router_$SUFFIX" postrouting)"
+grep -Fq 'iifname @managed_interfaces drop' <<<"$forward_chain" || fail "managed ingress isolation drop is missing"
+grep -Fq 'oifname @managed_interfaces drop' <<<"$forward_chain" || fail "managed egress isolation drop is missing"
+grep -Fq 'iifname "wg-ingress" oifname "awg-primary" ct mark 0x80000000 ip daddr 0.0.0.0/0 masquerade return' <<<"$nat_chain" || fail "primary masquerade rule is missing"
+
 grep -Fq 'iifname "wg-ingress" ip daddr 195.142.0.0/16 meta mark set 0x80000001 ct mark set meta mark return' <<<"$chain" || fail "secondary /16 classifier is missing"
 grep -Fq 'iifname "wg-ingress" ip daddr 79.100.22.0/24 meta mark set 0x80000001 ct mark set meta mark return' <<<"$chain" || fail "secondary /24 classifier is missing"
 grep -Fq 'iifname "wg-ingress" ip daddr 0.0.0.0/0 meta mark set 0x80000000 ct mark set meta mark return' <<<"$chain" || fail "primary default classifier is missing"
