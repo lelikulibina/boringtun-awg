@@ -839,6 +839,29 @@ egress = "awg-uplink"
     }
 
     #[test]
+    fn routing_rule_allows_both_ip_selectors_to_be_omitted() {
+        let input = valid_config()
+            .replace("destination = \"0.0.0.0/0\"\n", "")
+            .replace("destination = \"::/0\"\n", "");
+        let config = Config::parse_toml(&input).unwrap();
+        assert!(config.routing.rules[0].source.is_none());
+        assert!(config.routing.rules[0].destination.is_none());
+        assert!(config.routing.rules[1].source.is_none());
+        assert!(config.routing.rules[1].destination.is_none());
+    }
+
+    #[test]
+    fn routing_rule_accepts_multiple_source_and_destination_cidrs() {
+        let input = valid_config().replace(
+            "destination = \"0.0.0.0/0\"",
+            "source = [\"10.10.0.0/24\", \"2001:db8::/32\"]\ndestination = [\"0.0.0.0/0\", \"::/0\"]",
+        );
+        let config = Config::parse_toml(&input).unwrap();
+        assert_eq!(config.routing.rules[0].source.as_ref().unwrap().len(), 2);
+        assert_eq!(config.routing.rules[0].destination.as_ref().unwrap().len(), 2);
+    }
+
+    #[test]
     fn parses_and_validates_a_complete_multi_tunnel_config() {
         let config = Config::parse_toml(&valid_config()).unwrap();
         assert_eq!(config.interfaces.len(), 2);
