@@ -3,6 +3,9 @@ use crate::routing::RoutingPlan;
 use std::io::Write;
 use std::process::{Command, Stdio};
 
+// Reserved iproute2 protocol tag identifying resources owned by btrouted.
+const ROUTING_PROTOCOL: &str = "242";
+
 #[derive(Debug, thiserror::Error)]
 pub enum LinuxError {
     #[error("failed to execute {program}: {source}")]
@@ -131,6 +134,20 @@ pub fn remove_nft(plan: &RoutingPlan) {
     );
 }
 
+fn rule_has_owned_identity(line: &str, mark: u32, table: &str) -> bool {
+    let fields: Vec<_> = line.split_whitespace().collect();
+    let has_mark = fields
+        .windows(2)
+        .any(|pair| pair[0] == "fwmark" && pair[1] == format!("0x{mark:x}"));
+    let has_table = fields
+        .windows(2)
+        .any(|pair| pair[0] == "lookup" && pair[1] == table);
+    let has_protocol = fields
+        .windows(2)
+        .any(|pair| pair[0] == "proto" && pair[1] == ROUTING_PROTOCOL);
+    has_mark && has_table && has_protocol
+}
+
 fn ensure_policy_slots_available(plan: &RoutingPlan) -> Result<(), LinuxError> {
     for family in ["-4", "-6"] {
         let args = vec![family.into(), "rule".into(), "show".into()];
@@ -151,9 +168,10 @@ fn ensure_policy_slots_available(plan: &RoutingPlan) -> Result<(), LinuxError> {
                 continue;
             };
             if priority == 9_000 {
-                let ours = plan.socket_marks.iter().any(|mark| {
-                    line.contains(&format!("fwmark 0x{mark:x}")) && line.ends_with("lookup main")
-                });
+                let ours = plan
+                    .socket_marks
+                    .iter()
+                    .any(|mark| rule_has_owned_identity(line, *mark, "main"));
                 if !ours {
                     return Err(LinuxError::Conflict {
                         resource: format!("IPv{family} rule priority 9000"),
@@ -166,8 +184,8 @@ fn ensure_policy_slots_available(plan: &RoutingPlan) -> Result<(), LinuxError> {
                 .iter()
                 .find(|egress| egress.ip_rule_priority == priority)
             {
-                let expected = line.contains(&format!("fwmark 0x{:x}", egress.mark))
-                    && line.ends_with(&format!("lookup {}", egress.table_id));
+                let expected =
+                    rule_has_owned_identity(line, egress.mark, &egress.table_id.to_string());
                 if !expected {
                     return Err(LinuxError::Conflict {
                         resource: format!("IPv{family} rule priority {priority}"),
@@ -200,7 +218,13 @@ fn ensure_policy_slots_available(plan: &RoutingPlan) -> Result<(), LinuxError> {
                 });
             }
             for line in String::from_utf8_lossy(&routes.stdout).lines() {
-                if !line.starts_with(&format!("default dev {}", egress.interface)) {
+                let owned_route = line.starts_with(&format!("default dev {}", egress.interface))
+                    && line
+                        .split_whitespace()
+                        .collect::<Vec<_>>()
+                        .windows(2)
+                        .any(|fields| fields[0] == "proto" && fields[1] == ROUTING_PROTOCOL);
+                if !owned_route {
                     return Err(LinuxError::Conflict {
                         resource: format!("IPv{family} route table {}", egress.table_id),
                         details: line.trim().to_owned(),
@@ -264,6 +288,8 @@ pub fn apply_policy_routing(plan: &RoutingPlan) -> Result<(), LinuxError> {
                     mark.clone(),
                     "lookup".into(),
                     table.clone(),
+                    "protocol".into(),
+                    ROUTING_PROTOCOL.into(),
                 ],
             );
             if let Err(error) = run(
@@ -277,6 +303,8 @@ pub fn apply_policy_routing(plan: &RoutingPlan) -> Result<(), LinuxError> {
                     egress.interface.clone(),
                     "table".into(),
                     table.clone(),
+                    "proto".into(),
+                    ROUTING_PROTOCOL.into(),
                 ],
             )
             .and_then(|_| {
@@ -292,6 +320,8 @@ pub fn apply_policy_routing(plan: &RoutingPlan) -> Result<(), LinuxError> {
                         mark,
                         "lookup".into(),
                         table,
+                        "protocol".into(),
+                        ROUTING_PROTOCOL.into(),
                     ],
                 )
             }) {
@@ -318,6 +348,8 @@ pub fn remove_policy_routing(plan: &RoutingPlan) {
                     format!("0x{:x}", mark),
                     "lookup".into(),
                     "main".into(),
+                    "protocol".into(),
+                    ROUTING_PROTOCOL.into(),
                 ],
             );
         }
@@ -336,6 +368,8 @@ pub fn remove_policy_routing(plan: &RoutingPlan) {
                     format!("0x{:x}", egress.mark),
                     "lookup".into(),
                     egress.table_id.to_string(),
+                    "protocol".into(),
+                    ROUTING_PROTOCOL.into(),
                 ],
             );
             let _ = run(
@@ -349,6 +383,8 @@ pub fn remove_policy_routing(plan: &RoutingPlan) {
                     egress.interface.clone(),
                     "table".into(),
                     egress.table_id.to_string(),
+                    "proto".into(),
+                    ROUTING_PROTOCOL.into(),
                 ],
             );
         }
