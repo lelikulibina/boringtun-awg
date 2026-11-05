@@ -356,6 +356,38 @@ egress = "awg-primary"
     }
 
     #[test]
+    fn rule_without_source_or_destination_matches_entire_ingress_interface() {
+        let mut config = sample_config();
+        config.routing.rules[0].source = None;
+        config.routing.rules[0].destination = None;
+        let script = RoutingPlan::from_config(&config).nft_script();
+        assert!(script.contains(
+            "prerouting iifname \\"wg-server\\" ct state new meta mark set 0x80000001 ct mark set meta mark return"
+        ));
+        assert!(!script.contains("prerouting iifname \\"wg-server\\" ct state new ip saddr"));
+        assert!(!script.contains("prerouting iifname \\"wg-server\\" ct state new ip daddr"));
+        assert!(script.contains(
+            "postrouting iifname \\"wg-server\\" oifname \\"awg-secondary\\" ct mark 0x80000001 return"
+        ));
+    }
+
+    #[test]
+    fn nft_rule_supports_multiple_cidrs_for_both_selectors() {
+        let mut config = sample_config();
+        config.routing.rules[0].source = Some(vec![
+            "10.0.0.0/24".to_owned(),
+            "10.1.0.0/24".to_owned(),
+        ]);
+        config.routing.rules[0].destination = Some(vec![
+            "195.142.0.0/16".to_owned(),
+            "79.100.22.0/24".to_owned(),
+        ]);
+        let script = RoutingPlan::from_config(&config).nft_script();
+        assert!(script.contains("ip saddr { 10.0.0.0/24, 10.1.0.0/24 }"));
+        assert!(script.contains("ip daddr { 195.142.0.0/16, 79.100.22.0/24 }"));
+    }
+
+    #[test]
     fn nft_policy_drops_unmatched_managed_interface_transit() {
         let plan = RoutingPlan::from_config(&sample_config());
         let script = plan.nft_script();
