@@ -234,8 +234,8 @@ grep -Fq 'iifname @managed_interfaces drop' <<<"$forward_chain" || fail "managed
 grep -Fq 'oifname @managed_interfaces drop' <<<"$forward_chain" || fail "managed egress isolation drop is missing"
 grep -Fq 'ct direction reply meta mark set 0' <<<"$chain" || fail "reply packet mark reset is missing"
 
-grep -Fq 'iifname "wg-server" ip daddr 195.142.0.0/16 meta mark set 0x80000001 ct mark set meta mark return' <<<"$chain" || fail "secondary exception rule missing"
-grep -Fq 'iifname "wg-server" ip daddr 0.0.0.0/0 meta mark set 0x80000000 ct mark set meta mark return' <<<"$chain" || fail "primary default rule missing"
+grep -Fq 'iifname "wg-server" ct state new ip daddr 195.142.0.0/16 meta mark set 0x80000001 ct mark set meta mark return' <<<"$chain" || fail "secondary exception rule missing"
+grep -Fq 'iifname "wg-server" ct state new ip daddr 0.0.0.0/0 meta mark set 0x80000000 ct mark set meta mark return' <<<"$chain" || fail "primary default rule missing"
 
 kill -TERM "$DAEMON_PID"
 wait "$DAEMON_PID" || fail "daemon returned an error during graceful shutdown"
