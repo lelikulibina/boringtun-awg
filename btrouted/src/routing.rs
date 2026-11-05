@@ -362,12 +362,12 @@ egress = "awg-primary"
         config.routing.rules[0].destination = None;
         let script = RoutingPlan::from_config(&config).nft_script();
         assert!(script.contains(
-            "prerouting iifname \\"wg-server\\" ct state new meta mark set 0x80000001 ct mark set meta mark return"
+            "prerouting iifname \"wg-server\" ct state new meta mark set 0x80000001 ct mark set meta mark return"
         ));
-        assert!(!script.contains("prerouting iifname \\"wg-server\\" ct state new ip saddr"));
-        assert!(!script.contains("prerouting iifname \\"wg-server\\" ct state new ip daddr"));
+        assert!(!script.contains("prerouting iifname \"wg-server\" ct state new ip saddr"));
+        assert!(!script.contains("prerouting iifname \"wg-server\" ct state new ip daddr"));
         assert!(script.contains(
-            "postrouting iifname \\"wg-server\\" oifname \\"awg-secondary\\" ct mark 0x80000001 return"
+            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark 0x80000001 return"
         ));
     }
 
