@@ -135,9 +135,9 @@ impl RoutingPlan {
         // Original-direction packets restore the egress mark saved on the first
         // packet of the connection.
         output.push_str(&format!(
-            "add rule {} {} prerouting iifname @managed_interfaces ct state new meta mark set 0\\n\
-             add rule {} {} prerouting iifname @managed_interfaces ct state established,related ct direction reply meta mark set 0 return\\n\
-             add rule {} {} prerouting iifname @managed_interfaces ct state established,related ct direction original ct mark != 0 meta mark set ct mark return\\n",
+            "add rule {} {} prerouting iifname @managed_interfaces ct state new meta mark set 0\n\
+             add rule {} {} prerouting iifname @managed_interfaces ct state established,related ct direction reply meta mark set 0 return\n\
+             add rule {} {} prerouting iifname @managed_interfaces ct state established,related ct direction original ct mark != 0 meta mark set ct mark return\n",
             self.nft_family, self.nft_table,
             self.nft_family, self.nft_table,
             self.nft_family, self.nft_table
