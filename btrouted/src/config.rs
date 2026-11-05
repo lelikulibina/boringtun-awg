@@ -3,7 +3,7 @@ use base64::Engine as _;
 use boringtun::device::AllowedIP;
 use boringtun::noise::amnezia::AmneziaConfig;
 use boringtun::noise::handshake::ObfuscationRanges;
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use std::collections::HashSet;
 use std::fs;
 use std::net::SocketAddr;
@@ -195,12 +195,33 @@ fn default_routing_mark_base() -> u32 {
 pub struct RoutingRule {
     pub priority: u32,
     pub ingress: String,
-    #[serde(default)]
-    pub source: Option<String>,
-    pub destination: String,
+    #[serde(default, deserialize_with = "deserialize_optional_cidrs")]
+    pub source: Option<Vec<String>>,
+    #[serde(default, deserialize_with = "deserialize_optional_cidrs")]
+    pub destination: Option<Vec<String>>,
     pub egress: String,
     #[serde(default)]
     pub nat: NatMode,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum OneOrManyStrings {
+    One(String),
+    Many(Vec<String>),
+}
+
+/// Accept both a single CIDR (backward compatibility) and a list of CIDRs.
+fn deserialize_optional_cidrs<'de, D>(deserializer: D) -> Result<Option<Vec<String>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Option::<OneOrManyStrings>::deserialize(deserializer).map(|value| {
+        value.map(|value| match value {
+            OneOrManyStrings::One(prefix) => vec![prefix],
+            OneOrManyStrings::Many(prefixes) => prefixes,
+        })
+    })
 }
 
 impl Config {
@@ -442,12 +463,44 @@ impl Config {
                     rule.egress
                 ));
             }
-            let destination = parse_prefix(&rule.destination, "routing.rules.destination")?;
-            if let Some(source) = &rule.source {
-                let source = parse_prefix(source, "routing.rules.source")?;
-                if source.addr.is_ipv4() != destination.addr.is_ipv4() {
+            let source_prefixes = rule
+                .source
+                .as_ref()
+                .map(|prefixes| {
+                    if prefixes.is_empty() {
+                        return invalid("routing.rules.source must not be an empty list");
+                    }
+                    prefixes
+                        .iter()
+                        .map(|prefix| parse_prefix(prefix, "routing.rules.source"))
+                        .collect::<Result<Vec<_>, _>>()
+                })
+                .transpose()?;
+            let destination_prefixes = rule
+                .destination
+                .as_ref()
+                .map(|prefixes| {
+                    if prefixes.is_empty() {
+                        return invalid("routing.rules.destination must not be an empty list");
+                    }
+                    prefixes
+                        .iter()
+                        .map(|prefix| parse_prefix(prefix, "routing.rules.destination"))
+                        .collect::<Result<Vec<_>, _>>()
+                })
+                .transpose()?;
+
+            if let (Some(sources), Some(destinations)) =
+                (&source_prefixes, &destination_prefixes)
+            {
+                let has_common_family = sources.iter().any(|source| {
+                    destinations.iter().any(|destination| {
+                        source.addr.is_ipv4() == destination.addr.is_ipv4()
+                    })
+                });
+                if !has_common_family {
                     return invalid(
-                        "routing.rules.source and destination must use the same address family",
+                        "routing.rules.source and destination must share at least one address family",
                     );
                 }
             }
@@ -769,7 +822,7 @@ egress = "awg-uplink"
         let config = Config::parse_toml(&input).unwrap();
         assert_eq!(
             config.routing.rules[0].source.as_deref(),
-            Some("10.10.0.0/24")
+            Some(&["10.10.0.0/24".to_owned()][..])
         );
         assert_eq!(config.routing.rules[0].nat, NatMode::Masquerade);
         assert_eq!(config.routing.rules[1].nat, NatMode::None);
