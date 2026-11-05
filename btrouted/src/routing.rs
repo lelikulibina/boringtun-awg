@@ -23,8 +23,8 @@ pub struct EgressPlan {
 pub struct NftRule {
     pub priority: u32,
     pub ingress: String,
-    pub source: Option<String>,
-    pub destination: String,
+    pub source: Option<Vec<String>>,
+    pub destination: Option<Vec<String>>, 
     pub egress: String,
     pub mark: u32,
     pub nat: NatMode,
@@ -114,7 +114,7 @@ impl RoutingPlan {
     }
 
     /// Render a fail-closed transit policy. New flows require an explicit
-    /// ingress/destination/egress rule; conntrack permits only their replies.
+    /// ingress/egress rule and any configured IP selectors; conntrack permits only their replies.
     /// Unmatched packets entering or leaving a managed TUN are dropped.
     pub fn nft_script(&self) -> String {
         let interfaces = self
@@ -154,16 +154,17 @@ impl RoutingPlan {
         }
 
         for rule in &self.nft_rules {
-            let family = nft_family_match(&rule.destination);
-            let mut selectors = format!("iifname \"{}\" ct state new ", rule.ingress);
-            if let Some(source) = &rule.source {
-                selectors.push_str(&format!("{} saddr {} ", nft_family_match(source), source));
+            for (family, sources, destinations) in rule_family_variants(rule) {
+                let mut selectors = format!("iifname \"{}\" ct state new", rule.ingress);
+                if let Some(family) = family {
+                    append_cidr_selector(&mut selectors, family, "saddr", &sources);
+                    append_cidr_selector(&mut selectors, family, "daddr", &destinations);
+                }
+                output.push_str(&format!(
+                    "add rule {} {} prerouting {} meta mark set 0x{:x} ct mark set meta mark return\n",
+                    self.nft_family, self.nft_table, selectors, rule.mark
+                ));
             }
-            selectors.push_str(&format!("{} daddr {}", family, rule.destination));
-            output.push_str(&format!(
-                "add rule {} {} prerouting {} meta mark set 0x{:x} ct mark set meta mark return\n",
-                self.nft_family, self.nft_table, selectors, rule.mark
-            ));
         }
 
         output.push_str(&format!(
@@ -192,30 +193,27 @@ impl RoutingPlan {
         // matching "none" rule returns from the NAT chain, preventing a later,
         // more-specific rule from overriding the rule selected for this flow.
         for rule in &self.nft_rules {
-            let mut selectors = format!(
-                "iifname \"{}\" oifname \"{}\" ct mark 0x{:x} ",
-                rule.ingress, rule.egress, rule.mark
-            );
-            if let Some(source) = &rule.source {
-                selectors.push_str(&format!("{} saddr {} ", nft_family_match(source), source));
-            }
-            selectors.push_str(&format!(
-                "{} daddr {}",
-                nft_family_match(&rule.destination),
-                rule.destination
-            ));
-            match rule.nat {
-                NatMode::None => output.push_str(&format!(
-                    "add rule {} {} postrouting {} return\n",
-                    self.nft_family, self.nft_table, selectors
-                )),
-                NatMode::Masquerade => output.push_str(&format!(
-                    "add rule {} {} postrouting {} masquerade return\n",
-                    self.nft_family, self.nft_table, selectors
-                )),
+            for (family, sources, destinations) in rule_family_variants(rule) {
+                let mut selectors = format!(
+                    "iifname \"{}\" oifname \"{}\" ct mark 0x{:x}",
+                    rule.ingress, rule.egress, rule.mark
+                );
+                if let Some(family) = family {
+                    append_cidr_selector(&mut selectors, family, "saddr", &sources);
+                    append_cidr_selector(&mut selectors, family, "daddr", &destinations);
+                }
+                match rule.nat {
+                    NatMode::None => output.push_str(&format!(
+                        "add rule {} {} postrouting {} return\n",
+                        self.nft_family, self.nft_table, selectors
+                    )),
+                    NatMode::Masquerade => output.push_str(&format!(
+                        "add rule {} {} postrouting {} masquerade return\n",
+                        self.nft_family, self.nft_table, selectors
+                    )),
+                }
             }
         }
-        output
     }
 
     /// Commands needed to populate egress tables and select them by packet
@@ -268,10 +266,34 @@ impl RoutingPlan {
 }
 
 fn nft_family_match(prefix: &str) -> &'static str {
-    if prefix.contains(':') {
-        "ip6"
+    if prefix.contains(':') { "ip6" } else { "ip" }
+}
+
+fn rule_family_variants(rule: &NftRule) -> Vec<(Option<&'static str>, Vec<String>, Vec<String>)> {
+    let families = |prefixes: &Option<Vec<String>>| -> Vec<&'static str> {
+        prefixes.as_ref().into_iter().flatten().map(|p| nft_family_match(p)).collect()
+    };
+    let source_families = families(&rule.source);
+    let destination_families = families(&rule.destination);
+    let selected: Vec<&'static str> = match (source_families.is_empty(), destination_families.is_empty()) {
+        (true, true) => return vec![(None, Vec::new(), Vec::new())],
+        (false, true) => source_families,
+        (true, false) => destination_families,
+        (false, false) => source_families.into_iter().filter(|f| destination_families.contains(f)).collect(),
+    };
+    selected.into_iter().collect::<std::collections::BTreeSet<_>>().into_iter().map(|family| {
+        let sources = rule.source.as_ref().into_iter().flatten().filter(|p| nft_family_match(p) == family).cloned().collect();
+        let destinations = rule.destination.as_ref().into_iter().flatten().filter(|p| nft_family_match(p) == family).cloned().collect();
+        (Some(family), sources, destinations)
+    }).collect()
+}
+
+fn append_cidr_selector(selectors: &mut String, family: &str, direction: &str, prefixes: &[String]) {
+    if prefixes.is_empty() { return; }
+    if prefixes.len() == 1 {
+        selectors.push_str(&format!(" {} {} {}", family, direction, prefixes[0]));
     } else {
-        "ip"
+        selectors.push_str(&format!(" {} {} {{ {} }}", family, direction, prefixes.join(", ")));
     }
 }
 
@@ -348,11 +370,11 @@ egress = "awg-primary"
     #[test]
     fn nft_masquerade_is_limited_to_the_selected_rule() {
         let mut config = sample_config();
-        config.routing.rules[0].source = Some("10.0.0.0/24".to_owned());
+        config.routing.rules[0].source = Some(vec!["10.0.0.0/24".to_owned()]);
         config.routing.rules[0].nat = NatMode::Masquerade;
         let script = RoutingPlan::from_config(&config).nft_script();
         assert!(script.contains(
-            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark 0x80000001 ip saddr 10.0.0.0/24 ip daddr 195.142.0.0/16 masquerade return"
+            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark 0x80000001 ip saddr 10.0.0.0/24 masquerade return"
         ));
     }
 
