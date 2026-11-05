@@ -835,7 +835,7 @@ egress = "awg-uplink"
             "source = \"2001:db8::/32\"\ndestination = \"0.0.0.0/0\"",
         );
         let error = Config::parse_toml(&input).unwrap_err();
-        assert!(error.to_string().contains("same address family"));
+        assert!(error.to_string().contains("share at least one address family"));
     }
 
     #[test]
