@@ -215,6 +215,8 @@ impl RoutingPlan {
                 }
             }
         }
+
+        output
     }
 
     /// Commands needed to populate egress tables and select them by packet
