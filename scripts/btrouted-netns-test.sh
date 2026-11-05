@@ -19,12 +19,41 @@ trap cleanup EXIT
 
 fail() {
     echo "btrouted namespace test: $*" >&2
-    for log in "$TMP/daemon.log" "$TMP/conflict.log"; do
+    for log in "$TMP/daemon.log" "$TMP/conflict.log" "$TMP/policy-conflict.log" "$TMP/route-conflict.log"; do
         if [[ -f "$log" ]]; then
             cat "$log" >&2
         fi
     done
     exit 1
+}
+
+expect_startup_failure() {
+    local log="$1"
+    local description="$2"
+    ip netns exec "$NS" "$BIN" --config "$TMP/config.toml" >"$TMP/$log" 2>&1 &
+    DAEMON_PID=$!
+    for _ in $(seq 1 30); do
+        state="$(ps -o stat= -p "$DAEMON_PID" 2>/dev/null | tr -d ' ' || true)"
+        if [[ -z "$state" || "$state" == Z* ]]; then
+            break
+        fi
+        sleep 1
+    done
+    state="$(ps -o stat= -p "$DAEMON_PID" 2>/dev/null | tr -d ' ' || true)"
+    if [[ -n "$state" && "$state" != Z* ]]; then
+        fail "daemon did not reject $description"
+    fi
+    set +e
+    wait "$DAEMON_PID"
+    status=$?
+    set -e
+    DAEMON_PID=""
+    [[ $status -ne 0 ]] || fail "daemon accepted $description"
+    for iface in wg-server awg-primary awg-secondary; do
+        if ip netns exec "$NS" ip link show dev "$iface" >/dev/null 2>&1; then
+            fail "TUN interface $iface leaked after rejecting $description"
+        fi
+    done
 }
 
 [[ $EUID -eq 0 ]] || fail "must run as root"
@@ -140,6 +169,22 @@ for iface in wg-server awg-primary awg-secondary; do
 done
 ip netns exec "$NS" nft delete table inet btrouted_it
 
+# A foreign rule that happens to use the daemon's priority, mark and table
+# must not be adopted or removed merely because its selectors look identical.
+ip -n "$NS" -4 rule add priority 9000 fwmark 0x1001 lookup main
+ip -n "$NS" -6 rule add priority 9000 fwmark 0x1001 lookup main
+expect_startup_failure policy-conflict.log "foreign policy rules"
+ip -n "$NS" -4 rule show | grep -Fq 'fwmark 0x1001 lookup main' || fail "foreign IPv4 policy rule was removed"
+ip -n "$NS" -6 rule show | grep -Fq 'fwmark 0x1001 lookup main' || fail "foreign IPv6 policy rule was removed"
+ip -n "$NS" -4 rule del priority 9000 fwmark 0x1001 lookup main
+ip -n "$NS" -6 rule del priority 9000 fwmark 0x1001 lookup main
+
+# A pre-existing route in a reserved table must also be preserved.
+ip -n "$NS" -4 route replace default dev main0 table 10000 proto static
+expect_startup_failure route-conflict.log "foreign routing-table route"
+ip -n "$NS" -4 route show table 10000 | grep -Fq 'default dev main0 proto static' || fail "foreign route in table 10000 was overwritten"
+ip -n "$NS" -4 route del default dev main0 table 10000 proto static
+
 ip netns exec "$NS" "$BIN" --config "$TMP/config.toml" >"$TMP/daemon.log" 2>&1 &
 DAEMON_PID=$!
 
@@ -153,6 +198,17 @@ for _ in $(seq 1 30); do
     sleep 1
 done
 ip netns exec "$NS" nft list table inet btrouted_it >/dev/null 2>&1 || fail "nftables table was not installed"
+
+for family in -4 -6; do
+    rules="$(ip -n "$NS" "$family" rule show)"
+    grep -Fq 'fwmark 0x1001 lookup main proto 242' <<<"$rules" || fail "socket rule lacks btrouted ownership tag for $family"
+    grep -Fq 'fwmark 0x80000000 lookup 10000 proto 242' <<<"$rules" || fail "primary rule lacks btrouted ownership tag for $family"
+    grep -Fq 'fwmark 0x80000001 lookup 10001 proto 242' <<<"$rules" || fail "secondary rule lacks btrouted ownership tag for $family"
+    routes="$(ip -n "$NS" "$family" route show table 10000)"
+    grep -Fq 'default dev awg-primary proto 242' <<<"$routes" || fail "primary route lacks btrouted ownership tag for $family"
+    routes="$(ip -n "$NS" "$family" route show table 10001)"
+    grep -Fq 'default dev awg-secondary proto 242' <<<"$routes" || fail "secondary route lacks btrouted ownership tag for $family"
+done
 
 for spec in \
     "0x80000000 awg-primary" \
@@ -189,6 +245,17 @@ fi
 if ip netns exec "$NS" ip -4 rule show | grep -q 'fwmark 0x1001'; then
     fail "outer socket policy rule survived shutdown"
 fi
+for family in -4 -6; do
+    if ip -n "$NS" "$family" rule show | grep -q 'proto 242'; then
+        fail "btrouted policy rule survived shutdown for $family"
+    fi
+    if ip -n "$NS" "$family" route show table 10000 | grep -q .; then
+        fail "primary policy route survived shutdown for $family"
+    fi
+    if ip -n "$NS" "$family" route show table 10001 | grep -q .; then
+        fail "secondary policy route survived shutdown for $family"
+    fi
+done
 for iface in wg-server awg-primary awg-secondary; do
     if ip netns exec "$NS" ip link show dev "$iface" >/dev/null 2>&1; then
         fail "TUN interface $iface survived shutdown"
