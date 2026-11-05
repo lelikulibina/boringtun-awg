@@ -4,7 +4,7 @@
 //! validated TOML configuration into deterministic nftables and policy-routing
 //! operations; the runtime layer can apply these operations transactionally.
 
-use crate::config::{Config, InterfaceRole};
+use crate::config::{Config, InterfaceRole, NatMode};
 use std::collections::BTreeMap;
 use std::net::IpAddr;
 
@@ -24,9 +24,11 @@ pub struct EgressPlan {
 pub struct NftRule {
     pub priority: u32,
     pub ingress: String,
+    pub source: Option<String>,
     pub destination: String,
     pub egress: String,
     pub mark: u32,
+    pub nat: NatMode,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -74,9 +76,11 @@ impl RoutingPlan {
             .map(|rule| NftRule {
                 priority: rule.priority,
                 ingress: rule.ingress.clone(),
+                source: rule.source.clone(),
                 destination: rule.destination.clone(),
                 egress: rule.egress.clone(),
                 mark: egress_marks[rule.egress.as_str()],
+                nat: rule.nat,
             })
             .collect();
         nft_rules.sort_by(|left, right| {
@@ -101,29 +105,103 @@ impl RoutingPlan {
         }
     }
 
-    /// Render the daemon-owned nftables table. Lower numeric priorities are
-    /// emitted first; each rule assigns a mark consumed by an ip rule fwmark.
+    /// Render a fail-closed transit policy. New flows require an explicit
+    /// ingress/destination/egress rule; conntrack permits only their replies.
+    /// Unmatched packets entering or leaving a managed TUN are dropped.
     pub fn nft_script(&self) -> String {
+        let interfaces = self.egresses.iter()
+            .map(|egress| format!("\"{}\"", egress.interface))
+            .chain(self.nft_rules.iter().map(|rule| format!("\"{}\"", rule.ingress)))
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>()
+            .join(", ");
+
         let mut output = format!(
-            "add table {} {} {{ comment \"managed by btrouted\"; }}\nadd chain {} {} prerouting {{ type filter hook prerouting priority mangle; policy accept; }}\n",
-            self.nft_family, self.nft_table, self.nft_family, self.nft_table
+            "add table {} {} {{ comment \"managed by btrouted\"; }}\\n\
+             add set {} {} managed_interfaces {{ type ifname; elements = {{ {} }}; }}\\n\
+             add chain {} {} prerouting {{ type filter hook prerouting priority mangle; policy accept; }}\\n\
+             add chain {} {} forward {{ type filter hook forward priority filter; policy accept; }}\\n\
+             add chain {} {} postrouting {{ type nat hook postrouting priority srcnat; policy accept; }}\\n",
+            self.nft_family, self.nft_table,
+            self.nft_family, self.nft_table, interfaces,
+            self.nft_family, self.nft_table,
+            self.nft_family, self.nft_table,
+            self.nft_family, self.nft_table
         );
+
+        // The reply direction must use the main table to reach the ingress TUN.
+        // Original-direction packets restore the egress mark saved on the first
+        // packet of the connection.
+        output.push_str(&format!(
+            "add rule {} {} prerouting ct state established,related ct direction reply meta mark set 0 return\\n\
+             add rule {} {} prerouting ct state established,related ct direction original ct mark != 0 meta mark set ct mark return\\n",
+            self.nft_family, self.nft_table,
+            self.nft_family, self.nft_table
+        ));
+
         for rule in &self.nft_rules {
-            let family_match = match rule.destination.parse::<IpAddr>() {
-                Ok(IpAddr::V4(_)) => "ip",
-                Ok(IpAddr::V6(_)) => "ip6",
-                Err(_) if rule.destination.contains(':') => "ip6",
-                Err(_) => "ip",
-            };
+            let family = nft_family_match(&rule.destination);
+            let mut selectors = format!("iifname \"{}\" ct state new ", rule.ingress);
+            if let Some(source) = &rule.source {
+                selectors.push_str(&format!("{} saddr {} ", nft_family_match(source), source));
+            }
+            selectors.push_str(&format!("{} daddr {}", family, rule.destination));
             output.push_str(&format!(
-                "add rule {} {} prerouting iifname \"{}\" {} daddr {} meta mark set 0x{:x} return\n",
-                self.nft_family,
-                self.nft_table,
-                rule.ingress,
-                family_match,
-                rule.destination,
-                rule.mark
+                "add rule {} {} prerouting {} meta mark set 0x{:x} ct mark set meta mark return\\n",
+                self.nft_family, self.nft_table, selectors, rule.mark
             ));
+        }
+
+        output.push_str(&format!(
+            "add rule {} {} forward ct state invalid drop\\n",
+            self.nft_family, self.nft_table
+        ));
+        for rule in &self.nft_rules {
+            output.push_str(&format!(
+                "add rule {} {} forward iifname \"{}\" oifname \"{}\" ct state new,established,related meta mark 0x{:x} accept\\n",
+                self.nft_family, self.nft_table, rule.ingress, rule.egress, rule.mark
+            ));
+        }
+        for rule in &self.nft_rules {
+            output.push_str(&format!(
+                "add rule {} {} forward iifname \"{}\" oifname \"{}\" ct state established,related ct mark 0x{:x} accept\\n",
+                self.nft_family, self.nft_table, rule.egress, rule.ingress, rule.mark
+            ));
+        }
+        output.push_str(&format!(
+            "add rule {} {} forward iifname @managed_interfaces drop\\n\
+             add rule {} {} forward oifname @managed_interfaces drop\\n",
+            self.nft_family, self.nft_table,
+            self.nft_family, self.nft_table
+        ));
+
+        // Evaluate NAT rules in the same priority order as routing rules. A
+        // matching "none" rule returns from the NAT chain, preventing a later,
+        // more-specific rule from overriding the rule selected for this flow.
+        for rule in &self.nft_rules {
+            let mut selectors = format!(
+                "iifname \"{}\" oifname \"{}\" ct mark 0x{:x} ",
+                rule.ingress, rule.egress, rule.mark
+            );
+            if let Some(source) = &rule.source {
+                selectors.push_str(&format!("{} saddr {} ", nft_family_match(source), source));
+            }
+            selectors.push_str(&format!(
+                "{} daddr {}",
+                nft_family_match(&rule.destination),
+                rule.destination
+            ));
+            match rule.nat {
+                NatMode::None => output.push_str(&format!(
+                    "add rule {} {} postrouting {} return\\n",
+                    self.nft_family, self.nft_table, selectors
+                )),
+                NatMode::Masquerade => output.push_str(&format!(
+                    "add rule {} {} postrouting {} masquerade return\\n",
+                    self.nft_family, self.nft_table, selectors
+                )),
+            }
         }
         output
     }
