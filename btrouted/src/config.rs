@@ -446,7 +446,9 @@ impl Config {
             if let Some(source) = &rule.source {
                 let source = parse_prefix(source, "routing.rules.source")?;
                 if source.addr.is_ipv4() != destination.addr.is_ipv4() {
-                    return invalid("routing.rules.source and destination must use the same address family");
+                    return invalid(
+                        "routing.rules.source and destination must use the same address family",
+                    );
                 }
             }
         }
@@ -765,7 +767,10 @@ egress = "awg-uplink"
             "source = \"10.10.0.0/24\"\ndestination = \"0.0.0.0/0\"\nnat = \"masquerade\"",
         );
         let config = Config::parse_toml(&input).unwrap();
-        assert_eq!(config.routing.rules[0].source.as_deref(), Some("10.10.0.0/24"));
+        assert_eq!(
+            config.routing.rules[0].source.as_deref(),
+            Some("10.10.0.0/24")
+        );
         assert_eq!(config.routing.rules[0].nat, NatMode::Masquerade);
         assert_eq!(config.routing.rules[1].nat, NatMode::None);
     }
