@@ -200,3 +200,5 @@ jobs:
         run: sudo bash scripts/btrouted-peer-traffic-test.sh wg
       - name: Verify bidirectional AmneziaWG 3.1 peer traffic
         run: sudo bash scripts/btrouted-peer-traffic-test.sh awg3_1
+      - name: Verify packet-level multi-uplink routing
+        run: sudo bash scripts/btrouted-multi-uplink-test.sh
