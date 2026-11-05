@@ -244,7 +244,17 @@ assert_peer_counters() {
     local log="$2"
     local stats
     # Strip ANSI color sequences before matching structured tracing fields.
-    stats="$(sed -E     [[ -n "$stats" ]] || fail "$side did not publish peer statistics"
+    stats="$(python3 - "$log" <<'PY'
+import re
+import sys
+with open(sys.argv[1], encoding="utf-8", errors="replace") as stream:
+    for line in stream:
+        line = re.sub(r"\x1B\[[0-?]*[ -/]*[@-~]", "", line)
+        if "peer statistics" in line:
+            print(line, end="")
+PY
+    )"
+    [[ -n "$stats" ]] || fail "$side did not publish peer statistics"
     grep -Eq 'tx_bytes=[1-9][0-9]*.*rx_bytes=[1-9][0-9]*|rx_bytes=[1-9][0-9]*.*tx_bytes=[1-9][0-9]*' <<<"$stats" \
         || fail "$side peer TX/RX byte counters did not both increase"
 }
