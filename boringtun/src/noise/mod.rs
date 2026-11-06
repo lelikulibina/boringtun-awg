@@ -3954,6 +3954,33 @@ mod tests {
     }
 
     #[test]
+    fn handshake_confirmation_keepalive_updates_udp_window_with_upstream_accounting() {
+        // S4 is part of the outer datagram on send and receive. The sender's
+        // high-water mark includes the AEAD tag; the receiver's upstream
+        // accounting intentionally measures the decrypted plaintext and omits it.
+        let s4 = 9;
+        let cfg = AmneziaConfig::new(0, 0, 0, s4);
+        let (mut sender, mut receiver) = create_two_tuns_with_amnezia(cfg);
+
+        let init = create_handshake_init(&mut sender);
+        let response = create_handshake_response(&mut receiver, &init);
+        let keepalive = parse_handshake_resp(&mut sender, &response);
+
+        assert_eq!(
+            sender.udp_window,
+            s4 as usize + DATA_OVERHEAD_SZ,
+            "outbound handshake-confirmation keepalive must include S4, header, and AEAD tag"
+        );
+
+        parse_keepalive(&mut receiver, &keepalive);
+        assert_eq!(
+            receiver.udp_window,
+            s4 as usize + DATA_HEADER_SZ,
+            "inbound keepalive must use upstream's S4 + header + decrypted-plaintext accounting"
+        );
+    }
+
+    #[test]
     fn random_trailers_learn_udp_window_from_authenticated_packets_in_both_directions() {
         let cfg = AmneziaConfig::new(600, 600, 600, 600).with_random_trailers(true);
         let (mut sender, mut receiver) = create_two_tuns_with_amnezia(cfg);
