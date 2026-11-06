@@ -117,7 +117,7 @@ jobs:
   # it needs network namespaces, TUN devices and the external Go reference.
   awg31-interoperability:
     runs-on: ubuntu-latest
-    timeout-minutes: ${{ inputs.full_matrix && 30 || 25 }}
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v6
       - uses: actions-rs/toolchain@v1
@@ -160,13 +160,9 @@ jobs:
       - name: Build official WireGuard Go
         working-directory: upstream-wireguard-go
         run: go build -v -o ../wireguard-go .
-      - name: Run AWG interoperability suite
+      - name: Run full AWG/WireGuard interoperability matrix
         run: |
-          if [[ "${{ inputs.full_matrix }}" == "true" ]]; then
-            sudo python3 scripts/awg31-go-interop.py ./target/release/boringtun-cli ./amneziawg-go --full --awg30 ./amneziawg-go-3.0 --wireguard ./wireguard-go
-          else
-            sudo python3 scripts/awg31-go-interop.py ./target/release/boringtun-cli ./amneziawg-go --awg30 ./amneziawg-go-3.0 --wireguard ./wireguard-go
-          fi
+          sudo python3 scripts/awg31-go-interop.py ./target/release/boringtun-cli ./amneziawg-go --full --awg30 ./amneziawg-go-3.0 --wireguard ./wireguard-go
       - name: Upload normalized wire captures
         if: always()
         uses: actions/upload-artifact@v4
