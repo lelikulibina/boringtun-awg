@@ -109,11 +109,9 @@ impl RoutingPlan {
                 .then(left.priority.cmp(&right.priority))
         });
 
-        let mut socket_marks: Vec<_> = config
-            .interfaces
-            .iter()
-            .map(|interface| interface.socket_fwmark)
-            .collect();
+        let mut socket_marks = config
+            .resolved_socket_fwmarks()
+            .expect("RoutingPlan::from_config requires a validated configuration");
         socket_marks.sort_unstable();
 
         let mut managed_interfaces: Vec<_> = config
