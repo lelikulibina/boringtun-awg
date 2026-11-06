@@ -49,6 +49,8 @@ expect_startup_failure() {
     set -e
     DAEMON_PID=""
     [[ $status -ne 0 ]] || fail "daemon accepted $description"
+    [[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "0" ]] || fail "IPv4 forwarding was not restored after rejecting $description"
+    [[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "0" ]] || fail "IPv6 forwarding was not restored after rejecting $description"
     for iface in wg-server awg-primary awg-secondary; do
         if ip netns exec "$NS" ip link show dev "$iface" >/dev/null 2>&1; then
             fail "TUN interface $iface leaked after rejecting $description"
@@ -162,6 +164,8 @@ conflict_status=$?
 set -e
 DAEMON_PID=""
 [[ $conflict_status -ne 0 ]] || fail "daemon accepted a foreign nftables table"
+[[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "0" ]] || fail "IPv4 forwarding changed after nftables ownership conflict"
+[[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "0" ]] || fail "IPv6 forwarding changed after nftables ownership conflict"
 ip netns exec "$NS" nft list table inet btrouted_it >/dev/null 2>&1 || fail "foreign nftables table was deleted"
 if ip netns exec "$NS" ip -4 rule show | grep -Eq 'fwmark 0x(80000000|80000001|1001)'; then
     fail "policy rules leaked after nftables ownership conflict"
