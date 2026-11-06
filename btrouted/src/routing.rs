@@ -579,7 +579,7 @@ egress = "awg-primary"
             interface.socket_fwmark = None;
         }
         let plan = RoutingPlan::from_config(&config);
-        assert_eq!(plan.socket_marks, vec![0x1000, 0x1001]);
+        assert_eq!(plan.socket_marks, vec![0x1000, 0x1001, 0x1002]);
     }
 
     #[test]
