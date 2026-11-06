@@ -211,14 +211,9 @@ fn ensure_policy_slots_available(plan: &RoutingPlan) -> Result<(), LinuxError> {
                     });
                 }
             }
-            if let Some(egress) = plan
-                .egresses
-                .iter()
-                .find(|egress| {
-                    egress.ip_rule_priority == priority
-                        && (family != "-6" || egress.ipv6_enabled)
-                })
-            {
+            if let Some(egress) = plan.egresses.iter().find(|egress| {
+                egress.ip_rule_priority == priority && (family != "-6" || egress.ipv6_enabled)
+            }) {
                 let expected =
                     rule_has_owned_identity(line, egress.mark, &egress.table_id.to_string());
                 if !expected {
