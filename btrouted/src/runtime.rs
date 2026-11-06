@@ -52,17 +52,20 @@ impl Runtime {
         config
             .validate()
             .map_err(|error| RuntimeError::Configuration(error.to_string()))?;
+        let socket_fwmarks = config
+            .resolved_socket_fwmarks()
+            .map_err(|error| RuntimeError::Configuration(error.to_string()))?;
         let routing = RoutingPlan::from_config(&config);
         let mut devices = Vec::with_capacity(config.interfaces.len());
 
-        for interface in &config.interfaces {
+        for (interface, socket_fwmark) in config.interfaces.iter().zip(socket_fwmarks) {
             let handle = create_device(interface)?;
             linux::configure_interface(&interface.name, interface.mtu, &interface.addresses)?;
             handle.set_private_key(x25519::StaticSecret::from(
                 decode_key(&interface.private_key, "private_key")
                     .map_err(|error| RuntimeError::Configuration(error.to_string()))?,
             ));
-            handle.set_fwmark(interface.socket_fwmark)?;
+            handle.set_fwmark(socket_fwmark)?;
 
             for peer in &interface.peers {
                 let public_key = x25519::PublicKey::from(
