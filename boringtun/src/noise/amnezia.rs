@@ -2192,6 +2192,14 @@ mod tests {
             7,
             "ContentPaddingAddition takes precedence over RandomTrailers"
         );
+
+        let explicit_without_trailers =
+            AmneziaConfig::new(0, 0, 0, 0).with_content_padding_addition(7, 7);
+        assert_eq!(
+            explicit_without_trailers.transport_padding_size(101, 133, 133, 1420, &mut rng),
+            0,
+            "enabled CPA with no remaining UDP window must not fall through to MTU alignment"
+        );
     }
 
     #[test]
