@@ -1050,7 +1050,7 @@ egress = "awg-uplink"
         ] {
             let input = valid_config().replace(
                 "h4 = \"301-400\"",
-                &format!("h4 = \"301-400\"\\n{} = {}", field, value),
+                &format!("h4 = \"301-400\"\n{} = {}", field, value),
             );
             assert!(Config::parse_toml(&input).is_err(), "{}", field);
         }
@@ -1066,7 +1066,7 @@ egress = "awg-uplink"
         );
         let input = valid_config().replace(
             "manage_ip_forwarding = false",
-            "manage_ip_forwarding = false\\nipv6_enabled = false",
+            "manage_ip_forwarding = false\nipv6_enabled = false",
         );
         assert!(!Config::parse_toml(&input).unwrap().daemon.ipv6_enabled);
     }
