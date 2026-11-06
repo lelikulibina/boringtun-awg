@@ -603,10 +603,7 @@ impl AwgConfig {
             0,
         )
         .map_err(|e| {
-            ConfigError::Validation(format!(
-                "interfaces.{}.awg junk settings: {}",
-                interface, e
-            ))
+            ConfigError::Validation(format!("interfaces.{}.awg junk settings: {}", interface, e))
         })?
         .with_disable_cookies(self.disable_cookies.unwrap_or(false))
         .with_random_trailers(self.random_trailers.unwrap_or(false));
@@ -999,8 +996,14 @@ egress = "awg-uplink"
 
     #[test]
     fn accepts_explicit_awg30_protocol_name_without_breaking_legacy_name() {
-        let legacy = Config::parse_toml(&valid_config().replace("protocol = \"awg3_1\"", "protocol = \"awg3\"")).unwrap();
-        let explicit = Config::parse_toml(&valid_config().replace("protocol = \"awg3_1\"", "protocol = \"awg3_0\"")).unwrap();
+        let legacy = Config::parse_toml(
+            &valid_config().replace("protocol = \"awg3_1\"", "protocol = \"awg3\""),
+        )
+        .unwrap();
+        let explicit = Config::parse_toml(
+            &valid_config().replace("protocol = \"awg3_1\"", "protocol = \"awg3_0\""),
+        )
+        .unwrap();
         assert_eq!(legacy.interfaces[1].protocol, ProtocolVersion::Awg3);
         assert_eq!(explicit.interfaces[1].protocol, ProtocolVersion::Awg3);
     }
@@ -1029,8 +1032,12 @@ egress = "awg-uplink"
             "max_handshake_attempts = \"15-20\""
         ));
         let config = Config::parse_toml(&input).unwrap();
-        config.interfaces[1].awg.as_ref().unwrap()
-            .build("awg-uplink", ProtocolVersion::Awg3_1).unwrap();
+        config.interfaces[1]
+            .awg
+            .as_ref()
+            .unwrap()
+            .build("awg-uplink", ProtocolVersion::Awg3_1)
+            .unwrap();
     }
 
     #[test]
