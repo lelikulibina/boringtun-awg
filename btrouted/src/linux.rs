@@ -181,7 +181,7 @@ fn route_has_owned_identity(line: &str, interface: &str) -> bool {
 }
 
 fn ensure_policy_slots_available(plan: &RoutingPlan) -> Result<(), LinuxError> {
-    for &family in plan.ip_families() {
+    for family in ["-4", "-6"] {
         let args = vec![family.into(), "rule".into(), "show".into()];
         let rules = output("ip", &args)?;
         if !rules.status.success() {
@@ -211,6 +211,9 @@ fn ensure_policy_slots_available(plan: &RoutingPlan) -> Result<(), LinuxError> {
                     });
                 }
             }
+            if family == "-6" && !plan.ipv6_enabled {
+                continue;
+            }
             if let Some(egress) = plan
                 .egresses
                 .iter()
@@ -227,6 +230,9 @@ fn ensure_policy_slots_available(plan: &RoutingPlan) -> Result<(), LinuxError> {
             }
         }
 
+        if family == "-6" && !plan.ipv6_enabled {
+            continue;
+        }
         for egress in &plan.egresses {
             let args = vec![
                 family.into(),
@@ -266,7 +272,8 @@ fn ensure_policy_slots_available(plan: &RoutingPlan) -> Result<(), LinuxError> {
 pub fn apply_policy_routing(plan: &RoutingPlan) -> Result<(), LinuxError> {
     ensure_policy_slots_available(plan)?;
     for mark in &plan.socket_marks {
-        for &family in plan.ip_families() {
+        // Keep encrypted outer IPv6 transport on the main table even when inner IPv6 is disabled.
+        for family in ["-4", "-6"] {
             let args = vec![
                 family.into(),
                 "rule".into(),
