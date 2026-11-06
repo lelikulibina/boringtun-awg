@@ -638,21 +638,13 @@ egress = "awg-primary"
             .ipv6_enabled = false;
         let plan = RoutingPlan::from_config(&config);
         let script = plan.nft_script();
-        assert!(script.contains(
-            "elements = { \"awg-secondary\", \"wg-server\" }"
-        ));
-        assert!(script.contains(
-            "prerouting iifname @ipv6_blocked_interfaces meta nfproto ipv6 drop"
-        ));
-        assert!(script.contains(
-            "forward oifname @ipv6_blocked_interfaces meta nfproto ipv6 drop"
-        ));
-        assert!(script.contains(
-            "output oifname @ipv6_blocked_interfaces meta nfproto ipv6 drop"
-        ));
-        assert!(!script.contains(
-            "forward iifname @managed_interfaces meta nfproto ipv6 drop"
-        ));
+        assert!(script.contains("elements = { \"awg-secondary\", \"wg-server\" }"));
+        assert!(
+            script.contains("prerouting iifname @ipv6_blocked_interfaces meta nfproto ipv6 drop")
+        );
+        assert!(script.contains("forward oifname @ipv6_blocked_interfaces meta nfproto ipv6 drop"));
+        assert!(script.contains("output oifname @ipv6_blocked_interfaces meta nfproto ipv6 drop"));
+        assert!(!script.contains("forward iifname @managed_interfaces meta nfproto ipv6 drop"));
 
         // A route selector must not emit IPv6 classifier/NAT variants when
         // either its ingress or egress tunnel has IPv6 disabled.
