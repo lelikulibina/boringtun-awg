@@ -1063,8 +1063,14 @@ egress = "awg-uplink"
     #[test]
     fn ipv6_can_be_enabled_independently_per_interface() {
         let input = valid_config()
-            .replace("socket_fwmark = 4097", "socket_fwmark = 4097\nipv6_enabled = true")
-            .replace("socket_fwmark = 4098", "socket_fwmark = 4098\nipv6_enabled = false");
+            .replace(
+                "socket_fwmark = 4097",
+                "socket_fwmark = 4097\nipv6_enabled = true",
+            )
+            .replace(
+                "socket_fwmark = 4098",
+                "socket_fwmark = 4098\nipv6_enabled = false",
+            );
         let config = Config::parse_toml(&input).unwrap();
         assert!(config.interfaces[0].ipv6_enabled);
         assert!(!config.interfaces[1].ipv6_enabled);
