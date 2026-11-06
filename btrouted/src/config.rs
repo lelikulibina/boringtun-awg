@@ -977,19 +977,15 @@ egress = "awg-uplink"
 
     #[test]
     fn rejects_unknown_routing_ingress_and_egress() {
-        let unknown_ingress = valid_config().replace(
-            "ingress = \"wg-server\"",
-            "ingress = \"wg-missing\"",
-        );
+        let unknown_ingress =
+            valid_config().replace("ingress = \"wg-server\"", "ingress = \"wg-missing\"");
         assert!(Config::parse_toml(&unknown_ingress)
             .unwrap_err()
             .to_string()
             .contains("unknown ingress"));
 
-        let unknown_egress = valid_config().replace(
-            "egress = \"awg-uplink\"",
-            "egress = \"awg-missing\"",
-        );
+        let unknown_egress =
+            valid_config().replace("egress = \"awg-uplink\"", "egress = \"awg-missing\"");
         assert!(Config::parse_toml(&unknown_egress)
             .unwrap_err()
             .to_string()
@@ -998,10 +994,7 @@ egress = "awg-uplink"
 
     #[test]
     fn rejects_same_interface_as_ingress_and_egress() {
-        let input = valid_config().replace(
-            "egress = \"awg-uplink\"",
-            "egress = \"wg-server\"",
-        );
+        let input = valid_config().replace("egress = \"awg-uplink\"", "egress = \"wg-server\"");
         assert!(Config::parse_toml(&input)
             .unwrap_err()
             .to_string()
@@ -1010,21 +1003,15 @@ egress = "awg-uplink"
 
     #[test]
     fn rejects_wrong_interface_roles_for_routing_direction() {
-        let wrong_ingress = valid_config().replacen(
-            "role = \"server\"",
-            "role = \"client\"",
-            1,
-        );
+        let wrong_ingress =
+            valid_config().replacen("role = \"server\"", "role = \"client\"", 1);
         assert!(Config::parse_toml(&wrong_ingress)
             .unwrap_err()
             .to_string()
             .contains("must have role = 'server'"));
 
-        let wrong_egress = valid_config().replacen(
-            "role = \"client\"",
-            "role = \"server\"",
-            1,
-        );
+        let wrong_egress =
+            valid_config().replacen("role = \"client\"", "role = \"server\"", 1);
         assert!(Config::parse_toml(&wrong_egress)
             .unwrap_err()
             .to_string()
@@ -1060,5 +1047,4 @@ egress = "awg-uplink"
         );
         assert!(Config::parse_toml(&input).is_err());
     }
-
 }
