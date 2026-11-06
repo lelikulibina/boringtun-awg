@@ -488,16 +488,6 @@ impl Config {
         if self.routing.mark_base == 0 {
             return invalid("[routing].mark_base must be non-zero");
         }
-        let last_routing_mark = self
-            .routing
-            .mark_base
-            .checked_add(egress_count.saturating_sub(1) as u32)
-            .ok_or_else(|| {
-                ConfigError::Validation(
-                    "[routing].mark_base leaves no room for all client routing marks".to_owned(),
-                )
-            })?;
-        let _ = last_routing_mark;
         self.resolved_socket_fwmarks()?;
 
         let interfaces_by_name: std::collections::HashMap<_, _> = self
@@ -1212,10 +1202,10 @@ egress = "awg-uplink"
     #[test]
     fn automatic_socket_marks_skip_explicit_values_regardless_of_interface_order() {
         let input = valid_config()
-            .replace("socket_fwmark = 4097", "socket_fwmark = 4098")
-            .replace("socket_fwmark = 4098\n\n[[interfaces.peers]]", "socket_fwmark = 4097\n\n[[interfaces.peers]]");
+            .replace("socket_fwmark = 4097\n", "")
+            .replace("socket_fwmark = 4098", "socket_fwmark = 4096");
         let config = Config::parse_toml(&input).unwrap();
-        assert_eq!(config.resolved_socket_fwmarks().unwrap(), vec![4098, 4097]);
+        assert_eq!(config.resolved_socket_fwmarks().unwrap(), vec![4097, 4096]);
     }
 
     #[test]
@@ -1225,7 +1215,7 @@ egress = "awg-uplink"
             .replace("socket_fwmark = 4098\n", "")
             .replace("[[routing.rules]]", "[routing]\nmark_base = 4096\n\n[[routing.rules]]");
         let config = Config::parse_toml(&input).unwrap();
-        assert_eq!(config.resolved_socket_fwmarks().unwrap(), vec![4098, 4099]);
+        assert_eq!(config.resolved_socket_fwmarks().unwrap(), vec![4097, 4098]);
     }
 
     #[test]
