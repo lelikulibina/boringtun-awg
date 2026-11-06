@@ -116,7 +116,9 @@ pub struct InterfaceConfig {
     pub ipv6_enabled: bool,
     pub listen_port: u16,
     pub private_key: String,
-    pub socket_fwmark: u32,
+    /// Optional mark for encrypted UDP sockets; assigned automatically when omitted.
+    #[serde(default)]
+    pub socket_fwmark: Option<u32>,
     #[serde(default)]
     pub peers: Vec<PeerConfig>,
     #[serde(default)]
@@ -223,6 +225,9 @@ fn default_routing_mark_base() -> u32 {
     0x8000_0000
 }
 
+/// First mark considered for automatically assigned encrypted-socket marks.
+const DEFAULT_SOCKET_FWMARK_BASE: u32 = 0x1000;
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RoutingRule {
@@ -271,6 +276,71 @@ impl Config {
         Self::parse_toml(&input)
     }
 
+    /// Resolve explicit and automatically assigned socket marks in interface order.
+    /// Explicit marks are reserved first so automatic allocation never displaces them.
+    pub fn resolved_socket_fwmarks(&self) -> Result<Vec<u32>, ConfigError> {
+        let egress_count = self
+            .interfaces
+            .iter()
+            .filter(|interface| interface.role == InterfaceRole::Client)
+            .count();
+        let routing_mark_range = if egress_count == 0 {
+            None
+        } else {
+            let last = self
+                .routing
+                .mark_base
+                .checked_add(egress_count.saturating_sub(1) as u32)
+                .ok_or_else(|| ConfigError::Validation(
+                    "[routing].mark_base leaves no room for all client routing marks".to_owned()
+                ))?;
+            Some((self.routing.mark_base, last))
+        };
+
+        let mut used = HashSet::new();
+        for interface in &self.interfaces {
+            if let Some(mark) = interface.socket_fwmark {
+                if mark == 0 {
+                    return invalid(format!(
+                        "interfaces.{}.socket_fwmark must be non-zero",
+                        interface.name
+                    ));
+                }
+                if !used.insert(mark) {
+                    return invalid(format!("socket fwmark 0x{mark:x} is used by more than one interface"));
+                }
+                if routing_mark_range.is_some_and(|(first, last)| (first..=last).contains(&mark)) {
+                    return invalid(
+                        "[routing].mark_base range overlaps an interface socket_fwmark; outer UDP and inner packet marks must be distinct",
+                    );
+                }
+            }
+        }
+
+        let mut next_candidate = DEFAULT_SOCKET_FWMARK_BASE;
+        let mut resolved = Vec::with_capacity(self.interfaces.len());
+        for interface in &self.interfaces {
+            let mark = if let Some(mark) = interface.socket_fwmark {
+                mark
+            } else {
+                loop {
+                    if next_candidate == 0 {
+                        return invalid("no available non-zero socket fwmark remains");
+                    }
+                    let candidate = next_candidate;
+                    next_candidate = next_candidate.checked_add(1).unwrap_or(0);
+                    let conflicts_with_routing = routing_mark_range
+                        .is_some_and(|(first, last)| (first..=last).contains(&candidate));
+                    if !conflicts_with_routing && used.insert(candidate) {
+                        break candidate;
+                    }
+                }
+            };
+            resolved.push(mark);
+        }
+        Ok(resolved)
+    }
+
     pub fn validate(&self) -> Result<(), ConfigError> {
         if self.interfaces.is_empty() {
             return invalid("at least one interface must be configured");
@@ -292,7 +362,6 @@ impl Config {
 
         let mut interface_names = HashSet::new();
         let mut listen_ports = HashSet::new();
-        let mut fwmarks = HashSet::new();
 
         for interface in &self.interfaces {
             validate_interface_name(&interface.name)?;
@@ -309,18 +378,6 @@ impl Config {
                 return invalid(format!(
                     "UDP listen port {} is used by more than one interface",
                     interface.listen_port
-                ));
-            }
-            if interface.socket_fwmark == 0 {
-                return invalid(format!(
-                    "interfaces.{}.socket_fwmark must be non-zero",
-                    interface.name
-                ));
-            }
-            if !fwmarks.insert(interface.socket_fwmark) {
-                return invalid(format!(
-                    "socket fwmark 0x{:x} is used by more than one interface",
-                    interface.socket_fwmark
                 ));
             }
             if !(576..=65535).contains(&interface.mtu) {
@@ -440,14 +497,8 @@ impl Config {
                     "[routing].mark_base leaves no room for all client routing marks".to_owned(),
                 )
             })?;
-        if fwmarks
-            .iter()
-            .any(|mark| (*mark >= self.routing.mark_base) && (*mark <= last_routing_mark))
-        {
-            return invalid(
-                "[routing].mark_base range overlaps an interface socket_fwmark; outer UDP and inner packet marks must be distinct",
-            );
-        }
+        let _ = last_routing_mark;
+        self.resolved_socket_fwmarks()?;
 
         let interfaces_by_name: std::collections::HashMap<_, _> = self
             .interfaces
@@ -1147,6 +1198,41 @@ egress = "awg-uplink"
         let input = valid_config().replace(KEY, "AQID");
         let error = Config::parse_toml(&input).unwrap_err();
         assert!(error.to_string().contains("exactly 32 bytes"));
+    }
+
+    #[test]
+    fn socket_fwmarks_are_automatically_assigned_when_omitted() {
+        let input = valid_config()
+            .replace("socket_fwmark = 4097\n", "")
+            .replace("socket_fwmark = 4098\n", "");
+        let config = Config::parse_toml(&input).unwrap();
+        assert_eq!(config.resolved_socket_fwmarks().unwrap(), vec![0x1000, 0x1001]);
+    }
+
+    #[test]
+    fn automatic_socket_marks_skip_explicit_values_regardless_of_interface_order() {
+        let input = valid_config()
+            .replace("socket_fwmark = 4097", "socket_fwmark = 4098")
+            .replace("socket_fwmark = 4098\n\n[[interfaces.peers]]", "socket_fwmark = 4097\n\n[[interfaces.peers]]");
+        let config = Config::parse_toml(&input).unwrap();
+        assert_eq!(config.resolved_socket_fwmarks().unwrap(), vec![4098, 4097]);
+    }
+
+    #[test]
+    fn automatic_socket_marks_skip_the_inner_routing_mark_range() {
+        let input = valid_config()
+            .replace("socket_fwmark = 4097\n", "")
+            .replace("socket_fwmark = 4098\n", "")
+            .replace("[[routing.rules]]", "[routing]\nmark_base = 4096\n\n[[routing.rules]]");
+        let config = Config::parse_toml(&input).unwrap();
+        assert_eq!(config.resolved_socket_fwmarks().unwrap(), vec![4098, 4099]);
+    }
+
+    #[test]
+    fn explicit_socket_fwmarks_are_preserved_when_mixed_with_automatic_marks() {
+        let input = valid_config().replace("socket_fwmark = 4097\n", "");
+        let config = Config::parse_toml(&input).unwrap();
+        assert_eq!(config.resolved_socket_fwmarks().unwrap(), vec![4096, 4098]);
     }
 
     #[test]
