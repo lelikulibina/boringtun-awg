@@ -901,7 +901,12 @@ egress = "awg-uplink"
 
     #[test]
     fn parses_awg_30_and_31_extension_parameters() {
-        let input = valid_config().replace("h4 = \"301-400\"", concat!(
+        let input = valid_config()
+            .replace("s1 = 0", "s1 = 12")
+            .replace("s2 = 0", "s2 = 12")
+            .replace("s3 = 0", "s3 = 12")
+            .replace("s4 = 0", "s4 = 12")
+            .replace("h4 = \"301-400\"", concat!(
             "h4 = \"301-400\"\n",
             "i1 = \"<b 0x4142><r 8>\"\n",
             "i2 = \"<t>\"\n",
