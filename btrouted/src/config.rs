@@ -43,9 +43,6 @@ pub struct DaemonConfig {
     pub nft_table: String,
     #[serde(default)]
     pub manage_ip_forwarding: bool,
-    /// Allow IPv6 inside managed VPN routing; outer VPN transport is unaffected.
-    #[serde(default = "default_ipv6_enabled")]
-    pub ipv6_enabled: bool,
 }
 
 impl Default for DaemonConfig {
@@ -55,7 +52,6 @@ impl Default for DaemonConfig {
             stats_interval_secs: default_stats_interval(),
             nft_table: default_nft_table(),
             manage_ip_forwarding: false,
-            ipv6_enabled: default_ipv6_enabled(),
         }
     }
 }
@@ -76,9 +72,6 @@ fn default_mtu() -> u16 {
     1380
 }
 
-fn default_ipv6_enabled() -> bool {
-    true
-}
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -119,6 +112,9 @@ pub struct InterfaceConfig {
     pub addresses: Vec<String>,
     #[serde(default = "default_mtu")]
     pub mtu: u16,
+    /// Permit IPv6 packets entering or leaving this tunnel. Disabled by default.
+    #[serde(default)]
+    pub ipv6_enabled: bool,
     pub listen_port: u16,
     pub private_key: String,
     pub socket_fwmark: u32,
@@ -1057,18 +1053,28 @@ egress = "awg-uplink"
     }
 
     #[test]
-    fn ipv6_can_be_disabled_without_changing_the_default() {
-        assert!(
-            Config::parse_toml(&valid_config())
-                .unwrap()
-                .daemon
-                .ipv6_enabled
-        );
+    fn ipv6_is_blocked_by_default_on_every_interface() {
+        let config = Config::parse_toml(&valid_config()).unwrap();
+        assert!(config.interfaces.iter().all(|interface| !interface.ipv6_enabled));
+    }
+
+    #[test]
+    fn ipv6_can_be_enabled_independently_per_interface() {
+        let input = valid_config()
+            .replace("socket_fwmark = 4097", "socket_fwmark = 4097\nipv6_enabled = true")
+            .replace("socket_fwmark = 4098", "socket_fwmark = 4098\nipv6_enabled = false");
+        let config = Config::parse_toml(&input).unwrap();
+        assert!(config.interfaces[0].ipv6_enabled);
+        assert!(!config.interfaces[1].ipv6_enabled);
+    }
+
+    #[test]
+    fn rejects_removed_global_ipv6_setting() {
         let input = valid_config().replace(
             "manage_ip_forwarding = false",
-            "manage_ip_forwarding = false\nipv6_enabled = false",
+            "manage_ip_forwarding = false\nipv6_enabled = true",
         );
-        assert!(!Config::parse_toml(&input).unwrap().daemon.ipv6_enabled);
+        assert!(Config::parse_toml(&input).unwrap_err().to_string().contains("unknown field"));
     }
 
     #[test]
