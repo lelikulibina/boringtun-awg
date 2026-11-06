@@ -951,4 +951,113 @@ egress = "awg-uplink"
         let error = Config::parse_toml(&input).unwrap_err();
         assert!(error.to_string().contains("unknown field"));
     }
+
+    #[test]
+    fn rejects_duplicate_priorities_for_the_same_ingress() {
+        let input = valid_config().replace("priority = 110", "priority = 100");
+        let error = Config::parse_toml(&input).unwrap_err();
+        assert!(error.to_string().contains("duplicate priority"));
+    }
+
+    #[test]
+    fn allows_the_same_priority_on_different_ingresses() {
+        let input = valid_config()
+            .replace("name = \"wg-server\"", "name = \"wg-server\"")
+            .replace("priority = 110", "priority = 100");
+        // Duplicate priorities are scoped to an ingress. The validation
+        // fixture has one ingress, so move the second rule to another valid
+        // server interface before parsing.
+        let input = input.replace(
+            "[[interfaces]]\nname = \"awg-uplink\"",
+            "[[interfaces]]\nname = \"wg-backup\"\nprotocol = \"wg\"\nrole = \"server\"\naddresses = [\"10.11.0.1/24\"]\nlisten_port = 51823\nprivate_key = \"{KEY}\"\nsocket_fwmark = 4100\n\n[[interfaces]]\nname = \"awg-uplink\"",
+        ).replace("priority = 100\ningress = \"wg-server\"\ndestination = \"::/0\"", "priority = 100\ningress = \"wg-backup\"\ndestination = \"::/0\" ");
+        assert!(Config::parse_toml(&input).is_ok());
+    }
+
+    #[test]
+    fn rejects_unknown_routing_ingress_and_egress() {
+        let unknown_ingress = valid_config().replace(
+            "ingress = \"wg-server\"",
+            "ingress = \"wg-missing\"",
+        );
+        assert!(Config::parse_toml(&unknown_ingress)
+            .unwrap_err()
+            .to_string()
+            .contains("unknown ingress"));
+
+        let unknown_egress = valid_config().replace(
+            "egress = \"awg-uplink\"",
+            "egress = \"awg-missing\"",
+        );
+        assert!(Config::parse_toml(&unknown_egress)
+            .unwrap_err()
+            .to_string()
+            .contains("unknown egress"));
+    }
+
+    #[test]
+    fn rejects_same_interface_as_ingress_and_egress() {
+        let input = valid_config().replace(
+            "egress = \"awg-uplink\"",
+            "egress = \"wg-server\"",
+        );
+        assert!(Config::parse_toml(&input)
+            .unwrap_err()
+            .to_string()
+            .contains("both ingress and egress"));
+    }
+
+    #[test]
+    fn rejects_wrong_interface_roles_for_routing_direction() {
+        let wrong_ingress = valid_config().replacen(
+            "role = \"server\"",
+            "role = \"client\"",
+            1,
+        );
+        assert!(Config::parse_toml(&wrong_ingress)
+            .unwrap_err()
+            .to_string()
+            .contains("must have role = 'server'"));
+
+        let wrong_egress = valid_config().replacen(
+            "role = \"client\"",
+            "role = \"server\"",
+            1,
+        );
+        assert!(Config::parse_toml(&wrong_egress)
+            .unwrap_err()
+            .to_string()
+            .contains("must have role = 'client'"));
+    }
+
+    #[test]
+    fn rejects_empty_or_invalid_routing_cidr_selectors() {
+        let empty_source = valid_config().replace(
+            "destination = \"0.0.0.0/0\"",
+            "source = []\ndestination = \"0.0.0.0/0\"",
+        );
+        assert!(Config::parse_toml(&empty_source)
+            .unwrap_err()
+            .to_string()
+            .contains("source must not be an empty list"));
+
+        let invalid_destination = valid_config().replace(
+            "destination = \"0.0.0.0/0\"",
+            "destination = \"not-a-cidr\"",
+        );
+        assert!(Config::parse_toml(&invalid_destination)
+            .unwrap_err()
+            .to_string()
+            .contains("invalid CIDR"));
+    }
+
+    #[test]
+    fn rejects_unknown_nat_modes() {
+        let input = valid_config().replace(
+            "destination = \"0.0.0.0/0\"",
+            "destination = \"0.0.0.0/0\"\nnat = \"snat\"",
+        );
+        assert!(Config::parse_toml(&input).is_err());
+    }
+
 }
