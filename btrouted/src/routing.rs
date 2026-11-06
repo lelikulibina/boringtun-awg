@@ -39,6 +39,7 @@ pub struct RoutingPlan {
     pub nft_rules: Vec<NftRule>,
     /// Socket marks that force outer encrypted UDP through the main table.
     pub socket_marks: Vec<u32>,
+    pub ipv6_enabled: bool,
 }
 
 impl RoutingPlan {
@@ -110,7 +111,12 @@ impl RoutingPlan {
             egresses,
             nft_rules,
             socket_marks,
+            ipv6_enabled: config.daemon.ipv6_enabled,
         }
+    }
+
+    pub fn ip_families(&self) -> &'static [&'static str] {
+        if self.ipv6_enabled { &["-4", "-6"] } else { &["-4"] }
     }
 
     /// Render a fail-closed transit policy. New flows require an explicit
@@ -137,6 +143,13 @@ impl RoutingPlan {
             self.nft_family, self.nft_table,
             self.nft_family, self.nft_table
         );
+
+        if !self.ipv6_enabled {
+            output.push_str(&format!(
+                "add rule {} {} prerouting iifname @managed_interfaces meta nfproto ipv6 drop\\n",
+                self.nft_family, self.nft_table
+            ));
+        }
 
         // The reply direction must use the main table to reach the ingress TUN.
         // Original-direction packets restore the egress mark saved on the first
@@ -168,6 +181,13 @@ impl RoutingPlan {
             }
         }
 
+        if !self.ipv6_enabled {
+            output.push_str(&format!(
+                "add rule {} {} forward iifname @managed_interfaces meta nfproto ipv6 drop\\n\\
+                 add rule {} {} forward oifname @managed_interfaces meta nfproto ipv6 drop\\n",
+                self.nft_family, self.nft_table, self.nft_family, self.nft_table
+            ));
+        }
         output.push_str(&format!(
             "add rule {} {} forward iifname @managed_interfaces ct state invalid drop\n",
             self.nft_family, self.nft_table
@@ -225,7 +245,7 @@ impl RoutingPlan {
         let mut commands =
             Vec::with_capacity(self.egresses.len() * 4 + self.socket_marks.len() * 2);
         for mark in &self.socket_marks {
-            for family in ["-4", "-6"] {
+            for family in self.ip_families() {
                 commands.push(vec![
                     family.into(),
                     "rule".into(),
@@ -240,7 +260,7 @@ impl RoutingPlan {
             }
         }
         for egress in &self.egresses {
-            for family in ["-4", "-6"] {
+            for family in self.ip_families() {
                 commands.push(vec![
                     family.into(),
                     "route".into(),
@@ -547,6 +567,18 @@ egress = "awg-primary"
         assert!(commands
             .iter()
             .any(|args| args.iter().any(|arg| arg == "main")));
+    }
+
+    #[test]
+    fn ipv6_disable_blocks_tunnel_packets_and_omits_ipv6_routes() {
+        let mut config = sample_config();
+        config.daemon.ipv6_enabled = false;
+        let plan = RoutingPlan::from_config(&config);
+        let script = plan.nft_script();
+        assert!(script.contains("prerouting iifname @managed_interfaces meta nfproto ipv6 drop"));
+        assert!(script.contains("forward iifname @managed_interfaces meta nfproto ipv6 drop"));
+        assert!(script.contains("forward oifname @managed_interfaces meta nfproto ipv6 drop"));
+        assert!(!plan.ip_commands().iter().any(|args| args.first().is_some_and(|x| x == "-6")));
     }
 
     #[test]
