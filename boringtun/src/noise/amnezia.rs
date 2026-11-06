@@ -465,7 +465,12 @@ impl AmneziaConfig {
     /// Set the inclusive ContentPaddingAddition range in bytes.
     /// Use `(0, 0)` to disable additional content padding.
     pub fn with_content_padding_addition(mut self, min: u16, max: u16) -> Self {
-        self.content_padding_addition = (u32::from(min), u32::from(max));
+        self.with_content_padding_addition_range(u32::from(min), u32::from(max))
+    }
+
+    /// Set the full uint32 ContentPaddingAddition range used by the AWG UAPI.
+    pub fn with_content_padding_addition_range(mut self, min: u32, max: u32) -> Self {
+        self.content_padding_addition = (min, max);
         self
     }
 
