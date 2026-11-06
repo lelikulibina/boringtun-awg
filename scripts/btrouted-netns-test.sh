@@ -67,7 +67,7 @@ cat >"$TMP/config.toml" <<'TOML'
 log_level = "debug"
 stats_interval_secs = 1
 nft_table = "btrouted_it"
-manage_ip_forwarding = false
+manage_ip_forwarding = true
 
 [[interfaces]]
 name = "wg-server"
@@ -131,6 +131,10 @@ TOML
 
 ip netns add "$NS"
 ip -n "$NS" link set lo up
+# The daemon must enable forwarding for its lifetime and restore the original
+# namespace values when it exits.
+ip netns exec "$NS" sysctl -qw net.ipv4.ip_forward=0
+ip netns exec "$NS" sysctl -qw net.ipv6.conf.all.forwarding=0
 ip -n "$NS" link add main0 type dummy
 ip -n "$NS" link set main0 up
 ip -n "$NS" route replace default dev main0
@@ -198,6 +202,8 @@ for _ in $(seq 1 30); do
     sleep 1
 done
 ip netns exec "$NS" nft list table inet btrouted_it >/dev/null 2>&1 || fail "nftables table was not installed"
+[[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "1" ]] || fail "IPv4 forwarding was not enabled"
+[[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "1" ]] || fail "IPv6 forwarding was not enabled"
 
 for family in -4 -6; do
     rules="$(ip -n "$NS" "$family" rule show)"
@@ -240,6 +246,9 @@ grep -Fq 'iifname "wg-server" ct state new ip daddr 0.0.0.0/0 meta mark set 0x80
 kill -TERM "$DAEMON_PID"
 wait "$DAEMON_PID" || fail "daemon returned an error during graceful shutdown"
 DAEMON_PID=""
+
+[[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "0" ]] || fail "IPv4 forwarding value was not restored"
+[[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "0" ]] || fail "IPv6 forwarding value was not restored"
 
 if ip netns exec "$NS" nft list table inet btrouted_it >/dev/null 2>&1; then
     fail "daemon-owned nftables table survived shutdown"
