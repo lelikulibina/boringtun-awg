@@ -135,7 +135,9 @@ ip -n "$PRIMARY_NS" address add 203.0.113.1/32 dev lo
 ip -n "$PRIMARY_NS" -6 address add 2001:db8:1::1/128 dev lo
 ip -n "$SECONDARY_NS" address add 195.142.1.1/32 dev lo
 ip -n "$SECONDARY_NS" address add 79.100.22.1/32 dev lo
+ip -n "$PRIMARY_NS" address add 198.51.100.1/32 dev lo
 ip -n "$SECONDARY_NS" -6 address add 2001:db8:195:1::1/128 dev lo
+ip -n "$PRIMARY_NS" -6 address add 2001:db8:2::1/128 dev lo
 
 cat >"$TMP/client.toml" <<TOML
 [daemon]
@@ -244,22 +246,15 @@ persistent_keepalive_secs = 1
 [[routing.rules]]
 priority = 10
 ingress = "wg-ingress"
-source = "10.77.0.2/32"
-destination = "195.142.0.0/16"
-egress = "awg-secondary"
-
-[[routing.rules]]
-priority = 20
-ingress = "wg-ingress"
-source = "10.77.0.2/32"
-destination = "79.100.22.0/24"
+source = ["10.77.0.2/32", "10.77.0.4/32"]
+destination = ["195.142.0.0/16", "79.100.22.0/24"]
 egress = "awg-secondary"
 
 [[routing.rules]]
 priority = 100
 ingress = "wg-ingress"
 source = "10.77.0.2/32"
-destination = "0.0.0.0/0"
+destination = "203.0.113.0/24"
 egress = "awg-primary"
 nat = "masquerade"
 
@@ -274,7 +269,7 @@ egress = "awg-secondary"
 priority = 200
 ingress = "wg-ingress"
 source = "fd77::2/128"
-destination = "::/0"
+destination = "2001:db8:1::/48"
 egress = "awg-primary"
 TOML
 
@@ -364,8 +359,10 @@ ip -n "$SECONDARY_NS" -6 route replace fd77::2/128 dev up-secondary
 ip -n "$CLIENT_NS" route replace 203.0.113.1/32 dev wg-client
 ip -n "$CLIENT_NS" route replace 195.142.1.1/32 dev wg-client
 ip -n "$CLIENT_NS" route replace 79.100.22.1/32 dev wg-client
+ip -n "$CLIENT_NS" route replace 198.51.100.1/32 dev wg-client
 ip -n "$CLIENT_NS" -6 route replace 2001:db8:1::1/128 dev wg-client
 ip -n "$CLIENT_NS" -6 route replace 2001:db8:195:1::1/128 dev wg-client
+ip -n "$CLIENT_NS" -6 route replace 2001:db8:2::1/128 dev wg-client
 
 # Assert the daemon installed the intended classifier and mark mapping.
 chain="$(ip netns exec "$ROUTER_NS" nft list chain inet "btrouted_mu_router_$SUFFIX" prerouting)"
@@ -377,9 +374,9 @@ grep -Fq 'iifname "wg-ingress" oifname "awg-primary" ct mark 0x80000000 ip saddr
 
 grep -Fq 'iifname "wg-ingress" ct state new ip saddr 10.77.0.2 ip daddr 195.142.0.0/16 meta mark set 0x80000001 ct mark set meta mark return' <<<"$chain" || fail "secondary /16 classifier is missing"
 grep -Fq 'iifname "wg-ingress" ct state new ip saddr 10.77.0.2 ip daddr 79.100.22.0/24 meta mark set 0x80000001 ct mark set meta mark return' <<<"$chain" || fail "secondary /24 classifier is missing"
-grep -Fq 'iifname "wg-ingress" ct state new ip saddr 10.77.0.2 ip daddr 0.0.0.0/0 meta mark set 0x80000000 ct mark set meta mark return' <<<"$chain" || fail "primary default classifier is missing"
+grep -Fq 'iifname "wg-ingress" ct state new ip saddr 10.77.0.2 ip daddr 203.0.113.0/24 meta mark set 0x80000000 ct mark set meta mark return' <<<"$chain" || fail "primary destination-limited classifier is missing"
 grep -Fq 'iifname "wg-ingress" ct state new ip6 saddr fd77::2 ip6 daddr 2001:db8:195::/48 meta mark set 0x80000001 ct mark set meta mark return' <<<"$chain" || fail "IPv6 secondary exception classifier is missing"
-grep -Fq 'iifname "wg-ingress" ct state new ip6 saddr fd77::2 ip6 daddr ::/0 meta mark set 0x80000000 ct mark set meta mark return' <<<"$chain" || fail "IPv6 primary default classifier is missing"
+grep -Fq 'iifname "wg-ingress" ct state new ip6 saddr fd77::2 ip6 daddr 2001:db8:1::/48 meta mark set 0x80000000 ct mark set meta mark return' <<<"$chain" || fail "IPv6 primary destination-limited classifier is missing"
 
 ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -c 3 -W 2 10.77.0.1 \
     || fail "client could not establish the ingress WG tunnel"
@@ -393,6 +390,20 @@ if ip netns exec "$SECOND_CLIENT_NS" ping -n -I 10.77.0.3 -c 2 -W 1 10.77.0.2 >/
     fail "two peers on one WG server communicated without a routing rule"
 fi
 
+# A valid ingress interface is not sufficient: the source selector must match.
+if ip netns exec "$SECOND_CLIENT_NS" ping -n -I 10.77.0.3 -c 2 -W 1 203.0.113.1 >/dev/null 2>&1; then
+    fail "source selector mismatch was routed through an uplink"
+fi
+
+# A valid source is not sufficient either: destinations outside every rule
+# must not escape through the host's ordinary routing table.
+if ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -c 2 -W 1 198.51.100.1 >/dev/null 2>&1; then
+    fail "unmatched IPv4 destination escaped routing isolation"
+fi
+if ip netns exec "$CLIENT_NS" ping -6 -n -I fd77::2 -c 2 -W 1 2001:db8:2::1 >/dev/null 2>&1; then
+    fail "unmatched IPv6 destination escaped routing isolation"
+fi
+
 # Each address is hosted only by its intended remote uplink server.
 ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -c 4 -W 2 203.0.113.1 \
     || fail "default traffic did not traverse awg-primary"
@@ -404,6 +415,38 @@ ip netns exec "$CLIENT_NS" ping -6 -n -I fd77::2 -c 4 -W 2 2001:db8:1::1 \
     || fail "IPv6 default traffic did not traverse awg-primary"
 ip netns exec "$CLIENT_NS" ping -6 -n -I fd77::2 -c 4 -W 2 2001:db8:195:1::1 \
     || fail "IPv6 exception traffic did not traverse awg-secondary"
+
+# Observe inner packets at the remote TUNs. This proves NAT semantics rather
+# than merely checking that a masquerade statement exists in nftables.
+ip netns exec "$PRIMARY_NS" timeout 5 tcpdump -nn -i up-primary -c 1 \
+    'icmp and dst host 203.0.113.1' >"$TMP/nat-masquerade-capture.log" 2>&1 &
+capture_pid=$!
+sleep 0.25
+ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -c 1 -W 2 203.0.113.1 \
+    || fail "masqueraded IPv4 probe failed"
+wait "$capture_pid" || fail "could not capture masqueraded IPv4 packet"
+grep -Eq '10\.20\.0\.1 > 203\.0\.113\.1' "$TMP/nat-masquerade-capture.log" \
+    || fail "masquerade did not replace the source with the primary TUN address"
+
+ip netns exec "$SECONDARY_NS" timeout 5 tcpdump -nn -i up-secondary -c 1 \
+    'icmp and dst host 195.142.1.1' >"$TMP/nat-none-capture.log" 2>&1 &
+capture_pid=$!
+sleep 0.25
+ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -c 1 -W 2 195.142.1.1 \
+    || fail "non-NAT IPv4 probe failed"
+wait "$capture_pid" || fail "could not capture non-NAT IPv4 packet"
+grep -Eq '10\.77\.0\.2 > 195\.142\.1\.1' "$TMP/nat-none-capture.log" \
+    || fail "nat=none changed the original IPv4 source address"
+
+ip netns exec "$SECONDARY_NS" timeout 5 tcpdump -nn -i up-secondary -c 1 \
+    'icmp6 and dst host 2001:db8:195:1::1' >"$TMP/nat-none-v6-capture.log" 2>&1 &
+capture_pid=$!
+sleep 0.25
+ip netns exec "$CLIENT_NS" ping -6 -n -I fd77::2 -c 1 -W 2 2001:db8:195:1::1 \
+    || fail "non-NAT IPv6 probe failed"
+wait "$capture_pid" || fail "could not capture non-NAT IPv6 packet"
+grep -Eq 'fd77::2 > 2001:db8:195:1::1' "$TMP/nat-none-v6-capture.log" \
+    || fail "nat=none changed the original IPv6 source address"
 
 # AWG-secondary has no ingress routing rule. Even though the kernel has a
 # connected route to the WG client subnet, an AWG server must not initiate a
