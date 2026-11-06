@@ -72,7 +72,6 @@ fn default_mtu() -> u16 {
     1380
 }
 
-
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum ProtocolVersion {
@@ -1055,7 +1054,10 @@ egress = "awg-uplink"
     #[test]
     fn ipv6_is_blocked_by_default_on_every_interface() {
         let config = Config::parse_toml(&valid_config()).unwrap();
-        assert!(config.interfaces.iter().all(|interface| !interface.ipv6_enabled));
+        assert!(config
+            .interfaces
+            .iter()
+            .all(|interface| !interface.ipv6_enabled));
     }
 
     #[test]
@@ -1074,7 +1076,10 @@ egress = "awg-uplink"
             "manage_ip_forwarding = false",
             "manage_ip_forwarding = false\nipv6_enabled = true",
         );
-        assert!(Config::parse_toml(&input).unwrap_err().to_string().contains("unknown field"));
+        assert!(Config::parse_toml(&input)
+            .unwrap_err()
+            .to_string()
+            .contains("unknown field"));
     }
 
     #[test]
