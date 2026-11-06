@@ -390,8 +390,7 @@ grep -Fq 'iifname @managed_interfaces drop' <<<"$forward_chain" || fail "managed
 grep -Fq 'oifname @managed_interfaces drop' <<<"$forward_chain" || fail "managed egress isolation drop is missing"
 grep -Fq 'iifname "wg-ingress" oifname "awg-primary" ct mark 0x80000000 ip saddr 10.77.0.2 ip daddr 203.0.113.0/24 masquerade' <<<"$nat_chain" || fail "primary masquerade rule is missing"
 
-grep -Fq 'iifname "wg-ingress" ct state new ip saddr 10.77.0.2 ip daddr 195.142.0.0/16 meta mark set 0x80000001 ct mark set meta mark return' <<<"$chain" || fail "secondary /16 classifier is missing"
-grep -Fq 'iifname "wg-ingress" ct state new ip saddr 10.77.0.2 ip daddr 79.100.22.0/24 meta mark set 0x80000001 ct mark set meta mark return' <<<"$chain" || fail "secondary /24 classifier is missing"
+grep -Fq 'iifname "wg-ingress" ct state new ip saddr { 10.77.0.2, 10.77.0.4 } ip daddr { 195.142.0.0/16, 79.100.22.0/24 } meta mark set 0x80000001 ct mark set meta mark return' <<<"$chain" || fail "secondary source/destination CIDR arrays are missing"
 grep -Fq 'iifname "wg-ingress" ct state new ip saddr 10.77.0.2 ip daddr 203.0.113.0/24 meta mark set 0x80000000 ct mark set meta mark return' <<<"$chain" || fail "primary destination-limited classifier is missing"
 grep -Fq 'iifname "wg-ingress" ct state new ip6 saddr fd77::2 ip6 daddr 2001:db8:195::/48 meta mark set 0x80000001 ct mark set meta mark return' <<<"$chain" || fail "IPv6 secondary exception classifier is missing"
 grep -Fq 'iifname "wg-ingress" ct state new ip6 saddr fd77::2 ip6 daddr 2001:db8:1::/48 meta mark set 0x80000000 ct mark set meta mark return' <<<"$chain" || fail "IPv6 primary destination-limited classifier is missing"
@@ -428,14 +427,14 @@ fi
 # Overlapping rules must use the lowest numeric priority. Both uplinks host
 # this address, so a successful probe alone is insufficient: observe the
 # selected remote TUN and require the priority-5 secondary path.
-ip netns exec "$SECONDARY_NS" timeout 5 tcpdump -nn -i up-secondary -c 1 \\
+ip netns exec "$SECONDARY_NS" timeout 5 tcpdump -nn -i up-secondary -c 1 \
     'icmp and dst host 198.51.100.2' >"$TMP/priority-secondary.log" 2>&1 &
 capture_pid=$!
 sleep 0.25
-ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -c 1 -W 2 198.51.100.2 \\
+ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -c 1 -W 2 198.51.100.2 \
     || fail "overlapping-priority probe failed"
 wait "$capture_pid" || fail "priority-5 secondary rule did not receive overlapping traffic"
-grep -Eq '10\\.77\\.0\\.2 > 198\\.51\\.100\\.2' "$TMP/priority-secondary.log" \\
+grep -Eq '10\.77\.0\.2 > 198\.51\.100\.2' "$TMP/priority-secondary.log" \
     || fail "overlapping rules did not select the first matching non-NAT rule"
 
 # Each address is hosted only by its intended remote uplink server.
