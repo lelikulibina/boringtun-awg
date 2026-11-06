@@ -135,7 +135,7 @@ ip -n "$PRIMARY_NS" address add 203.0.113.1/32 dev lo
 ip -n "$PRIMARY_NS" -6 address add 2001:db8:1::1/128 dev lo
 ip -n "$SECONDARY_NS" address add 195.142.1.1/32 dev lo
 ip -n "$SECONDARY_NS" address add 79.100.22.1/32 dev lo
-ip -n "$PRIMARY_NS" address add 198.51.100.1/32 dev lo
+ip -n "$PRIMARY_NS" address add 198.51.101.1/32 dev lo
 ip -n "$PRIMARY_NS" address add 198.51.100.2/32 dev lo
 ip -n "$SECONDARY_NS" address add 198.51.100.2/32 dev lo
 ip -n "$SECONDARY_NS" -6 address add 2001:db8:195:1::1/128 dev lo
@@ -379,7 +379,7 @@ ip -n "$SECONDARY_NS" -6 route replace fd77::3/128 dev up-secondary
 ip -n "$CLIENT_NS" route replace 203.0.113.1/32 dev wg-client
 ip -n "$CLIENT_NS" route replace 195.142.1.1/32 dev wg-client
 ip -n "$CLIENT_NS" route replace 79.100.22.1/32 dev wg-client
-ip -n "$CLIENT_NS" route replace 198.51.100.1/32 dev wg-client
+ip -n "$CLIENT_NS" route replace 198.51.101.1/32 dev wg-client
 ip -n "$CLIENT_NS" route replace 198.51.100.2/32 dev wg-client
 ip -n "$CLIENT_NS" -6 route replace 2001:db8:1::1/128 dev wg-client
 ip -n "$CLIENT_NS" -6 route replace 2001:db8:195:1::1/128 dev wg-client
@@ -425,7 +425,7 @@ fi
 
 # A valid source is not sufficient either: destinations outside every rule
 # must not escape through the host's ordinary routing table.
-if ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -c 2 -W 1 198.51.100.1 >/dev/null 2>&1; then
+if ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -c 2 -W 1 198.51.101.1 >/dev/null 2>&1; then
     fail "unmatched IPv4 destination escaped routing isolation"
 fi
 if ip netns exec "$CLIENT_NS" ping -6 -n -I fd77::2 -c 2 -W 1 2001:db8:2::1 >/dev/null 2>&1; then
