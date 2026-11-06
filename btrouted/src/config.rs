@@ -1048,17 +1048,26 @@ egress = "awg-uplink"
             ("rekey_timeout", "\"8-3\""),
             ("i1", "\"<unknown 2>\""),
         ] {
-            let input = valid_config().replace("h4 = \"301-400\"",
-                &format!("h4 = \"301-400\"\n{} = {}", field, value));
+            let input = valid_config().replace(
+                "h4 = \"301-400\"",
+                &format!("h4 = \"301-400\"\\n{} = {}", field, value),
+            );
             assert!(Config::parse_toml(&input).is_err(), "{}", field);
         }
     }
 
     #[test]
     fn ipv6_can_be_disabled_without_changing_the_default() {
-        assert!(Config::parse_toml(&valid_config()).unwrap().daemon.ipv6_enabled);
-        let input = valid_config().replace("manage_ip_forwarding = false",
-            "manage_ip_forwarding = false\nipv6_enabled = false");
+        assert!(
+            Config::parse_toml(&valid_config())
+                .unwrap()
+                .daemon
+                .ipv6_enabled
+        );
+        let input = valid_config().replace(
+            "manage_ip_forwarding = false",
+            "manage_ip_forwarding = false\\nipv6_enabled = false",
+        );
         assert!(!Config::parse_toml(&input).unwrap().daemon.ipv6_enabled);
     }
 
