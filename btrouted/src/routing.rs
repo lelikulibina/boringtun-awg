@@ -58,12 +58,15 @@ impl RoutingPlan {
         egress_names.sort_unstable();
         egress_names.dedup();
 
+        let routing_marks = config
+            .resolved_routing_fwmarks()
+            .expect("RoutingPlan::from_config requires a validated configuration");
         let egresses: Vec<_> = egress_names
             .iter()
             .enumerate()
             .map(|(index, name)| EgressPlan {
                 interface: (*name).to_owned(),
-                mark: config.routing.mark_base + index as u32,
+                mark: routing_marks[index],
                 table_id: FIRST_ROUTING_TABLE + index as u32,
                 ip_rule_priority: FIRST_IP_RULE_PRIORITY + index as u32,
                 ipv6_enabled: config
@@ -570,6 +573,19 @@ egress = "awg-primary"
         assert_eq!(plan.egresses[0].mark, 0x8000_0000);
         assert_eq!(plan.egresses[1].mark, 0x8000_0001);
         assert_ne!(plan.egresses[1].mark, 4099);
+    }
+
+    #[test]
+    fn routing_plan_guarantees_socket_and_packet_mark_spaces_are_disjoint() {
+        let plan = RoutingPlan::from_config(&sample_config());
+        let packet_marks: std::collections::HashSet<_> =
+            plan.egresses.iter().map(|egress| egress.mark).collect();
+        let socket_marks: std::collections::HashSet<_> =
+            plan.socket_marks.iter().copied().collect();
+
+        assert_eq!(packet_marks.len(), plan.egresses.len());
+        assert_eq!(socket_marks.len(), plan.socket_marks.len());
+        assert!(packet_marks.is_disjoint(&socket_marks));
     }
 
     #[test]
