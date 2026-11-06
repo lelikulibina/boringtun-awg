@@ -198,3 +198,103 @@ impl Peer {
         self.index
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::noise::amnezia::{AmneziaConfig, DEFAULT_UDP_WINDOW};
+    use crate::noise::TunnResult;
+    use rand_core::OsRng;
+
+    fn take_network_packet(result: TunnResult<'_>) -> Vec<u8> {
+        match result {
+            TunnResult::WriteToNetwork(packet) => packet.to_vec(),
+            other => panic!("expected network packet, got {:?}", other),
+        }
+    }
+
+    fn complete_handshake(sender: &mut crate::noise::Tunn, receiver: &mut crate::noise::Tunn) {
+        let mut buffer = vec![0u8; 2048];
+        let init = take_network_packet(sender.format_handshake_initiation(&mut buffer, false));
+
+        let mut buffer = vec![0u8; 2048];
+        let response = take_network_packet(receiver.decapsulate(None, &init, &mut buffer));
+
+        let mut buffer = vec![0u8; 2048];
+        let keepalive = take_network_packet(sender.decapsulate(None, &response, &mut buffer));
+
+        let mut buffer = vec![0u8; 2048];
+        assert!(matches!(
+            receiver.decapsulate(None, &keepalive, &mut buffer),
+            TunnResult::Done
+        ));
+    }
+
+    fn ipv4_udp_packet(size: usize) -> Vec<u8> {
+        let header =
+            etherparse::PacketBuilder::ipv4([192, 168, 1, 2], [192, 168, 1, 3], 5).udp(5678, 23);
+        let payload = [0, 1, 2, 3];
+        let mut packet = Vec::<u8>::with_capacity(header.size(payload.len()));
+        header.write(&mut packet, &payload).unwrap();
+        packet.resize(size, 0);
+        packet[2..4].copy_from_slice(&(size as u16).to_be_bytes());
+        packet[24..26].copy_from_slice(&((size - 20) as u16).to_be_bytes());
+        packet
+    }
+
+    #[test]
+    fn endpoint_roaming_resets_learned_udp_window() {
+        let cfg = AmneziaConfig::new(0, 0, 0, 0).with_random_trailers(true);
+        let local_secret = x25519_dalek::StaticSecret::random_from_rng(OsRng);
+        let local_public = x25519_dalek::PublicKey::from(&local_secret);
+        let remote_secret = x25519_dalek::StaticSecret::random_from_rng(OsRng);
+        let remote_public = x25519_dalek::PublicKey::from(&remote_secret);
+
+        let mut sender = crate::noise::Tunn::new_with_amnezia(
+            local_secret, remote_public, None, None, 1, None,
+            0, 0, 0, 0, 0, 0, 0, 0, cfg.clone(),
+        ).unwrap();
+        let mut receiver = crate::noise::Tunn::new_with_amnezia(
+            remote_secret, local_public, None, None, 2, None,
+            0, 0, 0, 0, 0, 0, 0, 0, cfg,
+        ).unwrap();
+        complete_handshake(&mut sender, &mut receiver);
+
+        let first_endpoint = "192.0.2.1:51820".parse().unwrap();
+        let new_endpoint = "192.0.2.2:51820".parse().unwrap();
+        let mut peer = Peer::new(sender, 1, Some(first_endpoint), None);
+
+        // A large outbound packet raises the peer's high-water mark above the
+        // default. A subsequent small packet can then receive a large trailer.
+        let large = ipv4_udp_packet(600);
+        let mut buffer = vec![0u8; 4096];
+        let large_datagram = take_network_packet(peer.tunnel.encapsulate(&large, &mut buffer));
+        assert_eq!(large_datagram.len(), 600 + 32);
+
+        let small = ipv4_udp_packet(28);
+        let mut observed_above_default = false;
+        for _ in 0..256 {
+            let mut buffer = vec![0u8; 4096];
+            let datagram = take_network_packet(peer.tunnel.encapsulate(&small, &mut buffer));
+            if datagram.len() > DEFAULT_UDP_WINDOW {
+                observed_above_default = true;
+                break;
+            }
+        }
+        assert!(
+            observed_above_default,
+            "the learned high-water mark should permit a trailer above the default window"
+        );
+
+        peer.set_endpoint(new_endpoint);
+
+        for _ in 0..64 {
+            let mut buffer = vec![0u8; 4096];
+            let datagram = take_network_packet(peer.tunnel.encapsulate(&small, &mut buffer));
+            assert!(
+                datagram.len() <= DEFAULT_UDP_WINDOW,
+                "roaming must reset the old endpoint's learned UDP window"
+            );
+        }
+    }
+}
