@@ -641,10 +641,18 @@ egress = "awg-primary"
         assert!(script.contains(
             "elements = { \"awg-secondary\", \"wg-server\" }"
         ));
-        assert!(script.contains("prerouting iifname @ipv6_blocked_interfaces meta nfproto ipv6 drop"));
-        assert!(script.contains("forward oifname @ipv6_blocked_interfaces meta nfproto ipv6 drop"));
-        assert!(script.contains("output oifname @ipv6_blocked_interfaces meta nfproto ipv6 drop"));
-        assert!(!script.contains("forward iifname @managed_interfaces meta nfproto ipv6 drop"));
+        assert!(script.contains(
+            "prerouting iifname @ipv6_blocked_interfaces meta nfproto ipv6 drop"
+        ));
+        assert!(script.contains(
+            "forward oifname @ipv6_blocked_interfaces meta nfproto ipv6 drop"
+        ));
+        assert!(script.contains(
+            "output oifname @ipv6_blocked_interfaces meta nfproto ipv6 drop"
+        ));
+        assert!(!script.contains(
+            "forward iifname @managed_interfaces meta nfproto ipv6 drop"
+        ));
 
         // A route selector must not emit IPv6 classifier/NAT variants when
         // either its ingress or egress tunnel has IPv6 disabled.
@@ -654,9 +662,15 @@ egress = "awg-primary"
         assert!(rule_family_variants(&filtered_plan.nft_rules[0]).is_empty());
 
         let commands = plan.ip_commands();
-        assert!(commands.iter().any(|args| args.first().is_some_and(|x| x == "-6") && args.iter().any(|x| x == "main")));
-        assert!(commands.iter().any(|args| args.first().is_some_and(|x| x == "-6") && args.iter().any(|x| x == "awg-primary")));
-        assert!(!commands.iter().any(|args| args.first().is_some_and(|x| x == "-6") && args.iter().any(|x| x == "awg-secondary")));
+        assert!(commands.iter().any(|args| {
+            args.first().is_some_and(|x| x == "-6") && args.iter().any(|x| x == "main")
+        }));
+        assert!(commands.iter().any(|args| {
+            args.first().is_some_and(|x| x == "-6") && args.iter().any(|x| x == "awg-primary")
+        }));
+        assert!(!commands.iter().any(|args| {
+            args.first().is_some_and(|x| x == "-6") && args.iter().any(|x| x == "awg-secondary")
+        }));
     }
 
     #[test]
