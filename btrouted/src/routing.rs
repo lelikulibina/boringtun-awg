@@ -598,7 +598,10 @@ egress = "awg-primary"
 
         let plan = RoutingPlan::from_config(&config);
         assert_eq!(
-            plan.egresses.iter().map(|egress| egress.mark).collect::<Vec<_>>(),
+            plan.egresses
+                .iter()
+                .map(|egress| egress.mark)
+                .collect::<Vec<_>>(),
             vec![0x1000, 0x1001]
         );
         assert_eq!(plan.socket_marks, vec![0x1002, 0x1003, 0x1004]);
