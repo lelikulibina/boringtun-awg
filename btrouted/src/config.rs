@@ -1003,15 +1003,13 @@ egress = "awg-uplink"
 
     #[test]
     fn rejects_wrong_interface_roles_for_routing_direction() {
-        let wrong_ingress =
-            valid_config().replacen("role = \"server\"", "role = \"client\"", 1);
+        let wrong_ingress = valid_config().replacen("role = \"server\"", "role = \"client\"", 1);
         assert!(Config::parse_toml(&wrong_ingress)
             .unwrap_err()
             .to_string()
             .contains("must have role = 'server'"));
 
-        let wrong_egress =
-            valid_config().replacen("role = \"client\"", "role = \"server\"", 1);
+        let wrong_egress = valid_config().replacen("role = \"client\"", "role = \"server\"", 1);
         assert!(Config::parse_toml(&wrong_egress)
             .unwrap_err()
             .to_string()
