@@ -27,6 +27,8 @@
 
 ## 2. UAPI-параметры AWG 3.1
 
+`btrouted` exposes these values in `[interfaces.awg]`. `I1-I5` accept the upstream signature-chain grammar as strings; `header_protection_key` is 64 hex characters; `content_padding_addition` and all five timer fields accept a uint32 value or an inclusive `MIN-MAX` range. `content_padding_mode` accepts `udp_window` (AWG 3.1) or `mtu` (AWG 3.0). AWG 3.0 defaults to `mtu`; AWG 3.1 defaults to `udp_window`. Invalid keys, signature chains, ranges, and timer values are rejected before interfaces are created.
+
 | Параметр | Формат | Default / смысл |
 |---|---|---|
 | `header_protection_key` | 64 hex-символа (32 байта) | Нулевой ключ отключает HP. Один ключ на обоих концах. При HP все S1-S4 должны быть ≥12 байт. |
@@ -103,3 +105,8 @@ BoringTun следует исправленному upstream поведению 
 Любое изменение framing должно проверяться в обеих ролях: BoringTun server ↔ amneziawg-go client и amneziawg-go server ↔ BoringTun client. Для RandomTrailers нужны равные S на обеих сторонах; для HP — общий ключ и S≥12. Quick interop матрица в PR #13 выполняет 16 направленных сценариев: vanilla WG и AWG 2.x baseline, 1 MiB integrity transfer для AWG 3.0 и 3.1, combined AWG 3.1, accelerated rekey, packet-loss recovery и CPS I1-I5. Полная 44-сценарная матрица запускается отдельно через workflow_dispatch.
 
 Полное исследование параметров, версий, лимитов и известных upstream defects: [AMNEZIAWG_PROTOCOL_COMPATIBILITY.md](AMNEZIAWG_PROTOCOL_COMPATIBILITY.md).
+
+
+## 9. Управление IPv6 в btrouted
+
+В секции [daemon] параметр `ipv6_enabled` по умолчанию равен `true`. При `false` демон блокирует IPv6-пакеты, входящие в маршрутизацию через managed TUN-интерфейсы или направляемые в них, и не устанавливает IPv6 policy routes для uplink. Внешний UDP-транспорт BoringTun не фильтруется: VPN endpoint может оставаться IPv6-адресом. Настройка не отключает IPv6 в ОС и не меняет глобальный sysctl.
