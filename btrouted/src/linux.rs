@@ -312,12 +312,33 @@ pub fn apply_policy_routing(plan: &RoutingPlan) -> Result<(), LinuxError> {
     for egress in &plan.egresses {
         if !egress.ipv6_enabled {
             // Remove stale daemon-owned IPv6 policy left by an earlier enabled configuration.
-            let _ = run("ip", &["-6".into(), "rule".into(), "del".into(), "priority".into(),
-                egress.ip_rule_priority.to_string(), "fwmark".into(), format!("0x{:x}", egress.mark),
-                "lookup".into(), egress.table_id.to_string(), "protocol".into(), ROUTING_PROTOCOL.into()]);
-            let _ = run("ip", &["-6".into(), "route".into(), "del".into(), "default".into(),
-                "dev".into(), egress.interface.clone(), "table".into(), egress.table_id.to_string(),
-                "proto".into(), ROUTING_PROTOCOL.into()]);
+            let stale_rule = [
+                "-6".into(),
+                "rule".into(),
+                "del".into(),
+                "priority".into(),
+                egress.ip_rule_priority.to_string(),
+                "fwmark".into(),
+                format!("0x{:x}", egress.mark),
+                "lookup".into(),
+                egress.table_id.to_string(),
+                "protocol".into(),
+                ROUTING_PROTOCOL.into(),
+            ];
+            let stale_route = [
+                "-6".into(),
+                "route".into(),
+                "del".into(),
+                "default".into(),
+                "dev".into(),
+                egress.interface.clone(),
+                "table".into(),
+                egress.table_id.to_string(),
+                "proto".into(),
+                ROUTING_PROTOCOL.into(),
+            ];
+            let _ = run("ip", &stale_rule);
+            let _ = run("ip", &stale_route);
         }
         for &family in RoutingPlan::ip_families(egress) {
             let priority = egress.ip_rule_priority.to_string();
