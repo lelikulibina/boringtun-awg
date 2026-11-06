@@ -33,7 +33,6 @@ addresses = ["10.20.0.2/32"]
 mtu = 1380
 listen_port = 51821
 private_key = "REPLACE_WITH_BASE64_PRIVATE_KEY"
-socket_fwmark = 0x1002
 
 [[interfaces.peers]]
 name = "primary-server"
@@ -64,7 +63,6 @@ addresses = ["10.30.0.2/32"]
 mtu = 1380
 listen_port = 51822
 private_key = "REPLACE_WITH_BASE64_PRIVATE_KEY"
-socket_fwmark = 0x1003
 
 [[interfaces.peers]]
 name = "secondary-server"
