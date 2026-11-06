@@ -304,8 +304,7 @@ impl Config {
     /// The socket and packet mark spaces are disjoint by exact 32-bit value.
     /// Explicit marks are reserved first so automatic allocation never displaces them.
     pub fn resolved_socket_fwmarks(&self) -> Result<Vec<u32>, ConfigError> {
-        let routing_marks: HashSet<_> =
-            self.resolved_routing_fwmarks()?.into_iter().collect();
+        let routing_marks: HashSet<_> = self.resolved_routing_fwmarks()?.into_iter().collect();
 
         let mut used = HashSet::new();
         for interface in &self.interfaces {
@@ -1239,10 +1238,7 @@ egress = "awg-uplink"
 
     #[test]
     fn rejects_explicit_socket_mark_inside_packet_mark_range() {
-        let input = valid_config().replace(
-            "socket_fwmark = 4097",
-            "socket_fwmark = 2147483648",
-        );
+        let input = valid_config().replace("socket_fwmark = 4097", "socket_fwmark = 2147483648");
         let error = Config::parse_toml(&input).unwrap_err();
         assert!(error.to_string().contains("mark_base range overlaps"));
     }
