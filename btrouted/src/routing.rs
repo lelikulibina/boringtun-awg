@@ -573,6 +573,16 @@ egress = "awg-primary"
     }
 
     #[test]
+    fn routing_plan_uses_automatically_resolved_socket_marks() {
+        let mut config = sample_config();
+        for interface in &mut config.interfaces {
+            interface.socket_fwmark = None;
+        }
+        let plan = RoutingPlan::from_config(&config);
+        assert_eq!(plan.socket_marks, vec![0x1000, 0x1001]);
+    }
+
+    #[test]
     fn nft_rules_preserve_explicit_priority_and_mark_selection() {
         let plan = RoutingPlan::from_config(&sample_config());
         assert_eq!(
