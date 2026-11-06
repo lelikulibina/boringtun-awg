@@ -17,6 +17,7 @@ pub struct EgressPlan {
     pub mark: u32,
     pub table_id: u32,
     pub ip_rule_priority: u32,
+    pub ipv6_enabled: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -28,6 +29,8 @@ pub struct NftRule {
     pub egress: String,
     pub mark: u32,
     pub nat: NatMode,
+    /// IPv6 selectors are emitted only when both ends permit IPv6.
+    pub ipv6_enabled: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -39,7 +42,8 @@ pub struct RoutingPlan {
     pub nft_rules: Vec<NftRule>,
     /// Socket marks that force outer encrypted UDP through the main table.
     pub socket_marks: Vec<u32>,
-    pub ipv6_enabled: bool,
+    /// TUN interfaces on which inner IPv6 traffic is blocked.
+    pub ipv6_blocked_interfaces: Vec<String>,
 }
 
 impl RoutingPlan {
@@ -62,6 +66,7 @@ impl RoutingPlan {
                 mark: config.routing.mark_base + index as u32,
                 table_id: FIRST_ROUTING_TABLE + index as u32,
                 ip_rule_priority: FIRST_IP_RULE_PRIORITY + index as u32,
+                ipv6_enabled: config.interfaces.iter().find(|interface| interface.name == *name).is_some_and(|interface| interface.ipv6_enabled),
             })
             .collect();
 
@@ -82,6 +87,8 @@ impl RoutingPlan {
                 egress: rule.egress.clone(),
                 mark: egress_marks[rule.egress.as_str()],
                 nat: rule.nat,
+                ipv6_enabled: config.interfaces.iter().find(|interface| interface.name == rule.ingress).is_some_and(|interface| interface.ipv6_enabled)
+                    && config.interfaces.iter().find(|interface| interface.name == rule.egress).is_some_and(|interface| interface.ipv6_enabled),
             })
             .collect();
         nft_rules.sort_by(|left, right| {
@@ -103,6 +110,11 @@ impl RoutingPlan {
             .map(|interface| interface.name.clone())
             .collect();
         managed_interfaces.sort();
+        let mut ipv6_blocked_interfaces: Vec<_> = config.interfaces.iter()
+            .filter(|interface| !interface.ipv6_enabled)
+            .map(|interface| interface.name.clone())
+            .collect();
+        ipv6_blocked_interfaces.sort();
 
         Self {
             nft_family: "inet".to_owned(),
@@ -111,16 +123,12 @@ impl RoutingPlan {
             egresses,
             nft_rules,
             socket_marks,
-            ipv6_enabled: config.daemon.ipv6_enabled,
+            ipv6_blocked_interfaces,
         }
     }
 
-    pub fn ip_families(&self) -> &'static [&'static str] {
-        if self.ipv6_enabled {
-            &["-4", "-6"]
-        } else {
-            &["-4"]
-        }
+    pub fn ip_families(egress: &EgressPlan) -> &'static [&'static str] {
+        if egress.ipv6_enabled { &["-4", "-6"] } else { &["-4"] }
     }
 
     /// Render a fail-closed transit policy. New flows require an explicit
@@ -148,9 +156,28 @@ impl RoutingPlan {
             self.nft_family, self.nft_table
         );
 
-        if !self.ipv6_enabled {
+        if !self.ipv6_blocked_interfaces.is_empty() {
+            let elements = self.ipv6_blocked_interfaces.iter()
+                .map(|name| format!("\"{}\"", name))
+                .collect::<Vec<_>>().join(", ");
             output.push_str(&format!(
-                "add rule {} {} prerouting iifname @managed_interfaces meta nfproto ipv6 drop\n",
+                "add set {} {} ipv6_blocked_interfaces {{ type ifname; elements = {{ {} }}; }}\n",
+                self.nft_family, self.nft_table, elements
+            ));
+            output.push_str(&format!(
+                "add rule {} {} prerouting iifname @ipv6_blocked_interfaces meta nfproto ipv6 drop\n",
+                self.nft_family, self.nft_table
+            ));
+            output.push_str(&format!(
+                "add rule {} {} forward oifname @ipv6_blocked_interfaces meta nfproto ipv6 drop\n",
+                self.nft_family, self.nft_table
+            ));
+            output.push_str(&format!(
+                "add chain {} {} output {{ type filter hook output priority filter; policy accept; }}\n",
+                self.nft_family, self.nft_table
+            ));
+            output.push_str(&format!(
+                "add rule {} {} output oifname @ipv6_blocked_interfaces meta nfproto ipv6 drop\n",
                 self.nft_family, self.nft_table
             ));
         }
@@ -185,16 +212,6 @@ impl RoutingPlan {
             }
         }
 
-        if !self.ipv6_enabled {
-            output.push_str(&format!(
-                "add rule {} {} forward iifname @managed_interfaces meta nfproto ipv6 drop\n",
-                self.nft_family, self.nft_table
-            ));
-            output.push_str(&format!(
-                "add rule {} {} forward oifname @managed_interfaces meta nfproto ipv6 drop\n",
-                self.nft_family, self.nft_table
-            ));
-        }
         output.push_str(&format!(
             "add rule {} {} forward iifname @managed_interfaces ct state invalid drop\n",
             self.nft_family, self.nft_table
@@ -268,7 +285,7 @@ impl RoutingPlan {
             }
         }
         for egress in &self.egresses {
-            for &family in self.ip_families() {
+            for &family in Self::ip_families(egress) {
                 commands.push(vec![
                     family.into(),
                     "route".into(),
@@ -328,6 +345,7 @@ fn rule_family_variants(rule: &NftRule) -> Vec<(Option<&'static str>, Vec<String
 
     selected
         .into_iter()
+        .filter(|family| *family != "ip6" || rule.ipv6_enabled)
         .collect::<std::collections::BTreeSet<_>>()
         .into_iter()
         .map(|family| {
@@ -386,6 +404,7 @@ mod tests {
 name = "wg-server"
 protocol = "wg"
 role = "server"
+ipv6_enabled = true
 addresses = ["10.0.0.1/24"]
 listen_port = 51820
 private_key = "{KEY}"
@@ -395,6 +414,7 @@ socket_fwmark = 4097
 name = "awg-primary"
 protocol = "awg3_1"
 role = "client"
+ipv6_enabled = true
 addresses = ["10.1.0.2/32"]
 listen_port = 51821
 private_key = "{KEY}"
@@ -404,6 +424,7 @@ socket_fwmark = 4098
 name = "awg-secondary"
 protocol = "awg2"
 role = "client"
+ipv6_enabled = true
 addresses = ["10.2.0.2/32"]
 listen_port = 51822
 private_key = "{KEY}"
@@ -490,6 +511,8 @@ egress = "awg-primary"
         let script = plan.nft_script();
         assert!(script.contains("elements = { \"awg-primary\", \"awg-secondary\", \"wg-server\" }"));
         assert!(script.contains("forward iifname @managed_interfaces drop"));
+        assert!(!script.contains("ipv6_blocked_interfaces"));
+        assert!(!script.contains("hook output"));
         assert!(script.contains("forward oifname @managed_interfaces drop"));
         assert!(script.contains("iifname @managed_interfaces meta mark set 0"));
         assert!(script.contains("ct direction reply meta mark set 0"));
@@ -578,28 +601,21 @@ egress = "awg-primary"
     }
 
     #[test]
-    fn ipv6_disable_blocks_tunnel_packets_and_omits_ipv6_routes() {
+    fn ipv6_blocking_is_independent_for_ingress_and_egress_tunnels() {
         let mut config = sample_config();
-        config.daemon.ipv6_enabled = false;
+        config.interfaces.iter_mut().find(|i| i.name == "wg-server").unwrap().ipv6_enabled = false;
+        config.interfaces.iter_mut().find(|i| i.name == "awg-secondary").unwrap().ipv6_enabled = false;
         let plan = RoutingPlan::from_config(&config);
         let script = plan.nft_script();
-        assert!(script.contains("prerouting iifname @managed_interfaces meta nfproto ipv6 drop"));
-        assert!(script.contains("forward iifname @managed_interfaces meta nfproto ipv6 drop"));
-        assert!(script.contains("forward oifname @managed_interfaces meta nfproto ipv6 drop"));
+        assert!(script.contains("elements = { \"awg-secondary\", \"wg-server\" }"));
+        assert!(script.contains("prerouting iifname @ipv6_blocked_interfaces meta nfproto ipv6 drop"));
+        assert!(script.contains("forward oifname @ipv6_blocked_interfaces meta nfproto ipv6 drop"));
+        assert!(script.contains("output oifname @ipv6_blocked_interfaces meta nfproto ipv6 drop"));
+        assert!(!script.contains("forward iifname @managed_interfaces meta nfproto ipv6 drop"));
         let commands = plan.ip_commands();
-        assert!(
-            commands.iter().any(|args| {
-                args.first().is_some_and(|x| x == "-6") && args.iter().any(|x| x == "main")
-            }),
-            "outer IPv6 UDP sockets must retain their main-table escape"
-        );
-        assert!(
-            !commands.iter().any(|args| {
-                args.first().is_some_and(|x| x == "-6")
-                    && (args.iter().any(|x| x == "default") || args.iter().any(|x| x == "10000"))
-            }),
-            "IPv6 transit policy routes must be omitted"
-        );
+        assert!(commands.iter().any(|args| args.first().is_some_and(|x| x == "-6") && args.iter().any(|x| x == "main")));
+        assert!(commands.iter().any(|args| args.first().is_some_and(|x| x == "-6") && args.iter().any(|x| x == "awg-primary")));
+        assert!(!commands.iter().any(|args| args.first().is_some_and(|x| x == "-6") && args.iter().any(|x| x == "awg-secondary")));
     }
 
     #[test]
