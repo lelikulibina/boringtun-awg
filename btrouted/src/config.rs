@@ -185,9 +185,6 @@ pub struct AwgConfig {
     /// Inclusive uint32 range, e.g. "10-100".
     #[serde(default)]
     pub content_padding_addition: Option<String>,
-    /// mtu/awg30 or udp_window/awg31.
-    #[serde(default)]
-    pub content_padding_mode: Option<String>,
     #[serde(default)]
     pub rekey_after_time: Option<String>,
     #[serde(default)]
@@ -665,18 +662,9 @@ impl AwgConfig {
             })?;
             cfg = cfg.with_content_padding_addition_range(min, max);
         }
-        let legacy = match self.content_padding_mode.as_deref() {
-            Some("mtu" | "awg30") => true,
-            Some("udp_window" | "awg31") => false,
-            Some(other) => {
-                return invalid(format!(
-                    "interfaces.{}.awg.content_padding_mode '{}' is invalid",
-                    interface, other
-                ))
-            }
-            None => protocol == ProtocolVersion::Awg3,
-        };
-        cfg = cfg.with_legacy_content_padding(legacy);
+        // Padding mode is part of the protocol version: AWG 3.0 uses MTU
+        // padding, while AWG 3.1 uses UDP-window padding.
+        cfg = cfg.with_legacy_content_padding(protocol == ProtocolVersion::Awg3);
         for (name, value, slot) in [
             ("rekey_after_time", self.rekey_after_time.as_deref(), 0u8),
             ("rekey_timeout", self.rekey_timeout.as_deref(), 1u8),
@@ -1064,7 +1052,6 @@ egress = "awg-uplink"
             "i5 = \"<dz 2>\"\n",
             "header_protection_key = \"4242424242424242424242424242424242424242424242424242424242424242\"\n",
             "content_padding_addition = \"10-100\"\n",
-            "content_padding_mode = \"udp_window\"\n",
             "rekey_after_time = \"100-120\"\n",
             "rekey_timeout = \"3-8\"\n",
             "reject_after_time = \"150-180\"\n",
