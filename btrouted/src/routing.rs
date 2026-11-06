@@ -146,7 +146,7 @@ impl RoutingPlan {
 
         if !self.ipv6_enabled {
             output.push_str(&format!(
-                "add rule {} {} prerouting iifname @managed_interfaces meta nfproto ipv6 drop\\n",
+                "add rule {} {} prerouting iifname @managed_interfaces meta nfproto ipv6 drop\n",
                 self.nft_family, self.nft_table
             ));
         }
