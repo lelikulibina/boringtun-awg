@@ -57,7 +57,7 @@ random_trailers = false
 # i5 = "<dz 2>"
 # header_protection_key = "64_HEX_CHARACTERS_SHARED_WITH_PEER"
 # content_padding_addition = "10-100"
-content_padding_mode = "udp_window" # udp_window (AWG 3.1) or mtu (AWG 3.0)
+# Padding mode is selected automatically from protocol (AWG 3.0: MTU; AWG 3.1: UDP window).
 # rekey_after_time = "100-120"
 # rekey_timeout = "3-8"
 # reject_after_time = "150-180"
