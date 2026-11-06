@@ -101,7 +101,7 @@ h4 = "4"
 name = "awg-secondary"
 protocol = "awg2"
 role = "client"
-ipv6_enabled = true
+ipv6_enabled = false
 addresses = ["10.30.0.2/32"]
 listen_port = 51822
 private_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
@@ -216,12 +216,19 @@ for family in -4 -6; do
     rules="$(ip -n "$NS" "$family" rule show)"
     grep -Fq 'fwmark 0x1001 lookup main proto 242' <<<"$rules" || fail "socket rule lacks btrouted ownership tag for $family"
     grep -Fq 'fwmark 0x80000000 lookup 10000 proto 242' <<<"$rules" || fail "primary rule lacks btrouted ownership tag for $family"
-    grep -Fq 'fwmark 0x80000001 lookup 10001 proto 242' <<<"$rules" || fail "secondary rule lacks btrouted ownership tag for $family"
     routes="$(ip -n "$NS" "$family" route show table 10000)"
     grep -Fq 'default dev awg-primary proto 242' <<<"$routes" || fail "primary route lacks btrouted ownership tag for $family"
-    routes="$(ip -n "$NS" "$family" route show table 10001)"
-    grep -Fq 'default dev awg-secondary proto 242' <<<"$routes" || fail "secondary route lacks btrouted ownership tag for $family"
 done
+rules="$(ip -n "$NS" -4 rule show)"
+grep -Fq 'fwmark 0x80000001 lookup 10001 proto 242' <<<"$rules" || fail "secondary IPv4 rule lacks btrouted ownership tag"
+routes="$(ip -n "$NS" -4 route show table 10001)"
+grep -Fq 'default dev awg-secondary proto 242' <<<"$routes" || fail "secondary IPv4 route lacks btrouted ownership tag"
+if ip -n "$NS" -6 rule show | grep -Fq 'fwmark 0x80000001 lookup 10001'; then
+    fail "IPv6 policy rule was installed for IPv6-disabled egress"
+fi
+if ip -n "$NS" -6 route show table 10001 | grep -q .; then
+    fail "IPv6 route was installed for IPv6-disabled egress"
+fi
 
 for spec in \
     "0x80000000 awg-primary" \
@@ -234,7 +241,6 @@ done
 
 for spec in \
     "0x80000000 awg-primary" \
-    "0x80000001 awg-secondary" \
     "0x1001 main0"; do
     read -r mark expected <<<"$spec"
     result="$(ip netns exec "$NS" ip -6 route get 2001:db8::9 mark "$mark")"
@@ -245,6 +251,11 @@ chain="$(ip netns exec "$NS" nft list chain inet btrouted_it prerouting)"
 forward_chain="$(ip netns exec "$NS" nft list chain inet btrouted_it forward)"
 grep -Fq 'iifname @managed_interfaces drop' <<<"$forward_chain" || fail "managed ingress isolation drop is missing"
 grep -Fq 'oifname @managed_interfaces drop' <<<"$forward_chain" || fail "managed egress isolation drop is missing"
+blocked_set="$(ip netns exec "$NS" nft list set inet btrouted_it ipv6_blocked_interfaces)"
+grep -Fq '"awg-secondary"' <<<"$blocked_set" || fail "IPv6-disabled egress is absent from the blocked-interface set"
+grep -Fq 'oifname @ipv6_blocked_interfaces meta nfproto ipv6 drop' <<<"$forward_chain" || fail "IPv6 egress drop is missing"
+output_chain="$(ip netns exec "$NS" nft list chain inet btrouted_it output)"
+grep -Fq 'oifname @ipv6_blocked_interfaces meta nfproto ipv6 drop' <<<"$output_chain" || fail "locally generated IPv6 egress drop is missing"
 grep -Fq 'ct direction reply meta mark set 0' <<<"$chain" || fail "reply packet mark reset is missing"
 
 grep -Fq 'iifname "wg-server" ct state new ip daddr 195.142.0.0/16 meta mark set 0x80000001 ct mark set meta mark return' <<<"$chain" || fail "secondary exception rule missing"
