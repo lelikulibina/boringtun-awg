@@ -136,6 +136,8 @@ ip -n "$PRIMARY_NS" -6 address add 2001:db8:1::1/128 dev lo
 ip -n "$SECONDARY_NS" address add 195.142.1.1/32 dev lo
 ip -n "$SECONDARY_NS" address add 79.100.22.1/32 dev lo
 ip -n "$PRIMARY_NS" address add 198.51.100.1/32 dev lo
+ip -n "$PRIMARY_NS" address add 198.51.100.2/32 dev lo
+ip -n "$SECONDARY_NS" address add 198.51.100.2/32 dev lo
 ip -n "$SECONDARY_NS" -6 address add 2001:db8:195:1::1/128 dev lo
 ip -n "$PRIMARY_NS" -6 address add 2001:db8:2::1/128 dev lo
 
@@ -244,11 +246,26 @@ allowed_ips = ["0.0.0.0/0", "::/0"]
 persistent_keepalive_secs = 1
 
 [[routing.rules]]
+priority = 5
+ingress = "wg-ingress"
+source = "10.77.0.2/32"
+destination = "198.51.100.2/32"
+egress = "awg-secondary"
+
+[[routing.rules]]
 priority = 10
 ingress = "wg-ingress"
 source = ["10.77.0.2/32", "10.77.0.4/32"]
 destination = ["195.142.0.0/16", "79.100.22.0/24"]
 egress = "awg-secondary"
+
+[[routing.rules]]
+priority = 20
+ingress = "wg-ingress"
+source = "10.77.0.2/32"
+destination = "198.51.100.0/24"
+egress = "awg-primary"
+nat = "masquerade"
 
 [[routing.rules]]
 priority = 100
@@ -360,6 +377,7 @@ ip -n "$CLIENT_NS" route replace 203.0.113.1/32 dev wg-client
 ip -n "$CLIENT_NS" route replace 195.142.1.1/32 dev wg-client
 ip -n "$CLIENT_NS" route replace 79.100.22.1/32 dev wg-client
 ip -n "$CLIENT_NS" route replace 198.51.100.1/32 dev wg-client
+ip -n "$CLIENT_NS" route replace 198.51.100.2/32 dev wg-client
 ip -n "$CLIENT_NS" -6 route replace 2001:db8:1::1/128 dev wg-client
 ip -n "$CLIENT_NS" -6 route replace 2001:db8:195:1::1/128 dev wg-client
 ip -n "$CLIENT_NS" -6 route replace 2001:db8:2::1/128 dev wg-client
@@ -394,6 +412,9 @@ fi
 if ip netns exec "$SECOND_CLIENT_NS" ping -n -I 10.77.0.3 -c 2 -W 1 203.0.113.1 >/dev/null 2>&1; then
     fail "source selector mismatch was routed through an uplink"
 fi
+if ip netns exec "$SECOND_CLIENT_NS" ping -6 -n -I fd77::3 -c 2 -W 1 2001:db8:1::1 >/dev/null 2>&1; then
+    fail "IPv6 source selector mismatch was routed through an uplink"
+fi
 
 # A valid source is not sufficient either: destinations outside every rule
 # must not escape through the host's ordinary routing table.
@@ -403,6 +424,19 @@ fi
 if ip netns exec "$CLIENT_NS" ping -6 -n -I fd77::2 -c 2 -W 1 2001:db8:2::1 >/dev/null 2>&1; then
     fail "unmatched IPv6 destination escaped routing isolation"
 fi
+
+# Overlapping rules must use the lowest numeric priority. Both uplinks host
+# this address, so a successful probe alone is insufficient: observe the
+# selected remote TUN and require the priority-5 secondary path.
+ip netns exec "$SECONDARY_NS" timeout 5 tcpdump -nn -i up-secondary -c 1 \\
+    'icmp and dst host 198.51.100.2' >"$TMP/priority-secondary.log" 2>&1 &
+capture_pid=$!
+sleep 0.25
+ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -c 1 -W 2 198.51.100.2 \\
+    || fail "overlapping-priority probe failed"
+wait "$capture_pid" || fail "priority-5 secondary rule did not receive overlapping traffic"
+grep -Eq '10\\.77\\.0\\.2 > 198\\.51\\.100\\.2' "$TMP/priority-secondary.log" \\
+    || fail "overlapping rules did not select the first matching non-NAT rule"
 
 # Each address is hosted only by its intended remote uplink server.
 ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -c 4 -W 2 203.0.113.1 \
