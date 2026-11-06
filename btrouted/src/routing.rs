@@ -548,4 +548,40 @@ egress = "awg-primary"
             .iter()
             .any(|args| args.iter().any(|arg| arg == "main")));
     }
+
+    #[test]
+    fn earlier_nat_none_rule_prevents_later_overlapping_masquerade() {
+        let mut config = sample_config();
+        config.routing.rules[0].source = None;
+        config.routing.rules[0].destination = Some(vec!["0.0.0.0/0".to_owned()]);
+        config.routing.rules[0].nat = NatMode::None;
+        config.routing.rules[1].source = None;
+        config.routing.rules[1].destination = Some(vec!["195.142.0.0/16".to_owned()]);
+        config.routing.rules[1].nat = NatMode::Masquerade;
+
+        let script = RoutingPlan::from_config(&config).nft_script();
+        let no_nat = script.find(
+            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark 0x80000001 ip daddr 0.0.0.0/0 return",
+        ).expect("first matching nat=none rule must return");
+        let later_nat = script.find(
+            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark 0x80000001 ip daddr 195.142.0.0/16 masquerade",
+        ).expect("later overlapping masquerade rule must be present");
+        assert!(no_nat < later_nat, "NAT rules must preserve routing priority");
+    }
+
+    #[test]
+    fn source_only_and_destination_only_rules_generate_family_specific_matches() {
+        let mut config = sample_config();
+        config.routing.rules.truncate(2);
+        config.routing.rules[0].source = Some(vec!["10.10.0.0/24".to_owned()]);
+        config.routing.rules[0].destination = None;
+        config.routing.rules[1].source = None;
+        config.routing.rules[1].destination = Some(vec!["2001:db8:20::/48".to_owned()]);
+
+        let script = RoutingPlan::from_config(&config).nft_script();
+        assert!(script.contains("ct state new ip saddr 10.10.0.0/24 meta mark set"));
+        assert!(script.contains("ct state new ip6 daddr 2001:db8:20::/48 meta mark set"));
+        assert!(!script.contains("ip saddr 10.10.0.0/24 ip6 daddr"));
+    }
+
 }
