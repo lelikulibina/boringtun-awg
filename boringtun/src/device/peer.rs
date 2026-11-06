@@ -251,13 +251,41 @@ mod tests {
         let remote_public = x25519_dalek::PublicKey::from(&remote_secret);
 
         let mut sender = crate::noise::Tunn::new_with_amnezia(
-            local_secret, remote_public, None, None, 1, None,
-            0, 0, 0, 0, 0, 0, 0, 0, cfg.clone(),
-        ).unwrap();
+            local_secret,
+            remote_public,
+            None,
+            None,
+            1,
+            None,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            cfg.clone(),
+        )
+        .unwrap();
         let mut receiver = crate::noise::Tunn::new_with_amnezia(
-            remote_secret, local_public, None, None, 2, None,
-            0, 0, 0, 0, 0, 0, 0, 0, cfg,
-        ).unwrap();
+            remote_secret,
+            local_public,
+            None,
+            None,
+            2,
+            None,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            cfg,
+        )
+        .unwrap();
         complete_handshake(&mut sender, &mut receiver);
 
         let first_endpoint = "192.0.2.1:51820".parse().unwrap();
