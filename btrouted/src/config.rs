@@ -43,6 +43,9 @@ pub struct DaemonConfig {
     pub nft_table: String,
     #[serde(default)]
     pub manage_ip_forwarding: bool,
+    /// Allow IPv6 inside managed VPN routing; outer VPN transport is unaffected.
+    #[serde(default = "default_ipv6_enabled")]
+    pub ipv6_enabled: bool,
 }
 
 impl Default for DaemonConfig {
@@ -52,6 +55,7 @@ impl Default for DaemonConfig {
             stats_interval_secs: default_stats_interval(),
             nft_table: default_nft_table(),
             manage_ip_forwarding: false,
+            ipv6_enabled: default_ipv6_enabled(),
         }
     }
 }
@@ -71,6 +75,8 @@ fn default_nft_table() -> String {
 fn default_mtu() -> u16 {
     1380
 }
+
+fn default_ipv6_enabled() -> bool { true }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -161,8 +167,23 @@ pub struct AwgConfig {
     pub h4: Option<String>,
     #[serde(default)]
     pub disable_cookies: Option<bool>,
-    #[serde(default)]
-    pub random_trailers: Option<bool>,
+    #[serde(default)] pub random_trailers: Option<bool>,
+    #[serde(default)] pub i1: Option<String>,
+    #[serde(default)] pub i2: Option<String>,
+    #[serde(default)] pub i3: Option<String>,
+    #[serde(default)] pub i4: Option<String>,
+    #[serde(default)] pub i5: Option<String>,
+    /// 64 hexadecimal characters (32-byte AWG 3.1 header-protection key).
+    #[serde(default)] pub header_protection_key: Option<String>,
+    /// Inclusive uint32 range, e.g. "10-100".
+    #[serde(default)] pub content_padding_addition: Option<String>,
+    /// mtu/awg30 or udp_window/awg31.
+    #[serde(default)] pub content_padding_mode: Option<String>,
+    #[serde(default)] pub rekey_after_time: Option<String>,
+    #[serde(default)] pub rekey_timeout: Option<String>,
+    #[serde(default)] pub reject_after_time: Option<String>,
+    #[serde(default)] pub keepalive_timeout: Option<String>,
+    #[serde(default)] pub max_handshake_attempts: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -321,7 +342,7 @@ impl Config {
                 ));
             }
             if let Some(awg) = &interface.awg {
-                awg.validate(&interface.name)?;
+                awg.validate(&interface.name, interface.protocol)?;
             }
 
             let mut peer_names = HashSet::new();
@@ -509,84 +530,98 @@ impl Config {
 }
 
 impl AwgConfig {
-    fn validate(&self, interface: &str) -> Result<(), ConfigError> {
-        match (self.jmin, self.jmax) {
-            (Some(min), Some(max)) if min <= max => {}
-            (Some(_), Some(_)) => {
-                return invalid(format!(
-                    "interfaces.{}.awg.jmin must not exceed jmax",
-                    interface
-                ));
-            }
-            (Some(_), None) | (None, Some(_)) => {
-                return invalid(format!(
-                    "interfaces.{}.awg.jmin and jmax must be configured together",
-                    interface
-                ));
-            }
-            (None, None) => {}
-        }
-
-        let header_values = [
-            self.h1.as_deref().unwrap_or("1"),
-            self.h2.as_deref().unwrap_or("2"),
-            self.h3.as_deref().unwrap_or("3"),
-            self.h4.as_deref().unwrap_or("4"),
+    pub fn build(&self, interface: &str, protocol: ProtocolVersion)
+        -> Result<(ObfuscationRanges, AmneziaConfig), ConfigError>
+    {
+        let values = [
+            self.h1.as_deref().unwrap_or("1"), self.h2.as_deref().unwrap_or("2"),
+            self.h3.as_deref().unwrap_or("3"), self.h4.as_deref().unwrap_or("4"),
         ];
         let mut headers = [(0, 0); 4];
-        for (index, value) in header_values.iter().enumerate() {
-            headers[index] = parse_u32_range(value).ok_or_else(|| {
-                ConfigError::Validation(format!(
-                    "interfaces.{}.awg.h{} must be a uint32 tag or an inclusive start-end range",
-                    interface,
-                    index + 1
-                ))
-            })?;
+        for (i, value) in values.iter().enumerate() {
+            headers[i] = parse_u32_range(value).ok_or_else(|| ConfigError::Validation(format!(
+                "interfaces.{}.awg.h{} must be a uint32 tag or inclusive range", interface, i + 1
+            )))?;
         }
-        let obfuscation = ObfuscationRanges::from_explicit_ranges(headers).map_err(|error| {
-            ConfigError::Validation(format!(
-                "interfaces.{}.awg has invalid H1-H4 ranges: {}",
-                interface, error
-            ))
-        })?;
-
-        let amnezia = AmneziaConfig::new(
-            self.s1.unwrap_or(0),
-            self.s2.unwrap_or(0),
-            self.s3.unwrap_or(0),
-            self.s4.unwrap_or(0),
-        )
-        .try_with_pre_handshake_junk(
-            self.jc.unwrap_or(0),
-            self.jmin.unwrap_or(0),
-            self.jmax.unwrap_or(0),
-            0,
-        )
-        .map_err(|error| {
-            ConfigError::Validation(format!(
-                "interfaces.{}.awg junk settings are invalid: {}",
-                interface, error
-            ))
-        })?
-        .with_disable_cookies(self.disable_cookies.unwrap_or(false))
-        .with_random_trailers(self.random_trailers.unwrap_or(false));
-
-        amnezia.validate().map_err(|error| {
-            ConfigError::Validation(format!(
-                "interfaces.{}.awg settings are invalid: {}",
-                interface, error
-            ))
-        })?;
-        amnezia
-            .validate_random_trailers(obfuscation)
-            .map_err(|error| {
-                ConfigError::Validation(format!(
-                    "interfaces.{}.awg RandomTrailers settings are invalid: {}",
-                    interface, error
-                ))
-            })?;
-        Ok(())
+        let obf = ObfuscationRanges::from_explicit_ranges(headers).map_err(|e| ConfigError::Validation(format!(
+            "interfaces.{}.awg has invalid H1-H4 ranges: {}", interface, e
+        )))?;
+        match (self.jmin, self.jmax) {
+            (Some(a), Some(b)) if a <= b => {},
+            (Some(_), Some(_)) => return invalid(format!("interfaces.{}.awg.jmin must not exceed jmax", interface)),
+            (Some(_), None) | (None, Some(_)) => return invalid(format!("interfaces.{}.awg.jmin and jmax must be configured together", interface)),
+            _ => {},
+        }
+        let mut cfg = AmneziaConfig::new(self.s1.unwrap_or(0), self.s2.unwrap_or(0), self.s3.unwrap_or(0), self.s4.unwrap_or(0))
+            .try_with_pre_handshake_junk(self.jc.unwrap_or(0), self.jmin.unwrap_or(0), self.jmax.unwrap_or(0), 0)
+            .map_err(|e| ConfigError::Validation(format!("interfaces.{}.awg junk settings: {}", interface, e)))?
+            .with_disable_cookies(self.disable_cookies.unwrap_or(false))
+            .with_random_trailers(self.random_trailers.unwrap_or(false));
+        if let Some(value) = &self.header_protection_key {
+            let key = decode_hex_key(value).ok_or_else(|| ConfigError::Validation(format!(
+                "interfaces.{}.awg.header_protection_key must be 64 hexadecimal characters", interface
+            )))?;
+            cfg = cfg.with_header_protection_key(key);
+        }
+        if let Some(value) = &self.content_padding_addition {
+            let (min, max) = parse_u32_range(value).ok_or_else(|| ConfigError::Validation(format!(
+                "interfaces.{}.awg.content_padding_addition must be uint32 or min-max", interface
+            )))?;
+            cfg = cfg.with_content_padding_addition_range(min, max);
+        }
+        let legacy = match self.content_padding_mode.as_deref() {
+            Some("mtu" | "awg30") => true,
+            Some("udp_window" | "awg31") => false,
+            Some(other) => return invalid(format!("interfaces.{}.awg.content_padding_mode '{}' is invalid", interface, other)),
+            None => protocol == ProtocolVersion::Awg3,
+        };
+        cfg = cfg.with_legacy_content_padding(legacy);
+        for (name, value, slot) in [
+            ("rekey_after_time", self.rekey_after_time.as_deref(), 0u8),
+            ("rekey_timeout", self.rekey_timeout.as_deref(), 1u8),
+            ("reject_after_time", self.reject_after_time.as_deref(), 2u8),
+            ("keepalive_timeout", self.keepalive_timeout.as_deref(), 3u8),
+            ("max_handshake_attempts", self.max_handshake_attempts.as_deref(), 4u8),
+        ] {
+            if let Some(value) = value {
+                let (min, max) = parse_u32_range(value).ok_or_else(|| ConfigError::Validation(format!(
+                    "interfaces.{}.awg.{} must be uint32 or min-max", interface, name
+                )))?;
+                cfg = match slot {
+                    0 => cfg.with_rekey_after_time(min, max),
+                    1 => cfg.with_rekey_timeout(min, max),
+                    2 => cfg.with_reject_after_time(min, max),
+                    3 => cfg.with_keepalive_timeout(min, max),
+                    _ => cfg.with_max_handshake_attempts(min, max),
+                };
+            }
+        }
+        for (index, value) in [self.i1.as_deref(), self.i2.as_deref(), self.i3.as_deref(), self.i4.as_deref(), self.i5.as_deref()].iter().enumerate() {
+            if let Some(spec) = value {
+                cfg = cfg.with_signature_packet(index, spec).map_err(|e| ConfigError::Validation(format!(
+                    "interfaces.{}.awg.i{} is invalid: {}", interface, index + 1, e
+                )))?;
+            }
+        }
+        cfg.validate().map_err(|e| ConfigError::Validation(format!("interfaces.{}.awg settings: {}", interface, e)))?;
+        cfg.validate_random_trailers(obf).map_err(|e| ConfigError::Validation(format!("interfaces.{}.awg RandomTrailers: {}", interface, e)))?;
+        Ok((obf, cfg))
     }
+    fn validate(&self, interface: &str, protocol: ProtocolVersion) -> Result<(), ConfigError> {
+        self.build(interface, protocol).map(|_| ())
+    }
+}
+fn decode_hex_key(value: &str) -> Option<[u8; 32]> {
+    if value.len() != 64 || !value.is_ascii() { return None; }
+    let mut key = [0u8; 32];
+    for (i, pair) in value.as_bytes().chunks_exact(2).enumerate() {
+        let digit = |b: u8| match b {
+            b'0'..=b'9' => Some(b - b'0'), b'a'..=b'f' => Some(b - b'a' + 10),
+            b'A'..=b'F' => Some(b - b'A' + 10), _ => None,
+        };
+        key[i] = (digit(pair[0])? << 4) | digit(pair[1])?;
+    }
+    Some(key)
 }
 
 /// Parsed peer endpoint. DNS names are validated but deliberately not resolved
@@ -862,6 +897,51 @@ egress = "awg-uplink"
             config.routing.rules[0].destination.as_ref().unwrap().len(),
             2
         );
+    }
+
+    #[test]
+    fn parses_awg_30_and_31_extension_parameters() {
+        let input = valid_config().replace("h4 = \"301-400\"", concat!(
+            "h4 = \"301-400\"\n",
+            "i1 = \"<b 0x4142><r 8>\"\n",
+            "i2 = \"<t>\"\n",
+            "i3 = \"<rc 4>\"\n",
+            "i4 = \"<rd 4>\"\n",
+            "i5 = \"<dz 2>\"\n",
+            "header_protection_key = \"4242424242424242424242424242424242424242424242424242424242424242\"\n",
+            "content_padding_addition = \"10-100\"\n",
+            "content_padding_mode = \"udp_window\"\n",
+            "rekey_after_time = \"100-120\"\n",
+            "rekey_timeout = \"3-8\"\n",
+            "reject_after_time = \"150-180\"\n",
+            "keepalive_timeout = \"7-13\"\n",
+            "max_handshake_attempts = \"15-20\""
+        ));
+        let config = Config::parse_toml(&input).unwrap();
+        config.interfaces[1].awg.as_ref().unwrap()
+            .build("awg-uplink", ProtocolVersion::Awg3_1).unwrap();
+    }
+
+    #[test]
+    fn rejects_invalid_awg_extension_values() {
+        for (field, value) in [
+            ("header_protection_key", "\"abcd\""),
+            ("content_padding_addition", "\"100-10\""),
+            ("rekey_timeout", "\"8-3\""),
+            ("i1", "\"<unknown 2>\""),
+        ] {
+            let input = valid_config().replace("h4 = \"301-400\"",
+                &format!("h4 = \"301-400\"\n{} = {}", field, value));
+            assert!(Config::parse_toml(&input).is_err(), "{}", field);
+        }
+    }
+
+    #[test]
+    fn ipv6_can_be_disabled_without_changing_the_default() {
+        assert!(Config::parse_toml(&valid_config()).unwrap().daemon.ipv6_enabled);
+        let input = valid_config().replace("manage_ip_forwarding = false",
+            "manage_ip_forwarding = false\nipv6_enabled = false");
+        assert!(!Config::parse_toml(&input).unwrap().daemon.ipv6_enabled);
     }
 
     #[test]
