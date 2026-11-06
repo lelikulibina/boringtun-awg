@@ -75,7 +75,7 @@ manage_ip_forwarding = true
 name = "wg-server"
 protocol = "wg"
 role = "server"
-ipv6_enabled = true
+ipv6_enabled = false
 addresses = ["10.10.0.1/24"]
 listen_port = 51820
 private_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
@@ -253,6 +253,8 @@ grep -Fq 'iifname @managed_interfaces drop' <<<"$forward_chain" || fail "managed
 grep -Fq 'oifname @managed_interfaces drop' <<<"$forward_chain" || fail "managed egress isolation drop is missing"
 blocked_set="$(ip netns exec "$NS" nft list set inet btrouted_it ipv6_blocked_interfaces)"
 grep -Fq '"awg-secondary"' <<<"$blocked_set" || fail "IPv6-disabled egress is absent from the blocked-interface set"
+grep -Fq '"wg-server"' <<<"$blocked_set" || fail "IPv6-disabled ingress is absent from the blocked-interface set"
+grep -Fq 'iifname @ipv6_blocked_interfaces meta nfproto ipv6 drop' <<<"$chain" || fail "IPv6 ingress drop is missing"
 grep -Fq 'oifname @ipv6_blocked_interfaces meta nfproto ipv6 drop' <<<"$forward_chain" || fail "IPv6 egress drop is missing"
 output_chain="$(ip netns exec "$NS" nft list chain inet btrouted_it output)"
 grep -Fq 'oifname @ipv6_blocked_interfaces meta nfproto ipv6 drop' <<<"$output_chain" || fail "locally generated IPv6 egress drop is missing"
