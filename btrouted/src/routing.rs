@@ -248,7 +248,7 @@ impl RoutingPlan {
         let mut commands =
             Vec::with_capacity(self.egresses.len() * 4 + self.socket_marks.len() * 2);
         for mark in &self.socket_marks {
-            for family in self.ip_families() {
+            for &family in self.ip_families() {
                 commands.push(vec![
                     family.into(),
                     "rule".into(),
@@ -263,7 +263,7 @@ impl RoutingPlan {
             }
         }
         for egress in &self.egresses {
-            for family in self.ip_families() {
+            for &family in self.ip_families() {
                 commands.push(vec![
                     family.into(),
                     "route".into(),
