@@ -291,9 +291,12 @@ impl Config {
                 .routing
                 .mark_base
                 .checked_add(egress_count.saturating_sub(1) as u32)
-                .ok_or_else(|| ConfigError::Validation(
-                    "[routing].mark_base leaves no room for all client routing marks".to_owned()
-                ))?;
+                .ok_or_else(|| {
+                    ConfigError::Validation(
+                        "[routing].mark_base leaves no room for all client routing marks"
+                            .to_owned(),
+                    )
+                })?;
             Some((self.routing.mark_base, last))
         };
 
@@ -307,7 +310,9 @@ impl Config {
                     ));
                 }
                 if !used.insert(mark) {
-                    return invalid(format!("socket fwmark 0x{mark:x} is used by more than one interface"));
+                    return invalid(format!(
+                        "socket fwmark 0x{mark:x} is used by more than one interface"
+                    ));
                 }
                 if routing_mark_range.is_some_and(|(first, last)| (first..=last).contains(&mark)) {
                     return invalid(
@@ -1196,7 +1201,10 @@ egress = "awg-uplink"
             .replace("socket_fwmark = 4097\n", "")
             .replace("socket_fwmark = 4098\n", "");
         let config = Config::parse_toml(&input).unwrap();
-        assert_eq!(config.resolved_socket_fwmarks().unwrap(), vec![0x1000, 0x1001]);
+        assert_eq!(
+            config.resolved_socket_fwmarks().unwrap(),
+            vec![0x1000, 0x1001]
+        );
     }
 
     #[test]
@@ -1213,7 +1221,10 @@ egress = "awg-uplink"
         let input = valid_config()
             .replace("socket_fwmark = 4097\n", "")
             .replace("socket_fwmark = 4098\n", "")
-            .replace("[[routing.rules]]", "[routing]\nmark_base = 4096\n\n[[routing.rules]]");
+            .replace(
+                "[[routing.rules]]",
+                "[routing]\nmark_base = 4096\n\n[[routing.rules]]",
+            );
         let config = Config::parse_toml(&input).unwrap();
         assert_eq!(config.resolved_socket_fwmarks().unwrap(), vec![4097, 4098]);
     }
