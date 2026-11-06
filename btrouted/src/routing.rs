@@ -183,9 +183,12 @@ impl RoutingPlan {
 
         if !self.ipv6_enabled {
             output.push_str(&format!(
-                "add rule {} {} forward iifname @managed_interfaces meta nfproto ipv6 drop\\n\\
-                 add rule {} {} forward oifname @managed_interfaces meta nfproto ipv6 drop\\n",
-                self.nft_family, self.nft_table, self.nft_family, self.nft_table
+                "add rule {} {} forward iifname @managed_interfaces meta nfproto ipv6 drop\n",
+                self.nft_family, self.nft_table
+            ));
+            output.push_str(&format!(
+                "add rule {} {} forward oifname @managed_interfaces meta nfproto ipv6 drop\n",
+                self.nft_family, self.nft_table
             ));
         }
         output.push_str(&format!(
