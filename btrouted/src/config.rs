@@ -1238,6 +1238,16 @@ egress = "awg-uplink"
     }
 
     #[test]
+    fn rejects_explicit_socket_mark_inside_packet_mark_range() {
+        let input = valid_config().replace(
+            "socket_fwmark = 4097",
+            "socket_fwmark = 2147483648",
+        );
+        let error = Config::parse_toml(&input).unwrap_err();
+        assert!(error.to_string().contains("mark_base range overlaps"));
+    }
+
+    #[test]
     fn rejects_duplicate_socket_fwmarks() {
         let input = valid_config().replace("socket_fwmark = 4098", "socket_fwmark = 4097");
         let error = Config::parse_toml(&input).unwrap_err();
