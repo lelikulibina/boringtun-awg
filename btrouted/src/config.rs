@@ -170,23 +170,37 @@ pub struct AwgConfig {
     pub h4: Option<String>,
     #[serde(default)]
     pub disable_cookies: Option<bool>,
-    #[serde(default)] pub random_trailers: Option<bool>,
-    #[serde(default)] pub i1: Option<String>,
-    #[serde(default)] pub i2: Option<String>,
-    #[serde(default)] pub i3: Option<String>,
-    #[serde(default)] pub i4: Option<String>,
-    #[serde(default)] pub i5: Option<String>,
+    #[serde(default)]
+    pub random_trailers: Option<bool>,
+    #[serde(default)]
+    pub i1: Option<String>,
+    #[serde(default)]
+    pub i2: Option<String>,
+    #[serde(default)]
+    pub i3: Option<String>,
+    #[serde(default)]
+    pub i4: Option<String>,
+    #[serde(default)]
+    pub i5: Option<String>,
     /// 64 hexadecimal characters (32-byte AWG 3.1 header-protection key).
-    #[serde(default)] pub header_protection_key: Option<String>,
+    #[serde(default)]
+    pub header_protection_key: Option<String>,
     /// Inclusive uint32 range, e.g. "10-100".
-    #[serde(default)] pub content_padding_addition: Option<String>,
+    #[serde(default)]
+    pub content_padding_addition: Option<String>,
     /// mtu/awg30 or udp_window/awg31.
-    #[serde(default)] pub content_padding_mode: Option<String>,
-    #[serde(default)] pub rekey_after_time: Option<String>,
-    #[serde(default)] pub rekey_timeout: Option<String>,
-    #[serde(default)] pub reject_after_time: Option<String>,
-    #[serde(default)] pub keepalive_timeout: Option<String>,
-    #[serde(default)] pub max_handshake_attempts: Option<String>,
+    #[serde(default)]
+    pub content_padding_mode: Option<String>,
+    #[serde(default)]
+    pub rekey_after_time: Option<String>,
+    #[serde(default)]
+    pub rekey_timeout: Option<String>,
+    #[serde(default)]
+    pub reject_after_time: Option<String>,
+    #[serde(default)]
+    pub keepalive_timeout: Option<String>,
+    #[serde(default)]
+    pub max_handshake_attempts: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
