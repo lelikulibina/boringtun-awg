@@ -566,7 +566,10 @@ egress = "awg-primary"
         let later_nat = script.find(
             "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark 0x80000001 ip daddr 195.142.0.0/16 masquerade",
         ).expect("later overlapping masquerade rule must be present");
-        assert!(no_nat < later_nat, "NAT rules must preserve routing priority");
+        assert!(
+            no_nat < later_nat,
+            "NAT rules must preserve routing priority"
+        );
     }
 
     #[test]
@@ -583,5 +586,4 @@ egress = "awg-primary"
         assert!(script.contains("ct state new ip6 daddr 2001:db8:20::/48 meta mark set"));
         assert!(!script.contains("ip saddr 10.10.0.0/24 ip6 daddr"));
     }
-
 }
