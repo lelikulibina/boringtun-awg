@@ -116,7 +116,11 @@ impl RoutingPlan {
     }
 
     pub fn ip_families(&self) -> &'static [&'static str] {
-        if self.ipv6_enabled { &["-4", "-6"] } else { &["-4"] }
+        if self.ipv6_enabled {
+            &["-4", "-6"]
+        } else {
+            &["-4"]
+        }
     }
 
     /// Render a fail-closed transit policy. New flows require an explicit
@@ -581,7 +585,10 @@ egress = "awg-primary"
         assert!(script.contains("prerouting iifname @managed_interfaces meta nfproto ipv6 drop"));
         assert!(script.contains("forward iifname @managed_interfaces meta nfproto ipv6 drop"));
         assert!(script.contains("forward oifname @managed_interfaces meta nfproto ipv6 drop"));
-        assert!(!plan.ip_commands().iter().any(|args| args.first().is_some_and(|x| x == "-6")));
+        assert!(!plan
+            .ip_commands()
+            .iter()
+            .any(|args| args.first().is_some_and(|x| x == "-6")));
     }
 
     #[test]
