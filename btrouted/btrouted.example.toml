@@ -16,7 +16,7 @@ addresses = ["10.10.0.1/24"]
 mtu = 1380
 listen_port = 51820
 private_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
-socket_fwmark = 4097
+ # socket_fwmark опущен: демон назначит его автоматически
 
 [[interfaces.peers]]
 name = "wg-client-1"
@@ -33,7 +33,7 @@ addresses = ["10.20.0.2/32"]
 mtu = 1380
 listen_port = 51821
 private_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
-socket_fwmark = 4098
+ # socket_fwmark опущен: демон назначит его автоматически
 
 [interfaces.awg]
 jc = 4
@@ -80,7 +80,7 @@ addresses = ["10.30.0.2/32"]
 mtu = 1380
 listen_port = 51822
 private_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
-socket_fwmark = 4099
+ # socket_fwmark опущен: демон назначит его автоматически
 
 [interfaces.awg]
 jc = 4
