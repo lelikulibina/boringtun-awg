@@ -485,11 +485,6 @@ impl Config {
             }
         }
 
-        let egress_count = self
-            .interfaces
-            .iter()
-            .filter(|interface| interface.role == InterfaceRole::Client)
-            .count();
         if self.routing.mark_base == 0 {
             return invalid("[routing].mark_base must be non-zero");
         }
