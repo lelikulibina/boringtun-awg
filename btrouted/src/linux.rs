@@ -214,7 +214,10 @@ fn ensure_policy_slots_available(plan: &RoutingPlan) -> Result<(), LinuxError> {
             if let Some(egress) = plan
                 .egresses
                 .iter()
-                .find(|egress| egress.ip_rule_priority == priority && (family != "-6" || egress.ipv6_enabled))
+                .find(|egress| {
+                    egress.ip_rule_priority == priority
+                        && (family != "-6" || egress.ipv6_enabled)
+                })
             {
                 let expected =
                     rule_has_owned_identity(line, egress.mark, &egress.table_id.to_string());
@@ -227,7 +230,11 @@ fn ensure_policy_slots_available(plan: &RoutingPlan) -> Result<(), LinuxError> {
             }
         }
 
-        for egress in plan.egresses.iter().filter(|egress| family != "-6" || egress.ipv6_enabled) {
+        for egress in plan
+            .egresses
+            .iter()
+            .filter(|egress| family != "-6" || egress.ipv6_enabled)
+        {
             let args = vec![
                 family.into(),
                 "route".into(),
