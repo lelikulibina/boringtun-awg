@@ -6,6 +6,8 @@ log_level = "info"
 stats_interval_secs = 10
 nft_table = "btrouted"
 manage_ip_forwarding = false
+# false blocks IPv6 inside VPN routing, but preserves IPv6 VPN endpoint transport.
+ipv6_enabled = true
 
 [[interfaces]]
 name = "wg-server"
@@ -49,7 +51,9 @@ s1 = 0
 s2 = 0
 s3 = 0
 s4 = 0
-# h1..h4, timers, padding и signature chains — по необходимости.
+# h1..h4, i1..i5, HeaderProtectionKey, CPA и timer ranges доступны в AWG config.
+# Для Header Protection все S1-S4 должны быть не меньше 12 байт.
+# content_padding_mode = "udp_window" # AWG 3.1; "mtu" selects AWG 3.0
 
 [[interfaces]]
 name = "awg-secondary"
