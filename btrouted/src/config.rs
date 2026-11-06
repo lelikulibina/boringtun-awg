@@ -276,29 +276,36 @@ impl Config {
         Self::parse_toml(&input)
     }
 
-    /// Resolve explicit and automatically assigned socket marks in interface order.
-    /// Explicit marks are reserved first so automatic allocation never displaces them.
-    pub fn resolved_socket_fwmarks(&self) -> Result<Vec<u32>, ConfigError> {
+    /// Resolve the contiguous packet-mark range assigned to client interfaces.
+    /// The order matches RoutingPlan's lexicographically sorted egress list.
+    pub fn resolved_routing_fwmarks(&self) -> Result<Vec<u32>, ConfigError> {
         let egress_count = self
             .interfaces
             .iter()
             .filter(|interface| interface.role == InterfaceRole::Client)
             .count();
-        let routing_mark_range = if egress_count == 0 {
-            None
-        } else {
-            let last = self
-                .routing
-                .mark_base
-                .checked_add(egress_count.saturating_sub(1) as u32)
-                .ok_or_else(|| {
-                    ConfigError::Validation(
-                        "[routing].mark_base leaves no room for all client routing marks"
-                            .to_owned(),
-                    )
-                })?;
-            Some((self.routing.mark_base, last))
-        };
+        (0..egress_count)
+            .map(|index| {
+                self.routing
+                    .mark_base
+                    .checked_add(index as u32)
+                    .filter(|mark| *mark != 0)
+                    .ok_or_else(|| {
+                        ConfigError::Validation(
+                            "[routing].mark_base leaves no room for all client routing marks"
+                                .to_owned(),
+                        )
+                    })
+            })
+            .collect()
+    }
+
+    /// Resolve explicit and automatically assigned socket marks in interface order.
+    /// The socket and packet mark spaces are disjoint by exact 32-bit value.
+    /// Explicit marks are reserved first so automatic allocation never displaces them.
+    pub fn resolved_socket_fwmarks(&self) -> Result<Vec<u32>, ConfigError> {
+        let routing_marks: HashSet<_> =
+            self.resolved_routing_fwmarks()?.into_iter().collect();
 
         let mut used = HashSet::new();
         for interface in &self.interfaces {
@@ -314,7 +321,7 @@ impl Config {
                         "socket fwmark 0x{mark:x} is used by more than one interface"
                     ));
                 }
-                if routing_mark_range.is_some_and(|(first, last)| (first..=last).contains(&mark)) {
+                if routing_marks.contains(&mark) {
                     return invalid(
                         "[routing].mark_base range overlaps an interface socket_fwmark; outer UDP and inner packet marks must be distinct",
                     );
@@ -334,9 +341,7 @@ impl Config {
                     }
                     let candidate = next_candidate;
                     next_candidate = next_candidate.checked_add(1).unwrap_or(0);
-                    let conflicts_with_routing = routing_mark_range
-                        .is_some_and(|(first, last)| (first..=last).contains(&candidate));
-                    if !conflicts_with_routing && used.insert(candidate) {
+                    if !routing_marks.contains(&candidate) && used.insert(candidate) {
                         break candidate;
                     }
                 }
