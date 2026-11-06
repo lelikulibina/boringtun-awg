@@ -589,6 +589,26 @@ egress = "awg-primary"
     }
 
     #[test]
+    fn automatic_socket_marks_skip_the_complete_multi_egress_packet_mark_range() {
+        let mut config = sample_config();
+        config.routing.mark_base = 0x1000;
+        for interface in &mut config.interfaces {
+            interface.socket_fwmark = None;
+        }
+
+        let plan = RoutingPlan::from_config(&config);
+        assert_eq!(
+            plan.egresses.iter().map(|egress| egress.mark).collect::<Vec<_>>(),
+            vec![0x1000, 0x1001]
+        );
+        assert_eq!(plan.socket_marks, vec![0x1002, 0x1003, 0x1004]);
+        assert!(plan.socket_marks.iter().all(|socket_mark| plan
+            .egresses
+            .iter()
+            .all(|egress| egress.mark != *socket_mark)));
+    }
+
+    #[test]
     fn routing_plan_uses_automatically_resolved_socket_marks() {
         let mut config = sample_config();
         for interface in &mut config.interfaces {
