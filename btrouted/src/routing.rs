@@ -596,8 +596,7 @@ egress = "awg-primary"
         assert!(
             !commands.iter().any(|args| {
                 args.first().is_some_and(|x| x == "-6")
-                    && (args.iter().any(|x| x == "default")
-                        || args.iter().any(|x| x == "10000"))
+                    && (args.iter().any(|x| x == "default") || args.iter().any(|x| x == "10000"))
             }),
             "IPv6 transit policy routes must be omitted"
         );
