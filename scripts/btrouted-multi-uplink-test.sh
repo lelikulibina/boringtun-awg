@@ -206,7 +206,7 @@ socket_fwmark = 5001
 [[interfaces.peers]]
 name = "client"
 public_key = "$CLIENT_PUBLIC"
-allowed_ips = ["10.77.0.2/32", "fd77::2/128"]
+allowed_ips = ["10.77.0.2/32", "10.77.0.3/32", "fd77::2/128", "fd77::3/128"]
 
 [[interfaces.peers]]
 name = "client-2"
@@ -255,7 +255,7 @@ egress = "awg-secondary"
 [[routing.rules]]
 priority = 10
 ingress = "wg-ingress"
-source = ["10.77.0.2/32", "10.77.0.4/32"]
+source = ["10.77.0.2/32", "10.77.0.3/32"]
 destination = ["195.142.0.0/16", "79.100.22.0/24"]
 egress = "awg-secondary"
 
@@ -278,7 +278,7 @@ nat = "masquerade"
 [[routing.rules]]
 priority = 30
 ingress = "wg-ingress"
-source = "fd77::2/128"
+source = ["fd77::2/128", "fd77::3/128"]
 destination = "2001:db8:195::/48"
 egress = "awg-secondary"
 
@@ -372,7 +372,9 @@ wait_interface "$SECOND_CLIENT_NS" wg-client-2 "$SECOND_CLIENT_PID" "btrouted_mu
 ip -n "$PRIMARY_NS" route replace 10.77.0.2/32 dev up-primary
 ip -n "$PRIMARY_NS" -6 route replace fd77::2/128 dev up-primary
 ip -n "$SECONDARY_NS" route replace 10.77.0.2/32 dev up-secondary
+ip -n "$SECONDARY_NS" route replace 10.77.0.3/32 dev up-secondary
 ip -n "$SECONDARY_NS" -6 route replace fd77::2/128 dev up-secondary
+ip -n "$SECONDARY_NS" -6 route replace fd77::3/128 dev up-secondary
 
 ip -n "$CLIENT_NS" route replace 203.0.113.1/32 dev wg-client
 ip -n "$CLIENT_NS" route replace 195.142.1.1/32 dev wg-client
@@ -392,9 +394,9 @@ grep -Fq 'oifname @managed_interfaces drop' <<<"$forward_chain" || fail "managed
 grep -Fq 'iifname "wg-ingress" oifname "awg-primary" ct mark 0x80000000 ip saddr 10.77.0.2 ip daddr 203.0.113.0/24 masquerade' <<<"$nat_chain" || fail "primary IPv4 masquerade rule is missing"
 grep -Fq 'iifname "wg-ingress" oifname "awg-primary" ct mark 0x80000000 ip6 saddr fd77::2 ip6 daddr 2001:db8:1::/48 masquerade' <<<"$nat_chain" || fail "primary IPv6 masquerade rule is missing"
 
-grep -Fq 'iifname "wg-ingress" ct state new ip saddr { 10.77.0.2, 10.77.0.4 } ip daddr { 195.142.0.0/16, 79.100.22.0/24 } meta mark set 0x80000001 ct mark set meta mark return' <<<"$chain" || fail "secondary source/destination CIDR arrays are missing"
+grep -Fq 'iifname "wg-ingress" ct state new ip saddr { 10.77.0.2, 10.77.0.3 } ip daddr { 195.142.0.0/16, 79.100.22.0/24 } meta mark set 0x80000001 ct mark set meta mark return' <<<"$chain" || fail "secondary IPv4 source/destination CIDR arrays are missing"
 grep -Fq 'iifname "wg-ingress" ct state new ip saddr 10.77.0.2 ip daddr 203.0.113.0/24 meta mark set 0x80000000 ct mark set meta mark return' <<<"$chain" || fail "primary destination-limited classifier is missing"
-grep -Fq 'iifname "wg-ingress" ct state new ip6 saddr fd77::2 ip6 daddr 2001:db8:195::/48 meta mark set 0x80000001 ct mark set meta mark return' <<<"$chain" || fail "IPv6 secondary exception classifier is missing"
+grep -Fq 'iifname "wg-ingress" ct state new ip6 saddr { fd77::2, fd77::3 } ip6 daddr 2001:db8:195::/48 meta mark set 0x80000001 ct mark set meta mark return' <<<"$chain" || fail "secondary IPv6 source array classifier is missing"
 grep -Fq 'iifname "wg-ingress" ct state new ip6 saddr fd77::2 ip6 daddr 2001:db8:1::/48 meta mark set 0x80000000 ct mark set meta mark return' <<<"$chain" || fail "IPv6 primary destination-limited classifier is missing"
 
 ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -c 3 -W 2 10.77.0.1 \
@@ -446,6 +448,13 @@ ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -c 4 -W 2 195.142.1.1 \
     || fail "195.142.0.0/16 traffic did not traverse awg-secondary"
 ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -c 4 -W 2 79.100.22.1 \
     || fail "79.100.22.0/24 traffic did not traverse awg-secondary"
+
+# The second WG peer is included in the secondary source CIDR array but not in
+# the primary rule. Verify both IPv4 and IPv6 membership at packet level.
+ip netns exec "$SECOND_CLIENT_NS" ping -n -I 10.77.0.3 -c 4 -W 2 195.142.1.1 \
+    || fail "second IPv4 source-array member was not routed through awg-secondary"
+ip netns exec "$SECOND_CLIENT_NS" ping -6 -I fd77::3 -c 4 -W 2 2001:db8:195:1::1 \
+    || fail "second IPv6 source-array member was not routed through awg-secondary"
 ip netns exec "$CLIENT_NS" ping -6 -n -I fd77::2 -c 4 -W 2 2001:db8:1::1 \
     || fail "IPv6 default traffic did not traverse awg-primary"
 ip netns exec "$CLIENT_NS" ping -6 -n -I fd77::2 -c 4 -W 2 2001:db8:195:1::1 \
