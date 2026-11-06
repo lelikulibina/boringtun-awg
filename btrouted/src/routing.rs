@@ -587,13 +587,20 @@ egress = "awg-primary"
         assert!(script.contains("forward iifname @managed_interfaces meta nfproto ipv6 drop"));
         assert!(script.contains("forward oifname @managed_interfaces meta nfproto ipv6 drop"));
         let commands = plan.ip_commands();
-        assert!(commands.iter().any(|args| {
-            args.first().is_some_and(|x| x == "-6") && args.iter().any(|x| x == "main")
-        }), "outer IPv6 UDP sockets must retain their main-table escape");
-        assert!(!commands.iter().any(|args| {
-            args.first().is_some_and(|x| x == "-6")
-                && (args.iter().any(|x| x == "default") || args.iter().any(|x| x == "10000"))
-        }), "IPv6 transit policy routes must be omitted");
+        assert!(
+            commands.iter().any(|args| {
+                args.first().is_some_and(|x| x == "-6") && args.iter().any(|x| x == "main")
+            }),
+            "outer IPv6 UDP sockets must retain their main-table escape"
+        );
+        assert!(
+            !commands.iter().any(|args| {
+                args.first().is_some_and(|x| x == "-6")
+                    && (args.iter().any(|x| x == "default")
+                        || args.iter().any(|x| x == "10000"))
+            }),
+            "IPv6 transit policy routes must be omitted"
+        );
     }
 
     #[test]
