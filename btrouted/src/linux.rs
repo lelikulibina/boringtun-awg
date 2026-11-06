@@ -181,7 +181,7 @@ fn route_has_owned_identity(line: &str, interface: &str) -> bool {
 }
 
 fn ensure_policy_slots_available(plan: &RoutingPlan) -> Result<(), LinuxError> {
-    for family in ["-4", "-6"] {
+    for family in plan.ip_families() {
         let args = vec![family.into(), "rule".into(), "show".into()];
         let rules = output("ip", &args)?;
         if !rules.status.success() {
@@ -266,7 +266,7 @@ fn ensure_policy_slots_available(plan: &RoutingPlan) -> Result<(), LinuxError> {
 pub fn apply_policy_routing(plan: &RoutingPlan) -> Result<(), LinuxError> {
     ensure_policy_slots_available(plan)?;
     for mark in &plan.socket_marks {
-        for family in ["-4", "-6"] {
+        for family in plan.ip_families() {
             let args = vec![
                 family.into(),
                 "rule".into(),
@@ -302,7 +302,7 @@ pub fn apply_policy_routing(plan: &RoutingPlan) -> Result<(), LinuxError> {
     }
 
     for egress in &plan.egresses {
-        for family in ["-4", "-6"] {
+        for family in plan.ip_families() {
             let priority = egress.ip_rule_priority.to_string();
             let mark = format!("0x{:x}", egress.mark);
             let table = egress.table_id.to_string();
