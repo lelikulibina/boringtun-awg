@@ -3962,6 +3962,12 @@ mod tests {
         let cfg = AmneziaConfig::new(0, 0, 0, s4);
         let (mut sender, mut receiver) = create_two_tuns_with_amnezia(cfg);
 
+        // The UDP window is a high-water mark initialized to the default
+        // window. Start at zero here so this test can observe the exact
+        // handshake-confirmation keepalive accounting.
+        sender.udp_window = 0;
+        receiver.udp_window = 0;
+
         let init = create_handshake_init(&mut sender);
         let response = create_handshake_response(&mut receiver, &init);
         let keepalive = parse_handshake_resp(&mut sender, &response);
