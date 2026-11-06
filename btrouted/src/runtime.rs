@@ -242,72 +242,10 @@ fn build_awg_config(
         return Ok((ObfuscationRanges::default(), AmneziaConfig::default()));
     }
 
-    let awg = interface.awg.as_ref();
-    let defaults = ["1", "2", "3", "4"];
-    let values: Vec<(u32, u32)> = (0..4)
-        .map(|index| {
-            let value = awg
-                .and_then(|config| match index {
-                    0 => config.h1.as_ref(),
-                    1 => config.h2.as_ref(),
-                    2 => config.h3.as_ref(),
-                    _ => config.h4.as_ref(),
-                })
-                .map(String::as_str)
-                .unwrap_or(defaults[index]);
-            parse_tag_range(value).ok_or_else(|| {
-                RuntimeError::Configuration(format!(
-                    "interfaces.{}.awg.h{} has invalid tag range",
-                    interface.name,
-                    index + 1
-                ))
-            })
-        })
-        .collect::<Result<_, _>>()?;
-    let obf = ObfuscationRanges::from_explicit_ranges([values[0], values[1], values[2], values[3]])
-        .map_err(|error| {
-            RuntimeError::Configuration(format!("invalid AWG header ranges: {error}"))
-        })?;
-
-    let value = |pick: fn(&crate::config::AwgConfig) -> Option<u16>| -> u16 {
-        awg.and_then(pick).unwrap_or(0)
-    };
-    let mut amnezia = AmneziaConfig::new(
-        value(|config| config.s1),
-        value(|config| config.s2),
-        value(|config| config.s3),
-        value(|config| config.s4),
-    );
-    amnezia = amnezia
-        .try_with_pre_handshake_junk(
-            value(|config| config.jc),
-            value(|config| config.jmin),
-            value(|config| config.jmax),
-            0,
-        )
-        .map_err(|error| {
-            RuntimeError::Configuration(format!("invalid AWG junk settings: {error}"))
-        })?;
-    if let Some(awg) = awg {
-        amnezia = amnezia
-            .with_disable_cookies(awg.disable_cookies.unwrap_or(false))
-            .with_random_trailers(awg.random_trailers.unwrap_or(false));
-    }
-    amnezia
-        .validate()
-        .map_err(|error| RuntimeError::Configuration(format!("invalid AWG settings: {error}")))?;
-    Ok((obf, amnezia))
-}
-
-fn parse_tag_range(value: &str) -> Option<(u32, u32)> {
-    let (start, end) = match value.split_once('-') {
-        Some((start, end)) => (start.trim().parse().ok()?, end.trim().parse().ok()?),
-        None => {
-            let value = value.parse().ok()?;
-            (value, value)
-        }
-    };
-    (start <= end).then_some((start, end))
+    let defaults = crate::config::AwgConfig::default();
+    interface.awg.as_ref().unwrap_or(&defaults)
+        .build(&interface.name, interface.protocol)
+        .map_err(|error| RuntimeError::Configuration(error.to_string()))
 }
 
 fn resolve_endpoint(value: &str) -> Result<SocketAddr, RuntimeError> {
