@@ -6,6 +6,8 @@ log_level = "info"
 stats_interval_secs = 10
 nft_table = "btrouted"
 manage_ip_forwarding = false
+# false blocks IPv6 only inside VPN routing; external VPN endpoint transport is unaffected.
+ipv6_enabled = true
 
 [[interfaces]]
 name = "wg-server"
@@ -39,10 +41,28 @@ jmin = 40
 jmax = 80
 s1 = 0
 s2 = 0
+s3 = 0
+s4 = 0
 h1 = "1"
 h2 = "2"
 h3 = "3"
 h4 = "4"
+disable_cookies = false
+random_trailers = false
+# AWG 3.1 options (uncomment and configure consistently on both peers where required):
+# i1 = "<b 0x4142><r 8>"
+# i2 = "<t>"
+# i3 = "<rc 4>"
+# i4 = "<rd 4>"
+# i5 = "<dz 2>"
+# header_protection_key = "64_HEX_CHARACTERS_SHARED_WITH_PEER"
+# content_padding_addition = "10-100"
+content_padding_mode = "udp_window" # udp_window (AWG 3.1) or mtu (AWG 3.0)
+# rekey_after_time = "100-120"
+# rekey_timeout = "3-8"
+# reject_after_time = "150-180"
+# keepalive_timeout = "7-13"
+# max_handshake_attempts = "15-20"
 
 [[interfaces.peers]]
 name = "awg-primary-server"
