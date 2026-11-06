@@ -384,6 +384,10 @@ ip -n "$CLIENT_NS" route replace 198.51.100.2/32 dev wg-client
 ip -n "$CLIENT_NS" -6 route replace 2001:db8:1::1/128 dev wg-client
 ip -n "$CLIENT_NS" -6 route replace 2001:db8:195:1::1/128 dev wg-client
 ip -n "$CLIENT_NS" -6 route replace 2001:db8:2::1/128 dev wg-client
+ip -n "$SECOND_CLIENT_NS" route replace 203.0.113.1/32 dev wg-client-2
+ip -n "$SECOND_CLIENT_NS" route replace 195.142.1.1/32 dev wg-client-2
+ip -n "$SECOND_CLIENT_NS" -6 route replace 2001:db8:1::1/128 dev wg-client-2
+ip -n "$SECOND_CLIENT_NS" -6 route replace 2001:db8:195:1::1/128 dev wg-client-2
 
 # Assert the daemon installed the intended classifier and mark mapping.
 chain="$(ip netns exec "$ROUTER_NS" nft list chain inet "btrouted_mu_router_$SUFFIX" prerouting)"
