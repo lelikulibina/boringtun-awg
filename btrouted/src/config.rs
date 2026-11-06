@@ -1216,9 +1216,10 @@ egress = "awg-uplink"
         let input = valid_config()
             .replace("socket_fwmark = 4097\n", "")
             .replace("socket_fwmark = 4098\n", "")
-            .replace(
+            .replacen(
                 "[[routing.rules]]",
                 "[routing]\nmark_base = 4096\n\n[[routing.rules]]",
+                1,
             );
         let config = Config::parse_toml(&input).unwrap();
         assert_eq!(config.resolved_socket_fwmarks().unwrap(), vec![4097, 4098]);
