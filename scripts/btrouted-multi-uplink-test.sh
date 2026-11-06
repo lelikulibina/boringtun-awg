@@ -206,7 +206,7 @@ socket_fwmark = 5001
 [[interfaces.peers]]
 name = "client"
 public_key = "$CLIENT_PUBLIC"
-allowed_ips = ["10.77.0.2/32", "10.77.0.3/32", "fd77::2/128", "fd77::3/128"]
+allowed_ips = ["10.77.0.2/32", "fd77::2/128"]
 
 [[interfaces.peers]]
 name = "client-2"
@@ -330,7 +330,7 @@ socket_fwmark = 6002
 [[interfaces.peers]]
 name = "router"
 public_key = "$ROUTER_SECONDARY_PUBLIC"
-allowed_ips = ["10.77.0.2/32", "fd77::2/128"]
+allowed_ips = ["10.77.0.2/32", "10.77.0.3/32", "fd77::2/128", "fd77::3/128"]
 TOML
 
 for config in client second-client router primary secondary; do
