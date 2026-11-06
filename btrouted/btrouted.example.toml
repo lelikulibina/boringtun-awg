@@ -1,5 +1,6 @@
 # Пример: WG-сервер и два AWG uplink.
 # Замените все ключи и endpoint перед запуском. Файл должен иметь права 0600.
+# socket_fwmark необязателен: без него демон назначает уникальную метку автоматически (начиная с 0x1000).
 
 [daemon]
 log_level = "info"
@@ -16,7 +17,6 @@ addresses = ["10.10.0.1/24"]
 mtu = 1380
 listen_port = 51820
 private_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
- # socket_fwmark опущен: демон назначит его автоматически
 
 [[interfaces.peers]]
 name = "wg-client-1"
