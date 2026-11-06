@@ -6,13 +6,12 @@ log_level = "info"
 stats_interval_secs = 10
 nft_table = "btrouted"
 manage_ip_forwarding = false
-# false blocks IPv6 only inside VPN routing; external VPN endpoint transport is unaffected.
-ipv6_enabled = true
 
 [[interfaces]]
 name = "wg-server"
 protocol = "wg"
 role = "server"
+ipv6_enabled = true
 addresses = ["10.10.0.1/24"]
 mtu = 1380
 listen_port = 51820
@@ -29,6 +28,7 @@ persistent_keepalive_secs = 25
 name = "awg-primary"
 protocol = "awg3_1"
 role = "client"
+ipv6_enabled = true
 addresses = ["10.20.0.2/32"]
 mtu = 1380
 listen_port = 51821
@@ -75,6 +75,7 @@ persistent_keepalive_secs = 25
 name = "awg-secondary"
 protocol = "awg2"
 role = "client"
+ipv6_enabled = true
 addresses = ["10.30.0.2/32"]
 mtu = 1380
 listen_port = 51822
