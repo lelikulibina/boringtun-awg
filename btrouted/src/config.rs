@@ -86,6 +86,7 @@ pub enum ProtocolVersion {
     #[serde(rename = "awg1_5")]
     Awg1_5,
     Awg2,
+    #[serde(alias = "awg3_0")]
     Awg3,
     #[serde(rename = "awg3_1")]
     Awg3_1,
@@ -897,6 +898,14 @@ egress = "awg-uplink"
             config.routing.rules[0].destination.as_ref().unwrap().len(),
             2
         );
+    }
+
+    #[test]
+    fn accepts_explicit_awg30_protocol_name_without_breaking_legacy_name() {
+        let legacy = Config::parse_toml(&valid_config().replace("protocol = \"awg3_1\"", "protocol = \"awg3\"")).unwrap();
+        let explicit = Config::parse_toml(&valid_config().replace("protocol = \"awg3_1\"", "protocol = \"awg3_0\"")).unwrap();
+        assert_eq!(legacy.interfaces[1].protocol, ProtocolVersion::Awg3);
+        assert_eq!(explicit.interfaces[1].protocol, ProtocolVersion::Awg3);
     }
 
     #[test]
