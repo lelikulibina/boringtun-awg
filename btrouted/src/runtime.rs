@@ -243,7 +243,10 @@ fn build_awg_config(
     }
 
     let defaults = crate::config::AwgConfig::default();
-    interface.awg.as_ref().unwrap_or(&defaults)
+    interface
+        .awg
+        .as_ref()
+        .unwrap_or(&defaults)
         .build(&interface.name, interface.protocol)
         .map_err(|error| RuntimeError::Configuration(error.to_string()))
 }
