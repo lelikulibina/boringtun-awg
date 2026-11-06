@@ -211,13 +211,10 @@ fn ensure_policy_slots_available(plan: &RoutingPlan) -> Result<(), LinuxError> {
                     });
                 }
             }
-            if family == "-6" && !plan.ipv6_enabled {
-                continue;
-            }
             if let Some(egress) = plan
                 .egresses
                 .iter()
-                .find(|egress| egress.ip_rule_priority == priority)
+                .find(|egress| egress.ip_rule_priority == priority && (family != "-6" || egress.ipv6_enabled))
             {
                 let expected =
                     rule_has_owned_identity(line, egress.mark, &egress.table_id.to_string());
@@ -230,10 +227,7 @@ fn ensure_policy_slots_available(plan: &RoutingPlan) -> Result<(), LinuxError> {
             }
         }
 
-        if family == "-6" && !plan.ipv6_enabled {
-            continue;
-        }
-        for egress in &plan.egresses {
+        for egress in plan.egresses.iter().filter(|egress| family != "-6" || egress.ipv6_enabled) {
             let args = vec![
                 family.into(),
                 "route".into(),
@@ -309,7 +303,16 @@ pub fn apply_policy_routing(plan: &RoutingPlan) -> Result<(), LinuxError> {
     }
 
     for egress in &plan.egresses {
-        for &family in plan.ip_families() {
+        if !egress.ipv6_enabled {
+            // Remove stale daemon-owned IPv6 policy left by an earlier enabled configuration.
+            let _ = run("ip", &["-6".into(), "rule".into(), "del".into(), "priority".into(),
+                egress.ip_rule_priority.to_string(), "fwmark".into(), format!("0x{:x}", egress.mark),
+                "lookup".into(), egress.table_id.to_string(), "protocol".into(), ROUTING_PROTOCOL.into()]);
+            let _ = run("ip", &["-6".into(), "route".into(), "del".into(), "default".into(),
+                "dev".into(), egress.interface.clone(), "table".into(), egress.table_id.to_string(),
+                "proto".into(), ROUTING_PROTOCOL.into()]);
+        }
+        for &family in RoutingPlan::ip_families(egress) {
             let priority = egress.ip_rule_priority.to_string();
             let mark = format!("0x{:x}", egress.mark);
             let table = egress.table_id.to_string();
