@@ -288,6 +288,7 @@ ingress = "wg-ingress"
 source = "fd77::2/128"
 destination = "2001:db8:1::/48"
 egress = "awg-primary"
+nat = "masquerade"
 TOML
 
 cat >"$TMP/primary.toml" <<TOML
@@ -308,7 +309,7 @@ socket_fwmark = 6001
 [[interfaces.peers]]
 name = "router"
 public_key = "$ROUTER_PRIMARY_PUBLIC"
-allowed_ips = ["10.20.0.1/32", "fd77::2/128"]
+allowed_ips = ["10.20.0.1/32", "fd20::1/128", "fd77::2/128"]
 TOML
 
 cat >"$TMP/secondary.toml" <<TOML
@@ -388,7 +389,8 @@ forward_chain="$(ip netns exec "$ROUTER_NS" nft list chain inet "btrouted_mu_rou
 nat_chain="$(ip netns exec "$ROUTER_NS" nft list chain inet "btrouted_mu_router_$SUFFIX" postrouting)"
 grep -Fq 'iifname @managed_interfaces drop' <<<"$forward_chain" || fail "managed ingress isolation drop is missing"
 grep -Fq 'oifname @managed_interfaces drop' <<<"$forward_chain" || fail "managed egress isolation drop is missing"
-grep -Fq 'iifname "wg-ingress" oifname "awg-primary" ct mark 0x80000000 ip saddr 10.77.0.2 ip daddr 203.0.113.0/24 masquerade' <<<"$nat_chain" || fail "primary masquerade rule is missing"
+grep -Fq 'iifname "wg-ingress" oifname "awg-primary" ct mark 0x80000000 ip saddr 10.77.0.2 ip daddr 203.0.113.0/24 masquerade' <<<"$nat_chain" || fail "primary IPv4 masquerade rule is missing"
+grep -Fq 'iifname "wg-ingress" oifname "awg-primary" ct mark 0x80000000 ip6 saddr fd77::2 ip6 daddr 2001:db8:1::/48 masquerade' <<<"$nat_chain" || fail "primary IPv6 masquerade rule is missing"
 
 grep -Fq 'iifname "wg-ingress" ct state new ip saddr { 10.77.0.2, 10.77.0.4 } ip daddr { 195.142.0.0/16, 79.100.22.0/24 } meta mark set 0x80000001 ct mark set meta mark return' <<<"$chain" || fail "secondary source/destination CIDR arrays are missing"
 grep -Fq 'iifname "wg-ingress" ct state new ip saddr 10.77.0.2 ip daddr 203.0.113.0/24 meta mark set 0x80000000 ct mark set meta mark return' <<<"$chain" || fail "primary destination-limited classifier is missing"
@@ -480,6 +482,16 @@ ip netns exec "$CLIENT_NS" ping -6 -n -I fd77::2 -c 1 -W 2 2001:db8:195:1::1 \
 wait "$capture_pid" || fail "could not capture non-NAT IPv6 packet"
 grep -Eq 'fd77::2 > 2001:db8:195:1::1' "$TMP/nat-none-v6-capture.log" \
     || fail "nat=none changed the original IPv6 source address"
+
+ip netns exec "$PRIMARY_NS" timeout 5 tcpdump -nn -i up-primary -c 1 \
+    'icmp6 and dst host 2001:db8:1::1' >"$TMP/nat-masquerade-v6-capture.log" 2>&1 &
+capture_pid=$!
+sleep 0.25
+ip netns exec "$CLIENT_NS" ping -6 -n -I fd77::2 -c 1 -W 2 2001:db8:1::1 \
+    || fail "masqueraded IPv6 probe failed"
+wait "$capture_pid" || fail "could not capture masqueraded IPv6 packet"
+grep -Eq 'fd20::1 > 2001:db8:1::1' "$TMP/nat-masquerade-v6-capture.log" \
+    || fail "IPv6 masquerade did not replace the source with the primary TUN address"
 
 # AWG-secondary has no ingress routing rule. Even though the kernel has a
 # connected route to the WG client subnet, an AWG server must not initiate a
