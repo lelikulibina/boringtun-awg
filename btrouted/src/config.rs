@@ -970,7 +970,8 @@ egress = "awg-uplink"
         let input = input.replace(
             "[[interfaces]]\nname = \"awg-uplink\"",
             "[[interfaces]]\nname = \"wg-backup\"\nprotocol = \"wg\"\nrole = \"server\"\naddresses = [\"10.11.0.1/24\"]\nlisten_port = 51823\nprivate_key = \"{KEY}\"\nsocket_fwmark = 4100\n\n[[interfaces]]\nname = \"awg-uplink\"",
-        ).replace("priority = 100\ningress = \"wg-server\"\ndestination = \"::/0\"", "priority = 100\ningress = \"wg-backup\"\ndestination = \"::/0\" ");
+        ).replace("priority = 100\ningress = \"wg-server\"\ndestination = \"::/0\"", "priority = 100\ningress = \"wg-backup\"\ndestination = \"::/0\" ")
+        .replace("{KEY}", KEY);
         assert!(Config::parse_toml(&input).is_ok());
     }
 
