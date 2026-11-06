@@ -252,7 +252,8 @@ impl RoutingPlan {
         let mut commands =
             Vec::with_capacity(self.egresses.len() * 4 + self.socket_marks.len() * 2);
         for mark in &self.socket_marks {
-            for &family in self.ip_families() {
+            // Preserve the main-table escape for encrypted outer UDP, including IPv6 endpoints.
+            for family in ["-4", "-6"] {
                 commands.push(vec![
                     family.into(),
                     "rule".into(),
@@ -585,10 +586,14 @@ egress = "awg-primary"
         assert!(script.contains("prerouting iifname @managed_interfaces meta nfproto ipv6 drop"));
         assert!(script.contains("forward iifname @managed_interfaces meta nfproto ipv6 drop"));
         assert!(script.contains("forward oifname @managed_interfaces meta nfproto ipv6 drop"));
-        assert!(!plan
-            .ip_commands()
-            .iter()
-            .any(|args| args.first().is_some_and(|x| x == "-6")));
+        let commands = plan.ip_commands();
+        assert!(commands.iter().any(|args| {
+            args.first().is_some_and(|x| x == "-6") && args.iter().any(|x| x == "main")
+        }), "outer IPv6 UDP sockets must retain their main-table escape");
+        assert!(!commands.iter().any(|args| {
+            args.first().is_some_and(|x| x == "-6")
+                && (args.iter().any(|x| x == "default") || args.iter().any(|x| x == "10000"))
+        }), "IPv6 transit policy routes must be omitted");
     }
 
     #[test]
