@@ -66,7 +66,11 @@ impl RoutingPlan {
                 mark: config.routing.mark_base + index as u32,
                 table_id: FIRST_ROUTING_TABLE + index as u32,
                 ip_rule_priority: FIRST_IP_RULE_PRIORITY + index as u32,
-                ipv6_enabled: config.interfaces.iter().find(|interface| interface.name == *name).is_some_and(|interface| interface.ipv6_enabled),
+                ipv6_enabled: config
+                    .interfaces
+                    .iter()
+                    .find(|interface| interface.name == *name)
+                    .is_some_and(|interface| interface.ipv6_enabled),
             })
             .collect();
 
@@ -87,8 +91,16 @@ impl RoutingPlan {
                 egress: rule.egress.clone(),
                 mark: egress_marks[rule.egress.as_str()],
                 nat: rule.nat,
-                ipv6_enabled: config.interfaces.iter().find(|interface| interface.name == rule.ingress).is_some_and(|interface| interface.ipv6_enabled)
-                    && config.interfaces.iter().find(|interface| interface.name == rule.egress).is_some_and(|interface| interface.ipv6_enabled),
+                ipv6_enabled: config
+                    .interfaces
+                    .iter()
+                    .find(|interface| interface.name == rule.ingress)
+                    .is_some_and(|interface| interface.ipv6_enabled)
+                    && config
+                        .interfaces
+                        .iter()
+                        .find(|interface| interface.name == rule.egress)
+                        .is_some_and(|interface| interface.ipv6_enabled),
             })
             .collect();
         nft_rules.sort_by(|left, right| {
@@ -110,7 +122,9 @@ impl RoutingPlan {
             .map(|interface| interface.name.clone())
             .collect();
         managed_interfaces.sort();
-        let mut ipv6_blocked_interfaces: Vec<_> = config.interfaces.iter()
+        let mut ipv6_blocked_interfaces: Vec<_> = config
+            .interfaces
+            .iter()
             .filter(|interface| !interface.ipv6_enabled)
             .map(|interface| interface.name.clone())
             .collect();
@@ -128,7 +142,11 @@ impl RoutingPlan {
     }
 
     pub fn ip_families(egress: &EgressPlan) -> &'static [&'static str] {
-        if egress.ipv6_enabled { &["-4", "-6"] } else { &["-4"] }
+        if egress.ipv6_enabled {
+            &["-4", "-6"]
+        } else {
+            &["-4"]
+        }
     }
 
     /// Render a fail-closed transit policy. New flows require an explicit
@@ -157,9 +175,12 @@ impl RoutingPlan {
         );
 
         if !self.ipv6_blocked_interfaces.is_empty() {
-            let elements = self.ipv6_blocked_interfaces.iter()
+            let elements = self
+                .ipv6_blocked_interfaces
+                .iter()
                 .map(|name| format!("\"{}\"", name))
-                .collect::<Vec<_>>().join(", ");
+                .collect::<Vec<_>>()
+                .join(", ");
             output.push_str(&format!(
                 "add set {} {} ipv6_blocked_interfaces {{ type ifname; elements = {{ {} }}; }}\n",
                 self.nft_family, self.nft_table, elements
@@ -603,11 +624,23 @@ egress = "awg-primary"
     #[test]
     fn ipv6_blocking_is_independent_for_ingress_and_egress_tunnels() {
         let mut config = sample_config();
-        config.interfaces.iter_mut().find(|i| i.name == "wg-server").unwrap().ipv6_enabled = false;
-        config.interfaces.iter_mut().find(|i| i.name == "awg-secondary").unwrap().ipv6_enabled = false;
+        config
+            .interfaces
+            .iter_mut()
+            .find(|interface| interface.name == "wg-server")
+            .unwrap()
+            .ipv6_enabled = false;
+        config
+            .interfaces
+            .iter_mut()
+            .find(|interface| interface.name == "awg-secondary")
+            .unwrap()
+            .ipv6_enabled = false;
         let plan = RoutingPlan::from_config(&config);
         let script = plan.nft_script();
-        assert!(script.contains("elements = { \"awg-secondary\", \"wg-server\" }"));
+        assert!(script.contains(
+            "elements = { \"awg-secondary\", \"wg-server\" }"
+        ));
         assert!(script.contains("prerouting iifname @ipv6_blocked_interfaces meta nfproto ipv6 drop"));
         assert!(script.contains("forward oifname @ipv6_blocked_interfaces meta nfproto ipv6 drop"));
         assert!(script.contains("output oifname @ipv6_blocked_interfaces meta nfproto ipv6 drop"));
