@@ -316,9 +316,9 @@ fn parse_interface(source: &str) -> Result<(InterfaceConfig, Vec<String>), Impor
 
     let awg = parse_awg(&interface)?;
     let tunnel_type = if awg.is_some() {
-        TunnelType::Awg
+        TunnelType::AmneziaWg
     } else {
-        TunnelType::Wg
+        TunnelType::WireGuard
     };
     let config = InterfaceConfig {
         tunnel_type,
@@ -536,7 +536,7 @@ PersistentKeepalive = 25
     #[test]
     fn imports_wireguard_client_and_reports_unmapped_options() {
         let (cfg, warnings) = parse_interface(CLIENT).unwrap();
-        assert_eq!(cfg.tunnel_type, TunnelType::Wg);
+        assert_eq!(cfg.tunnel_type, TunnelType::WireGuard);
         assert_eq!(cfg.role, InterfaceRole::Client);
         assert_eq!(cfg.address, vec!["10.0.0.2/32", "fd00::2/128"]);
         assert_eq!(cfg.listen_port, None);
@@ -592,15 +592,15 @@ PersistentKeepalive = 25
             .replace("fd00::2/128", "10.0.0.2/32")
             .replace("AllowedIPs = 0.0.0.0/0, ::/0", "AllowedIPs = 0.0.0.0/0");
         let profiles = [
-            ("Jc = 4\nS1 = 16", TunnelType::Awg),
-            ("I1 = <t>", TunnelType::Awg),
-            ("S3 = 16\nH1 = 1-100", TunnelType::Awg),
-            ("S3 = 0\nS4 = 0\nI1 = <t>", TunnelType::Awg),
+            ("Jc = 4\nS1 = 16", TunnelType::AmneziaWg),
+            ("I1 = <t>", TunnelType::AmneziaWg),
+            ("S3 = 16\nH1 = 1-100", TunnelType::AmneziaWg),
+            ("S3 = 0\nS4 = 0\nI1 = <t>", TunnelType::AmneziaWg),
             (
                 "HeaderProtectionKey = 0000000000000000000000000000000000000000000000000000000000000000",
-                TunnelType::Awg,
+                TunnelType::AmneziaWg,
             ),
-            ("RandomTrailers = true", TunnelType::Awg),
+            ("RandomTrailers = true", TunnelType::AmneziaWg),
         ];
 
         for (parameters, expected) in profiles {

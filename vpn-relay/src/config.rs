@@ -75,8 +75,10 @@ fn default_mtu() -> u16 {
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum TunnelType {
-    Wg,
-    Awg,
+    #[serde(rename = "wg")]
+    WireGuard,
+    #[serde(rename = "awg")]
+    AmneziaWg,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
@@ -402,7 +404,7 @@ impl Config {
                 ));
             }
 
-            if interface.tunnel_type == TunnelType::Wg && interface.awg.is_some() {
+            if interface.tunnel_type == TunnelType::WireGuard && interface.awg.is_some() {
                 return invalid(format!(
                     "interfaces.{}.awg is not valid for protocol 'wg'",
                     interface_name
@@ -835,8 +837,8 @@ egress = "awg-uplink"
     #[test]
     fn config_selects_tunnel_family_without_exposing_awg_generation() {
         let config = Config::parse_toml(&valid_config()).unwrap();
-        assert_eq!(config.interfaces["wg-server"].tunnel_type, TunnelType::Wg);
-        assert_eq!(config.interfaces["awg-uplink"].tunnel_type, TunnelType::Awg);
+        assert_eq!(config.interfaces["wg-server"].tunnel_type, TunnelType::WireGuard);
+        assert_eq!(config.interfaces["awg-uplink"].tunnel_type, TunnelType::AmneziaWg);
 
         let (_, amnezia) = config.interfaces["awg-uplink"]
             .awg
@@ -936,7 +938,7 @@ egress = "awg-uplink"
         let config = Config::parse_toml(&valid_config()).unwrap();
         assert_eq!(config.interfaces.len(), 2);
         assert_eq!(config.routing.rules.len(), 2);
-        assert_eq!(config.interfaces["awg-uplink"].tunnel_type, TunnelType::Awg);
+        assert_eq!(config.interfaces["awg-uplink"].tunnel_type, TunnelType::AmneziaWg);
         assert!(config.interfaces.contains_key("wg-server"));
         assert_eq!(config.interfaces["wg-server"].peers.len(), 1);
         assert_eq!(config.interfaces["awg-uplink"].peers.len(), 1);

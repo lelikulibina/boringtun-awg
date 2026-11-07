@@ -1,13 +1,8 @@
-//! Linux runtime: create BoringTun devices, configure peers, and install routing.
-use crate::config::{decode_key, Config, EndpointHost, InterfaceConfig, TunnelType};
+//! Linux runtime: dispatch tunnel backends and install shared routing.
+use crate::backend::{BackendError, BackendRegistry, TunnelHandle, TunnelSnapshot};
+use crate::config::Config;
 use crate::linux::{self, LinuxError};
 use crate::routing::RoutingPlan;
-use boringtun::device::{AllowedIP, DeviceConfig, DeviceHandle};
-use boringtun::noise::amnezia::AmneziaConfig;
-use boringtun::noise::handshake::ObfuscationRanges;
-use boringtun::x25519;
-use std::net::{SocketAddr, ToSocketAddrs};
-use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
@@ -21,12 +16,10 @@ extern "C" fn request_shutdown(_: libc::c_int) {
 pub enum RuntimeError {
     #[error(transparent)]
     Linux(#[from] LinuxError),
-    #[error("BoringTun device error: {0}")]
-    Device(#[from] boringtun::device::Error),
+    #[error("tunnel backend error: {0}")]
+    Backend(#[from] BackendError),
     #[error("invalid runtime configuration: {0}")]
     Configuration(String),
-    #[error("failed to resolve endpoint {endpoint}: {reason}")]
-    Endpoint { endpoint: String, reason: String },
     #[error("failed to enable IP forwarding: {0}")]
     Forwarding(String),
     #[error("failed to install signal handler: {0}")]
@@ -34,7 +27,7 @@ pub enum RuntimeError {
 }
 
 pub struct Runtime {
-    devices: Vec<DeviceHandle>,
+    devices: Vec<Box<dyn TunnelHandle>>,
     routing: RoutingPlan,
     stats_interval: Duration,
     forwarding_state: Option<ForwardingState>,
@@ -46,8 +39,8 @@ struct ForwardingState {
 }
 
 impl Runtime {
-    /// Start all interfaces and install routing after the complete config has
-    /// been parsed and validated. UAPI is disabled on every daemon device.
+    /// Start all interfaces through their registered backend, then install
+    /// shared routing only after every tunnel has been configured.
     pub fn start(config: Config) -> Result<Self, RuntimeError> {
         config
             .validate()
@@ -57,56 +50,18 @@ impl Runtime {
             .map_err(|error| RuntimeError::Configuration(error.to_string()))?;
         let routing = RoutingPlan::from_config(&config);
         let mut devices = Vec::with_capacity(config.interfaces.len());
+        let backends = BackendRegistry::default();
 
         for ((interface_name, interface), socket_fwmark) in
             config.interfaces.iter().zip(socket_fwmarks)
         {
-            let handle = create_device(interface_name, interface)?;
+            let handle = backends.create(
+                interface.tunnel_type,
+                interface_name,
+                interface,
+                socket_fwmark,
+            )?;
             linux::configure_interface(interface_name, interface.mtu, &interface.address)?;
-            handle.set_private_key(x25519::StaticSecret::from(
-                decode_key(&interface.private_key, "private_key")
-                    .map_err(|error| RuntimeError::Configuration(error.to_string()))?,
-            ));
-            handle.set_fwmark(socket_fwmark)?;
-
-            for peer in &interface.peers {
-                let public_key = x25519::PublicKey::from(
-                    decode_key(&peer.public_key, "peer.public_key")
-                        .map_err(|error| RuntimeError::Configuration(error.to_string()))?,
-                );
-                let preshared_key = peer
-                    .preshared_key
-                    .as_ref()
-                    .map(|value| {
-                        decode_key(value, "peer.preshared_key")
-                            .map_err(|error| RuntimeError::Configuration(error.to_string()))
-                    })
-                    .transpose()?;
-                let endpoint = peer.endpoint.as_deref().map(resolve_endpoint).transpose()?;
-                let allowed_ips: Result<Vec<AllowedIP>, _> = peer
-                    .allowed_ips
-                    .iter()
-                    .map(|prefix| {
-                        AllowedIP::from_str(prefix).map_err(|error| {
-                            RuntimeError::Configuration(format!(
-                                "invalid AllowedIP {prefix}: {error}"
-                            ))
-                        })
-                    })
-                    .collect();
-                let keepalive = peer
-                    .persistent_keepalive_secs
-                    .map(|seconds| (u32::from(seconds), u32::from(seconds)));
-                handle.update_peer(
-                    public_key,
-                    false,
-                    true,
-                    endpoint,
-                    &allowed_ips?,
-                    keepalive,
-                    preshared_key,
-                )?;
-            }
             devices.push(handle);
         }
 
@@ -142,8 +97,8 @@ impl Runtime {
         &self.routing
     }
 
-    /// Return consistent live counters without querying UAPI.
-    pub fn snapshots(&self) -> Result<Vec<boringtun::device::DeviceSnapshot>, RuntimeError> {
+    /// Return consistent live counters without depending on a backend UAPI.
+    pub fn snapshots(&self) -> Result<Vec<TunnelSnapshot>, RuntimeError> {
         self.devices
             .iter()
             .map(|device| device.snapshot().map_err(RuntimeError::from))
@@ -182,7 +137,7 @@ impl Runtime {
                     }
                 }
                 Err(error) => {
-                    tracing::error!(%error, "failed to collect device statistics")
+                    tracing::error!(%error, "failed to collect tunnel statistics")
                 }
             }
         }
@@ -222,61 +177,6 @@ fn install_signal_handlers() -> Result<(), RuntimeError> {
 
 fn hex_key(key: &[u8; 32]) -> String {
     key.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
-fn create_device(name: &str, interface: &InterfaceConfig) -> Result<DeviceHandle, RuntimeError> {
-    let (obf, amnezia) = build_awg_config(name, interface)?;
-    let config = DeviceConfig {
-        n_threads: 4,
-        use_connected_socket: true,
-        use_multi_queue: true,
-        uapi_fd: -1,
-        enable_uapi: false,
-        listen_port: interface.listen_port,
-        obf,
-        amnezia,
-        probe_reply_bytes_per_sec: None,
-    };
-    Ok(DeviceHandle::new(name, config)?)
-}
-
-fn build_awg_config(
-    name: &str,
-    interface: &InterfaceConfig,
-) -> Result<(ObfuscationRanges, AmneziaConfig), RuntimeError> {
-    if interface.tunnel_type == TunnelType::Wg {
-        return Ok((ObfuscationRanges::default(), AmneziaConfig::default()));
-    }
-
-    let defaults = crate::config::AwgConfig::default();
-    interface
-        .awg
-        .as_ref()
-        .unwrap_or(&defaults)
-        .build(name)
-        .map_err(|error| RuntimeError::Configuration(error.to_string()))
-}
-
-fn resolve_endpoint(value: &str) -> Result<SocketAddr, RuntimeError> {
-    let parsed =
-        crate::config::PeerEndpoint::parse(value).map_err(|reason| RuntimeError::Endpoint {
-            endpoint: value.into(),
-            reason,
-        })?;
-    match parsed.host {
-        EndpointHost::Ip(ip) => Ok(SocketAddr::new(ip, parsed.port)),
-        EndpointHost::Dns(host) => (host.as_str(), parsed.port)
-            .to_socket_addrs()
-            .map_err(|error| RuntimeError::Endpoint {
-                endpoint: value.into(),
-                reason: error.to_string(),
-            })?
-            .next()
-            .ok_or_else(|| RuntimeError::Endpoint {
-                endpoint: value.into(),
-                reason: "DNS returned no addresses".into(),
-            }),
-    }
 }
 
 fn read_sysctl(key: &str) -> Result<String, RuntimeError> {
