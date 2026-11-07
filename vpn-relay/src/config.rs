@@ -1,6 +1,6 @@
 use base64::engine::general_purpose::STANDARD;
-use boringtun::noise::amnezia::AmneziaWgConfig;
 use base64::Engine as _;
+use boringtun::noise::amnezia::AmneziaWgConfig;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
