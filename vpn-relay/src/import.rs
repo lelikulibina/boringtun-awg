@@ -1,7 +1,5 @@
 //! Import standard WireGuard and AmneziaWG INI configurations.
-use crate::config::{
-    AwgConfig, Config, InterfaceConfig, InterfaceRole, PeerConfig, TunnelType,
-};
+use crate::config::{AwgConfig, Config, InterfaceConfig, InterfaceRole, PeerConfig, TunnelType};
 use boringtun::noise::amnezia::AmneziaWgVersion;
 use std::collections::HashMap;
 use std::fs::{self, OpenOptions};

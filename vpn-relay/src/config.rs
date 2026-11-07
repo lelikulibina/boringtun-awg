@@ -646,14 +646,24 @@ impl AwgConfig {
         present!("i4", self.i4.as_deref());
         present!("i5", self.i5.as_deref());
         present!("headerprotectionkey", self.header_protection_key.as_deref());
-        present!("contentpaddingaddition", self.content_padding_addition.as_deref());
+        present!(
+            "contentpaddingaddition",
+            self.content_padding_addition.as_deref()
+        );
         present!("rekeyaftertime", self.rekey_after_time.as_deref());
         present!("rekeytimeout", self.rekey_timeout.as_deref());
         present!("rejectaftertime", self.reject_after_time.as_deref());
         present!("keepalivetimeout", self.keepalive_timeout.as_deref());
-        present!("maxhandshakeattempts", self.max_handshake_attempts.as_deref());
-        if self.random_trailers.is_some() { version_parameters.push(("randomtrailers", "")); }
-        if self.disable_cookies.is_some() { version_parameters.push(("disablecookies", "")); }
+        present!(
+            "maxhandshakeattempts",
+            self.max_handshake_attempts.as_deref()
+        );
+        if self.random_trailers.is_some() {
+            version_parameters.push(("randomtrailers", ""));
+        }
+        if self.disable_cookies.is_some() {
+            version_parameters.push(("disablecookies", ""));
+        }
         cfg = cfg.with_detected_version(&version_parameters);
         for (name, value, slot) in [
             ("rekey_after_time", self.rekey_after_time.as_deref(), 0u8),
@@ -1089,10 +1099,7 @@ egress = "awg-uplink"
         let config = Config::parse_toml(&valid_config()).unwrap();
         assert_eq!(config.interfaces.len(), 2);
         assert_eq!(config.routing.rules.len(), 2);
-        assert_eq!(
-            config.interfaces["awg-uplink"].tunnel_type,
-            TunnelType::Awg
-        );
+        assert_eq!(config.interfaces["awg-uplink"].tunnel_type, TunnelType::Awg);
         assert!(config.interfaces.contains_key("wg-server"));
         assert_eq!(config.interfaces["wg-server"].peers.len(), 1);
         assert_eq!(config.interfaces["awg-uplink"].peers.len(), 1);
