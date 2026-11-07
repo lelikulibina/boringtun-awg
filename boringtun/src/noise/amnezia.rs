@@ -34,7 +34,7 @@ pub enum AmneziaWgVersion {
 
 impl AmneziaWgVersion {
     /// Infer the AmneziaWG generation from the parameter names and values
-    /// present in an imported configuration.
+    /// present in a configuration.
     ///
     /// The caller passes the original parameter set, preserving the
     /// distinction between an omitted parameter and an explicitly configured
@@ -400,7 +400,7 @@ pub struct AmneziaConfig {
     /// Disable the under-load MAC2/cookie challenge (upstream AWG semantics).
     /// MAC1 validation and incoming Cookie Reply handling remain enabled.
     pub(crate) disable_cookies: bool,
-    /// 32-byte raw ChaCha20 key for AmneziaWG 3.1 header protection.
+    /// 32-byte raw ChaCha20 key for AmneziaWG 3.0+ header protection.
     /// An all-zero key disables header protection, matching upstream.
     pub(crate) header_protection_key: [u8; 32],
     /// Inclusive range of extra zero bytes appended to the encrypted IP payload.

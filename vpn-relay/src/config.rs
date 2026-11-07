@@ -173,7 +173,7 @@ pub struct AwgConfig {
     pub i4: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub i5: Option<String>,
-    /// 64 hexadecimal characters (32-byte AWG 3.1 header-protection key).
+    /// 64 hexadecimal characters (32-byte AWG 3.0+ header-protection key).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub header_protection_key: Option<String>,
     /// Inclusive uint32 range, e.g. "10-100".
@@ -586,22 +586,6 @@ impl AwgConfig {
     }
 }
 
-fn decode_hex_key(value: &str) -> Option<[u8; 32]> {
-    if value.len() != 64 || !value.is_ascii() {
-        return None;
-    }
-    let mut key = [0u8; 32];
-    for (i, pair) in value.as_bytes().chunks_exact(2).enumerate() {
-        let digit = |b: u8| match b {
-            b'0'..=b'9' => Some(b - b'0'),
-            b'a'..=b'f' => Some(b - b'a' + 10),
-            b'A'..=b'F' => Some(b - b'A' + 10),
-            _ => None,
-        };
-        key[i] = (digit(pair[0])? << 4) | digit(pair[1])?;
-    }
-    Some(key)
-}
 
 /// Parsed peer endpoint. DNS names are validated but deliberately not resolved
 /// while loading configuration; resolution belongs to daemon startup/reconnect.
