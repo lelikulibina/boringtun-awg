@@ -848,19 +848,15 @@ egress = "awg-uplink"
 
     #[test]
     fn explicit_awg_version_is_forwarded_to_boringtun_validation() {
-        let explicit = valid_config().replace(
-            "h4 = \"301-400\"",
-            "h4 = \"301-400\"\nversion = \"3.1\"",
-        );
+        let explicit =
+            valid_config().replace("h4 = \"301-400\"", "h4 = \"301-400\"\nversion = \"3.1\"");
         let config = Config::parse_toml(&explicit).unwrap();
         crate::backend::BackendRegistry::default()
             .validate_config(&config)
             .unwrap();
 
-        let conflicting = valid_config().replace(
-            "h4 = \"301-400\"",
-            "h4 = \"301-400\"\nversion = \"1.0\"",
-        );
+        let conflicting =
+            valid_config().replace("h4 = \"301-400\"", "h4 = \"301-400\"\nversion = \"1.0\"");
         let config = Config::parse_toml(&conflicting).unwrap();
         let error = crate::backend::BackendRegistry::default()
             .validate_config(&config)

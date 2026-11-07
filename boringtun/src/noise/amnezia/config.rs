@@ -366,18 +366,27 @@ mod tests {
     #[test]
     fn rejects_explicit_versions_that_conflict_with_parameter_generations() {
         for (version, input) in [
-            ("1.0", AmneziaWgConfig {
-                i1: Some("<t>".into()),
-                ..Default::default()
-            }),
-            ("2.0", AmneziaWgConfig {
-                header_protection_key: Some("00".repeat(32)),
-                ..Default::default()
-            }),
-            ("3.0", AmneziaWgConfig {
-                random_trailers: Some(false),
-                ..Default::default()
-            }),
+            (
+                "1.0",
+                AmneziaWgConfig {
+                    i1: Some("<t>".into()),
+                    ..Default::default()
+                },
+            ),
+            (
+                "2.0",
+                AmneziaWgConfig {
+                    header_protection_key: Some("00".repeat(32)),
+                    ..Default::default()
+                },
+            ),
+            (
+                "3.0",
+                AmneziaWgConfig {
+                    random_trailers: Some(false),
+                    ..Default::default()
+                },
+            ),
         ] {
             let input = AmneziaWgConfig {
                 version: Some(version.into()),

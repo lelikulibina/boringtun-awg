@@ -158,8 +158,7 @@ mod version_tests {
 
     #[test]
     fn detected_generation_is_carried_by_the_normalized_config() {
-        let config = super::AmneziaConfig::new(12, 12, 12, 12)
-            .with_protocol_version(Version::V3);
+        let config = super::AmneziaConfig::new(12, 12, 12, 12).with_protocol_version(Version::V3);
         assert_eq!(config.protocol_version(), Some(Version::V3));
         assert!(config.content_padding_uses_mtu);
     }
@@ -598,6 +597,15 @@ impl AmneziaConfig {
     pub(crate) fn with_protocol_version(mut self, version: AmneziaWgVersion) -> Self {
         self.protocol_version = Some(version);
         self.content_padding_uses_mtu = version == AmneziaWgVersion::V3;
+        self
+    }
+
+    /// Preserve version inference for configurations applied through the
+    /// existing device control API (UAPI/typed updates).
+    pub(crate) fn with_detected_version(mut self, parameters: &[(&str, &str)]) -> Self {
+        if let Some(version) = AmneziaWgVersion::detect_from_parameters(parameters) {
+            self = self.with_protocol_version(version);
+        }
         self
     }
 
