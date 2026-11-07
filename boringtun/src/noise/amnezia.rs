@@ -106,6 +106,14 @@ mod version_tests {
     fn no_amnezia_parameters_means_wireguard() {
         assert_eq!(Version::detect_from_parameters(&[("mtu", "1380")]), None);
     }
+
+    #[test]
+    fn detected_generation_is_carried_by_the_normalized_config() {
+        let config = super::AmneziaConfig::new(12, 12, 12, 12)
+            .with_detected_version(&[("headerprotectionkey", "key")]);
+        assert_eq!(config.protocol_version(), Some(Version::V3));
+        assert!(config.legacy_content_padding);
+    }
 }
 
 const DNS_OPT_FIXED_LEN: usize = 11;
@@ -374,6 +382,7 @@ pub struct AmneziaConfig {
     pub(crate) content_padding_addition: (u32, u32),
     /// Use AWG 3.0's MTU-bounded CPA algorithm instead of AWG 3.1's peer UDP-window algorithm.
     pub(crate) legacy_content_padding: bool,
+    protocol_version: Option<AmneziaWgVersion>,
     /// Inclusive timer ranges in seconds; (0, 0) preserves WireGuard defaults.
     pub(crate) rekey_after_time: (u32, u32),
     pub(crate) rekey_timeout: (u32, u32),
@@ -523,6 +532,7 @@ impl AmneziaConfig {
             header_protection_key: [0u8; 32],
             content_padding_addition: (0, 0),
             legacy_content_padding: false,
+            protocol_version: None,
             rekey_after_time: (0, 0),
             rekey_timeout: (0, 0),
             reject_after_time: (0, 0),
@@ -538,9 +548,15 @@ impl AmneziaConfig {
     /// parameters. The generation controls version-specific packet behavior.
     pub fn with_detected_version(mut self, parameters: &[(&str, &str)]) -> Self {
         if let Some(version) = AmneziaWgVersion::detect_from_parameters(parameters) {
+            self.protocol_version = Some(version);
             self.legacy_content_padding = version == AmneziaWgVersion::V3;
         }
         self
+    }
+
+    /// The generation inferred from the supplied AmneziaWG parameters.
+    pub fn protocol_version(&self) -> Option<AmneziaWgVersion> {
+        self.protocol_version
     }
 
     /// Disable the under-load cookie challenge, matching AmneziaWG 3.1.
