@@ -359,10 +359,6 @@ ip netns exec "$SECONDARY_NS" "$BIN" --config "$TMP/secondary.toml" >"$TMP/secon
 SECONDARY_PID=$!
 ip netns exec "$ROUTER_NS" "$BIN" --config "$TMP/router.toml" >"$TMP/router.log" 2>&1 &
 ROUTER_PID=$!
-ip netns exec "$CLIENT_NS" "$BIN" --config "$TMP/client.toml" >"$TMP/client.log" 2>&1 &
-CLIENT_PID=$!
-ip netns exec "$SECOND_CLIENT_NS" "$BIN" --config "$TMP/second-client.toml" >"$TMP/second-client.log" 2>&1 &
-SECOND_CLIENT_PID=$!
 
 wait_interface() {
     local ns="$1" iface="$2" pid="$3" table="$4"
@@ -381,6 +377,15 @@ wait_interface "$SECONDARY_NS" up-secondary "$SECONDARY_PID" "vpn_relay_mu_secon
 wait_interface "$ROUTER_NS" wg-ingress "$ROUTER_PID" "vpn_relay_mu_router_$SUFFIX"
 wait_interface "$ROUTER_NS" awg-primary "$ROUTER_PID" "vpn_relay_mu_router_$SUFFIX"
 wait_interface "$ROUTER_NS" awg-secondary "$ROUTER_PID" "vpn_relay_mu_router_$SUFFIX"
+
+# Start ingress clients only after the router has bound its UDP listener and
+# registered all peers. Starting them concurrently creates a startup race:
+# the first handshake can arrive before wg-ingress is ready and is then lost.
+ip netns exec "$CLIENT_NS" "$BIN" --config "$TMP/client.toml" >"$TMP/client.log" 2>&1 &
+CLIENT_PID=$!
+ip netns exec "$SECOND_CLIENT_NS" "$BIN" --config "$TMP/second-client.toml" >"$TMP/second-client.log" 2>&1 &
+SECOND_CLIENT_PID=$!
+
 wait_interface "$CLIENT_NS" wg-client "$CLIENT_PID" "vpn_relay_mu_client_$SUFFIX"
 wait_interface "$SECOND_CLIENT_NS" wg-client-2 "$SECOND_CLIENT_PID" "vpn_relay_mu_client2_$SUFFIX"
 
