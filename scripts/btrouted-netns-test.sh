@@ -71,8 +71,7 @@ stats_interval_secs = 1
 nft_table = "btrouted_it"
 manage_ip_forwarding = true
 
-[[interfaces]]
-name = "wg-server"
+[interfaces.wg-server]
 protocol = "wg"
 role = "server"
 ipv6_enabled = false
@@ -81,8 +80,7 @@ listen_port = 51820
 private_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 socket_fwmark = 4097
 
-[[interfaces]]
-name = "awg-primary"
+[interfaces.awg-primary]
 protocol = "awg3_1"
 role = "client"
 ipv6_enabled = true
@@ -91,14 +89,13 @@ listen_port = 51821
 private_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 socket_fwmark = 4098
 
-[interfaces.awg]
+[interfaces.awg-primary.awg]
 h1 = "1"
 h2 = "2"
 h3 = "3"
 h4 = "4"
 
-[[interfaces]]
-name = "awg-secondary"
+[interfaces.awg-secondary]
 protocol = "awg2"
 role = "client"
 ipv6_enabled = false
@@ -107,7 +104,7 @@ listen_port = 51822
 private_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 socket_fwmark = 4099
 
-[interfaces.awg]
+[interfaces.awg-secondary.awg]
 h1 = "1"
 h2 = "2"
 h3 = "3"
