@@ -435,12 +435,7 @@ fn detect_protocol(v: &HashMap<String, String>) -> ProtocolVersion {
     let ranged_headers = ["h1", "h2", "h3", "h4"]
         .iter()
         .any(|k| v.get(*k).is_some_and(|x| x.contains('-')));
-    if ranged_headers
-        || has(&["s3", "s4"])
-            && ["s3", "s4"]
-                .iter()
-                .any(|k| v.get(*k).is_some_and(|x| x != "0"))
-    {
+    if ranged_headers || has(&["s3", "s4"]) {
         return ProtocolVersion::Awg2;
     }
     if has(&["i1", "i2", "i3", "i4", "i5"]) {
@@ -564,7 +559,7 @@ MTU = 1380
 
 [Peer]
 PublicKey = AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
-PresharedKey = BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=
+PresharedKey = AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
 Endpoint = [2001:db8::1]:51820
 AllowedIPs = 0.0.0.0/0, ::/0
 PersistentKeepalive = 25
@@ -632,6 +627,7 @@ PersistentKeepalive = 25
             ("Jc = 4\nS1 = 16", ProtocolVersion::Awg1),
             ("I1 = <t>", ProtocolVersion::Awg1_5),
             ("S3 = 16\nH1 = 1-100", ProtocolVersion::Awg2),
+            ("S3 = 0\nS4 = 0\nI1 = <t>", ProtocolVersion::Awg2),
             (
                 "HeaderProtectionKey = 0000000000000000000000000000000000000000000000000000000000000000",
                 ProtocolVersion::Awg3,
