@@ -2,7 +2,7 @@
 
 mod boringtun;
 
-use crate::config::{InterfaceConfig, TunnelType};
+use crate::config::{Config, InterfaceConfig, TunnelType};
 use std::time::Duration;
 
 /// Error returned by a tunnel backend.
@@ -41,6 +41,8 @@ pub trait TunnelHandle: Send {
 
 /// Creates running tunnel instances for a specific tunnel family.
 pub trait TunnelBackend: Send + Sync {
+    fn validate(&self, name: &str, interface: &InterfaceConfig) -> Result<(), BackendError>;
+
     fn create(
         &self,
         name: &str,
@@ -57,6 +59,17 @@ pub struct BackendRegistry {
 }
 
 impl BackendRegistry {
+    pub fn validate_config(&self, config: &Config) -> Result<(), BackendError> {
+        for (name, interface) in &config.interfaces {
+            match interface.tunnel_type {
+                TunnelType::WireGuard | TunnelType::AmneziaWg => {
+                    self.boringtun.validate(name, interface)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub fn create(
         &self,
         tunnel_type: TunnelType,

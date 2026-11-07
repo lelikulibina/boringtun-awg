@@ -73,7 +73,7 @@ pub fn import_file(
         interfaces.insert(name.to_owned(), value);
         let rendered =
             toml::to_string_pretty(&root).map_err(|e| ImportError::Config(e.to_string()))?;
-        Config::parse_toml(&rendered).map_err(|e| ImportError::Config(e.to_string()))?;
+        validate_rendered_config(&rendered)?;
         atomic_write(config_path, rendered.as_bytes())?;
         Ok(ImportReport {
             tunnel_type: interface.tunnel_type,
@@ -107,6 +107,15 @@ pub fn import_file(
             replaced: false,
         })
     }
+}
+
+fn validate_rendered_config(rendered: &str) -> Result<(), ImportError> {
+    let config = Config::parse_toml(rendered).map_err(|error| ImportError::Config(error.to_string()))?;
+    #[cfg(target_os = "linux")]
+    crate::backend::BackendRegistry::default()
+        .validate_config(&config)
+        .map_err(|error| ImportError::Config(error.to_string()))?;
+    Ok(())
 }
 
 fn atomic_write(path: &Path, contents: &[u8]) -> Result<(), ImportError> {

@@ -51,6 +51,7 @@ impl Runtime {
         let routing = RoutingPlan::from_config(&config);
         let mut devices = Vec::with_capacity(config.interfaces.len());
         let backends = BackendRegistry::default();
+        backends.validate_config(&config)?;
 
         for ((interface_name, interface), socket_fwmark) in
             config.interfaces.iter().zip(socket_fwmarks)

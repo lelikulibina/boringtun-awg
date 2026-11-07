@@ -82,6 +82,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     let config = Config::load(&config_path)?;
     if check_only {
+        vpn_relay::backend::BackendRegistry::default().validate_config(&config)?;
         println!("configuration is valid: {}", config_path.display());
         return Ok(());
     }

@@ -1,12 +1,9 @@
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine as _;
-use boringtun::device::AllowedIP;
-use boringtun::noise::amnezia::{AmneziaConfig, AmneziaWgConfig};
-use boringtun::noise::handshake::ObfuscationRanges;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::Path;
 use std::str::FromStr;
 
@@ -410,10 +407,6 @@ impl Config {
                     interface_name
                 ));
             }
-            if let Some(awg) = &interface.awg {
-                awg.validate(interface_name)?;
-            }
-
             let mut peer_keys = HashSet::new();
             let mut owned_prefixes = HashSet::new();
             for (peer_index, peer) in interface.peers.iter().enumerate() {
@@ -438,8 +431,8 @@ impl Config {
                 }
                 for prefix in &peer.allowed_ips {
                     let parsed = parse_prefix(prefix, &format!("{peer_path}.allowed_ips"))?;
-                    has_ipv6 |= parsed.addr.is_ipv6();
-                    if !owned_prefixes.insert((parsed.addr, parsed.cidr)) {
+                    has_ipv6 |= parsed.0.is_ipv6();
+                    if !owned_prefixes.insert(parsed) {
                         return invalid(format!(
                             "interfaces.{} assigns AllowedIP {} to more than one peer",
                             interface_name, prefix
@@ -543,50 +536,6 @@ impl Config {
     }
 }
 
-impl AwgConfig {
-    fn to_boringtun(&self) -> AmneziaWgConfig {
-        AmneziaWgConfig {
-            jc: self.jc,
-            jmin: self.jmin,
-            jmax: self.jmax,
-            s1: self.s1,
-            s2: self.s2,
-            s3: self.s3,
-            s4: self.s4,
-            h1: self.h1.clone(),
-            h2: self.h2.clone(),
-            h3: self.h3.clone(),
-            h4: self.h4.clone(),
-            disable_cookies: self.disable_cookies,
-            random_trailers: self.random_trailers,
-            i1: self.i1.clone(),
-            i2: self.i2.clone(),
-            i3: self.i3.clone(),
-            i4: self.i4.clone(),
-            i5: self.i5.clone(),
-            header_protection_key: self.header_protection_key.clone(),
-            content_padding_addition: self.content_padding_addition.clone(),
-            rekey_after_time: self.rekey_after_time.clone(),
-            rekey_timeout: self.rekey_timeout.clone(),
-            reject_after_time: self.reject_after_time.clone(),
-            keepalive_timeout: self.keepalive_timeout.clone(),
-            max_handshake_attempts: self.max_handshake_attempts.clone(),
-        }
-    }
-
-    pub(crate) fn build(
-        &self,
-        interface: &str,
-    ) -> Result<(ObfuscationRanges, AmneziaConfig), ConfigError> {
-        self.to_boringtun().build().map_err(|cause| {
-            ConfigError::Validation(format!("interfaces.{}.awg: {}", interface, cause))
-        })
-    }
-
-    fn validate(&self, interface: &str) -> Result<(), ConfigError> {
-        self.build(interface).map(|_| ())
-    }
-}
 
 /// Parsed peer endpoint. DNS names are validated but deliberately not resolved
 /// while loading configuration; resolution belongs to daemon startup/reconnect.
@@ -673,13 +622,33 @@ pub fn decode_key(value: &str, field: &str) -> Result<[u8; 32], ConfigError> {
     })
 }
 
-fn parse_prefix(value: &str, field: &str) -> Result<AllowedIP, ConfigError> {
-    AllowedIP::from_str(value).map_err(|error| {
+fn parse_prefix(value: &str, field: &str) -> Result<(IpAddr, u8), ConfigError> {
+    let (address, prefix) = value.split_once('/').ok_or_else(|| {
+        ConfigError::Validation(format!(
+            "{} contains invalid CIDR '{}': expected address/prefix",
+            field, value
+        ))
+    })?;
+    let address = address.parse::<IpAddr>().map_err(|error| {
         ConfigError::Validation(format!(
             "{} contains invalid CIDR '{}': {}",
             field, value, error
         ))
-    })
+    })?;
+    let prefix = prefix.parse::<u8>().map_err(|error| {
+        ConfigError::Validation(format!(
+            "{} contains invalid CIDR '{}': {}",
+            field, value, error
+        ))
+    })?;
+    let max_prefix = if address.is_ipv4() { 32 } else { 128 };
+    if prefix > max_prefix {
+        return Err(ConfigError::Validation(format!(
+            "{} contains invalid CIDR '{}': prefix exceeds {}",
+            field, value, max_prefix
+        )));
+    }
+    Ok((address, prefix))
 }
 
 fn validate_interface_name(name: &str) -> Result<(), ConfigError> {
@@ -712,7 +681,6 @@ fn invalid<T>(message: impl Into<String>) -> Result<T, ConfigError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use boringtun::noise::amnezia::AmneziaWgVersion;
 
     const KEY: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
 
@@ -839,14 +807,6 @@ egress = "awg-uplink"
         let config = Config::parse_toml(&valid_config()).unwrap();
         assert_eq!(config.interfaces["wg-server"].tunnel_type, TunnelType::WireGuard);
         assert_eq!(config.interfaces["awg-uplink"].tunnel_type, TunnelType::AmneziaWg);
-
-        let (_, amnezia) = config.interfaces["awg-uplink"]
-            .awg
-            .as_ref()
-            .unwrap()
-            .build("awg-uplink")
-            .unwrap();
-        assert_eq!(amnezia.protocol_version(), Some(AmneziaWgVersion::V2));
     }
 
     #[test]
@@ -872,11 +832,8 @@ egress = "awg-uplink"
             "max_handshake_attempts = \"15-20\""
         ));
         let config = Config::parse_toml(&input).unwrap();
-        config.interfaces["awg-uplink"]
-            .awg
-            .as_ref()
-            .unwrap()
-            .build("awg-uplink")
+        crate::backend::BackendRegistry::default()
+            .validate_config(&config)
             .unwrap();
     }
 
@@ -892,7 +849,14 @@ egress = "awg-uplink"
                 "h4 = \"301-400\"",
                 &format!("h4 = \"301-400\"\n{} = {}", field, value),
             );
-            assert!(Config::parse_toml(&input).is_err(), "{}", field);
+            let config = Config::parse_toml(&input).unwrap();
+            assert!(
+                crate::backend::BackendRegistry::default()
+                    .validate_config(&config)
+                    .is_err(),
+                "{}",
+                field
+            );
         }
     }
 
