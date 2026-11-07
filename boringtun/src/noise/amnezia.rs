@@ -593,16 +593,11 @@ impl AmneziaConfig {
         }
     }
 
-    /// Select the AmneziaWG generation detected from the supplied configuration
-    /// parameters. The generation controls version-specific packet behavior.
-    pub(crate) fn with_detected_version(mut self, parameters: &[(&str, &str)]) -> Self {
-        if let Some(version) = AmneziaWgVersion::detect_from_parameters(parameters) {
-            let version = self
-                .protocol_version
-                .map_or(version, |current| current.max(version));
-            self.protocol_version = Some(version);
-            self.content_padding_uses_mtu = version == AmneziaWgVersion::V3;
-        }
+    /// Set the validated AmneziaWG generation. AWG 3.0 uses MTU-bounded
+    /// ContentPaddingAddition; AWG 3.1 uses the peer UDP-window algorithm.
+    pub(crate) fn with_protocol_version(mut self, version: AmneziaWgVersion) -> Self {
+        self.protocol_version = Some(version);
+        self.content_padding_uses_mtu = version == AmneziaWgVersion::V3;
         self
     }
 
