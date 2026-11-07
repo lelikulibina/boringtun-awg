@@ -1,8 +1,8 @@
 // Copyright (c) 2026 BoringTun contributors. All rights reserved.
 // SPDX-License-Identifier: BSD-3-Clause
 
-use super::{AmneziaConfig, AmneziaWgVersion};
 use super::super::handshake::ObfuscationRanges;
+use super::{AmneziaConfig, AmneziaWgVersion};
 use std::fmt;
 
 /// Complete AmneziaWG protocol configuration before normalization.
@@ -117,13 +117,27 @@ impl AmneziaWgConfig {
                 }
             };
         }
-        if self.jc.is_some() { parameters.push(("jc", "")); }
-        if self.jmin.is_some() { parameters.push(("jmin", "")); }
-        if self.jmax.is_some() { parameters.push(("jmax", "")); }
-        if self.s1.is_some() { parameters.push(("s1", "")); }
-        if self.s2.is_some() { parameters.push(("s2", "")); }
-        if self.s3.is_some() { parameters.push(("s3", "")); }
-        if self.s4.is_some() { parameters.push(("s4", "")); }
+        if self.jc.is_some() {
+            parameters.push(("jc", ""));
+        }
+        if self.jmin.is_some() {
+            parameters.push(("jmin", ""));
+        }
+        if self.jmax.is_some() {
+            parameters.push(("jmax", ""));
+        }
+        if self.s1.is_some() {
+            parameters.push(("s1", ""));
+        }
+        if self.s2.is_some() {
+            parameters.push(("s2", ""));
+        }
+        if self.s3.is_some() {
+            parameters.push(("s3", ""));
+        }
+        if self.s4.is_some() {
+            parameters.push(("s4", ""));
+        }
         present!("h1", self.h1.as_deref());
         present!("h2", self.h2.as_deref());
         present!("h3", self.h3.as_deref());
@@ -134,14 +148,24 @@ impl AmneziaWgConfig {
         present!("i4", self.i4.as_deref());
         present!("i5", self.i5.as_deref());
         present!("headerprotectionkey", self.header_protection_key.as_deref());
-        present!("contentpaddingaddition", self.content_padding_addition.as_deref());
+        present!(
+            "contentpaddingaddition",
+            self.content_padding_addition.as_deref()
+        );
         present!("rekeyaftertime", self.rekey_after_time.as_deref());
         present!("rekeytimeout", self.rekey_timeout.as_deref());
         present!("rejectaftertime", self.reject_after_time.as_deref());
         present!("keepalivetimeout", self.keepalive_timeout.as_deref());
-        present!("maxhandshakeattempts", self.max_handshake_attempts.as_deref());
-        if self.random_trailers.is_some() { parameters.push(("randomtrailers", "")); }
-        if self.disable_cookies.is_some() { parameters.push(("disablecookies", "")); }
+        present!(
+            "maxhandshakeattempts",
+            self.max_handshake_attempts.as_deref()
+        );
+        if self.random_trailers.is_some() {
+            parameters.push(("randomtrailers", ""));
+        }
+        if self.disable_cookies.is_some() {
+            parameters.push(("disablecookies", ""));
+        }
         config = config.with_detected_version(&parameters);
 
         for (name, value, slot) in [
@@ -149,7 +173,11 @@ impl AmneziaWgConfig {
             ("rekey_timeout", self.rekey_timeout.as_deref(), 1u8),
             ("reject_after_time", self.reject_after_time.as_deref(), 2u8),
             ("keepalive_timeout", self.keepalive_timeout.as_deref(), 3u8),
-            ("max_handshake_attempts", self.max_handshake_attempts.as_deref(), 4u8),
+            (
+                "max_handshake_attempts",
+                self.max_handshake_attempts.as_deref(),
+                4u8,
+            ),
         ] {
             if let Some(value) = value {
                 let (min, max) = parse_u32_range(value)
@@ -231,11 +259,41 @@ mod tests {
     #[test]
     fn detects_all_supported_generations_from_their_parameters() {
         let cases = [
-            (AmneziaWgConfig { jc: Some(4), ..Default::default() }, AmneziaWgVersion::V1),
-            (AmneziaWgConfig { i1: Some("<t>".into()), ..Default::default() }, AmneziaWgVersion::V1_5),
-            (AmneziaWgConfig { s3: Some(0), ..Default::default() }, AmneziaWgVersion::V2),
-            (AmneziaWgConfig { header_protection_key: Some("00".repeat(32)), ..Default::default() }, AmneziaWgVersion::V3),
-            (AmneziaWgConfig { random_trailers: Some(false), ..Default::default() }, AmneziaWgVersion::V3_1),
+            (
+                AmneziaWgConfig {
+                    jc: Some(4),
+                    ..Default::default()
+                },
+                AmneziaWgVersion::V1,
+            ),
+            (
+                AmneziaWgConfig {
+                    i1: Some("<t>".into()),
+                    ..Default::default()
+                },
+                AmneziaWgVersion::V1_5,
+            ),
+            (
+                AmneziaWgConfig {
+                    s3: Some(0),
+                    ..Default::default()
+                },
+                AmneziaWgVersion::V2,
+            ),
+            (
+                AmneziaWgConfig {
+                    header_protection_key: Some("00".repeat(32)),
+                    ..Default::default()
+                },
+                AmneziaWgVersion::V3,
+            ),
+            (
+                AmneziaWgConfig {
+                    random_trailers: Some(false),
+                    ..Default::default()
+                },
+                AmneziaWgVersion::V3_1,
+            ),
         ];
         for (input, expected) in cases {
             let (_, normalized) = input.build().unwrap();
@@ -258,9 +316,30 @@ mod tests {
 
     #[test]
     fn rejects_invalid_parameter_combinations() {
-        assert!(AmneziaWgConfig { jmin: Some(10), ..Default::default() }.build().is_err());
-        assert!(AmneziaWgConfig { jmin: Some(20), jmax: Some(10), ..Default::default() }.build().is_err());
-        assert!(AmneziaWgConfig { header_protection_key: Some("bad".into()), ..Default::default() }.build().is_err());
-        assert!(AmneziaWgConfig { content_padding_addition: Some("100-10".into()), ..Default::default() }.build().is_err());
+        assert!(AmneziaWgConfig {
+            jmin: Some(10),
+            ..Default::default()
+        }
+        .build()
+        .is_err());
+        assert!(AmneziaWgConfig {
+            jmin: Some(20),
+            jmax: Some(10),
+            ..Default::default()
+        }
+        .build()
+        .is_err());
+        assert!(AmneziaWgConfig {
+            header_protection_key: Some("bad".into()),
+            ..Default::default()
+        }
+        .build()
+        .is_err());
+        assert!(AmneziaWgConfig {
+            content_padding_addition: Some("100-10".into()),
+            ..Default::default()
+        }
+        .build()
+        .is_err());
     }
 }

@@ -681,7 +681,6 @@ fn parse_prefix(value: &str, field: &str) -> Result<AllowedIP, ConfigError> {
     })
 }
 
-
 fn validate_interface_name(name: &str) -> Result<(), ConfigError> {
     if name.is_empty()
         || name.len() > 15
