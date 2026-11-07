@@ -1,6 +1,6 @@
 //! Import standard WireGuard and AmneziaWG INI configurations.
 use crate::config::{
-    AwgConfig, Config, InterfaceConfig, InterfaceRole, PeerConfig, ProtocolVersion,
+    AwgConfig, Config, InterfaceConfig, InterfaceRole, PeerConfig, TunnelType,
 };
 use boringtun::noise::amnezia::AmneziaWgVersion;
 use std::collections::HashMap;
@@ -24,7 +24,7 @@ pub enum ImportError {
 
 #[derive(Debug)]
 pub struct ImportReport {
-    pub protocol: ProtocolVersion,
+    pub tunnel_type: TunnelType,
     pub role: InterfaceRole,
     pub warnings: Vec<String>,
     pub replaced: bool,
@@ -79,7 +79,7 @@ pub fn import_file(
         Config::parse_toml(&rendered).map_err(|e| ImportError::Config(e.to_string()))?;
         atomic_write(config_path, rendered.as_bytes())?;
         Ok(ImportReport {
-            protocol: interface.protocol,
+            tunnel_type: interface.tunnel_type,
             role: interface.role,
             warnings,
             replaced,
@@ -104,7 +104,7 @@ pub fn import_file(
         Config::parse_toml(&rendered).map_err(|e| ImportError::Config(e.to_string()))?;
         atomic_write(config_path, rendered.as_bytes())?;
         Ok(ImportReport {
-            protocol: interface.protocol,
+            tunnel_type: interface.tunnel_type,
             role: interface.role,
             warnings,
             replaced: false,
@@ -322,16 +322,13 @@ fn parse_interface(source: &str) -> Result<(InterfaceConfig, Vec<String>), Impor
         .iter()
         .map(|(name, value)| (name.as_str(), value.as_str()))
         .collect();
-    let protocol = match AmneziaWgVersion::detect_from_parameters(&parameters) {
-        Some(AmneziaWgVersion::V1) => ProtocolVersion::Awg1,
-        Some(AmneziaWgVersion::V1_5) => ProtocolVersion::Awg1_5,
-        Some(AmneziaWgVersion::V2) => ProtocolVersion::Awg2,
-        Some(AmneziaWgVersion::V3) => ProtocolVersion::Awg3,
-        Some(AmneziaWgVersion::V3_1) => ProtocolVersion::Awg3_1,
-        None => ProtocolVersion::Wg,
+    let tunnel_type = if AmneziaWgVersion::detect_from_parameters(&parameters).is_some() {
+        TunnelType::Awg
+    } else {
+        TunnelType::Wg
     };
     let config = InterfaceConfig {
-        protocol,
+        tunnel_type,
         role,
         address,
         mtu,
@@ -546,7 +543,7 @@ PersistentKeepalive = 25
     #[test]
     fn imports_wireguard_client_and_reports_unmapped_options() {
         let (cfg, warnings) = parse_interface(CLIENT).unwrap();
-        assert_eq!(cfg.protocol, ProtocolVersion::Wg);
+        assert_eq!(cfg.tunnel_type, TunnelType::Wg);
         assert_eq!(cfg.role, InterfaceRole::Client);
         assert_eq!(cfg.address, vec!["10.0.0.2/32", "fd00::2/128"]);
         assert_eq!(cfg.listen_port, None);
@@ -596,26 +593,26 @@ PersistentKeepalive = 25
     }
 
     #[test]
-    fn infers_awg_generations_from_parameter_sets() {
+    fn imports_awg_parameter_profiles_as_awg_tunnel() {
         let base = CLIENT
             .replace("DNS = 1.1.1.1\n", "")
             .replace("fd00::2/128", "10.0.0.2/32")
             .replace("AllowedIPs = 0.0.0.0/0, ::/0", "AllowedIPs = 0.0.0.0/0");
         let profiles = [
-            ("Jc = 4\nS1 = 16", ProtocolVersion::Awg1),
-            ("I1 = <t>", ProtocolVersion::Awg1_5),
-            ("S3 = 16\nH1 = 1-100", ProtocolVersion::Awg2),
-            ("S3 = 0\nS4 = 0\nI1 = <t>", ProtocolVersion::Awg2),
+            ("Jc = 4\nS1 = 16", TunnelType::Awg),
+            ("I1 = <t>", TunnelType::Awg),
+            ("S3 = 16\nH1 = 1-100", TunnelType::Awg),
+            ("S3 = 0\nS4 = 0\nI1 = <t>", TunnelType::Awg),
             (
                 "HeaderProtectionKey = 0000000000000000000000000000000000000000000000000000000000000000",
-                ProtocolVersion::Awg3,
+                TunnelType::Awg,
             ),
-            ("RandomTrailers = true", ProtocolVersion::Awg3_1),
+            ("RandomTrailers = true", TunnelType::Awg),
         ];
 
         for (parameters, expected) in profiles {
             let input = base.replace("MTU = 1380", &format!("MTU = 1380\n{parameters}"));
-            assert_eq!(parse_interface(&input).unwrap().0.protocol, expected);
+            assert_eq!(parse_interface(&input).unwrap().0.tunnel_type, expected);
         }
     }
 

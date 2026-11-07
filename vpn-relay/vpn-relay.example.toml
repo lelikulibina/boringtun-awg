@@ -9,7 +9,7 @@ nft_table = "vpn_relay"
 manage_ip_forwarding = false
 
 [interfaces.wg-server]
-protocol = "wg"
+type = "wg"
 role = "server"
 ipv6_enabled = true
 address = ["10.10.0.1/24"]
@@ -23,7 +23,7 @@ allowed_ips = ["10.10.0.2/32"]
 persistent_keepalive_secs = 25
 
 [interfaces.awg-primary]
-protocol = "awg3_1"
+type = "awg"
 role = "client"
 ipv6_enabled = true
 address = ["10.20.0.2/32"]
@@ -68,7 +68,7 @@ allowed_ips = ["0.0.0.0/0", "::/0"]
 persistent_keepalive_secs = 25
 
 [interfaces.awg-secondary]
-protocol = "awg2"
+type = "awg"
 role = "client"
 ipv6_enabled = true
 address = ["10.30.0.2/32"]

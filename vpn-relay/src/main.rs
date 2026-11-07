@@ -61,7 +61,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let report = vpn_relay::import::import_file(&source, &config_path, &name, exists)?;
         println!(
             "Импортирован интерфейс '{name}': {:?}, роль {:?}.",
-            report.protocol, report.role
+            report.tunnel_type, report.role
         );
         if report.replaced {
             println!(

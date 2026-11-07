@@ -74,16 +74,9 @@ fn default_mtu() -> u16 {
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
-pub enum ProtocolVersion {
+pub enum TunnelType {
     Wg,
-    Awg1,
-    #[serde(rename = "awg1_5")]
-    Awg1_5,
-    Awg2,
-    #[serde(alias = "awg3_0")]
-    Awg3,
-    #[serde(rename = "awg3_1")]
-    Awg3_1,
+    Awg,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
@@ -105,7 +98,8 @@ pub enum NatMode {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct InterfaceConfig {
-    pub protocol: ProtocolVersion,
+    #[serde(rename = "type")]
+    pub tunnel_type: TunnelType,
     pub role: InterfaceRole,
     #[serde(alias = "addresses")]
     pub address: Vec<String>,
@@ -408,7 +402,7 @@ impl Config {
                 ));
             }
 
-            if interface.protocol == ProtocolVersion::Wg && interface.awg.is_some() {
+            if interface.tunnel_type == TunnelType::Wg && interface.awg.is_some() {
                 return invalid(format!(
                     "interfaces.{}.awg is not valid for protocol 'wg'",
                     interface_name
@@ -891,7 +885,7 @@ nft_table = "vpn_relay"
 manage_ip_forwarding = false
 
 [interfaces.wg-server]
-protocol = "wg"
+type = "wg"
 role = "server"
 address = ["10.10.0.1/24"]
 mtu = 1380
@@ -904,7 +898,7 @@ public_key = "{KEY}"
 allowed_ips = ["10.10.0.2/32"]
 
 [interfaces.awg-uplink]
-protocol = "awg3_1"
+type = "awg"
 role = "client"
 address = ["10.20.0.2/32"]
 mtu = 1380
@@ -1000,23 +994,10 @@ egress = "awg-uplink"
     }
 
     #[test]
-    fn accepts_explicit_awg30_protocol_name_without_breaking_legacy_name() {
-        let legacy = Config::parse_toml(
-            &valid_config().replace("protocol = \"awg3_1\"", "protocol = \"awg3\""),
-        )
-        .unwrap();
-        let explicit = Config::parse_toml(
-            &valid_config().replace("protocol = \"awg3_1\"", "protocol = \"awg3_0\""),
-        )
-        .unwrap();
-        assert_eq!(
-            legacy.interfaces["awg-uplink"].protocol,
-            ProtocolVersion::Awg3
-        );
-        assert_eq!(
-            explicit.interfaces["awg-uplink"].protocol,
-            ProtocolVersion::Awg3
-        );
+    fn config_selects_tunnel_family_without_exposing_awg_generation() {
+        let config = Config::parse_toml(&valid_config()).unwrap();
+        assert_eq!(config.interfaces["wg-server"].tunnel_type, TunnelType::Wg);
+        assert_eq!(config.interfaces["awg-uplink"].tunnel_type, TunnelType::Awg);
     }
 
     #[test]
@@ -1109,8 +1090,8 @@ egress = "awg-uplink"
         assert_eq!(config.interfaces.len(), 2);
         assert_eq!(config.routing.rules.len(), 2);
         assert_eq!(
-            config.interfaces["awg-uplink"].protocol,
-            ProtocolVersion::Awg3_1
+            config.interfaces["awg-uplink"].tunnel_type,
+            TunnelType::Awg
         );
         assert!(config.interfaces.contains_key("wg-server"));
         assert_eq!(config.interfaces["wg-server"].peers.len(), 1);

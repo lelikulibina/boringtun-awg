@@ -1,5 +1,5 @@
 //! Linux runtime: create BoringTun devices, configure peers, and install routing.
-use crate::config::{decode_key, Config, EndpointHost, InterfaceConfig, ProtocolVersion};
+use crate::config::{decode_key, Config, EndpointHost, InterfaceConfig, TunnelType};
 use crate::linux::{self, LinuxError};
 use crate::routing::RoutingPlan;
 use boringtun::device::{AllowedIP, DeviceConfig, DeviceHandle};
@@ -244,7 +244,7 @@ fn build_awg_config(
     name: &str,
     interface: &InterfaceConfig,
 ) -> Result<(ObfuscationRanges, AmneziaConfig), RuntimeError> {
-    if interface.protocol == ProtocolVersion::Wg {
+    if interface.tunnel_type == TunnelType::Wg {
         return Ok((ObfuscationRanges::default(), AmneziaConfig::default()));
     }
 
