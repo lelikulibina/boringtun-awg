@@ -4,7 +4,7 @@ use boringtun::device::AllowedIP;
 use boringtun::noise::amnezia::AmneziaConfig;
 use boringtun::noise::handshake::ObfuscationRanges;
 use serde::{Deserialize, Deserializer};
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::net::SocketAddr;
 use std::path::Path;
@@ -27,7 +27,7 @@ pub enum ConfigError {
 pub struct Config {
     #[serde(default)]
     pub daemon: DaemonConfig,
-    pub interfaces: Vec<InterfaceConfig>,
+    pub interfaces: BTreeMap<String, InterfaceConfig>,
     #[serde(default)]
     pub routing: RoutingConfig,
 }
@@ -105,7 +105,6 @@ pub enum NatMode {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct InterfaceConfig {
-    pub name: String,
     pub protocol: ProtocolVersion,
     pub role: InterfaceRole,
     pub addresses: Vec<String>,
@@ -120,7 +119,7 @@ pub struct InterfaceConfig {
     #[serde(default)]
     pub socket_fwmark: Option<u32>,
     #[serde(default)]
-    pub peers: Vec<PeerConfig>,
+    pub peers: BTreeMap<String, PeerConfig>,
     #[serde(default)]
     pub awg: Option<AwgConfig>,
 }
@@ -128,7 +127,6 @@ pub struct InterfaceConfig {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PeerConfig {
-    pub name: String,
     pub public_key: String,
     #[serde(default)]
     pub preshared_key: Option<String>,
@@ -278,7 +276,7 @@ impl Config {
     pub fn resolved_routing_fwmarks(&self) -> Result<Vec<u32>, ConfigError> {
         let egress_count = self
             .interfaces
-            .iter()
+            .values()
             .filter(|interface| interface.role == InterfaceRole::Client)
             .count();
         (0..egress_count)
@@ -304,12 +302,12 @@ impl Config {
         let routing_marks: HashSet<_> = self.resolved_routing_fwmarks()?.into_iter().collect();
 
         let mut used = HashSet::new();
-        for interface in &self.interfaces {
+        for (interface_name, interface) in &self.interfaces {
             if let Some(mark) = interface.socket_fwmark {
                 if mark == 0 {
                     return invalid(format!(
                         "interfaces.{}.socket_fwmark must be non-zero",
-                        interface.name
+                        interface_name
                     ));
                 }
                 if !used.insert(mark) {
@@ -327,7 +325,7 @@ impl Config {
 
         let mut next_candidate = DEFAULT_SOCKET_FWMARK_BASE;
         let mut resolved = Vec::with_capacity(self.interfaces.len());
-        for interface in &self.interfaces {
+        for (interface_name, interface) in &self.interfaces {
             let mark = if let Some(mark) = interface.socket_fwmark {
                 mark
             } else {
@@ -366,18 +364,14 @@ impl Config {
             return invalid("[daemon].log_level must be trace, debug, info, warn, or error");
         }
 
-        let mut interface_names = HashSet::new();
         let mut listen_ports = HashSet::new();
 
-        for interface in &self.interfaces {
-            validate_interface_name(&interface.name)?;
-            if !interface_names.insert(interface.name.as_str()) {
-                return invalid(format!("duplicate interface name '{}'", interface.name));
-            }
+        for (interface_name, interface) in &self.interfaces {
+            validate_interface_name(&interface_name)?;
             if interface.listen_port == 0 {
                 return invalid(format!(
                     "interfaces.{}.listen_port must be in 1..=65535",
-                    interface.name
+                    interface_name
                 ));
             }
             if !listen_ports.insert(interface.listen_port) {
@@ -389,59 +383,52 @@ impl Config {
             if !(576..=65535).contains(&interface.mtu) {
                 return invalid(format!(
                     "interfaces.{}.mtu must be in 576..=65535",
-                    interface.name
+                    interface_name
                 ));
             }
             decode_key(
                 &interface.private_key,
-                &format!("interfaces.{}.private_key", interface.name),
+                &format!("interfaces.{}.private_key", interface_name),
             )?;
 
             let mut has_ipv6 = false;
             for address in &interface.addresses {
                 let parsed =
-                    parse_prefix(address, &format!("interfaces.{}.addresses", interface.name))?;
+                    parse_prefix(address, &format!("interfaces.{}.addresses", interface_name))?;
                 has_ipv6 |= parsed.addr.is_ipv6();
             }
             if has_ipv6 && interface.mtu < 1280 {
                 return invalid(format!(
                     "interfaces.{}.mtu must be at least 1280 when IPv6 addresses are configured",
-                    interface.name
+                    interface_name
                 ));
             }
 
             if interface.protocol == ProtocolVersion::Wg && interface.awg.is_some() {
                 return invalid(format!(
                     "interfaces.{}.awg is not valid for protocol 'wg'",
-                    interface.name
+                    interface_name
                 ));
             }
             if let Some(awg) = &interface.awg {
-                awg.validate(&interface.name, interface.protocol)?;
+                awg.validate(&interface_name, interface.protocol)?;
             }
 
-            let mut peer_names = HashSet::new();
             let mut peer_keys = HashSet::new();
             let mut owned_prefixes = HashSet::new();
-            for peer in &interface.peers {
-                validate_peer_name(&peer.name, &interface.name)?;
-                if !peer_names.insert(peer.name.as_str()) {
-                    return invalid(format!(
-                        "interfaces.{}.peers contains duplicate peer name '{}'",
-                        interface.name, peer.name
-                    ));
-                }
+            for (peer_name, peer) in &interface.peers {
+                validate_peer_name(peer_name, interface_name)?;
                 let public_key = decode_key(
                     &peer.public_key,
                     &format!(
                         "interfaces.{}.peers.{}.public_key",
-                        interface.name, peer.name
+                        interface_name, peer_name
                     ),
                 )?;
                 if !peer_keys.insert(public_key) {
                     return invalid(format!(
                         "interfaces.{} contains duplicate peer public keys",
-                        interface.name
+                        interface_name
                     ));
                 }
                 if let Some(psk) = &peer.preshared_key {
@@ -449,7 +436,7 @@ impl Config {
                         psk,
                         &format!(
                             "interfaces.{}.peers.{}.preshared_key",
-                            interface.name, peer.name
+                            interface_name, peer_name
                         ),
                     )?;
                 }
@@ -457,7 +444,7 @@ impl Config {
                     PeerEndpoint::parse(endpoint).map_err(|error| {
                         ConfigError::Validation(format!(
                             "interfaces.{}.peers.{}.endpoint is invalid: {}",
-                            interface.name, peer.name, error
+                            interface_name, peer_name, error
                         ))
                     })?;
                 }
@@ -466,14 +453,14 @@ impl Config {
                         prefix,
                         &format!(
                             "interfaces.{}.peers.{}.allowed_ips",
-                            interface.name, peer.name
+                            interface_name, peer_name
                         ),
                     )?;
                     has_ipv6 |= parsed.addr.is_ipv6();
                     if !owned_prefixes.insert((parsed.addr, parsed.cidr)) {
                         return invalid(format!(
                             "interfaces.{} assigns AllowedIP {} to more than one peer",
-                            interface.name, prefix
+                            interface_name, prefix
                         ));
                     }
                 }
@@ -481,7 +468,7 @@ impl Config {
             if has_ipv6 && interface.mtu < 1280 {
                 return invalid(format!(
                     "interfaces.{}.mtu must be at least 1280 when IPv6 AllowedIPs are configured",
-                    interface.name
+                    interface_name
                 ));
             }
         }
@@ -491,11 +478,6 @@ impl Config {
         }
         self.resolved_socket_fwmarks()?;
 
-        let interfaces_by_name: std::collections::HashMap<_, _> = self
-            .interfaces
-            .iter()
-            .map(|interface| (interface.name.as_str(), interface))
-            .collect();
         let mut route_priorities = HashSet::new();
         for rule in &self.routing.rules {
             if !route_priorities.insert((rule.ingress.as_str(), rule.priority)) {
@@ -504,7 +486,7 @@ impl Config {
                     rule.priority, rule.ingress
                 ));
             }
-            let ingress = interfaces_by_name
+            let ingress = self.interfaces
                 .get(rule.ingress.as_str())
                 .ok_or_else(|| {
                     ConfigError::Validation(format!(
@@ -512,7 +494,7 @@ impl Config {
                         rule.ingress
                     ))
                 })?;
-            let egress = interfaces_by_name
+            let egress = self.interfaces
                 .get(rule.egress.as_str())
                 .ok_or_else(|| {
                     ConfigError::Validation(format!(
@@ -909,8 +891,7 @@ stats_interval_secs = 10
 nft_table = "btrouted"
 manage_ip_forwarding = false
 
-[[interfaces]]
-name = "wg-server"
+[interfaces.wg-server]
 protocol = "wg"
 role = "server"
 addresses = ["10.10.0.1/24"]
@@ -919,13 +900,11 @@ listen_port = 51820
 private_key = "{KEY}"
 socket_fwmark = 4097
 
-[[interfaces.peers]]
-name = "client-1"
+[interfaces.wg-server.peers.client-1]
 public_key = "{KEY}"
 allowed_ips = ["10.10.0.2/32"]
 
-[[interfaces]]
-name = "awg-uplink"
+[interfaces.awg-uplink]
 protocol = "awg3_1"
 role = "client"
 addresses = ["10.20.0.2/32"]
@@ -934,14 +913,13 @@ listen_port = 51821
 private_key = "{KEY}"
 socket_fwmark = 4098
 
-[[interfaces.peers]]
-name = "server"
+[interfaces.awg-uplink.peers.server]
 public_key = "{KEY}"
 endpoint = "198.51.100.10:51820"
 allowed_ips = ["0.0.0.0/0", "::/0"]
 persistent_keepalive_secs = 25
 
-[interfaces.awg]
+[interfaces.awg-uplink.awg]
 jc = 5
 jmin = 50
 jmax = 1000
@@ -1032,8 +1010,8 @@ egress = "awg-uplink"
             &valid_config().replace("protocol = \"awg3_1\"", "protocol = \"awg3_0\""),
         )
         .unwrap();
-        assert_eq!(legacy.interfaces[1].protocol, ProtocolVersion::Awg3);
-        assert_eq!(explicit.interfaces[1].protocol, ProtocolVersion::Awg3);
+        assert_eq!(legacy.interfaces["awg-uplink"].protocol, ProtocolVersion::Awg3);
+        assert_eq!(explicit.interfaces["awg-uplink"].protocol, ProtocolVersion::Awg3);
     }
 
     #[test]
@@ -1059,7 +1037,7 @@ egress = "awg-uplink"
             "max_handshake_attempts = \"15-20\""
         ));
         let config = Config::parse_toml(&input).unwrap();
-        config.interfaces[1]
+        config.interfaces["awg-uplink"]
             .awg
             .as_ref()
             .unwrap()
@@ -1086,10 +1064,7 @@ egress = "awg-uplink"
     #[test]
     fn ipv6_is_blocked_by_default_on_every_interface() {
         let config = Config::parse_toml(&valid_config()).unwrap();
-        assert!(config
-            .interfaces
-            .iter()
-            .all(|interface| !interface.ipv6_enabled));
+        assert!(config.interfaces.values().all(|interface| !interface.ipv6_enabled));
     }
 
     #[test]
@@ -1104,8 +1079,8 @@ egress = "awg-uplink"
                 "socket_fwmark = 4098\nipv6_enabled = false",
             );
         let config = Config::parse_toml(&input).unwrap();
-        assert!(config.interfaces[0].ipv6_enabled);
-        assert!(!config.interfaces[1].ipv6_enabled);
+        assert!(config.interfaces["wg-server"].ipv6_enabled);
+        assert!(!config.interfaces["awg-uplink"].ipv6_enabled);
     }
 
     #[test]
@@ -1125,7 +1100,7 @@ egress = "awg-uplink"
         let config = Config::parse_toml(&valid_config()).unwrap();
         assert_eq!(config.interfaces.len(), 2);
         assert_eq!(config.routing.rules.len(), 2);
-        assert_eq!(config.interfaces[1].protocol, ProtocolVersion::Awg3_1);
+        assert_eq!(config.interfaces["awg-uplink"].protocol, ProtocolVersion::Awg3_1);
     }
 
     #[test]
@@ -1266,15 +1241,13 @@ egress = "awg-uplink"
 
     #[test]
     fn allows_the_same_priority_on_different_ingresses() {
-        let input = valid_config()
-            .replace("name = \"wg-server\"", "name = \"wg-server\"")
-            .replace("priority = 110", "priority = 100");
+        let input = valid_config().replace("priority = 110", "priority = 100");
         // Duplicate priorities are scoped to an ingress. The validation
         // fixture has one ingress, so move the second rule to another valid
         // server interface before parsing.
         let input = input.replace(
-            "[[interfaces]]\nname = \"awg-uplink\"",
-            "[[interfaces]]\nname = \"wg-backup\"\nprotocol = \"wg\"\nrole = \"server\"\naddresses = [\"10.11.0.1/24\"]\nlisten_port = 51823\nprivate_key = \"{KEY}\"\nsocket_fwmark = 4100\n\n[[interfaces]]\nname = \"awg-uplink\"",
+            "[interfaces.awg-uplink]",
+            "[interfaces.wg-backup]\nprotocol = \"wg\"\nrole = \"server\"\naddresses = [\"10.11.0.1/24\"]\nlisten_port = 51823\nprivate_key = \"{KEY}\"\nsocket_fwmark = 4100\n\n[interfaces.awg-uplink]",
         ).replace("priority = 100\ningress = \"wg-server\"\ndestination = \"::/0\"", "priority = 100\ningress = \"wg-backup\"\ndestination = \"::/0\" ")
         .replace("{KEY}", KEY);
         assert!(Config::parse_toml(&input).is_ok());
