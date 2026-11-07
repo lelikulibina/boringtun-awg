@@ -392,7 +392,7 @@ impl Config {
             for address in &interface.address {
                 let parsed =
                     parse_prefix(address, &format!("interfaces.{}.address", interface_name))?;
-                has_ipv6 |= parsed.addr.is_ipv6();
+                has_ipv6 |= parsed.0.is_ipv6();
             }
             if has_ipv6 && interface.mtu < 1280 {
                 return invalid(format!(
@@ -522,7 +522,7 @@ impl Config {
                 let has_common_family = sources.iter().any(|source| {
                     destinations
                         .iter()
-                        .any(|destination| source.addr.is_ipv4() == destination.addr.is_ipv4())
+                        .any(|destination| source.0.is_ipv4() == destination.0.is_ipv4())
                 });
                 if !has_common_family {
                     return invalid(
