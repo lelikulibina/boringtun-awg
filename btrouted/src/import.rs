@@ -112,7 +112,7 @@ pub fn import_file(
 }
 
 fn atomic_write(path: &Path, contents: &[u8]) -> Result<(), ImportError> {
-    if let Some(parent) = path.parent() {
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
         fs::create_dir_all(parent)?;
     }
     let temp = path.with_extension(format!("toml.tmp.{}", std::process::id()));
@@ -585,50 +585,24 @@ PersistentKeepalive = 25
     #[test]
     fn infers_awg_generations_from_parameter_sets() {
         let base = CLIENT
-            .replace("DNS = 1.1.1.1\n", "")
+            .replace("DNS = 1.1.1.1\\n", "")
             .replace("fd00::2/128", "10.0.0.2/32")
             .replace("AllowedIPs = 0.0.0.0/0, ::/0", "AllowedIPs = 0.0.0.0/0");
-        assert_eq!(
-            parse_interface(&base.replace(
-                "PersistentKeepalive = 25",
-                "Jc = 4\nS1 = 16\nPersistentKeepalive = 25"
-            ))
-            .unwrap()
-            .0
-            .protocol,
-            ProtocolVersion::Awg1
-        );
-        assert_eq!(
-            parse_interface(&base.replace(
-                "PersistentKeepalive = 25",
-                "I1 = <t>\nPersistentKeepalive = 25"
-            ))
-            .unwrap()
-            .0
-            .protocol,
-            ProtocolVersion::Awg1_5
-        );
-        assert_eq!(
-            parse_interface(&base.replace(
-                "PersistentKeepalive = 25",
-                "S3 = 16\nH1 = 1-100\nPersistentKeepalive = 25"
-            ))
-            .unwrap()
-            .0
-            .protocol,
-            ProtocolVersion::Awg2
-        );
-        assert_eq!(parse_interface(&base.replace("PersistentKeepalive = 25","HeaderProtectionKey = 0000000000000000000000000000000000000000000000000000000000000000\nPersistentKeepalive = 25")).unwrap().0.protocol,ProtocolVersion::Awg3);
-        assert_eq!(
-            parse_interface(&base.replace(
-                "PersistentKeepalive = 25",
-                "RandomTrailers = true\nPersistentKeepalive = 25"
-            ))
-            .unwrap()
-            .0
-            .protocol,
-            ProtocolVersion::Awg3_1
-        );
+        let profiles = [
+            ("Jc = 4\\nS1 = 16", ProtocolVersion::Awg1),
+            ("I1 = <t>", ProtocolVersion::Awg1_5),
+            ("S3 = 16\\nH1 = 1-100", ProtocolVersion::Awg2),
+            (
+                "HeaderProtectionKey = 0000000000000000000000000000000000000000000000000000000000000000",
+                ProtocolVersion::Awg3,
+            ),
+            ("RandomTrailers = true", ProtocolVersion::Awg3_1),
+        ];
+
+        for (parameters, expected) in profiles {
+            let input = base.replace("MTU = 1380", &format!("MTU = 1380\\n{parameters}"));
+            assert_eq!(parse_interface(&input).unwrap().0.protocol, expected);
+        }
     }
 
     #[test]
