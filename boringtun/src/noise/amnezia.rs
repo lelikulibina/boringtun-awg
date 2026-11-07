@@ -13,6 +13,7 @@ use crate::noise::errors::WireGuardError;
 use crate::noise::signature::SignatureChain;
 use chacha20::cipher::{KeyIvInit, StreamCipher};
 use rand_core::RngCore;
+use serde::{Deserialize, Serialize};
 use std::convert::{TryFrom, TryInto};
 use std::time::Duration;
 
@@ -23,12 +24,17 @@ pub use config::{AmneziaWgConfig, AmneziaWgConfigError};
 ///
 /// This describes the protocol profile, not a negotiated handshake field.
 /// AmneziaWG peers must be configured for compatible profiles independently.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
 pub enum AmneziaWgVersion {
+    #[serde(rename = "1.0")]
     V1,
+    #[serde(rename = "1.5")]
     V1_5,
+    #[serde(rename = "2.0")]
     V2,
+    #[serde(rename = "3.0")]
     V3,
+    #[serde(rename = "3.1")]
     V3_1,
 }
 

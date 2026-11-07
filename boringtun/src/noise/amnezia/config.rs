@@ -67,7 +67,7 @@ pub struct AmneziaWgConfig {
     /// Optional explicit protocol generation. When omitted, BoringTun infers
     /// the minimum compatible generation from the supplied parameters.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub version: Option<String>,
+    pub version: Option<AmneziaWgVersion>,
 }
 
 /// Invalid AmneziaWG configuration or incompatible parameter combination.
@@ -198,11 +198,9 @@ impl AmneziaWgConfig {
             parameters.push(("disablecookies", ""));
         }
         let detected_version = AmneziaWgVersion::detect_from_parameters(&parameters);
-        let selected_version = match self.version.as_deref() {
-            Some(value) => AmneziaWgVersion::parse(value)
-                .ok_or_else(|| error(format!("unsupported AmneziaWG version '{value}'")))?,
-            None => detected_version.unwrap_or(AmneziaWgVersion::V1),
-        };
+        let selected_version = self
+            .version
+            .unwrap_or_else(|| detected_version.unwrap_or(AmneziaWgVersion::V1));
 
         if let Some(required_version) = detected_version {
             if selected_version < required_version {
@@ -373,7 +371,7 @@ mod tests {
     #[test]
     fn explicit_version_is_supported_and_controls_protocol_behavior() {
         let (_, config) = AmneziaWgConfig {
-            version: Some("3.1".into()),
+            version: Some(AmneziaWgVersion::V3_1),
             ..Default::default()
         }
         .build()
@@ -381,7 +379,7 @@ mod tests {
         assert_eq!(config.protocol_version(), Some(AmneziaWgVersion::V3_1));
 
         let (_, config) = AmneziaWgConfig {
-            version: Some("3.0".into()),
+            version: Some(AmneziaWgVersion::V3),
             header_protection_key: Some("00".repeat(32)),
             ..Default::default()
         }
@@ -395,21 +393,21 @@ mod tests {
     fn rejects_explicit_versions_that_conflict_with_parameter_generations() {
         for (version, input) in [
             (
-                "1.0",
+                AmneziaWgVersion::V1,
                 AmneziaWgConfig {
                     i1: Some("<t>".into()),
                     ..Default::default()
                 },
             ),
             (
-                "2.0",
+                AmneziaWgVersion::V2,
                 AmneziaWgConfig {
                     header_protection_key: Some("00".repeat(32)),
                     ..Default::default()
                 },
             ),
             (
-                "3.0",
+                AmneziaWgVersion::V3,
                 AmneziaWgConfig {
                     random_trailers: Some(false),
                     ..Default::default()
@@ -417,7 +415,7 @@ mod tests {
             ),
         ] {
             let input = AmneziaWgConfig {
-                version: Some(version.into()),
+                version: Some(version),
                 ..input
             };
             assert!(
