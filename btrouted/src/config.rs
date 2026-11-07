@@ -1109,8 +1109,18 @@ egress = "awg-uplink"
     #[test]
     fn interfaces_without_peers_are_valid() {
         let input = valid_config()
-            .replace("[[interfaces.wg-server.peers]]\npublic_key = \"{KEY}\"\nallowed_ips = [\"10.10.0.2/32\"]\n\n", "")
-            .replace("[[interfaces.awg-uplink.peers]]\npublic_key = \"{KEY}\"\nendpoint = \"198.51.100.10:51820\"\nallowed_ips = [\"0.0.0.0/0\", \"::/0\"]\npersistent_keepalive_secs = 25\n\n", "");
+            .replace(
+                &format!(
+                    "[[interfaces.wg-server.peers]]\npublic_key = \"{KEY}\"\nallowed_ips = [\"10.10.0.2/32\"]\n\n"
+                ),
+                "",
+            )
+            .replace(
+                &format!(
+                    "[[interfaces.awg-uplink.peers]]\npublic_key = \"{KEY}\"\nendpoint = \"198.51.100.10:51820\"\nallowed_ips = [\"0.0.0.0/0\", \"::/0\"]\npersistent_keepalive_secs = 25\n\n"
+                ),
+                "",
+            );
         let config = Config::parse_toml(&input).unwrap();
         assert!(config
             .interfaces
