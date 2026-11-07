@@ -896,6 +896,7 @@ fn invalid<T>(message: impl Into<String>) -> Result<T, ConfigError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use boringtun::noise::amnezia::AmneziaWgVersion;
 
     const KEY: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
 
@@ -1022,6 +1023,14 @@ egress = "awg-uplink"
         let config = Config::parse_toml(&valid_config()).unwrap();
         assert_eq!(config.interfaces["wg-server"].tunnel_type, TunnelType::Wg);
         assert_eq!(config.interfaces["awg-uplink"].tunnel_type, TunnelType::Awg);
+
+        let (_, amnezia) = config.interfaces["awg-uplink"]
+            .awg
+            .as_ref()
+            .unwrap()
+            .build("awg-uplink")
+            .unwrap();
+        assert_eq!(amnezia.protocol_version(), Some(AmneziaWgVersion::V2));
     }
 
     #[test]
