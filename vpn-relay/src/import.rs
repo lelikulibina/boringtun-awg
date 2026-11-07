@@ -1,6 +1,5 @@
 //! Import standard WireGuard and AmneziaWG INI configurations.
 use crate::config::{AwgConfig, Config, InterfaceConfig, InterfaceRole, PeerConfig, TunnelType};
-use boringtun::noise::amnezia::AmneziaWgVersion;
 use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -316,11 +315,7 @@ fn parse_interface(source: &str) -> Result<(InterfaceConfig, Vec<String>), Impor
     };
 
     let awg = parse_awg(&interface)?;
-    let parameters: Vec<_> = interface
-        .iter()
-        .map(|(name, value)| (name.as_str(), value.as_str()))
-        .collect();
-    let tunnel_type = if AmneziaWgVersion::detect_from_parameters(&parameters).is_some() {
+    let tunnel_type = if awg.is_some() {
         TunnelType::Awg
     } else {
         TunnelType::Wg

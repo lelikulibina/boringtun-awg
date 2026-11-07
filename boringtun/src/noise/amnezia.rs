@@ -16,6 +16,9 @@ use rand_core::RngCore;
 use std::convert::{TryFrom, TryInto};
 use std::time::Duration;
 
+pub mod config;
+pub use config::{AmneziaWgConfig, AmneziaWgConfigError};
+
 /// AmneziaWG protocol generation implemented by this BoringTun build.
 ///
 /// This describes the protocol profile, not a negotiated handshake field.
@@ -37,7 +40,7 @@ impl AmneziaWgVersion {
     /// distinction between an omitted parameter and an explicitly configured
     /// default value. None means that no AmneziaWG-specific parameter was
     /// supplied, so the configuration is plain WireGuard.
-    pub fn detect_from_parameters(parameters: &[(&str, &str)]) -> Option<Self> {
+    pub(crate) fn detect_from_parameters(parameters: &[(&str, &str)]) -> Option<Self> {
         let has = |names: &[&str]| parameters.iter().any(|(name, _)| names.contains(name));
         let ranged_headers = parameters
             .iter()
@@ -569,7 +572,7 @@ impl AmneziaConfig {
 
     /// Select the AmneziaWG generation detected from the supplied configuration
     /// parameters. The generation controls version-specific packet behavior.
-    pub fn with_detected_version(mut self, parameters: &[(&str, &str)]) -> Self {
+    pub(crate) fn with_detected_version(mut self, parameters: &[(&str, &str)]) -> Self {
         if let Some(version) = AmneziaWgVersion::detect_from_parameters(parameters) {
             self.protocol_version = Some(version);
             self.legacy_content_padding = version == AmneziaWgVersion::V3;

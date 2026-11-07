@@ -1,7 +1,7 @@
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine as _;
 use boringtun::device::AllowedIP;
-use boringtun::noise::amnezia::AmneziaConfig;
+use boringtun::noise::amnezia::{AmneziaConfig, AmneziaWgConfig};
 use boringtun::noise::handshake::ObfuscationRanges;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::{BTreeMap, HashSet};
@@ -542,201 +542,43 @@ impl Config {
 }
 
 impl AwgConfig {
+    fn to_boringtun(&self) -> AmneziaWgConfig {
+        AmneziaWgConfig {
+            jc: self.jc,
+            jmin: self.jmin,
+            jmax: self.jmax,
+            s1: self.s1,
+            s2: self.s2,
+            s3: self.s3,
+            s4: self.s4,
+            h1: self.h1.clone(),
+            h2: self.h2.clone(),
+            h3: self.h3.clone(),
+            h4: self.h4.clone(),
+            disable_cookies: self.disable_cookies,
+            random_trailers: self.random_trailers,
+            i1: self.i1.clone(),
+            i2: self.i2.clone(),
+            i3: self.i3.clone(),
+            i4: self.i4.clone(),
+            i5: self.i5.clone(),
+            header_protection_key: self.header_protection_key.clone(),
+            content_padding_addition: self.content_padding_addition.clone(),
+            rekey_after_time: self.rekey_after_time.clone(),
+            rekey_timeout: self.rekey_timeout.clone(),
+            reject_after_time: self.reject_after_time.clone(),
+            keepalive_timeout: self.keepalive_timeout.clone(),
+            max_handshake_attempts: self.max_handshake_attempts.clone(),
+        }
+    }
+
     pub fn build(
         &self,
         interface: &str,
     ) -> Result<(ObfuscationRanges, AmneziaConfig), ConfigError> {
-        let values = [
-            self.h1.as_deref().unwrap_or("1"),
-            self.h2.as_deref().unwrap_or("2"),
-            self.h3.as_deref().unwrap_or("3"),
-            self.h4.as_deref().unwrap_or("4"),
-        ];
-        let mut headers = [(0, 0); 4];
-        for (i, value) in values.iter().enumerate() {
-            headers[i] = parse_u32_range(value).ok_or_else(|| {
-                ConfigError::Validation(format!(
-                    "interfaces.{}.awg.h{} must be a uint32 tag or inclusive range",
-                    interface,
-                    i + 1
-                ))
-            })?;
-        }
-        let obf = ObfuscationRanges::from_explicit_ranges(headers).map_err(|e| {
-            ConfigError::Validation(format!(
-                "interfaces.{}.awg has invalid H1-H4 ranges: {}",
-                interface, e
-            ))
-        })?;
-        match (self.jmin, self.jmax) {
-            (Some(a), Some(b)) if a <= b => {}
-            (Some(_), Some(_)) => {
-                return invalid(format!(
-                    "interfaces.{}.awg.jmin must not exceed jmax",
-                    interface
-                ))
-            }
-            (Some(_), None) | (None, Some(_)) => {
-                return invalid(format!(
-                    "interfaces.{}.awg.jmin and jmax must be configured together",
-                    interface
-                ))
-            }
-            _ => {}
-        }
-        let mut cfg = AmneziaConfig::new(
-            self.s1.unwrap_or(0),
-            self.s2.unwrap_or(0),
-            self.s3.unwrap_or(0),
-            self.s4.unwrap_or(0),
-        )
-        .try_with_pre_handshake_junk(
-            self.jc.unwrap_or(0),
-            self.jmin.unwrap_or(0),
-            self.jmax.unwrap_or(0),
-            0,
-        )
-        .map_err(|e| {
-            ConfigError::Validation(format!("interfaces.{}.awg junk settings: {}", interface, e))
-        })?
-        .with_disable_cookies(self.disable_cookies.unwrap_or(false))
-        .with_random_trailers(self.random_trailers.unwrap_or(false));
-        if let Some(value) = &self.header_protection_key {
-            let key = decode_hex_key(value).ok_or_else(|| {
-                ConfigError::Validation(format!(
-                    "interfaces.{}.awg.header_protection_key must be 64 hexadecimal characters",
-                    interface
-                ))
-            })?;
-            cfg = cfg.with_header_protection_key(key);
-        }
-        if let Some(value) = &self.content_padding_addition {
-            let (min, max) = parse_u32_range(value).ok_or_else(|| {
-                ConfigError::Validation(format!(
-                    "interfaces.{}.awg.content_padding_addition must be uint32 or min-max",
-                    interface
-                ))
-            })?;
-            cfg = cfg.with_content_padding_addition_range(min, max);
-        }
-        // BoringTun owns generation detection and selects the matching
-        // protocol behavior. vpn-relay only forwards the configured parameters.
-        let mut version_parameters = Vec::new();
-        macro_rules! present {
-            ($name:literal, $field:expr) => {
-                if let Some(value) = $field {
-                    version_parameters.push(($name, value));
-                }
-            };
-        }
-        if self.jc.is_some() {
-            version_parameters.push(("jc", ""));
-        }
-        if self.jmin.is_some() {
-            version_parameters.push(("jmin", ""));
-        }
-        if self.jmax.is_some() {
-            version_parameters.push(("jmax", ""));
-        }
-        if self.s1.is_some() {
-            version_parameters.push(("s1", ""));
-        }
-        if self.s2.is_some() {
-            version_parameters.push(("s2", ""));
-        }
-        if self.s3.is_some() {
-            version_parameters.push(("s3", ""));
-        }
-        if self.s4.is_some() {
-            version_parameters.push(("s4", ""));
-        }
-        present!("h1", self.h1.as_deref());
-        present!("h2", self.h2.as_deref());
-        present!("h3", self.h3.as_deref());
-        present!("h4", self.h4.as_deref());
-        present!("i1", self.i1.as_deref());
-        present!("i2", self.i2.as_deref());
-        present!("i3", self.i3.as_deref());
-        present!("i4", self.i4.as_deref());
-        present!("i5", self.i5.as_deref());
-        present!("headerprotectionkey", self.header_protection_key.as_deref());
-        present!(
-            "contentpaddingaddition",
-            self.content_padding_addition.as_deref()
-        );
-        present!("rekeyaftertime", self.rekey_after_time.as_deref());
-        present!("rekeytimeout", self.rekey_timeout.as_deref());
-        present!("rejectaftertime", self.reject_after_time.as_deref());
-        present!("keepalivetimeout", self.keepalive_timeout.as_deref());
-        present!(
-            "maxhandshakeattempts",
-            self.max_handshake_attempts.as_deref()
-        );
-        if self.random_trailers.is_some() {
-            version_parameters.push(("randomtrailers", ""));
-        }
-        if self.disable_cookies.is_some() {
-            version_parameters.push(("disablecookies", ""));
-        }
-        cfg = cfg.with_detected_version(&version_parameters);
-        for (name, value, slot) in [
-            ("rekey_after_time", self.rekey_after_time.as_deref(), 0u8),
-            ("rekey_timeout", self.rekey_timeout.as_deref(), 1u8),
-            ("reject_after_time", self.reject_after_time.as_deref(), 2u8),
-            ("keepalive_timeout", self.keepalive_timeout.as_deref(), 3u8),
-            (
-                "max_handshake_attempts",
-                self.max_handshake_attempts.as_deref(),
-                4u8,
-            ),
-        ] {
-            if let Some(value) = value {
-                let (min, max) = parse_u32_range(value).ok_or_else(|| {
-                    ConfigError::Validation(format!(
-                        "interfaces.{}.awg.{} must be uint32 or min-max",
-                        interface, name
-                    ))
-                })?;
-                cfg = match slot {
-                    0 => cfg.with_rekey_after_time(min, max),
-                    1 => cfg.with_rekey_timeout(min, max),
-                    2 => cfg.with_reject_after_time(min, max),
-                    3 => cfg.with_keepalive_timeout(min, max),
-                    _ => cfg.with_max_handshake_attempts(min, max),
-                };
-            }
-        }
-        for (index, value) in [
-            self.i1.as_deref(),
-            self.i2.as_deref(),
-            self.i3.as_deref(),
-            self.i4.as_deref(),
-            self.i5.as_deref(),
-        ]
-        .iter()
-        .enumerate()
-        {
-            if let Some(spec) = value {
-                cfg = cfg.with_signature_packet(index, spec).map_err(|e| {
-                    ConfigError::Validation(format!(
-                        "interfaces.{}.awg.i{} is invalid: {}",
-                        interface,
-                        index + 1,
-                        e
-                    ))
-                })?;
-            }
-        }
-        cfg.validate().map_err(|e| {
-            ConfigError::Validation(format!("interfaces.{}.awg settings: {}", interface, e))
-        })?;
-        cfg.validate_random_trailers(obf).map_err(|e| {
-            ConfigError::Validation(format!(
-                "interfaces.{}.awg RandomTrailers: {}",
-                interface, e
-            ))
-        })?;
-        Ok((obf, cfg))
+        self.to_boringtun().build().map_err(|cause| {
+            ConfigError::Validation(format!("interfaces.{}.awg: {}", interface, cause))
+        })
     }
 
     fn validate(&self, interface: &str) -> Result<(), ConfigError> {
@@ -855,16 +697,6 @@ fn parse_prefix(value: &str, field: &str) -> Result<AllowedIP, ConfigError> {
     })
 }
 
-fn parse_u32_range(value: &str) -> Option<(u32, u32)> {
-    let (start, end) = match value.split_once('-') {
-        Some((start, end)) => (start.trim().parse().ok()?, end.trim().parse().ok()?),
-        None => {
-            let value = value.trim().parse().ok()?;
-            (value, value)
-        }
-    };
-    (start <= end).then_some((start, end))
-}
 
 fn validate_interface_name(name: &str) -> Result<(), ConfigError> {
     if name.is_empty()
