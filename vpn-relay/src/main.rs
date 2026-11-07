@@ -1,7 +1,7 @@
 #[cfg(target_os = "linux")]
-use vpn_relay::{Config, Runtime};
-#[cfg(target_os = "linux")]
 use std::path::PathBuf;
+#[cfg(target_os = "linux")]
+use vpn_relay::{Config, Runtime};
 
 #[cfg(target_os = "linux")]
 fn main() {
