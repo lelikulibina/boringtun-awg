@@ -657,7 +657,11 @@ egress = "awg-primary"
     fn ipv6_blocking_is_independent_for_ingress_and_egress_tunnels() {
         let mut config = sample_config();
         config.interfaces.get_mut("wg-server").unwrap().ipv6_enabled = false;
-        config.interfaces.get_mut("awg-secondary").unwrap().ipv6_enabled = false;
+        config
+            .interfaces
+            .get_mut("awg-secondary")
+            .unwrap()
+            .ipv6_enabled = false;
         let plan = RoutingPlan::from_config(&config);
         let script = plan.nft_script();
         assert!(script.contains("elements = { \"awg-secondary\", \"wg-server\" }"));
