@@ -1,9 +1,7 @@
 //! BoringTun implementation of the generic tunnel backend contract.
 
 use super::{BackendError, TunnelBackend, TunnelHandle, TunnelPeerSnapshot, TunnelSnapshot};
-use crate::config::{
-    decode_key, EndpointHost, InterfaceConfig, PeerEndpoint, TunnelType,
-};
+use crate::config::{decode_key, EndpointHost, InterfaceConfig, PeerEndpoint, TunnelType};
 use boringtun::device::{AllowedIP, DeviceConfig, DeviceHandle};
 use boringtun::noise::amnezia::{AmneziaConfig, AmneziaWgConfig};
 use boringtun::noise::handshake::ObfuscationRanges;

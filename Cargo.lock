@@ -164,6 +164,7 @@ dependencies = [
  "rand_chacha",
  "rand_core",
  "ring",
+ "serde",
  "socket2",
  "subtle",
  "thiserror 2.0.18",
@@ -171,7 +172,6 @@ dependencies = [
  "tracing-subscriber",
  "untrusted",
  "x25519-dalek",
- "serde",
 ]
 
 [[package]]
