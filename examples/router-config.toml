@@ -7,8 +7,7 @@ stats_interval_secs = 10
 nft_table = "btrouted"
 manage_ip_forwarding = false
 
-[[interfaces]]
-name = "wg-server"
+[interfaces.wg-server]
 protocol = "wg"
 role = "server"
 ipv6_enabled = true
@@ -18,14 +17,12 @@ listen_port = 51820
 private_key = "REPLACE_WITH_BASE64_PRIVATE_KEY"
 socket_fwmark = 0x1001
 
-[[interfaces.peers]]
-name = "client-1"
+[interfaces.wg-server.peers.client-1]
 public_key = "REPLACE_WITH_BASE64_PUBLIC_KEY"
 allowed_ips = ["10.10.0.2/32"]
 persistent_keepalive_secs = 25
 
-[[interfaces]]
-name = "awg-primary"
+[interfaces.awg-primary]
 protocol = "awg3_1"
 role = "client"
 ipv6_enabled = true
@@ -34,14 +31,13 @@ mtu = 1380
 listen_port = 51821
 private_key = "REPLACE_WITH_BASE64_PRIVATE_KEY"
 
-[[interfaces.peers]]
-name = "primary-server"
+[interfaces.awg-primary.peers.primary-server]
 public_key = "REPLACE_WITH_BASE64_PUBLIC_KEY"
 endpoint = "198.51.100.10:51820"
 allowed_ips = ["0.0.0.0/0", "::/0"]
 persistent_keepalive_secs = 25
 
-[interfaces.awg]
+[interfaces.awg-primary.awg]
 # Иллюстрация структуры. Значения должны соответствовать профилю AWG 3.1.
 jc = 5
 jmin = 50
@@ -54,8 +50,7 @@ s4 = 0
 # Для Header Protection все S1-S4 должны быть не меньше 12 байт.
 # content_padding_mode = "udp_window" # AWG 3.1; "mtu" selects AWG 3.0
 
-[[interfaces]]
-name = "awg-secondary"
+[interfaces.awg-secondary]
 protocol = "awg2"
 role = "client"
 ipv6_enabled = false
@@ -64,8 +59,7 @@ mtu = 1380
 listen_port = 51822
 private_key = "REPLACE_WITH_BASE64_PRIVATE_KEY"
 
-[[interfaces.peers]]
-name = "secondary-server"
+[interfaces.awg-secondary.peers.secondary-server]
 public_key = "REPLACE_WITH_BASE64_PUBLIC_KEY"
 endpoint = "203.0.113.20:51820"
 allowed_ips = ["0.0.0.0/0"]
