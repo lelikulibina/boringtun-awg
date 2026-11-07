@@ -94,7 +94,7 @@ cat >"$TMP/server.toml" <<TOML
 [daemon]
 log_level = "debug"
 stats_interval_secs = 1
-nft_table = "vpn-relay_peer_srv_$SUFFIX"
+nft_table = "vpn_relay_peer_srv_$SUFFIX"
 
 [interfaces.wg-peer-test]
 protocol = "$PROTO"
@@ -113,7 +113,7 @@ cat >"$TMP/client.toml" <<TOML
 [daemon]
 log_level = "debug"
 stats_interval_secs = 1
-nft_table = "vpn-relay_peer_cli_$SUFFIX"
+nft_table = "vpn_relay_peer_cli_$SUFFIX"
 
 [interfaces.wg-peer-test]
 protocol = "$PROTO"
@@ -161,8 +161,8 @@ for _ in $(seq 1 40); do
     inner_route="$(ip -n "$CLIENT_NS" route get 192.0.2.1 mark 0x80000000 2>&1 || true)"
     if grep -q "dev $CLIENT_VETH" <<<"$socket_route" \
         && grep -q "dev wg-peer-test" <<<"$inner_route" \
-        && ip netns exec "$CLIENT_NS" nft list table inet "vpn-relay_peer_cli_$SUFFIX" >/dev/null 2>&1 \
-        && ip netns exec "$SERVER_NS" nft list table inet "vpn-relay_peer_srv_$SUFFIX" >/dev/null 2>&1; then
+        && ip netns exec "$CLIENT_NS" nft list table inet "vpn_relay_peer_cli_$SUFFIX" >/dev/null 2>&1 \
+        && ip netns exec "$SERVER_NS" nft list table inet "vpn_relay_peer_srv_$SUFFIX" >/dev/null 2>&1; then
         routing_ready=1
         break
     fi
