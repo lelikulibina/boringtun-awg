@@ -119,7 +119,7 @@ pub struct InterfaceConfig {
     #[serde(default)]
     pub socket_fwmark: Option<u32>,
     #[serde(default)]
-    pub peers: BTreeMap<String, PeerConfig>,
+    pub peers: Vec<PeerConfig>,
     #[serde(default)]
     pub awg: Option<AwgConfig>,
 }
@@ -416,15 +416,9 @@ impl Config {
 
             let mut peer_keys = HashSet::new();
             let mut owned_prefixes = HashSet::new();
-            for (peer_name, peer) in &interface.peers {
-                validate_peer_name(peer_name, interface_name)?;
-                let public_key = decode_key(
-                    &peer.public_key,
-                    &format!(
-                        "interfaces.{}.peers.{}.public_key",
-                        interface_name, peer_name
-                    ),
-                )?;
+            for (peer_index, peer) in interface.peers.iter().enumerate() {
+                let peer_path = format!("interfaces.{}.peers[{}]", interface_name, peer_index);
+                let public_key = decode_key(&peer.public_key, &format!("{peer_path}.public_key"))?;
                 if !peer_keys.insert(public_key) {
                     return invalid(format!(
                         "interfaces.{} contains duplicate peer public keys",
@@ -435,16 +429,15 @@ impl Config {
                     decode_key(
                         psk,
                         &format!(
-                            "interfaces.{}.peers.{}.preshared_key",
-                            interface_name, peer_name
+                            "{peer_path}.preshared_key"
                         ),
                     )?;
                 }
                 if let Some(endpoint) = &peer.endpoint {
                     PeerEndpoint::parse(endpoint).map_err(|error| {
                         ConfigError::Validation(format!(
-                            "interfaces.{}.peers.{}.endpoint is invalid: {}",
-                            interface_name, peer_name, error
+                            "{peer_path}.endpoint is invalid: {}",
+                            error
                         ))
                     })?;
                 }
@@ -452,8 +445,7 @@ impl Config {
                     let parsed = parse_prefix(
                         prefix,
                         &format!(
-                            "interfaces.{}.peers.{}.allowed_ips",
-                            interface_name, peer_name
+                            "{peer_path}.allowed_ips"
                         ),
                     )?;
                     has_ipv6 |= parsed.addr.is_ipv6();
@@ -845,21 +837,6 @@ fn validate_interface_name(name: &str) -> Result<(), ConfigError> {
     Ok(())
 }
 
-fn validate_peer_name(name: &str, interface: &str) -> Result<(), ConfigError> {
-    if name.is_empty()
-        || name.len() > 64
-        || !name
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
-    {
-        return invalid(format!(
-            "interfaces.{}.peers contains invalid peer name '{}'",
-            interface, name
-        ));
-    }
-    Ok(())
-}
-
 fn valid_nft_table_name(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 64
@@ -896,7 +873,7 @@ listen_port = 51820
 private_key = "{KEY}"
 socket_fwmark = 4097
 
-[interfaces.wg-server.peers.client-1]
+[[interfaces.wg-server.peers]]
 public_key = "{KEY}"
 allowed_ips = ["10.10.0.2/32"]
 
@@ -909,7 +886,7 @@ listen_port = 51821
 private_key = "{KEY}"
 socket_fwmark = 4098
 
-[interfaces.awg-uplink.peers.server]
+[[interfaces.awg-uplink.peers]]
 public_key = "{KEY}"
 endpoint = "198.51.100.10:51820"
 allowed_ips = ["0.0.0.0/0", "::/0"]
@@ -1110,10 +1087,8 @@ egress = "awg-uplink"
             ProtocolVersion::Awg3_1
         );
         assert!(config.interfaces.contains_key("wg-server"));
-        assert!(config.interfaces["wg-server"]
-            .peers
-            .contains_key("client-1"));
-        assert!(config.interfaces["awg-uplink"].peers.contains_key("server"));
+        assert_eq!(config.interfaces["wg-server"].peers.len(), 1);
+        assert_eq!(config.interfaces["awg-uplink"].peers.len(), 1);
         assert_eq!(config.resolved_socket_fwmarks().unwrap(), vec![4098, 4097]);
     }
 
@@ -1121,45 +1096,37 @@ egress = "awg-uplink"
     fn shipped_example_configuration_parses_with_named_sections() {
         let config = Config::parse_toml(include_str!("../btrouted.example.toml")).unwrap();
         assert!(config.interfaces.contains_key("wg-server"));
-        assert!(config.interfaces["wg-server"]
-            .peers
-            .contains_key("wg-client-1"));
-        assert!(config.interfaces["awg-primary"]
-            .peers
-            .contains_key("awg-primary-server"));
-        assert!(config.interfaces["awg-secondary"]
-            .peers
-            .contains_key("awg-secondary-server"));
+        assert_eq!(config.interfaces["wg-server"].peers.len(), 1);
+        assert_eq!(config.interfaces["awg-primary"].peers.len(), 1);
+        assert_eq!(config.interfaces["awg-secondary"].peers.len(), 1);
     }
 
     #[test]
-    fn named_interface_and_peer_sections_populate_map_keys() {
+    fn named_interfaces_and_unnamed_peer_arrays_parse() {
         let config = Config::parse_toml(&valid_config()).unwrap();
         assert_eq!(
-            config
-                .interfaces
-                .keys()
-                .map(String::as_str)
-                .collect::<Vec<_>>(),
+            config.interfaces.keys().map(String::as_str).collect::<Vec<_>>(),
             vec!["awg-uplink", "wg-server"]
         );
-        assert_eq!(
-            config.interfaces["wg-server"]
-                .peers
-                .keys()
-                .map(String::as_str)
-                .collect::<Vec<_>>(),
-            vec!["client-1"]
-        );
-        assert!(!config.interfaces["awg-uplink"].peers.is_empty());
+        assert_eq!(config.interfaces["wg-server"].peers.len(), 1);
+        assert_eq!(config.interfaces["awg-uplink"].peers.len(), 1);
     }
 
     #[test]
-    fn rejects_duplicate_peer_public_keys_across_distinct_named_peers() {
+    fn interfaces_without_peers_are_valid() {
+        let input = valid_config()
+            .replace("[[interfaces.wg-server.peers]]\npublic_key = \"{KEY}\"\nallowed_ips = [\"10.10.0.2/32\"]\n\n", "")
+            .replace("[[interfaces.awg-uplink.peers]]\npublic_key = \"{KEY}\"\nendpoint = \"198.51.100.10:51820\"\nallowed_ips = [\"0.0.0.0/0\", \"::/0\"]\npersistent_keepalive_secs = 25\n\n", "");
+        let config = Config::parse_toml(&input).unwrap();
+        assert!(config.interfaces.values().all(|interface| interface.peers.is_empty()));
+    }
+
+    #[test]
+    fn rejects_duplicate_peer_public_keys_in_unnamed_peer_array() {
         let input = valid_config().replace(
             "[interfaces.awg-uplink]",
             &format!(
-                "[interfaces.wg-server.peers.client-2]\npublic_key = \"{}\"\nallowed_ips = [\"10.10.0.3/32\"]\n\n[interfaces.awg-uplink]",
+                "[[interfaces.wg-server.peers]]\npublic_key = \"{}\"\nallowed_ips = [\"10.10.0.3/32\"]\n\n[interfaces.awg-uplink]",
                 KEY
             ),
         );

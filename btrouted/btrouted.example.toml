@@ -17,7 +17,7 @@ mtu = 1380
 listen_port = 51820
 private_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 
-[interfaces.wg-server.peers.wg-client-1]
+[[interfaces.wg-server.peers]]
 public_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 allowed_ips = ["10.10.0.2/32"]
 persistent_keepalive_secs = 25
@@ -61,7 +61,7 @@ random_trailers = false
 # keepalive_timeout = "7-13"
 # max_handshake_attempts = "15-20"
 
-[interfaces.awg-primary.peers.awg-primary-server]
+[[interfaces.awg-primary.peers]]
 public_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 endpoint = "vpn-primary.example.net:51820"
 allowed_ips = ["0.0.0.0/0", "::/0"]
@@ -88,7 +88,7 @@ h2 = "2"
 h3 = "3"
 h4 = "4"
 
-[interfaces.awg-secondary.peers.awg-secondary-server]
+[[interfaces.awg-secondary.peers]]
 public_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 endpoint = "vpn-secondary.example.net:51820"
 allowed_ips = ["0.0.0.0/0", "::/0"]

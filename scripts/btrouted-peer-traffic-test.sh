@@ -104,7 +104,7 @@ listen_port = 51871
 private_key = "$SERVER_PRIVATE"
 socket_fwmark = 5001
 
-[interfaces.wg-peer-test.peers.test-client]
+[[interfaces.wg-peer-test.peers]]
 public_key = "$CLIENT_PUBLIC"
 allowed_ips = ["10.77.0.2/32"]
 TOML
@@ -123,7 +123,7 @@ listen_port = 51872
 private_key = "$CLIENT_PRIVATE"
 socket_fwmark = 5002
 
-[interfaces.wg-peer-test.peers.test-server]
+[[interfaces.wg-peer-test.peers]]
 public_key = "$SERVER_PUBLIC"
 endpoint = "192.0.2.1:51871"
 allowed_ips = ["10.77.0.1/32"]

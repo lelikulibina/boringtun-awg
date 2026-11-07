@@ -17,7 +17,7 @@ listen_port = 51820
 private_key = "REPLACE_WITH_BASE64_PRIVATE_KEY"
 socket_fwmark = 0x1001
 
-[interfaces.wg-server.peers.client-1]
+[[interfaces.wg-server.peers]]
 public_key = "REPLACE_WITH_BASE64_PUBLIC_KEY"
 allowed_ips = ["10.10.0.2/32"]
 persistent_keepalive_secs = 25
@@ -31,7 +31,7 @@ mtu = 1380
 listen_port = 51821
 private_key = "REPLACE_WITH_BASE64_PRIVATE_KEY"
 
-[interfaces.awg-primary.peers.primary-server]
+[[interfaces.awg-primary.peers]]
 public_key = "REPLACE_WITH_BASE64_PUBLIC_KEY"
 endpoint = "198.51.100.10:51820"
 allowed_ips = ["0.0.0.0/0", "::/0"]
@@ -59,7 +59,7 @@ mtu = 1380
 listen_port = 51822
 private_key = "REPLACE_WITH_BASE64_PRIVATE_KEY"
 
-[interfaces.awg-secondary.peers.secondary-server]
+[[interfaces.awg-secondary.peers]]
 public_key = "REPLACE_WITH_BASE64_PUBLIC_KEY"
 endpoint = "203.0.113.20:51820"
 allowed_ips = ["0.0.0.0/0"]

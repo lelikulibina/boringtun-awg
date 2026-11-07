@@ -69,7 +69,7 @@ impl Runtime {
             ));
             handle.set_fwmark(socket_fwmark)?;
 
-            for peer in interface.peers.values() {
+            for peer in &interface.peers {
                 let public_key = x25519::PublicKey::from(
                     decode_key(&peer.public_key, "peer.public_key")
                         .map_err(|error| RuntimeError::Configuration(error.to_string()))?,

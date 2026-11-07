@@ -156,7 +156,7 @@ listen_port = 51876
 private_key = "$CLIENT_PRIVATE"
 socket_fwmark = 5004
 
-[interfaces.wg-client.peers.router]
+[[interfaces.wg-client.peers]]
 public_key = "$ROUTER_INGRESS_PUBLIC"
 endpoint = "192.0.2.1:51871"
 allowed_ips = ["0.0.0.0/0", "::/0"]
@@ -178,7 +178,7 @@ listen_port = 51877
 private_key = "$SECOND_CLIENT_PRIVATE"
 socket_fwmark = 5005
 
-[interfaces.wg-client-2.peers.router]
+[[interfaces.wg-client-2.peers]]
 public_key = "$ROUTER_INGRESS_PUBLIC"
 endpoint = "192.0.3.1:51871"
 allowed_ips = ["0.0.0.0/0", "::/0"]
@@ -201,11 +201,11 @@ listen_port = 51871
 private_key = "$ROUTER_INGRESS_PRIVATE"
 socket_fwmark = 5001
 
-[interfaces.wg-ingress.peers.client]
+[[interfaces.wg-ingress.peers]]
 public_key = "$CLIENT_PUBLIC"
 allowed_ips = ["10.77.0.2/32", "fd77::2/128"]
 
-[interfaces.wg-ingress.peers.client-2]
+[[interfaces.wg-ingress.peers]]
 public_key = "$SECOND_CLIENT_PUBLIC"
 allowed_ips = ["10.77.0.3/32", "fd77::3/128"]
 
@@ -218,7 +218,7 @@ listen_port = 51872
 private_key = "$ROUTER_PRIMARY_PRIVATE"
 socket_fwmark = 5002
 
-[interfaces.awg-primary.peers.primary-server]
+[[interfaces.awg-primary.peers]]
 public_key = "$PRIMARY_PUBLIC"
 endpoint = "198.18.1.2:51873"
 allowed_ips = ["0.0.0.0/0", "::/0"]
@@ -233,7 +233,7 @@ listen_port = 51874
 private_key = "$ROUTER_SECONDARY_PRIVATE"
 socket_fwmark = 5003
 
-[interfaces.awg-secondary.peers.secondary-server]
+[[interfaces.awg-secondary.peers]]
 public_key = "$SECONDARY_PUBLIC"
 endpoint = "198.18.2.2:51875"
 allowed_ips = ["0.0.0.0/0", "::/0"]
@@ -300,7 +300,7 @@ listen_port = 51873
 private_key = "$PRIMARY_PRIVATE"
 socket_fwmark = 6001
 
-[interfaces.up-primary.peers.router]
+[[interfaces.up-primary.peers]]
 public_key = "$ROUTER_PRIMARY_PUBLIC"
 allowed_ips = ["10.20.0.1/32", "fd20::1/128", "fd77::2/128"]
 TOML
@@ -320,7 +320,7 @@ listen_port = 51875
 private_key = "$SECONDARY_PRIVATE"
 socket_fwmark = 6002
 
-[interfaces.up-secondary.peers.router]
+[[interfaces.up-secondary.peers]]
 public_key = "$ROUTER_SECONDARY_PUBLIC"
 allowed_ips = ["10.77.0.2/32", "10.77.0.3/32", "fd77::2/128", "fd77::3/128"]
 TOML
