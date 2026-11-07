@@ -583,15 +583,57 @@ PersistentKeepalive = 25
     }
 
     #[test]
+    fn importing_and_replacing_an_interface_preserves_other_interfaces() {
+        let directory = std::env::temp_dir().join(format!(
+            "btrouted-import-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir_all(&directory).unwrap();
+        let source_path = directory.join("wg.conf");
+        let config_path = directory.join("config.toml");
+        fs::write(&source_path, CLIENT).unwrap();
+
+        import_file(&source_path, &config_path, "wg-client", false).unwrap();
+        import_file(&source_path, &config_path, "wg-backup", false).unwrap();
+
+        let before_declined_replace = fs::read_to_string(&config_path).unwrap();
+        assert!(matches!(
+            import_file(&source_path, &config_path, "wg-client", false),
+            Err(ImportError::Exists(_))
+        ));
+        assert_eq!(
+            fs::read_to_string(&config_path).unwrap(),
+            before_declined_replace
+        );
+
+        let report = import_file(&source_path, &config_path, "wg-client", true).unwrap();
+        assert!(report.replaced);
+        let config = Config::load(&config_path).unwrap();
+        assert_eq!(config.interfaces.len(), 2);
+        assert_eq!(
+            config.interfaces["wg-client"].address,
+            vec!["10.0.0.2/32", "fd00::2/128"]
+        );
+        assert_eq!(config.interfaces["wg-client"].listen_port, None);
+        assert_eq!(config.interfaces["wg-backup"].listen_port, None);
+
+        let rendered = fs::read_to_string(&config_path).unwrap();
+        assert!(rendered.contains("address ="));
+        assert!(!rendered.contains("addresses ="));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn infers_awg_generations_from_parameter_sets() {
         let base = CLIENT
-            .replace("DNS = 1.1.1.1\\n", "")
+            .replace("DNS = 1.1.1.1\n", "")
             .replace("fd00::2/128", "10.0.0.2/32")
             .replace("AllowedIPs = 0.0.0.0/0, ::/0", "AllowedIPs = 0.0.0.0/0");
         let profiles = [
-            ("Jc = 4\\nS1 = 16", ProtocolVersion::Awg1),
+            ("Jc = 4\nS1 = 16", ProtocolVersion::Awg1),
             ("I1 = <t>", ProtocolVersion::Awg1_5),
-            ("S3 = 16\\nH1 = 1-100", ProtocolVersion::Awg2),
+            ("S3 = 16\nH1 = 1-100", ProtocolVersion::Awg2),
             (
                 "HeaderProtectionKey = 0000000000000000000000000000000000000000000000000000000000000000",
                 ProtocolVersion::Awg3,
@@ -600,7 +642,7 @@ PersistentKeepalive = 25
         ];
 
         for (parameters, expected) in profiles {
-            let input = base.replace("MTU = 1380", &format!("MTU = 1380\\n{parameters}"));
+            let input = base.replace("MTU = 1380", &format!("MTU = 1380\n{parameters}"));
             assert_eq!(parse_interface(&input).unwrap().0.protocol, expected);
         }
     }
