@@ -1130,7 +1130,10 @@ egress = "awg-uplink"
     fn rejects_duplicate_peer_public_keys_across_distinct_named_peers() {
         let input = valid_config().replace(
             "[interfaces.awg-uplink]",
-            "[interfaces.wg-server.peers.client-2]\npublic_key = \"{KEY}\"\nallowed_ips = [\"10.10.0.3/32\"]\n\n[interfaces.awg-uplink]",
+            &format!(
+                "[interfaces.wg-server.peers.client-2]\npublic_key = \"{}\"\nallowed_ips = [\"10.10.0.3/32\"]\n\n[interfaces.awg-uplink]",
+                KEY
+            ),
         );
         let error = Config::parse_toml(&input).unwrap_err();
         assert!(error.to_string().contains("duplicate peer public keys"));
