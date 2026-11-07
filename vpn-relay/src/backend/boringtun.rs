@@ -160,6 +160,7 @@ fn build_awg_config(
         reject_after_time: raw.reject_after_time.clone(),
         keepalive_timeout: raw.keepalive_timeout.clone(),
         max_handshake_attempts: raw.max_handshake_attempts.clone(),
+        version: raw.version.clone(),
     };
     config
         .build()

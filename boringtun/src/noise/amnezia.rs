@@ -47,13 +47,22 @@ impl AmneziaWgVersion {
         }
     }
 
-    /// Infer the AmneziaWG generation from the parameter names and values
-    /// present in a configuration.
+    /// Parse a stable protocol version string (for example, "3.1").
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "1.0" => Some(Self::V1),
+            "1.5" => Some(Self::V1_5),
+            "2.0" => Some(Self::V2),
+            "3.0" => Some(Self::V3),
+            "3.1" => Some(Self::V3_1),
+            _ => None,
+        }
+    }
+
+    /// Infer the minimum generation required by the supplied parameter set.
     ///
-    /// The caller passes the original parameter set, preserving the
-    /// distinction between an omitted parameter and an explicitly configured
-    /// default value. None means that no AmneziaWG-specific parameter was
-    /// supplied, so the configuration is plain WireGuard.
+    /// Newer generations extend earlier profiles, so cumulative parameters
+    /// select the newest generation marker that is actually present.
     pub(crate) fn detect_from_parameters(parameters: &[(&str, &str)]) -> Option<Self> {
         let has = |names: &[&str]| parameters.iter().any(|(name, _)| names.contains(name));
         let ranged_headers = parameters

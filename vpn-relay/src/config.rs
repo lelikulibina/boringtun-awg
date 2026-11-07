@@ -188,6 +188,10 @@ pub struct AwgConfig {
     pub keepalive_timeout: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_handshake_attempts: Option<String>,
+    /// Optional AmneziaWG protocol generation override (1.0, 1.5, 2.0, 3.0, 3.1).
+    /// Version inference and compatibility validation are owned by BoringTun.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
