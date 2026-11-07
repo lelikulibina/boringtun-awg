@@ -426,12 +426,7 @@ impl Config {
                     ));
                 }
                 if let Some(psk) = &peer.preshared_key {
-                    decode_key(
-                        psk,
-                        &format!(
-                            "{peer_path}.preshared_key"
-                        ),
-                    )?;
+                    decode_key(psk, &format!("{peer_path}.preshared_key"))?;
                 }
                 if let Some(endpoint) = &peer.endpoint {
                     PeerEndpoint::parse(endpoint).map_err(|error| {
@@ -442,12 +437,7 @@ impl Config {
                     })?;
                 }
                 for prefix in &peer.allowed_ips {
-                    let parsed = parse_prefix(
-                        prefix,
-                        &format!(
-                            "{peer_path}.allowed_ips"
-                        ),
-                    )?;
+                    let parsed = parse_prefix(prefix, &format!("{peer_path}.allowed_ips"))?;
                     has_ipv6 |= parsed.addr.is_ipv6();
                     if !owned_prefixes.insert((parsed.addr, parsed.cidr)) {
                         return invalid(format!(
@@ -1105,7 +1095,11 @@ egress = "awg-uplink"
     fn named_interfaces_and_unnamed_peer_arrays_parse() {
         let config = Config::parse_toml(&valid_config()).unwrap();
         assert_eq!(
-            config.interfaces.keys().map(String::as_str).collect::<Vec<_>>(),
+            config
+                .interfaces
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
             vec!["awg-uplink", "wg-server"]
         );
         assert_eq!(config.interfaces["wg-server"].peers.len(), 1);
@@ -1118,7 +1112,10 @@ egress = "awg-uplink"
             .replace("[[interfaces.wg-server.peers]]\npublic_key = \"{KEY}\"\nallowed_ips = [\"10.10.0.2/32\"]\n\n", "")
             .replace("[[interfaces.awg-uplink.peers]]\npublic_key = \"{KEY}\"\nendpoint = \"198.51.100.10:51820\"\nallowed_ips = [\"0.0.0.0/0\", \"::/0\"]\npersistent_keepalive_secs = 25\n\n", "");
         let config = Config::parse_toml(&input).unwrap();
-        assert!(config.interfaces.values().all(|interface| interface.peers.is_empty()));
+        assert!(config
+            .interfaces
+            .values()
+            .all(|interface| interface.peers.is_empty()));
     }
 
     #[test]
