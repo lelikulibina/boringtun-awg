@@ -27,13 +27,12 @@
 
 ## 2. UAPI-параметры AWG 3.1
 
-`vpn-relay` exposes the AWG parameters in `[interfaces.<name>.awg]`; the tunnel family is selected with `type = "awg"`. The AWG generation is inferred and validated by BoringTun from the configured parameter set; `vpn-relay` does not expose a generation field. `I1-I5` accept the upstream signature-chain grammar as strings; `header_protection_key` is 64 hex characters; `content_padding_addition` and all five timer fields accept a uint32 value or an inclusive `MIN-MAX` range. BoringTun selects the Content Padding algorithm from the detected generation: MTU-bounded for AWG 3.0 and UDP-window-bounded for AWG 3.1. This local implementation detail is not a vpn-relay TOML option. Invalid keys, signature chains, ranges, and timer values are rejected before interfaces are created.
+`vpn-relay` принимает параметры AWG в `[interfaces.<name>.awg]`; семейство туннеля задаётся через `type = "awg"`. Поколение AWG определяется и проверяется внутри BoringTun по набору параметров. В конфигурации `vpn-relay` отдельного поля поколения нет. `I1-I5` принимают upstream-грамматику CPS-цепочек; `header_protection_key` — 64 шестнадцатеричных символа; `content_padding_addition` и все пять таймеров принимают uint32 или включительный диапазон `MIN-MAX`. BoringTun автоматически выбирает алгоритм Content Padding: ограничение по MTU для AWG 3.0 и по UDP window для AWG 3.1. Этот внутренний выбор не является параметром TOML. Неизвестные ключи, некорректные CPS-цепочки, диапазоны и значения таймеров отклоняются до создания интерфейсов.
 
 | Параметр | Формат | Default / смысл |
 |---|---|---|
 | `header_protection_key` | 64 hex-символа (32 байта) | Нулевой ключ отключает HP. Один ключ на обоих концах. При HP все S1-S4 должны быть ≥12 байт. |
 | `content_padding_addition` | `N` или `MIN-MAX`, uint32 | Включительный диапазон нулевого padding внутри transport plaintext до AEAD. `0-0` выключает. |
-| `content_padding_mode` | `udp_window` или `mtu` | BoringTun-only: `udp_window` (default) — AWG 3.1; `mtu` — legacy CPA AWG 3.0. На проводе режим не согласуется. |
 | `random_trailers` | boolean | `false`. Внешний случайный trailer для handshake/cookie; нулевой padding внутри transport AEAD. |
 | `disable_cookies` | boolean | `false`. Пропускает under-load MAC2/cookie gate, но MAC1 остаётся обязательным. Входящие Cookie Reply продолжают приниматься. |
 | `rekey_after_time` | секунды, uint32 range | 120 с по умолчанию. |
