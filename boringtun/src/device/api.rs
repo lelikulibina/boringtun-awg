@@ -233,7 +233,7 @@ impl AwgParams {
             }
         }
         for (index, chain) in self.signature_packets.iter().enumerate() {
-            if matches!(chain, Some(Some(_))) {
+            if chain.as_ref().and_then(|entry| entry.as_ref()).is_some() {
                 version_parameters.push((["i1", "i2", "i3", "i4", "i5"][index], ""));
             }
         }
