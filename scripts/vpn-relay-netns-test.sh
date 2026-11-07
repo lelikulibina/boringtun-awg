@@ -107,9 +107,6 @@ private_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 socket_fwmark = 4099
 
 [interfaces.awg-secondary.awg]
-h1 = "1"
-h2 = "2"
-h3 = "3"
 s3 = 0
 s4 = 0
 h1 = "1-100"
