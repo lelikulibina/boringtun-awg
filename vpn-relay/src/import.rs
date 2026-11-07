@@ -98,7 +98,7 @@ pub fn import_file(
         );
         let rendered =
             toml::to_string_pretty(&value).map_err(|e| ImportError::Config(e.to_string()))?;
-        Config::parse_toml(&rendered).map_err(|e| ImportError::Config(e.to_string()))?;
+        validate_rendered_config(&rendered)?;
         atomic_write(config_path, rendered.as_bytes())?;
         Ok(ImportReport {
             tunnel_type: interface.tunnel_type,
