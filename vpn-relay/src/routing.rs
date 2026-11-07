@@ -411,7 +411,7 @@ mod tests {
         let toml = format!(
             r#"
 [interfaces.wg-server]
-protocol = "wg"
+type = "wg"
 role = "server"
 ipv6_enabled = true
 addresses = ["10.0.0.1/24"]
@@ -420,7 +420,7 @@ private_key = "{KEY}"
 socket_fwmark = 4097
 
 [interfaces.awg-primary]
-protocol = "awg3_1"
+type = "awg"
 role = "client"
 ipv6_enabled = true
 addresses = ["10.1.0.2/32"]
@@ -429,7 +429,7 @@ private_key = "{KEY}"
 socket_fwmark = 4098
 
 [interfaces.awg-secondary]
-protocol = "awg2"
+type = "awg"
 role = "client"
 ipv6_enabled = true
 addresses = ["10.2.0.2/32"]

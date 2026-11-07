@@ -1332,7 +1332,7 @@ egress = "awg-uplink"
         // server interface before parsing.
         let input = input.replace(
             "[interfaces.awg-uplink]",
-            "[interfaces.wg-backup]\nprotocol = \"wg\"\nrole = \"server\"\naddress = [\"10.11.0.1/24\"]\nlisten_port = 51823\nprivate_key = \"{KEY}\"\nsocket_fwmark = 4100\n\n[interfaces.awg-uplink]",
+            "[interfaces.wg-backup]\ntype = \"wg\"\nrole = \"server\"\naddress = [\"10.11.0.1/24\"]\nlisten_port = 51823\nprivate_key = \"{KEY}\"\nsocket_fwmark = 4100\n\n[interfaces.awg-uplink]",
         ).replace("priority = 100\ningress = \"wg-server\"\ndestination = \"::/0\"", "priority = 100\ningress = \"wg-backup\"\ndestination = \"::/0\" ")
         .replace("{KEY}", KEY);
         assert!(Config::parse_toml(&input).is_ok());
