@@ -372,11 +372,13 @@ mod tests {
     fn explicit_version_is_supported_and_controls_protocol_behavior() {
         let (_, config) = AmneziaWgConfig {
             version: Some(AmneziaWgVersion::V3_1),
+            content_padding_addition: Some("10-20".into()),
             ..Default::default()
         }
         .build()
         .unwrap();
         assert_eq!(config.protocol_version(), Some(AmneziaWgVersion::V3_1));
+        assert!(!config.content_padding_uses_mtu);
 
         let (_, config) = AmneziaWgConfig {
             version: Some(AmneziaWgVersion::V3),
@@ -420,7 +422,7 @@ mod tests {
             };
             assert!(
                 input.build().is_err(),
-                "version {version} must not silently accept newer-generation parameters"
+                "version {version:?} must not silently accept newer-generation parameters"
             );
         }
     }
