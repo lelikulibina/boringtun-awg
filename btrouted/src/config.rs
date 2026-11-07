@@ -1121,6 +1121,21 @@ egress = "awg-uplink"
     }
 
     #[test]
+    fn shipped_example_configuration_parses_with_named_sections() {
+        let config = Config::parse_toml(include_str!("../btrouted.example.toml")).unwrap();
+        assert!(config.interfaces.contains_key("wg-server"));
+        assert!(config.interfaces["wg-server"]
+            .peers
+            .contains_key("wg-client-1"));
+        assert!(config.interfaces["awg-primary"]
+            .peers
+            .contains_key("awg-primary-server"));
+        assert!(config.interfaces["awg-secondary"]
+            .peers
+            .contains_key("awg-secondary-server"));
+    }
+
+    #[test]
     fn named_interface_and_peer_sections_populate_map_keys() {
         let config = Config::parse_toml(&valid_config()).unwrap();
         assert_eq!(
