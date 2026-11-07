@@ -295,7 +295,7 @@ impl Config {
             .collect()
     }
 
-    /// Resolve explicit and automatically assigned socket marks in interface order.
+    /// Resolve explicit and automatically assigned socket marks in interface-name order.
     /// The socket and packet mark spaces are disjoint by exact 32-bit value.
     /// Explicit marks are reserved first so automatic allocation never displaces them.
     pub fn resolved_socket_fwmarks(&self) -> Result<Vec<u32>, ConfigError> {
@@ -325,7 +325,7 @@ impl Config {
 
         let mut next_candidate = DEFAULT_SOCKET_FWMARK_BASE;
         let mut resolved = Vec::with_capacity(self.interfaces.len());
-        for (interface_name, interface) in &self.interfaces {
+        for interface in self.interfaces.values() {
             let mark = if let Some(mark) = interface.socket_fwmark {
                 mark
             } else {
@@ -367,7 +367,7 @@ impl Config {
         let mut listen_ports = HashSet::new();
 
         for (interface_name, interface) in &self.interfaces {
-            validate_interface_name(&interface_name)?;
+            validate_interface_name(interface_name)?;
             if interface.listen_port == 0 {
                 return invalid(format!(
                     "interfaces.{}.listen_port must be in 1..=65535",
@@ -411,7 +411,7 @@ impl Config {
                 ));
             }
             if let Some(awg) = &interface.awg {
-                awg.validate(&interface_name, interface.protocol)?;
+                awg.validate(interface_name, interface.protocol)?;
             }
 
             let mut peer_keys = HashSet::new();
@@ -1101,6 +1101,9 @@ egress = "awg-uplink"
         assert_eq!(config.interfaces.len(), 2);
         assert_eq!(config.routing.rules.len(), 2);
         assert_eq!(config.interfaces["awg-uplink"].protocol, ProtocolVersion::Awg3_1);
+        assert!(config.interfaces.contains_key("wg-server"));
+        assert!(config.interfaces["wg-server"].peers.contains_key("client-1"));
+        assert!(config.interfaces["awg-uplink"].peers.contains_key("server"));
     }
 
     #[test]
@@ -1174,7 +1177,7 @@ egress = "awg-uplink"
             .replace("socket_fwmark = 4097\n", "")
             .replace("socket_fwmark = 4098", "socket_fwmark = 4096");
         let config = Config::parse_toml(&input).unwrap();
-        assert_eq!(config.resolved_socket_fwmarks().unwrap(), vec![4097, 4096]);
+        assert_eq!(config.resolved_socket_fwmarks().unwrap(), vec![4096, 4097]);
     }
 
     #[test]
@@ -1195,7 +1198,7 @@ egress = "awg-uplink"
     fn explicit_socket_fwmarks_are_preserved_when_mixed_with_automatic_marks() {
         let input = valid_config().replace("socket_fwmark = 4097\n", "");
         let config = Config::parse_toml(&input).unwrap();
-        assert_eq!(config.resolved_socket_fwmarks().unwrap(), vec![4096, 4098]);
+        assert_eq!(config.resolved_socket_fwmarks().unwrap(), vec![4098, 4096]);
     }
 
     #[test]
