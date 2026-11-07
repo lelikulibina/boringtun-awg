@@ -16,7 +16,6 @@ use rand_core::RngCore;
 use std::convert::{TryFrom, TryInto};
 use std::time::Duration;
 
-
 /// AmneziaWG protocol generation implemented by this BoringTun build.
 ///
 /// This describes the protocol profile, not a negotiated handshake field.
@@ -40,9 +39,9 @@ impl AmneziaWgVersion {
     /// supplied, so the configuration is plain WireGuard.
     pub fn detect_from_parameters(parameters: &[(&str, &str)]) -> Option<Self> {
         let has = |names: &[&str]| parameters.iter().any(|(name, _)| names.contains(name));
-        let ranged_headers = parameters.iter().any(|(name, value)| {
-            matches!(*name, "h1" | "h2" | "h3" | "h4") && value.contains('-')
-        });
+        let ranged_headers = parameters
+            .iter()
+            .any(|(name, value)| matches!(*name, "h1" | "h2" | "h3" | "h4") && value.contains('-'));
 
         if has(&["randomtrailers", "disablecookies"]) {
             return Some(Self::V3_1);
