@@ -5,8 +5,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BIN="${VPN_RELAY_BIN:-$ROOT/target/debug/vpn-relay}"
 PROTO="${1:-wg}"
 case "$PROTO" in
-    wg|awg3_1) ;;
-    *) echo "usage: $0 [wg|awg3_1]" >&2; exit 2 ;;
+    wg|awg) ;;
+    *) echo "usage: $0 [wg|awg]" >&2; exit 2 ;;
 esac
 
 SUFFIX="$$"
@@ -97,7 +97,7 @@ stats_interval_secs = 1
 nft_table = "vpn_relay_peer_srv_$SUFFIX"
 
 [interfaces.wg-peer-test]
-protocol = "$PROTO"
+type = "$PROTO"
 role = "server"
 addresses = ["10.77.0.1/24"]
 listen_port = 51871
@@ -109,6 +109,14 @@ public_key = "$CLIENT_PUBLIC"
 allowed_ips = ["10.77.0.2/32"]
 TOML
 
+if [[ "$PROTO" == "awg" ]]; then
+    cat >>"$TMP/server.toml" <<'AWG'
+[interfaces.wg-peer-test.awg]
+random_trailers = false
+disable_cookies = false
+AWG
+fi
+
 cat >"$TMP/client.toml" <<TOML
 [daemon]
 log_level = "debug"
@@ -116,7 +124,7 @@ stats_interval_secs = 1
 nft_table = "vpn_relay_peer_cli_$SUFFIX"
 
 [interfaces.wg-peer-test]
-protocol = "$PROTO"
+type = "$PROTO"
 role = "client"
 addresses = ["10.77.0.2/24"]
 listen_port = 51872
@@ -129,6 +137,14 @@ endpoint = "192.0.2.1:51871"
 allowed_ips = ["10.77.0.1/32"]
 persistent_keepalive_secs = 1
 TOML
+
+if [[ "$PROTO" == "awg" ]]; then
+    cat >>"$TMP/client.toml" <<'AWG'
+[interfaces.wg-peer-test.awg]
+random_trailers = false
+disable_cookies = false
+AWG
+fi
 
 "$BIN" --config "$TMP/server.toml" --check >/dev/null
 "$BIN" --config "$TMP/client.toml" --check >/dev/null
@@ -278,4 +294,4 @@ done
 [[ "$recovered" -eq 1 ]] || fail "peer did not recover encrypted traffic after remote daemon restart"
 ip netns exec "$SERVER_NS" ping -n -c 3 -W 2 10.77.0.2 || fail "reverse traffic failed after reconnect"
 
-echo "vpn-relay peer traffic test passed: protocol=$PROTO, bidirectional ICMP/TCP/UDP, socket-mark routing, reconnect/handshake recovery"
+echo "vpn-relay peer traffic test passed: tunnel_type=$PROTO, bidirectional ICMP/TCP/UDP, socket-mark routing, reconnect/handshake recovery"

@@ -72,7 +72,7 @@ nft_table = "vpn_relay_it"
 manage_ip_forwarding = true
 
 [interfaces.wg-server]
-protocol = "wg"
+type = "wg"
 role = "server"
 ipv6_enabled = false
 addresses = ["10.10.0.1/24"]
@@ -81,7 +81,7 @@ private_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 socket_fwmark = 4097
 
 [interfaces.awg-primary]
-protocol = "awg3_1"
+type = "awg"
 role = "client"
 ipv6_enabled = true
 addresses = ["10.20.0.2/32"]
@@ -94,9 +94,11 @@ h1 = "1"
 h2 = "2"
 h3 = "3"
 h4 = "4"
+random_trailers = false
+disable_cookies = false
 
 [interfaces.awg-secondary]
-protocol = "awg2"
+type = "awg"
 role = "client"
 ipv6_enabled = false
 addresses = ["10.30.0.2/32"]
@@ -108,7 +110,12 @@ socket_fwmark = 4099
 h1 = "1"
 h2 = "2"
 h3 = "3"
-h4 = "4"
+s3 = 0
+s4 = 0
+h1 = "1-100"
+h2 = "101-200"
+h3 = "201-300"
+h4 = "301-400"
 
 [[routing.rules]]
 priority = 10

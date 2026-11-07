@@ -148,7 +148,7 @@ stats_interval_secs = 1
 nft_table = "vpn_relay_mu_client_$SUFFIX"
 
 [interfaces.wg-client]
-protocol = "wg"
+type = "wg"
 role = "client"
 ipv6_enabled = true
 addresses = ["10.77.0.2/24", "fd77::2/64"]
@@ -170,7 +170,7 @@ stats_interval_secs = 1
 nft_table = "vpn_relay_mu_client2_$SUFFIX"
 
 [interfaces.wg-client-2]
-protocol = "wg"
+type = "wg"
 role = "client"
 ipv6_enabled = true
 addresses = ["10.77.0.3/24", "fd77::3/64"]
@@ -193,7 +193,7 @@ nft_table = "vpn_relay_mu_router_$SUFFIX"
 manage_ip_forwarding = true
 
 [interfaces.wg-ingress]
-protocol = "wg"
+type = "wg"
 role = "server"
 ipv6_enabled = true
 addresses = ["10.77.0.1/24", "fd77::1/64"]
@@ -210,13 +210,17 @@ public_key = "$SECOND_CLIENT_PUBLIC"
 allowed_ips = ["10.77.0.3/32", "fd77::3/128"]
 
 [interfaces.awg-primary]
-protocol = "awg3_1"
+type = "awg"
 role = "client"
 ipv6_enabled = true
 addresses = ["10.20.0.1/24", "fd20::1/64"]
 listen_port = 51872
 private_key = "$ROUTER_PRIMARY_PRIVATE"
 socket_fwmark = 5002
+
+[interfaces.awg-primary.awg]
+random_trailers = false
+disable_cookies = false
 
 [[interfaces.awg-primary.peers]]
 public_key = "$PRIMARY_PUBLIC"
@@ -225,13 +229,21 @@ allowed_ips = ["0.0.0.0/0", "::/0"]
 persistent_keepalive_secs = 1
 
 [interfaces.awg-secondary]
-protocol = "awg2"
+type = "awg"
 role = "client"
 ipv6_enabled = true
 addresses = ["10.30.0.1/24", "fd30::1/64"]
 listen_port = 51874
 private_key = "$ROUTER_SECONDARY_PRIVATE"
 socket_fwmark = 5003
+
+[interfaces.awg-secondary.awg]
+s3 = 0
+s4 = 0
+h1 = "1-100"
+h2 = "101-200"
+h3 = "201-300"
+h4 = "301-400"
 
 [[interfaces.awg-secondary.peers]]
 public_key = "$SECONDARY_PUBLIC"
@@ -292,13 +304,17 @@ stats_interval_secs = 1
 nft_table = "vpn_relay_mu_primary_$SUFFIX"
 
 [interfaces.up-primary]
-protocol = "awg3_1"
+type = "awg"
 role = "server"
 ipv6_enabled = true
 addresses = ["10.20.0.2/24", "fd20::2/64"]
 listen_port = 51873
 private_key = "$PRIMARY_PRIVATE"
 socket_fwmark = 6001
+
+[interfaces.up-primary.awg]
+random_trailers = false
+disable_cookies = false
 
 [[interfaces.up-primary.peers]]
 public_key = "$ROUTER_PRIMARY_PUBLIC"
@@ -312,13 +328,21 @@ stats_interval_secs = 1
 nft_table = "vpn_relay_mu_secondary_$SUFFIX"
 
 [interfaces.up-secondary]
-protocol = "awg2"
+type = "awg"
 role = "server"
 ipv6_enabled = true
 addresses = ["10.30.0.2/24", "fd30::2/64"]
 listen_port = 51875
 private_key = "$SECONDARY_PRIVATE"
 socket_fwmark = 6002
+
+[interfaces.up-secondary.awg]
+s3 = 0
+s4 = 0
+h1 = "1-100"
+h2 = "101-200"
+h3 = "201-300"
+h4 = "301-400"
 
 [[interfaces.up-secondary.peers]]
 public_key = "$ROUTER_SECONDARY_PUBLIC"
