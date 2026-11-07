@@ -2,8 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BIN="${BTRouted_BIN:-$ROOT/target/debug/btrouted}"
-NS="btrouted-it-$$"
+BIN="${VPN_RELAY_BIN:-$ROOT/target/debug/vpn-relay}"
+NS="vpn-relay-it-$$"
 TMP="$(mktemp -d)"
 DAEMON_PID=""
 
@@ -18,7 +18,7 @@ cleanup() {
 trap cleanup EXIT
 
 fail() {
-    echo "btrouted namespace test: $*" >&2
+    echo "vpn-relay namespace test: $*" >&2
     for log in "$TMP/daemon.log" "$TMP/conflict.log" "$TMP/policy-conflict.log" "$TMP/route-conflict.log"; do
         if [[ -f "$log" ]]; then
             cat "$log" >&2
@@ -59,7 +59,7 @@ expect_startup_failure() {
 }
 
 [[ $EUID -eq 0 ]] || fail "must run as root"
-[[ -x "$BIN" ]] || fail "btrouted binary not found at $BIN"
+[[ -x "$BIN" ]] || fail "vpn-relay binary not found at $BIN"
 [[ -c /dev/net/tun ]] || fail "/dev/net/tun is unavailable"
 command -v ip >/dev/null || fail "iproute2 is required"
 command -v nft >/dev/null || fail "nftables is required"
@@ -68,7 +68,7 @@ cat >"$TMP/config.toml" <<'TOML'
 [daemon]
 log_level = "debug"
 stats_interval_secs = 1
-nft_table = "btrouted_it"
+nft_table = "vpn-relay_it"
 manage_ip_forwarding = true
 
 [interfaces.wg-server]
@@ -144,7 +144,7 @@ ip -n "$NS" -6 route replace default dev main0
 
 # A foreign table with the configured name must be preserved. Startup must
 # fail and roll back policy rules and TUN devices instead of deleting it.
-ip netns exec "$NS" nft add table inet btrouted_it
+ip netns exec "$NS" nft add table inet vpn-relay_it
 ip netns exec "$NS" "$BIN" --config "$TMP/config.toml" >"$TMP/conflict.log" 2>&1 &
 DAEMON_PID=$!
 for _ in $(seq 1 30); do
@@ -166,7 +166,7 @@ DAEMON_PID=""
 [[ $conflict_status -ne 0 ]] || fail "daemon accepted a foreign nftables table"
 [[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "0" ]] || fail "IPv4 forwarding changed after nftables ownership conflict"
 [[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "0" ]] || fail "IPv6 forwarding changed after nftables ownership conflict"
-ip netns exec "$NS" nft list table inet btrouted_it >/dev/null 2>&1 || fail "foreign nftables table was deleted"
+ip netns exec "$NS" nft list table inet vpn-relay_it >/dev/null 2>&1 || fail "foreign nftables table was deleted"
 if ip netns exec "$NS" ip -4 rule show | grep -Eq 'fwmark 0x(80000000|80000001|1001)'; then
     fail "policy rules leaked after nftables ownership conflict"
 fi
@@ -175,7 +175,7 @@ for iface in wg-server awg-primary awg-secondary; do
         fail "TUN interface $iface leaked after startup failure"
     fi
 done
-ip netns exec "$NS" nft delete table inet btrouted_it
+ip netns exec "$NS" nft delete table inet vpn-relay_it
 
 # A foreign rule that happens to use the daemon's priority, mark and table
 # must not be adopted or removed merely because its selectors look identical.
@@ -197,7 +197,7 @@ ip netns exec "$NS" "$BIN" --config "$TMP/config.toml" >"$TMP/daemon.log" 2>&1 &
 DAEMON_PID=$!
 
 for _ in $(seq 1 30); do
-    if ip netns exec "$NS" nft list table inet btrouted_it >/dev/null 2>&1; then
+    if ip netns exec "$NS" nft list table inet vpn-relay_it >/dev/null 2>&1; then
         break
     fi
     if ! kill -0 "$DAEMON_PID" 2>/dev/null; then
@@ -205,21 +205,21 @@ for _ in $(seq 1 30); do
     fi
     sleep 1
 done
-ip netns exec "$NS" nft list table inet btrouted_it >/dev/null 2>&1 || fail "nftables table was not installed"
+ip netns exec "$NS" nft list table inet vpn-relay_it >/dev/null 2>&1 || fail "nftables table was not installed"
 [[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "1" ]] || fail "IPv4 forwarding was not enabled"
 [[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "1" ]] || fail "IPv6 forwarding was not enabled"
 
 for family in -4 -6; do
     rules="$(ip -n "$NS" "$family" rule show)"
-    grep -Fq 'fwmark 0x1001 lookup main proto 242' <<<"$rules" || fail "socket rule lacks btrouted ownership tag for $family"
-    grep -Fq 'fwmark 0x80000000 lookup 10000 proto 242' <<<"$rules" || fail "primary rule lacks btrouted ownership tag for $family"
+    grep -Fq 'fwmark 0x1001 lookup main proto 242' <<<"$rules" || fail "socket rule lacks vpn-relay ownership tag for $family"
+    grep -Fq 'fwmark 0x80000000 lookup 10000 proto 242' <<<"$rules" || fail "primary rule lacks vpn-relay ownership tag for $family"
     routes="$(ip -n "$NS" "$family" route show table 10000)"
-    grep -Fq 'default dev awg-primary proto 242' <<<"$routes" || fail "primary route lacks btrouted ownership tag for $family"
+    grep -Fq 'default dev awg-primary proto 242' <<<"$routes" || fail "primary route lacks vpn-relay ownership tag for $family"
 done
 rules="$(ip -n "$NS" -4 rule show)"
-grep -Fq 'fwmark 0x80000001 lookup 10001 proto 242' <<<"$rules" || fail "secondary IPv4 rule lacks btrouted ownership tag"
+grep -Fq 'fwmark 0x80000001 lookup 10001 proto 242' <<<"$rules" || fail "secondary IPv4 rule lacks vpn-relay ownership tag"
 routes="$(ip -n "$NS" -4 route show table 10001)"
-grep -Fq 'default dev awg-secondary proto 242' <<<"$routes" || fail "secondary IPv4 route lacks btrouted ownership tag"
+grep -Fq 'default dev awg-secondary proto 242' <<<"$routes" || fail "secondary IPv4 route lacks vpn-relay ownership tag"
 if ip -n "$NS" -6 rule show | grep -Fq 'fwmark 0x80000001 lookup 10001'; then
     fail "IPv6 policy rule was installed for IPv6-disabled egress"
 fi
@@ -244,16 +244,16 @@ for spec in \
     grep -q "dev $expected" <<<"$result" || fail "IPv6 mark $mark expected $expected, got: $result"
 done
 
-chain="$(ip netns exec "$NS" nft list chain inet btrouted_it prerouting)"
-forward_chain="$(ip netns exec "$NS" nft list chain inet btrouted_it forward)"
+chain="$(ip netns exec "$NS" nft list chain inet vpn-relay_it prerouting)"
+forward_chain="$(ip netns exec "$NS" nft list chain inet vpn-relay_it forward)"
 grep -Fq 'iifname @managed_interfaces drop' <<<"$forward_chain" || fail "managed ingress isolation drop is missing"
 grep -Fq 'oifname @managed_interfaces drop' <<<"$forward_chain" || fail "managed egress isolation drop is missing"
-blocked_set="$(ip netns exec "$NS" nft list set inet btrouted_it ipv6_blocked_interfaces)"
+blocked_set="$(ip netns exec "$NS" nft list set inet vpn-relay_it ipv6_blocked_interfaces)"
 grep -Fq '"awg-secondary"' <<<"$blocked_set" || fail "IPv6-disabled egress is absent from the blocked-interface set"
 grep -Fq '"wg-server"' <<<"$blocked_set" || fail "IPv6-disabled ingress is absent from the blocked-interface set"
 grep -Fq 'iifname @ipv6_blocked_interfaces meta nfproto ipv6 drop' <<<"$chain" || fail "IPv6 ingress drop is missing"
 grep -Fq 'oifname @ipv6_blocked_interfaces meta nfproto ipv6 drop' <<<"$forward_chain" || fail "IPv6 egress drop is missing"
-output_chain="$(ip netns exec "$NS" nft list chain inet btrouted_it output)"
+output_chain="$(ip netns exec "$NS" nft list chain inet vpn-relay_it output)"
 grep -Fq 'oifname @ipv6_blocked_interfaces meta nfproto ipv6 drop' <<<"$output_chain" || fail "locally generated IPv6 egress drop is missing"
 grep -Fq 'ct direction reply meta mark set 0' <<<"$chain" || fail "reply packet mark reset is missing"
 
@@ -267,7 +267,7 @@ DAEMON_PID=""
 [[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "0" ]] || fail "IPv4 forwarding value was not restored"
 [[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "0" ]] || fail "IPv6 forwarding value was not restored"
 
-if ip netns exec "$NS" nft list table inet btrouted_it >/dev/null 2>&1; then
+if ip netns exec "$NS" nft list table inet vpn-relay_it >/dev/null 2>&1; then
     fail "daemon-owned nftables table survived shutdown"
 fi
 if ip netns exec "$NS" ip -4 rule show | grep -Eq 'fwmark 0x8000000[01]'; then
@@ -278,7 +278,7 @@ if ip netns exec "$NS" ip -4 rule show | grep -q 'fwmark 0x1001'; then
 fi
 for family in -4 -6; do
     if ip -n "$NS" "$family" rule show | grep -q 'proto 242'; then
-        fail "btrouted policy rule survived shutdown for $family"
+        fail "vpn-relay policy rule survived shutdown for $family"
     fi
     if ip -n "$NS" "$family" route show table 10000 | grep -q .; then
         fail "primary policy route survived shutdown for $family"
@@ -293,4 +293,4 @@ for iface in wg-server awg-primary awg-secondary; do
     fi
 done
 
-echo "btrouted namespace integration test passed"
+echo "vpn-relay namespace integration test passed"

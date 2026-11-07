@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BIN="${BTRouted_BIN:-$ROOT/target/debug/btrouted}"
+BIN="${VPN_RELAY_BIN:-$ROOT/target/debug/vpn-relay}"
 SUFFIX="$$"
 CLIENT_NS="btr-mc-$SUFFIX"
 SECOND_CLIENT_NS="btr-mc2-$SUFFIX"
@@ -52,7 +52,7 @@ dump_namespace() {
 }
 
 fail() {
-    echo "btrouted multi-uplink test: $*" >&2
+    echo "vpn-relay multi-uplink test: $*" >&2
     for ns in "$CLIENT_NS" "$SECOND_CLIENT_NS" "$ROUTER_NS" "$PRIMARY_NS" "$SECONDARY_NS"; do
         if ip netns list | awk '{print $1}' | grep -Fxq "$ns"; then
             dump_namespace "$ns"
@@ -68,7 +68,7 @@ fail() {
 }
 
 [[ $EUID -eq 0 ]] || fail "must run as root"
-[[ -x "$BIN" ]] || fail "btrouted binary not found at $BIN"
+[[ -x "$BIN" ]] || fail "vpn-relay binary not found at $BIN"
 [[ -c /dev/net/tun ]] || fail "/dev/net/tun is unavailable"
 for command in ip nft wg ping iperf3 python3 tcpdump timeout; do
     command -v "$command" >/dev/null || fail "$command is required"
@@ -145,7 +145,7 @@ cat >"$TMP/client.toml" <<TOML
 [daemon]
 log_level = "debug"
 stats_interval_secs = 1
-nft_table = "btrouted_mu_client_$SUFFIX"
+nft_table = "vpn-relay_mu_client_$SUFFIX"
 
 [interfaces.wg-client]
 protocol = "wg"
@@ -167,7 +167,7 @@ cat >"$TMP/second-client.toml" <<TOML
 [daemon]
 log_level = "debug"
 stats_interval_secs = 1
-nft_table = "btrouted_mu_client2_$SUFFIX"
+nft_table = "vpn-relay_mu_client2_$SUFFIX"
 
 [interfaces.wg-client-2]
 protocol = "wg"
@@ -189,7 +189,7 @@ cat >"$TMP/router.toml" <<TOML
 [daemon]
 log_level = "debug"
 stats_interval_secs = 1
-nft_table = "btrouted_mu_router_$SUFFIX"
+nft_table = "vpn-relay_mu_router_$SUFFIX"
 manage_ip_forwarding = true
 
 [interfaces.wg-ingress]
@@ -289,7 +289,7 @@ cat >"$TMP/primary.toml" <<TOML
 [daemon]
 log_level = "debug"
 stats_interval_secs = 1
-nft_table = "btrouted_mu_primary_$SUFFIX"
+nft_table = "vpn-relay_mu_primary_$SUFFIX"
 
 [interfaces.up-primary]
 protocol = "awg3_1"
@@ -309,7 +309,7 @@ cat >"$TMP/secondary.toml" <<TOML
 [daemon]
 log_level = "debug"
 stats_interval_secs = 1
-nft_table = "btrouted_mu_secondary_$SUFFIX"
+nft_table = "vpn-relay_mu_secondary_$SUFFIX"
 
 [interfaces.up-secondary]
 protocol = "awg2"
@@ -352,13 +352,13 @@ wait_interface() {
     done
     fail "interface or nftables table for $iface did not become ready"
 }
-wait_interface "$PRIMARY_NS" up-primary "$PRIMARY_PID" "btrouted_mu_primary_$SUFFIX"
-wait_interface "$SECONDARY_NS" up-secondary "$SECONDARY_PID" "btrouted_mu_secondary_$SUFFIX"
-wait_interface "$ROUTER_NS" wg-ingress "$ROUTER_PID" "btrouted_mu_router_$SUFFIX"
-wait_interface "$ROUTER_NS" awg-primary "$ROUTER_PID" "btrouted_mu_router_$SUFFIX"
-wait_interface "$ROUTER_NS" awg-secondary "$ROUTER_PID" "btrouted_mu_router_$SUFFIX"
-wait_interface "$CLIENT_NS" wg-client "$CLIENT_PID" "btrouted_mu_client_$SUFFIX"
-wait_interface "$SECOND_CLIENT_NS" wg-client-2 "$SECOND_CLIENT_PID" "btrouted_mu_client2_$SUFFIX"
+wait_interface "$PRIMARY_NS" up-primary "$PRIMARY_PID" "vpn-relay_mu_primary_$SUFFIX"
+wait_interface "$SECONDARY_NS" up-secondary "$SECONDARY_PID" "vpn-relay_mu_secondary_$SUFFIX"
+wait_interface "$ROUTER_NS" wg-ingress "$ROUTER_PID" "vpn-relay_mu_router_$SUFFIX"
+wait_interface "$ROUTER_NS" awg-primary "$ROUTER_PID" "vpn-relay_mu_router_$SUFFIX"
+wait_interface "$ROUTER_NS" awg-secondary "$ROUTER_PID" "vpn-relay_mu_router_$SUFFIX"
+wait_interface "$CLIENT_NS" wg-client "$CLIENT_PID" "vpn-relay_mu_client_$SUFFIX"
+wait_interface "$SECOND_CLIENT_NS" wg-client-2 "$SECOND_CLIENT_PID" "vpn-relay_mu_client2_$SUFFIX"
 
 # Install the return routes only after the daemon has created the remote TUNs.
 ip -n "$PRIMARY_NS" route replace 10.77.0.2/32 dev up-primary
@@ -382,9 +382,9 @@ ip -n "$SECOND_CLIENT_NS" -6 route replace 2001:db8:1::1/128 dev wg-client-2
 ip -n "$SECOND_CLIENT_NS" -6 route replace 2001:db8:195:1::1/128 dev wg-client-2
 
 # Assert the daemon installed the intended classifier and mark mapping.
-chain="$(ip netns exec "$ROUTER_NS" nft list chain inet "btrouted_mu_router_$SUFFIX" prerouting)"
-forward_chain="$(ip netns exec "$ROUTER_NS" nft list chain inet "btrouted_mu_router_$SUFFIX" forward)"
-nat_chain="$(ip netns exec "$ROUTER_NS" nft list chain inet "btrouted_mu_router_$SUFFIX" postrouting)"
+chain="$(ip netns exec "$ROUTER_NS" nft list chain inet "vpn-relay_mu_router_$SUFFIX" prerouting)"
+forward_chain="$(ip netns exec "$ROUTER_NS" nft list chain inet "vpn-relay_mu_router_$SUFFIX" forward)"
+nat_chain="$(ip netns exec "$ROUTER_NS" nft list chain inet "vpn-relay_mu_router_$SUFFIX" postrouting)"
 grep -Fq 'iifname @managed_interfaces drop' <<<"$forward_chain" || fail "managed ingress isolation drop is missing"
 grep -Fq 'oifname @managed_interfaces drop' <<<"$forward_chain" || fail "managed egress isolation drop is missing"
 grep -Fq 'iifname "wg-ingress" oifname "awg-primary" ct mark 0x80000000 ip saddr 10.77.0.2 ip daddr 203.0.113.0/24 masquerade' <<<"$nat_chain" || fail "primary IPv4 masquerade rule is missing"
@@ -604,7 +604,7 @@ wait "$PRIMARY_PID" || fail "primary uplink server failed during shutdown"
 PRIMARY_PID=""
 ip netns exec "$PRIMARY_NS" "$BIN" --config "$TMP/primary.toml" >"$TMP/primary-restarted.log" 2>&1 &
 PRIMARY_PID=$!
-wait_interface "$PRIMARY_NS" up-primary "$PRIMARY_PID" "btrouted_mu_primary_$SUFFIX"
+wait_interface "$PRIMARY_NS" up-primary "$PRIMARY_PID" "vpn-relay_mu_primary_$SUFFIX"
 ip -n "$PRIMARY_NS" route replace 10.77.0.2/32 dev up-primary
 ip -n "$PRIMARY_NS" -6 route replace fd77::2/128 dev up-primary
 primary_recovered=0
@@ -623,7 +623,7 @@ wait "$SECONDARY_PID" || fail "secondary uplink server failed during shutdown"
 SECONDARY_PID=""
 ip netns exec "$SECONDARY_NS" "$BIN" --config "$TMP/secondary.toml" >"$TMP/secondary-restarted.log" 2>&1 &
 SECONDARY_PID=$!
-wait_interface "$SECONDARY_NS" up-secondary "$SECONDARY_PID" "btrouted_mu_secondary_$SUFFIX"
+wait_interface "$SECONDARY_NS" up-secondary "$SECONDARY_PID" "vpn-relay_mu_secondary_$SUFFIX"
 ip -n "$SECONDARY_NS" route replace 10.77.0.2/32 dev up-secondary
 ip -n "$SECONDARY_NS" -6 route replace fd77::2/128 dev up-secondary
 secondary_recovered=0
@@ -638,4 +638,4 @@ for _ in $(seq 1 40); do
 done
 [[ "$secondary_recovered" -eq 1 ]] || fail "secondary uplink did not recover both exception routes after remote daemon restart"
 
-echo "btrouted multi-uplink test passed: IPv4/IPv6 static default/exceptions, bidirectional ICMP/TCP/UDP, outer UDP underlay isolation, independent uplink handshake recovery"
+echo "vpn-relay multi-uplink test passed: IPv4/IPv6 static default/exceptions, bidirectional ICMP/TCP/UDP, outer UDP underlay isolation, independent uplink handshake recovery"

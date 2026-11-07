@@ -198,12 +198,12 @@ jobs:
       - name: Run ignored integration tests
         run: cargo test -- --ignored
       - name: Build router daemon
-        run: cargo build -p btrouted --bin btrouted
+        run: cargo build -p vpn-relay --bin vpn-relay
       - name: Exercise daemon routing in isolated network namespace
-        run: sudo bash scripts/btrouted-netns-test.sh
+        run: sudo bash scripts/vpn-relay-netns-test.sh
       - name: Verify bidirectional WireGuard peer traffic
-        run: sudo bash scripts/btrouted-peer-traffic-test.sh wg
+        run: sudo bash scripts/vpn-relay-peer-traffic-test.sh wg
       - name: Verify bidirectional AmneziaWG 3.1 peer traffic
-        run: sudo bash scripts/btrouted-peer-traffic-test.sh awg3_1
+        run: sudo bash scripts/vpn-relay-peer-traffic-test.sh awg3_1
       - name: Verify packet-level multi-uplink routing
-        run: sudo bash scripts/btrouted-multi-uplink-test.sh
+        run: sudo bash scripts/vpn-relay-multi-uplink-test.sh

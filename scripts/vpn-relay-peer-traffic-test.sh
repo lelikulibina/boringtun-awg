@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BIN="${BTRouted_BIN:-$ROOT/target/debug/btrouted}"
+BIN="${VPN_RELAY_BIN:-$ROOT/target/debug/vpn-relay}"
 PROTO="${1:-wg}"
 case "$PROTO" in
     wg|awg3_1) ;;
@@ -10,8 +10,8 @@ case "$PROTO" in
 esac
 
 SUFFIX="$$"
-SERVER_NS="btrouted-srv-$SUFFIX"
-CLIENT_NS="btrouted-cli-$SUFFIX"
+SERVER_NS="vpn-relay-srv-$SUFFIX"
+CLIENT_NS="vpn-relay-cli-$SUFFIX"
 SERVER_VETH="bts$SUFFIX"
 CLIENT_VETH="btc$SUFFIX"
 TMP="$(mktemp -d)"
@@ -54,7 +54,7 @@ dump_namespace_diagnostics() {
 }
 
 fail() {
-    echo "btrouted peer traffic test ($PROTO): $*" >&2
+    echo "vpn-relay peer traffic test ($PROTO): $*" >&2
     dump_namespace_diagnostics "$CLIENT_NS"
     dump_namespace_diagnostics "$SERVER_NS"
     for log in "$TMP/server.log" "$TMP/client.log" "$TMP/server-iperf.log" "$TMP/client-iperf.log"; do
@@ -67,7 +67,7 @@ fail() {
 }
 
 [[ $EUID -eq 0 ]] || fail "must run as root"
-[[ -x "$BIN" ]] || fail "btrouted binary not found at $BIN"
+[[ -x "$BIN" ]] || fail "vpn-relay binary not found at $BIN"
 [[ -c /dev/net/tun ]] || fail "/dev/net/tun is unavailable"
 for command in ip nft wg ping iperf3 python3 tcpdump timeout; do
     command -v "$command" >/dev/null || fail "$command is required"
@@ -94,7 +94,7 @@ cat >"$TMP/server.toml" <<TOML
 [daemon]
 log_level = "debug"
 stats_interval_secs = 1
-nft_table = "btrouted_peer_srv_$SUFFIX"
+nft_table = "vpn-relay_peer_srv_$SUFFIX"
 
 [interfaces.wg-peer-test]
 protocol = "$PROTO"
@@ -113,7 +113,7 @@ cat >"$TMP/client.toml" <<TOML
 [daemon]
 log_level = "debug"
 stats_interval_secs = 1
-nft_table = "btrouted_peer_cli_$SUFFIX"
+nft_table = "vpn-relay_peer_cli_$SUFFIX"
 
 [interfaces.wg-peer-test]
 protocol = "$PROTO"
@@ -161,8 +161,8 @@ for _ in $(seq 1 40); do
     inner_route="$(ip -n "$CLIENT_NS" route get 192.0.2.1 mark 0x80000000 2>&1 || true)"
     if grep -q "dev $CLIENT_VETH" <<<"$socket_route" \
         && grep -q "dev wg-peer-test" <<<"$inner_route" \
-        && ip netns exec "$CLIENT_NS" nft list table inet "btrouted_peer_cli_$SUFFIX" >/dev/null 2>&1 \
-        && ip netns exec "$SERVER_NS" nft list table inet "btrouted_peer_srv_$SUFFIX" >/dev/null 2>&1; then
+        && ip netns exec "$CLIENT_NS" nft list table inet "vpn-relay_peer_cli_$SUFFIX" >/dev/null 2>&1 \
+        && ip netns exec "$SERVER_NS" nft list table inet "vpn-relay_peer_srv_$SUFFIX" >/dev/null 2>&1; then
         routing_ready=1
         break
     fi
@@ -278,4 +278,4 @@ done
 [[ "$recovered" -eq 1 ]] || fail "peer did not recover encrypted traffic after remote daemon restart"
 ip netns exec "$SERVER_NS" ping -n -c 3 -W 2 10.77.0.2 || fail "reverse traffic failed after reconnect"
 
-echo "btrouted peer traffic test passed: protocol=$PROTO, bidirectional ICMP/TCP/UDP, socket-mark routing, reconnect/handshake recovery"
+echo "vpn-relay peer traffic test passed: protocol=$PROTO, bidirectional ICMP/TCP/UDP, socket-mark routing, reconnect/handshake recovery"

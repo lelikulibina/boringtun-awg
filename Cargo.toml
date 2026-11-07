@@ -1,5 +1,5 @@
 [workspace]
-members = ["boringtun", "boringtun-cli", "btrouted"]
+members = ["boringtun", "boringtun-cli", "vpn-relay"]
 
 [profile.release]
 lto = true        # Enable full link-time optimization.

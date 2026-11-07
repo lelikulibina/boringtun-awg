@@ -1,10 +1,10 @@
-# /etc/btrouted/config.toml
+# /etc/vpn-relay/config.toml
 # Демон работает от root на Linux. Файл содержит секреты: chmod 0600.
 
 [daemon]
 log_level = "info"
 stats_interval_secs = 10
-nft_table = "btrouted"
+nft_table = "vpn_relay"
 manage_ip_forwarding = false
 
 [interfaces.wg-server]

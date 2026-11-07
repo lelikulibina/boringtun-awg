@@ -186,7 +186,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "btrouted"
+name = "vpn-relay"
 version = "0.1.0"
 dependencies = [
  "base64",

@@ -1,0 +1,115 @@
+# Пример: WG-сервер и два AWG uplink.
+# Замените все ключи и endpoint перед запуском. Файл должен иметь права 0600.
+# socket_fwmark необязателен: без него демон назначает уникальную метку автоматически (начиная с 0x1000).
+
+[daemon]
+log_level = "info"
+stats_interval_secs = 10
+nft_table = "vpn_relay"
+manage_ip_forwarding = false
+
+[interfaces.wg-server]
+protocol = "wg"
+role = "server"
+ipv6_enabled = true
+address = ["10.10.0.1/24"]
+mtu = 1380
+listen_port = 51820
+private_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+
+[[interfaces.wg-server.peers]]
+public_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+allowed_ips = ["10.10.0.2/32"]
+persistent_keepalive_secs = 25
+
+[interfaces.awg-primary]
+protocol = "awg3_1"
+role = "client"
+ipv6_enabled = true
+address = ["10.20.0.2/32"]
+mtu = 1380
+listen_port = 51821
+private_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+ # socket_fwmark опущен: демон назначит его автоматически
+
+[interfaces.awg-primary.awg]
+jc = 4
+jmin = 40
+jmax = 80
+s1 = 0
+s2 = 0
+s3 = 0
+s4 = 0
+h1 = "1"
+h2 = "2"
+h3 = "3"
+h4 = "4"
+disable_cookies = false
+random_trailers = false
+# AWG 3.1 options (uncomment and configure consistently on both peers where required):
+# i1 = "<b 0x4142><r 8>"
+# i2 = "<t>"
+# i3 = "<rc 4>"
+# i4 = "<rd 4>"
+# i5 = "<dz 2>"
+# header_protection_key = "64_HEX_CHARACTERS_SHARED_WITH_PEER"
+# content_padding_addition = "10-100"
+# Padding mode is selected automatically from protocol (AWG 3.0: MTU; AWG 3.1: UDP window).
+# rekey_after_time = "100-120"
+# rekey_timeout = "3-8"
+# reject_after_time = "150-180"
+# keepalive_timeout = "7-13"
+# max_handshake_attempts = "15-20"
+
+[[interfaces.awg-primary.peers]]
+public_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+endpoint = "vpn-primary.example.net:51820"
+allowed_ips = ["0.0.0.0/0", "::/0"]
+persistent_keepalive_secs = 25
+
+[interfaces.awg-secondary]
+protocol = "awg2"
+role = "client"
+ipv6_enabled = true
+address = ["10.30.0.2/32"]
+mtu = 1380
+listen_port = 51822
+private_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+ # socket_fwmark опущен: демон назначит его автоматически
+
+[interfaces.awg-secondary.awg]
+jc = 4
+jmin = 40
+jmax = 80
+s1 = 0
+s2 = 0
+h1 = "1"
+h2 = "2"
+h3 = "3"
+h4 = "4"
+
+[[interfaces.awg-secondary.peers]]
+public_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+endpoint = "vpn-secondary.example.net:51820"
+allowed_ips = ["0.0.0.0/0", "::/0"]
+persistent_keepalive_secs = 25
+
+[[routing.rules]]
+priority = 10
+ingress = "wg-server"
+destination = "195.142.0.0/16"
+egress = "awg-secondary"
+
+[[routing.rules]]
+priority = 20
+ingress = "wg-server"
+destination = "79.100.22.0/24"
+egress = "awg-secondary"
+
+[[routing.rules]]
+priority = 100
+ingress = "wg-server"
+source = "10.10.0.0/24"
+destination = "0.0.0.0/0"
+egress = "awg-primary"
+nat = "masquerade"

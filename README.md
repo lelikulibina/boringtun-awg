@@ -60,21 +60,21 @@ This branch contains AmneziaWG 3.0/3.1 extensions. Linux interop CI tests 16 dir
 
 ## Linux multi-tunnel router daemon
 
-The workspace includes the experimental `btrouted` Linux daemon. It creates WG/AWG TUN devices directly through BoringTun's typed device API; daemon-managed devices do not expose UAPI sockets.
+The workspace includes the experimental `vpn-relay` Linux daemon. It creates WG/AWG TUN devices directly through BoringTun's typed device API; daemon-managed devices do not expose UAPI sockets.
 
 Build and validate the example configuration:
 
 ```sh
-cargo build -p btrouted --bin btrouted
-sudo install -d -m 0750 /etc/btrouted
-sudo install -m 0600 btrouted/btrouted.example.toml /etc/btrouted/config.toml
-sudo target/debug/btrouted --config /etc/btrouted/config.toml --check
+cargo build -p vpn-relay --bin vpn-relay
+sudo install -d -m 0750 /etc/vpn-relay
+sudo install -m 0600 vpn-relay/vpn-relay.example.toml /etc/vpn-relay/config.toml
+sudo target/debug/vpn-relay --config /etc/vpn-relay/config.toml --check
 ```
 
 Import an existing WireGuard or AmneziaWG profile directly into the daemon configuration:
 
 ```sh
-sudo target/debug/btrouted --config /etc/btrouted/config.toml --import wg0.conf wg-primary
+sudo target/debug/vpn-relay --config /etc/vpn-relay/config.toml --import wg0.conf wg-primary
 ```
 
 If the interface name already exists, the importer asks before replacing it. Use `--yes` for non-interactive replacement. The import changes only the selected interface; other interfaces and routing rules remain intact. A missing `ListenPort` is imported as automatic UDP port selection. Unsupported wg-quick directives (for example `DNS`, `Table`, and hooks) are listed in the import report rather than silently applied.
@@ -84,12 +84,12 @@ The daemon configuration uses the singular `address` key, matching the original 
 Replace all example keys and endpoint hostnames before starting the daemon. Then run:
 
 ```sh
-sudo target/debug/btrouted --config /etc/btrouted/config.toml
+sudo target/debug/vpn-relay --config /etc/vpn-relay/config.toml
 ```
 
 The daemon requires Linux TUN support, `iproute2`, and `nftables`. It installs policy routes and an nftables table named in `[daemon].nft_table`; the table is tagged as daemon-owned and conflicting unowned tables or policy-routing slots are rejected. SIGINT/SIGTERM triggers worker shutdown and cleanup.
 
-A privileged network-namespace smoke/integration test is available at `scripts/btrouted-netns-test.sh`. It exercises WG/AWG device creation, IPv4/IPv6 fwmark routing, nftables rule installation, collision rollback, and graceful cleanup. The daemon is experimental; run it in an isolated test environment before production use.
+A privileged network-namespace smoke/integration test is available at `scripts/vpn-relay-netns-test.sh`. It exercises WG/AWG device creation, IPv4/IPv6 fwmark routing, nftables rule installation, collision rollback, and graceful cleanup. The daemon is experimental; run it in an isolated test environment before production use.
 
 ## Supported platforms
 
