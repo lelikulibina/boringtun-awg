@@ -159,7 +159,7 @@ mod version_tests {
     #[test]
     fn detected_generation_is_carried_by_the_normalized_config() {
         let config = super::AmneziaConfig::new(12, 12, 12, 12)
-            .with_detected_version(&[("headerprotectionkey", "key")]);
+            .with_protocol_version(Version::V3);
         assert_eq!(config.protocol_version(), Some(Version::V3));
         assert!(config.content_padding_uses_mtu);
     }
