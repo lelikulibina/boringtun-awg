@@ -71,6 +71,44 @@ impl AmneziaWgVersion {
     }
 }
 
+#[cfg(test)]
+mod version_tests {
+    use super::AmneziaWgVersion as Version;
+
+    #[test]
+    fn detects_each_supported_generation() {
+        let cases: &[(&[(&str, &str)], Version)] = &[
+            (&[("jc", "4")], Version::V1),
+            (&[("i1", "<tls>")], Version::V1_5),
+            (&[("s3", "0")], Version::V2),
+            (&[("headerprotectionkey", "00")], Version::V3),
+            (&[("randomtrailers", "false")], Version::V3_1),
+            (&[("disablecookies", "false")], Version::V3_1),
+        ];
+
+        for (parameters, expected) in cases {
+            assert_eq!(Version::detect_from_parameters(parameters), Some(*expected));
+        }
+    }
+
+    #[test]
+    fn ranged_header_values_identify_awg_v2() {
+        assert_eq!(
+            Version::detect_from_parameters(&[("h1", "100-200")]),
+            Some(Version::V2)
+        );
+        assert_eq!(
+            Version::detect_from_parameters(&[("h1", "100")]),
+            Some(Version::V1)
+        );
+    }
+
+    #[test]
+    fn no_amnezia_parameters_means_wireguard() {
+        assert_eq!(Version::detect_from_parameters(&[("mtu", "1380")]), None);
+    }
+}
+
 const DNS_OPT_FIXED_LEN: usize = 11;
 const DNS_OPT_MIN_WIRE_SIZE: usize = DNS_OPT_FIXED_LEN + 4;
 const DEFAULT_JUNK_PACKET_SIZE_MIN: u16 = 50;
