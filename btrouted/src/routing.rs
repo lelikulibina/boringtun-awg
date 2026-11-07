@@ -49,11 +49,11 @@ pub struct RoutingPlan {
 impl RoutingPlan {
     /// Build a deterministic plan from a fully validated configuration.
     pub fn from_config(config: &Config) -> Self {
-        let mut egress_names: Vec<_> = config
+        let egress_names: Vec<_> = config
             .interfaces
             .iter()
-            .filter(|interface| interface.role == InterfaceRole::Client)
-            .map(|interface| interface.name.as_str())
+            .filter(|(_, interface)| interface.role == InterfaceRole::Client)
+            .map(|(name, _)| name.as_str())
             .collect();
         egress_names.sort_unstable();
         egress_names.dedup();
@@ -71,8 +71,7 @@ impl RoutingPlan {
                 ip_rule_priority: FIRST_IP_RULE_PRIORITY + index as u32,
                 ipv6_enabled: config
                     .interfaces
-                    .iter()
-                    .find(|interface| interface.name == *name)
+                    .get(*name)
                     .is_some_and(|interface| interface.ipv6_enabled),
             })
             .collect();
@@ -96,13 +95,11 @@ impl RoutingPlan {
                 nat: rule.nat,
                 ipv6_enabled: config
                     .interfaces
-                    .iter()
-                    .find(|interface| interface.name == rule.ingress)
+                    .get(rule.ingress.as_str())
                     .is_some_and(|interface| interface.ipv6_enabled)
                     && config
                         .interfaces
-                        .iter()
-                        .find(|interface| interface.name == rule.egress)
+                        .get(rule.egress.as_str())
                         .is_some_and(|interface| interface.ipv6_enabled),
             })
             .collect();
@@ -117,19 +114,13 @@ impl RoutingPlan {
             .expect("RoutingPlan::from_config requires a validated configuration");
         socket_marks.sort_unstable();
 
-        let mut managed_interfaces: Vec<_> = config
+        let managed_interfaces: Vec<_> = config.interfaces.keys().cloned().collect();
+        let ipv6_blocked_interfaces: Vec<_> = config
             .interfaces
             .iter()
-            .map(|interface| interface.name.clone())
+            .filter(|(_, interface)| !interface.ipv6_enabled)
+            .map(|(name, _)| name.clone())
             .collect();
-        managed_interfaces.sort();
-        let mut ipv6_blocked_interfaces: Vec<_> = config
-            .interfaces
-            .iter()
-            .filter(|interface| !interface.ipv6_enabled)
-            .map(|interface| interface.name.clone())
-            .collect();
-        ipv6_blocked_interfaces.sort();
 
         Self {
             nft_family: "inet".to_owned(),
@@ -422,8 +413,7 @@ mod tests {
     fn sample_config() -> Config {
         let toml = format!(
             r#"
-[[interfaces]]
-name = "wg-server"
+[interfaces.wg-server]
 protocol = "wg"
 role = "server"
 ipv6_enabled = true
@@ -432,8 +422,7 @@ listen_port = 51820
 private_key = "{KEY}"
 socket_fwmark = 4097
 
-[[interfaces]]
-name = "awg-primary"
+[interfaces.awg-primary]
 protocol = "awg3_1"
 role = "client"
 ipv6_enabled = true
@@ -442,8 +431,7 @@ listen_port = 51821
 private_key = "{KEY}"
 socket_fwmark = 4098
 
-[[interfaces]]
-name = "awg-secondary"
+[interfaces.awg-secondary]
 protocol = "awg2"
 role = "client"
 ipv6_enabled = true
@@ -592,7 +580,7 @@ egress = "awg-primary"
     fn automatic_socket_marks_skip_the_complete_multi_egress_packet_mark_range() {
         let mut config = sample_config();
         config.routing.mark_base = 0x1000;
-        for interface in &mut config.interfaces {
+        for interface in config.interfaces.values_mut() {
             interface.socket_fwmark = None;
         }
 
@@ -614,7 +602,7 @@ egress = "awg-primary"
     #[test]
     fn routing_plan_uses_automatically_resolved_socket_marks() {
         let mut config = sample_config();
-        for interface in &mut config.interfaces {
+        for interface in config.interfaces.values_mut() {
             interface.socket_fwmark = None;
         }
         let plan = RoutingPlan::from_config(&config);
@@ -671,18 +659,8 @@ egress = "awg-primary"
     #[test]
     fn ipv6_blocking_is_independent_for_ingress_and_egress_tunnels() {
         let mut config = sample_config();
-        config
-            .interfaces
-            .iter_mut()
-            .find(|interface| interface.name == "wg-server")
-            .unwrap()
-            .ipv6_enabled = false;
-        config
-            .interfaces
-            .iter_mut()
-            .find(|interface| interface.name == "awg-secondary")
-            .unwrap()
-            .ipv6_enabled = false;
+        config.interfaces.get_mut("wg-server").unwrap().ipv6_enabled = false;
+        config.interfaces.get_mut("awg-secondary").unwrap().ipv6_enabled = false;
         let plan = RoutingPlan::from_config(&config);
         let script = plan.nft_script();
         assert!(script.contains("elements = { \"awg-secondary\", \"wg-server\" }"));
