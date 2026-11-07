@@ -427,12 +427,7 @@ mod tests {
 
     #[test]
     fn rejects_unknown_explicit_version() {
-        assert!(AmneziaWgConfig {
-            version: Some("4.0".into()),
-            ..Default::default()
-        }
-        .build()
-        .is_err());
+        assert_eq!(AmneziaWgVersion::parse("4.0"), None);
     }
 
     #[test]
