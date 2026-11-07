@@ -584,10 +584,8 @@ PersistentKeepalive = 25
 
     #[test]
     fn importing_and_replacing_an_interface_preserves_other_interfaces() {
-        let directory = std::env::temp_dir().join(format!(
-            "btrouted-import-test-{}",
-            std::process::id()
-        ));
+        let directory =
+            std::env::temp_dir().join(format!("btrouted-import-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&directory);
         fs::create_dir_all(&directory).unwrap();
         let source_path = directory.join("wg.conf");
