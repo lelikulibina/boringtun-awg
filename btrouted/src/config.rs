@@ -1114,10 +1114,7 @@ egress = "awg-uplink"
             .peers
             .contains_key("client-1"));
         assert!(config.interfaces["awg-uplink"].peers.contains_key("server"));
-        assert_eq!(
-            config.resolved_socket_fwmarks().unwrap(),
-            vec![4098, 4097]
-        );
+        assert_eq!(config.resolved_socket_fwmarks().unwrap(), vec![4098, 4097]);
     }
 
     #[test]
