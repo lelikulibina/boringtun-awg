@@ -71,6 +71,16 @@ sudo install -m 0600 btrouted/btrouted.example.toml /etc/btrouted/config.toml
 sudo target/debug/btrouted --config /etc/btrouted/config.toml --check
 ```
 
+Import an existing WireGuard or AmneziaWG profile directly into the daemon configuration:
+
+```sh
+sudo target/debug/btrouted --config /etc/btrouted/config.toml --import wg0.conf wg-primary
+```
+
+If the interface name already exists, the importer asks before replacing it. Use `--yes` for non-interactive replacement. The import changes only the selected interface; other interfaces and routing rules remain intact. A missing `ListenPort` is imported as automatic UDP port selection. Unsupported wg-quick directives (for example `DNS`, `Table`, and hooks) are listed in the import report rather than silently applied.
+
+The daemon configuration uses the singular `address` key, matching the original WireGuard/AmneziaWG `Address` directive.
+
 Replace all example keys and endpoint hostnames before starting the daemon. Then run:
 
 ```sh

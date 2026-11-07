@@ -62,7 +62,7 @@ impl Runtime {
             config.interfaces.iter().zip(socket_fwmarks)
         {
             let handle = create_device(interface_name, interface)?;
-            linux::configure_interface(interface_name, interface.mtu, &interface.addresses)?;
+            linux::configure_interface(interface_name, interface.mtu, &interface.address)?;
             handle.set_private_key(x25519::StaticSecret::from(
                 decode_key(&interface.private_key, "private_key")
                     .map_err(|error| RuntimeError::Configuration(error.to_string()))?,

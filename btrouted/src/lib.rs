@@ -5,6 +5,7 @@
 //! devices and is not part of this crate's management path.
 
 pub mod config;
+pub mod import;
 #[cfg(target_os = "linux")]
 pub mod linux;
 pub mod routing;

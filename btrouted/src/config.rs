@@ -3,7 +3,7 @@ use base64::Engine as _;
 use boringtun::device::AllowedIP;
 use boringtun::noise::amnezia::AmneziaConfig;
 use boringtun::noise::handshake::ObfuscationRanges;
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::net::SocketAddr;
@@ -72,7 +72,7 @@ fn default_mtu() -> u16 {
     1380
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum ProtocolVersion {
     Wg,
@@ -86,7 +86,7 @@ pub enum ProtocolVersion {
     Awg3_1,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum InterfaceRole {
     Server,
@@ -102,96 +102,98 @@ pub enum NatMode {
     Masquerade,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct InterfaceConfig {
     pub protocol: ProtocolVersion,
     pub role: InterfaceRole,
-    pub addresses: Vec<String>,
+    #[serde(alias = "addresses")]
+    pub address: Vec<String>,
     #[serde(default = "default_mtu")]
     pub mtu: u16,
     /// Permit IPv6 packets entering or leaving this tunnel. Disabled by default.
     #[serde(default)]
     pub ipv6_enabled: bool,
-    pub listen_port: u16,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub listen_port: Option<u16>,
     pub private_key: String,
     /// Optional mark for encrypted UDP sockets; assigned automatically when omitted.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub socket_fwmark: Option<u32>,
     #[serde(default)]
     pub peers: Vec<PeerConfig>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub awg: Option<AwgConfig>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PeerConfig {
     pub public_key: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preshared_key: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub endpoint: Option<String>,
     #[serde(default)]
     pub allowed_ips: Vec<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub persistent_keepalive_secs: Option<u16>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AwgConfig {
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jc: Option<u16>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jmin: Option<u16>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jmax: Option<u16>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub s1: Option<u16>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub s2: Option<u16>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub s3: Option<u16>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub s4: Option<u16>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub h1: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub h2: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub h3: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub h4: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub disable_cookies: Option<bool>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub random_trailers: Option<bool>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub i1: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub i2: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub i3: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub i4: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub i5: Option<String>,
     /// 64 hexadecimal characters (32-byte AWG 3.1 header-protection key).
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub header_protection_key: Option<String>,
     /// Inclusive uint32 range, e.g. "10-100".
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content_padding_addition: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rekey_after_time: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rekey_timeout: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reject_after_time: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub keepalive_timeout: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_handshake_attempts: Option<String>,
 }
 
@@ -368,17 +370,19 @@ impl Config {
 
         for (interface_name, interface) in &self.interfaces {
             validate_interface_name(interface_name)?;
-            if interface.listen_port == 0 {
-                return invalid(format!(
-                    "interfaces.{}.listen_port must be in 1..=65535",
-                    interface_name
-                ));
-            }
-            if !listen_ports.insert(interface.listen_port) {
-                return invalid(format!(
-                    "UDP listen port {} is used by more than one interface",
-                    interface.listen_port
-                ));
+            if let Some(port) = interface.listen_port {
+                if port == 0 {
+                    return invalid(format!(
+                        "interfaces.{}.listen_port must be in 1..=65535 when specified",
+                        interface_name
+                    ));
+                }
+                if !listen_ports.insert(port) {
+                    return invalid(format!(
+                        "UDP listen port {} is used by more than one interface",
+                        port
+                    ));
+                }
             }
             if !(576..=65535).contains(&interface.mtu) {
                 return invalid(format!(
@@ -392,9 +396,9 @@ impl Config {
             )?;
 
             let mut has_ipv6 = false;
-            for address in &interface.addresses {
+            for address in &interface.address {
                 let parsed =
-                    parse_prefix(address, &format!("interfaces.{}.addresses", interface_name))?;
+                    parse_prefix(address, &format!("interfaces.{}.address", interface_name))?;
                 has_ipv6 |= parsed.addr.is_ipv6();
             }
             if has_ipv6 && interface.mtu < 1280 {
@@ -857,7 +861,7 @@ manage_ip_forwarding = false
 [interfaces.wg-server]
 protocol = "wg"
 role = "server"
-addresses = ["10.10.0.1/24"]
+address = ["10.10.0.1/24"]
 mtu = 1380
 listen_port = 51820
 private_key = "{KEY}"
@@ -870,7 +874,7 @@ allowed_ips = ["10.10.0.2/32"]
 [interfaces.awg-uplink]
 protocol = "awg3_1"
 role = "client"
-addresses = ["10.20.0.2/32"]
+address = ["10.20.0.2/32"]
 mtu = 1380
 listen_port = 51821
 private_key = "{KEY}"
@@ -1285,7 +1289,7 @@ egress = "awg-uplink"
         // server interface before parsing.
         let input = input.replace(
             "[interfaces.awg-uplink]",
-            "[interfaces.wg-backup]\nprotocol = \"wg\"\nrole = \"server\"\naddresses = [\"10.11.0.1/24\"]\nlisten_port = 51823\nprivate_key = \"{KEY}\"\nsocket_fwmark = 4100\n\n[interfaces.awg-uplink]",
+            "[interfaces.wg-backup]\nprotocol = \"wg\"\nrole = \"server\"\naddress = [\"10.11.0.1/24\"]\nlisten_port = 51823\nprivate_key = \"{KEY}\"\nsocket_fwmark = 4100\n\n[interfaces.awg-uplink]",
         ).replace("priority = 100\ningress = \"wg-server\"\ndestination = \"::/0\"", "priority = 100\ningress = \"wg-backup\"\ndestination = \"::/0\" ")
         .replace("{KEY}", KEY);
         assert!(Config::parse_toml(&input).is_ok());
