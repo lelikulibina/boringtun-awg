@@ -96,8 +96,7 @@ log_level = "debug"
 stats_interval_secs = 1
 nft_table = "btrouted_peer_srv_$SUFFIX"
 
-[[interfaces]]
-name = "wg-peer-test"
+[interfaces.wg-peer-test]
 protocol = "$PROTO"
 role = "server"
 addresses = ["10.77.0.1/24"]
@@ -105,8 +104,7 @@ listen_port = 51871
 private_key = "$SERVER_PRIVATE"
 socket_fwmark = 5001
 
-[[interfaces.peers]]
-name = "test-client"
+[interfaces.wg-peer-test.peers.test-client]
 public_key = "$CLIENT_PUBLIC"
 allowed_ips = ["10.77.0.2/32"]
 TOML
@@ -117,8 +115,7 @@ log_level = "debug"
 stats_interval_secs = 1
 nft_table = "btrouted_peer_cli_$SUFFIX"
 
-[[interfaces]]
-name = "wg-peer-test"
+[interfaces.wg-peer-test]
 protocol = "$PROTO"
 role = "client"
 addresses = ["10.77.0.2/24"]
@@ -126,8 +123,7 @@ listen_port = 51872
 private_key = "$CLIENT_PRIVATE"
 socket_fwmark = 5002
 
-[[interfaces.peers]]
-name = "test-server"
+[interfaces.wg-peer-test.peers.test-server]
 public_key = "$SERVER_PUBLIC"
 endpoint = "192.0.2.1:51871"
 allowed_ips = ["10.77.0.1/32"]
