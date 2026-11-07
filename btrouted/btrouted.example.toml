@@ -8,8 +8,7 @@ stats_interval_secs = 10
 nft_table = "btrouted"
 manage_ip_forwarding = false
 
-[[interfaces]]
-name = "wg-server"
+[interfaces.wg-server]
 protocol = "wg"
 role = "server"
 ipv6_enabled = true
@@ -18,14 +17,12 @@ mtu = 1380
 listen_port = 51820
 private_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 
-[[interfaces.peers]]
-name = "wg-client-1"
+[interfaces.wg-server.peers.wg-client-1]
 public_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 allowed_ips = ["10.10.0.2/32"]
 persistent_keepalive_secs = 25
 
-[[interfaces]]
-name = "awg-primary"
+[interfaces.awg-primary]
 protocol = "awg3_1"
 role = "client"
 ipv6_enabled = true
@@ -35,7 +32,7 @@ listen_port = 51821
 private_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
  # socket_fwmark опущен: демон назначит его автоматически
 
-[interfaces.awg]
+[interfaces.awg-primary.awg]
 jc = 4
 jmin = 40
 jmax = 80
@@ -64,15 +61,13 @@ random_trailers = false
 # keepalive_timeout = "7-13"
 # max_handshake_attempts = "15-20"
 
-[[interfaces.peers]]
-name = "awg-primary-server"
+[interfaces.awg-primary.peers.awg-primary-server]
 public_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 endpoint = "vpn-primary.example.net:51820"
 allowed_ips = ["0.0.0.0/0", "::/0"]
 persistent_keepalive_secs = 25
 
-[[interfaces]]
-name = "awg-secondary"
+[interfaces.awg-secondary]
 protocol = "awg2"
 role = "client"
 ipv6_enabled = true
@@ -82,7 +77,7 @@ listen_port = 51822
 private_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
  # socket_fwmark опущен: демон назначит его автоматически
 
-[interfaces.awg]
+[interfaces.awg-secondary.awg]
 jc = 4
 jmin = 40
 jmax = 80
@@ -93,8 +88,7 @@ h2 = "2"
 h3 = "3"
 h4 = "4"
 
-[[interfaces.peers]]
-name = "awg-secondary-server"
+[interfaces.awg-secondary.peers.awg-secondary-server]
 public_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 endpoint = "vpn-secondary.example.net:51820"
 allowed_ips = ["0.0.0.0/0", "::/0"]
