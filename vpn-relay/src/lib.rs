@@ -10,6 +10,8 @@ pub mod import;
 pub mod linux;
 pub mod routing;
 #[cfg(target_os = "linux")]
+pub mod backend;
+#[cfg(target_os = "linux")]
 pub mod runtime;
 
 pub use config::{Config, ConfigError, EndpointHost, NatMode, PeerEndpoint, TunnelType};
