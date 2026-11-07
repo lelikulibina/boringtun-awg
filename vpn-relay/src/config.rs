@@ -415,7 +415,7 @@ impl Config {
                 ));
             }
             if let Some(awg) = &interface.awg {
-                awg.validate(interface_name, interface.protocol)?;
+                awg.validate(interface_name)?;
             }
 
             let mut peer_keys = HashSet::new();
@@ -551,7 +551,6 @@ impl AwgConfig {
     pub fn build(
         &self,
         interface: &str,
-        protocol: ProtocolVersion,
     ) -> Result<(ObfuscationRanges, AmneziaConfig), ConfigError> {
         let values = [
             self.h1.as_deref().unwrap_or("1"),
@@ -626,9 +625,42 @@ impl AwgConfig {
             })?;
             cfg = cfg.with_content_padding_addition_range(min, max);
         }
-        // Padding mode is part of the protocol version: AWG 3.0 uses MTU
-        // padding, while AWG 3.1 uses UDP-window padding.
-        cfg = cfg.with_legacy_content_padding(protocol == ProtocolVersion::Awg3);
+        // BoringTun owns generation detection and selects the matching
+        // protocol behavior. vpn-relay only forwards the configured parameters.
+        let mut version_parameters = Vec::new();
+        macro_rules! present {
+            ($name:literal, $field:expr) => {
+                if let Some(value) = $field {
+                    version_parameters.push(($name, value));
+                }
+            };
+        }
+        if self.jc.is_some() { version_parameters.push(("jc", "")); }
+        if self.jmin.is_some() { version_parameters.push(("jmin", "")); }
+        if self.jmax.is_some() { version_parameters.push(("jmax", "")); }
+        if self.s1.is_some() { version_parameters.push(("s1", "")); }
+        if self.s2.is_some() { version_parameters.push(("s2", "")); }
+        if self.s3.is_some() { version_parameters.push(("s3", "")); }
+        if self.s4.is_some() { version_parameters.push(("s4", "")); }
+        present!("h1", self.h1.as_deref());
+        present!("h2", self.h2.as_deref());
+        present!("h3", self.h3.as_deref());
+        present!("h4", self.h4.as_deref());
+        present!("i1", self.i1.as_deref());
+        present!("i2", self.i2.as_deref());
+        present!("i3", self.i3.as_deref());
+        present!("i4", self.i4.as_deref());
+        present!("i5", self.i5.as_deref());
+        present!("headerprotectionkey", self.header_protection_key.as_deref());
+        present!("contentpaddingaddition", self.content_padding_addition.as_deref());
+        present!("rekeyaftertime", self.rekey_after_time.as_deref());
+        present!("rekeytimeout", self.rekey_timeout.as_deref());
+        present!("rejectaftertime", self.reject_after_time.as_deref());
+        present!("keepalivetimeout", self.keepalive_timeout.as_deref());
+        present!("maxhandshakeattempts", self.max_handshake_attempts.as_deref());
+        if self.random_trailers.is_some() { version_parameters.push(("randomtrailers", "")); }
+        if self.disable_cookies.is_some() { version_parameters.push(("disablecookies", "")); }
+        cfg = cfg.with_detected_version(&version_parameters);
         for (name, value, slot) in [
             ("rekey_after_time", self.rekey_after_time.as_deref(), 0u8),
             ("rekey_timeout", self.rekey_timeout.as_deref(), 1u8),
@@ -689,8 +721,8 @@ impl AwgConfig {
         Ok((obf, cfg))
     }
 
-    fn validate(&self, interface: &str, protocol: ProtocolVersion) -> Result<(), ConfigError> {
-        self.build(interface, protocol).map(|_| ())
+    fn validate(&self, interface: &str) -> Result<(), ConfigError> {
+        self.build(interface).map(|_| ())
     }
 }
 
@@ -1014,7 +1046,7 @@ egress = "awg-uplink"
             .awg
             .as_ref()
             .unwrap()
-            .build("awg-uplink", ProtocolVersion::Awg3_1)
+            .build("awg-uplink")
             .unwrap();
     }
 

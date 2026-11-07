@@ -253,7 +253,7 @@ fn build_awg_config(
         .awg
         .as_ref()
         .unwrap_or(&defaults)
-        .build(name, interface.protocol)
+        .build(name)
         .map_err(|error| RuntimeError::Configuration(error.to_string()))
 }
 

@@ -534,6 +534,15 @@ impl AmneziaConfig {
         }
     }
 
+    /// Select the AmneziaWG generation detected from the supplied configuration
+    /// parameters. The generation controls version-specific packet behavior.
+    pub fn with_detected_version(mut self, parameters: &[(&str, &str)]) -> Self {
+        if let Some(version) = AmneziaWgVersion::detect_from_parameters(parameters) {
+            self.legacy_content_padding = version == AmneziaWgVersion::V3;
+        }
+        self
+    }
+
     /// Disable the under-load cookie challenge, matching AmneziaWG 3.1.
     /// When enabled, MAC1 is still verified, but the under-load MAC2/rate-limit
     /// challenge is bypassed and no Cookie Reply is sent. Incoming Cookie Reply
