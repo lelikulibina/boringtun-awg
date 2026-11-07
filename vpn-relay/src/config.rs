@@ -536,7 +536,6 @@ impl Config {
     }
 }
 
-
 /// Parsed peer endpoint. DNS names are validated but deliberately not resolved
 /// while loading configuration; resolution belongs to daemon startup/reconnect.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -805,8 +804,14 @@ egress = "awg-uplink"
     #[test]
     fn config_selects_tunnel_family_without_exposing_awg_generation() {
         let config = Config::parse_toml(&valid_config()).unwrap();
-        assert_eq!(config.interfaces["wg-server"].tunnel_type, TunnelType::WireGuard);
-        assert_eq!(config.interfaces["awg-uplink"].tunnel_type, TunnelType::AmneziaWg);
+        assert_eq!(
+            config.interfaces["wg-server"].tunnel_type,
+            TunnelType::WireGuard
+        );
+        assert_eq!(
+            config.interfaces["awg-uplink"].tunnel_type,
+            TunnelType::AmneziaWg
+        );
     }
 
     #[test]
@@ -902,7 +907,10 @@ egress = "awg-uplink"
         let config = Config::parse_toml(&valid_config()).unwrap();
         assert_eq!(config.interfaces.len(), 2);
         assert_eq!(config.routing.rules.len(), 2);
-        assert_eq!(config.interfaces["awg-uplink"].tunnel_type, TunnelType::AmneziaWg);
+        assert_eq!(
+            config.interfaces["awg-uplink"].tunnel_type,
+            TunnelType::AmneziaWg
+        );
         assert!(config.interfaces.contains_key("wg-server"));
         assert_eq!(config.interfaces["wg-server"].peers.len(), 1);
         assert_eq!(config.interfaces["awg-uplink"].peers.len(), 1);

@@ -110,7 +110,8 @@ pub fn import_file(
 }
 
 fn validate_rendered_config(rendered: &str) -> Result<(), ImportError> {
-    let config = Config::parse_toml(rendered).map_err(|error| ImportError::Config(error.to_string()))?;
+    let config =
+        Config::parse_toml(rendered).map_err(|error| ImportError::Config(error.to_string()))?;
     #[cfg(target_os = "linux")]
     crate::backend::BackendRegistry::default()
         .validate_config(&config)

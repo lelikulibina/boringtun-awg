@@ -4,13 +4,13 @@
 //! BoringTun's typed control API. UAPI is deliberately disabled for daemon
 //! devices and is not part of this crate's management path.
 
+#[cfg(target_os = "linux")]
+pub mod backend;
 pub mod config;
 pub mod import;
 #[cfg(target_os = "linux")]
 pub mod linux;
 pub mod routing;
-#[cfg(target_os = "linux")]
-pub mod backend;
 #[cfg(target_os = "linux")]
 pub mod runtime;
 

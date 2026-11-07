@@ -1,7 +1,9 @@
 //! BoringTun implementation of the generic tunnel backend contract.
 
 use super::{BackendError, TunnelBackend, TunnelHandle, TunnelPeerSnapshot, TunnelSnapshot};
-use crate::config::{decode_key, AwgConfig, EndpointHost, InterfaceConfig, PeerEndpoint, TunnelType};
+use crate::config::{
+    decode_key, AwgConfig, EndpointHost, InterfaceConfig, PeerEndpoint, TunnelType,
+};
 use boringtun::device::{AllowedIP, DeviceConfig, DeviceHandle};
 use boringtun::noise::amnezia::{AmneziaConfig, AmneziaWgConfig};
 use boringtun::noise::handshake::ObfuscationRanges;
@@ -165,20 +167,18 @@ fn build_awg_config(
 }
 
 fn resolve_endpoint(value: &str) -> Result<SocketAddr, BackendError> {
-    let parsed =
-        PeerEndpoint::parse(value).map_err(|reason| BackendError::new(format!(
-            "invalid endpoint {value}: {reason}"
-        )))?;
+    let parsed = PeerEndpoint::parse(value)
+        .map_err(|reason| BackendError::new(format!("invalid endpoint {value}: {reason}")))?;
     match parsed.host {
         EndpointHost::Ip(ip) => Ok(SocketAddr::new(ip, parsed.port)),
         EndpointHost::Dns(host) => (host.as_str(), parsed.port)
             .to_socket_addrs()
-            .map_err(|error| BackendError::new(format!(
-                "failed to resolve endpoint {value}: {error}"
-            )))?
+            .map_err(|error| {
+                BackendError::new(format!("failed to resolve endpoint {value}: {error}"))
+            })?
             .next()
-            .ok_or_else(|| BackendError::new(format!(
-                "DNS returned no addresses for endpoint {value}"
-            ))),
+            .ok_or_else(|| {
+                BackendError::new(format!("DNS returned no addresses for endpoint {value}"))
+            }),
     }
 }
