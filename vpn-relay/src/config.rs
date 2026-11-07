@@ -572,7 +572,7 @@ impl AwgConfig {
         }
     }
 
-    pub fn build(
+    pub(crate) fn build(
         &self,
         interface: &str,
     ) -> Result<(ObfuscationRanges, AmneziaConfig), ConfigError> {

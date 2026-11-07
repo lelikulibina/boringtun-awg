@@ -1091,7 +1091,7 @@ mod tests {
             legacy.protocol_version(),
             Some(crate::noise::amnezia::AmneziaWgVersion::V3)
         );
-        assert!(legacy.legacy_content_padding);
+        assert!(legacy.content_padding_uses_mtu);
 
         let mut params = AwgParams::default();
         params.random_trailers = Some(false);
@@ -1103,7 +1103,7 @@ mod tests {
             modern.protocol_version(),
             Some(crate::noise::amnezia::AmneziaWgVersion::V3_1)
         );
-        assert!(!modern.legacy_content_padding);
+        assert!(!modern.content_padding_uses_mtu);
     }
 
     #[test]

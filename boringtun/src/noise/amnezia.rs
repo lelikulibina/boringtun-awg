@@ -33,6 +33,20 @@ pub enum AmneziaWgVersion {
 }
 
 impl AmneziaWgVersion {
+    /// Every AmneziaWG generation supported by this BoringTun build.
+    pub const ALL: [Self; 5] = [Self::V1, Self::V1_5, Self::V2, Self::V3, Self::V3_1];
+
+    /// Stable protocol version string.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::V1 => "1.0",
+            Self::V1_5 => "1.5",
+            Self::V2 => "2.0",
+            Self::V3 => "3.0",
+            Self::V3_1 => "3.1",
+        }
+    }
+
     /// Infer the AmneziaWG generation from the parameter names and values
     /// present in a configuration.
     ///
@@ -138,7 +152,7 @@ mod version_tests {
         let config = super::AmneziaConfig::new(12, 12, 12, 12)
             .with_detected_version(&[("headerprotectionkey", "key")]);
         assert_eq!(config.protocol_version(), Some(Version::V3));
-        assert!(config.legacy_content_padding);
+        assert!(config.content_padding_uses_mtu);
     }
 }
 
@@ -407,7 +421,7 @@ pub struct AmneziaConfig {
     /// `(0, 0)` disables ContentPaddingAddition.
     pub(crate) content_padding_addition: (u32, u32),
     /// Use AWG 3.0's MTU-bounded CPA algorithm instead of AWG 3.1's peer UDP-window algorithm.
-    pub(crate) legacy_content_padding: bool,
+    pub(crate) content_padding_uses_mtu: bool,
     protocol_version: Option<AmneziaWgVersion>,
     /// Inclusive timer ranges in seconds; (0, 0) preserves WireGuard defaults.
     pub(crate) rekey_after_time: (u32, u32),
@@ -557,7 +571,7 @@ impl AmneziaConfig {
             disable_cookies: false,
             header_protection_key: [0u8; 32],
             content_padding_addition: (0, 0),
-            legacy_content_padding: false,
+            content_padding_uses_mtu: false,
             protocol_version: None,
             rekey_after_time: (0, 0),
             rekey_timeout: (0, 0),
@@ -578,7 +592,7 @@ impl AmneziaConfig {
                 .protocol_version
                 .map_or(version, |current| current.max(version));
             self.protocol_version = Some(version);
-            self.legacy_content_padding = version == AmneziaWgVersion::V3;
+            self.content_padding_uses_mtu = version == AmneziaWgVersion::V3;
         }
         self
     }
@@ -698,7 +712,7 @@ impl AmneziaConfig {
         rng: &mut impl RngCore,
     ) -> usize {
         let (min, max) = self.content_padding_addition;
-        let available = if self.legacy_content_padding {
+        let available = if self.content_padding_uses_mtu {
             if mtu == 0 {
                 usize::MAX
             } else {
