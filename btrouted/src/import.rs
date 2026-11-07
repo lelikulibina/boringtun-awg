@@ -1,5 +1,7 @@
 //! Import standard WireGuard and AmneziaWG INI configurations.
-use crate::config::{AwgConfig, Config, InterfaceConfig, InterfaceRole, PeerConfig, ProtocolVersion};
+use crate::config::{
+    AwgConfig, Config, InterfaceConfig, InterfaceRole, PeerConfig, ProtocolVersion,
+};
 use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -38,41 +40,81 @@ pub fn interface_exists(config_path: &Path, name: &str) -> Result<bool, ImportEr
         return Ok(false);
     }
     let source = fs::read_to_string(config_path)?;
-    let value: toml::Value = source.parse().map_err(|e: toml::de::Error| ImportError::Config(e.to_string()))?;
+    let value: toml::Value = source
+        .parse()
+        .map_err(|e: toml::de::Error| ImportError::Config(e.to_string()))?;
     Ok(value.get("interfaces").and_then(|v| v.get(name)).is_some())
 }
 
-pub fn import_file(source_path: &Path, config_path: &Path, name: &str, replace: bool) -> Result<ImportReport, ImportError> {
+pub fn import_file(
+    source_path: &Path,
+    config_path: &Path,
+    name: &str,
+    replace: bool,
+) -> Result<ImportReport, ImportError> {
     let source = fs::read_to_string(source_path)?;
     let (interface, warnings) = parse_interface(&source)?;
     if config_path.exists() {
         let current = fs::read_to_string(config_path)?;
-        let mut root: toml::Value = current.parse().map_err(|e: toml::de::Error| ImportError::Config(e.to_string()))?;
-        let interfaces = root.as_table_mut().and_then(|t| t.get_mut("interfaces")).and_then(toml::Value::as_table_mut)
-            .ok_or_else(|| ImportError::Config("existing configuration has no [interfaces] table".into()))?;
+        let mut root: toml::Value = current
+            .parse()
+            .map_err(|e: toml::de::Error| ImportError::Config(e.to_string()))?;
+        let interfaces = root
+            .as_table_mut()
+            .and_then(|t| t.get_mut("interfaces"))
+            .and_then(toml::Value::as_table_mut)
+            .ok_or_else(|| {
+                ImportError::Config("existing configuration has no [interfaces] table".into())
+            })?;
         let replaced = interfaces.contains_key(name);
-        if replaced && !replace { return Err(ImportError::Exists(name.into())); }
-        let value = toml::Value::try_from(&interface).map_err(|e| ImportError::Config(e.to_string()))?;
+        if replaced && !replace {
+            return Err(ImportError::Exists(name.into()));
+        }
+        let value =
+            toml::Value::try_from(&interface).map_err(|e| ImportError::Config(e.to_string()))?;
         interfaces.insert(name.to_owned(), value);
-        let rendered = toml::to_string_pretty(&root).map_err(|e| ImportError::Config(e.to_string()))?;
+        let rendered =
+            toml::to_string_pretty(&root).map_err(|e| ImportError::Config(e.to_string()))?;
         Config::parse_toml(&rendered).map_err(|e| ImportError::Config(e.to_string()))?;
         atomic_write(config_path, rendered.as_bytes())?;
-        Ok(ImportReport { protocol: interface.protocol, role: interface.role, warnings, replaced })
+        Ok(ImportReport {
+            protocol: interface.protocol,
+            role: interface.role,
+            warnings,
+            replaced,
+        })
     } else {
         let mut root = toml::map::Map::new();
-        root.insert("interfaces".into(), toml::Value::Table(toml::map::Map::new()));
+        root.insert(
+            "interfaces".into(),
+            toml::Value::Table(toml::map::Map::new()),
+        );
         let mut value = toml::Value::Table(root);
-        let interfaces = value.get_mut("interfaces").and_then(toml::Value::as_table_mut).unwrap();
-        interfaces.insert(name.to_owned(), toml::Value::try_from(&interface).map_err(|e| ImportError::Config(e.to_string()))?);
-        let rendered = toml::to_string_pretty(&value).map_err(|e| ImportError::Config(e.to_string()))?;
+        let interfaces = value
+            .get_mut("interfaces")
+            .and_then(toml::Value::as_table_mut)
+            .unwrap();
+        interfaces.insert(
+            name.to_owned(),
+            toml::Value::try_from(&interface).map_err(|e| ImportError::Config(e.to_string()))?,
+        );
+        let rendered =
+            toml::to_string_pretty(&value).map_err(|e| ImportError::Config(e.to_string()))?;
         Config::parse_toml(&rendered).map_err(|e| ImportError::Config(e.to_string()))?;
         atomic_write(config_path, rendered.as_bytes())?;
-        Ok(ImportReport { protocol: interface.protocol, role: interface.role, warnings, replaced: false })
+        Ok(ImportReport {
+            protocol: interface.protocol,
+            role: interface.role,
+            warnings,
+            replaced: false,
+        })
     }
 }
 
 fn atomic_write(path: &Path, contents: &[u8]) -> Result<(), ImportError> {
-    if let Some(parent) = path.parent() { fs::create_dir_all(parent)?; }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
     let temp = path.with_extension(format!("toml.tmp.{}", std::process::id()));
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);
@@ -99,18 +141,27 @@ fn parse_interface(source: &str) -> Result<(InterfaceConfig, Vec<String>), Impor
     let mut peers = Vec::<HashMap<String, String>>::new();
     for (line_index, raw) in source.lines().enumerate() {
         let line = strip_comment(raw).trim();
-        if line.is_empty() { continue; }
+        if line.is_empty() {
+            continue;
+        }
         if line.starts_with('[') && line.ends_with(']') {
-            match line[1..line.len()-1].trim().to_ascii_lowercase().as_str() {
+            match line[1..line.len() - 1].trim().to_ascii_lowercase().as_str() {
                 "interface" => {
-                    if section.is_some() { return Err(parse_error(line_index, "duplicate [Interface] section")); }
+                    if section.is_some() {
+                        return Err(parse_error(line_index, "duplicate [Interface] section"));
+                    }
                     section = Some(Section::Interface);
                 }
                 "peer" => {
                     peers.push(HashMap::new());
-                    section = Some(Section::Peer(peers.len()-1));
+                    section = Some(Section::Peer(peers.len() - 1));
                 }
-                other => return Err(parse_error(line_index, &format!("unsupported section [{other}]"))),
+                other => {
+                    return Err(parse_error(
+                        line_index,
+                        &format!("unsupported section [{other}]"),
+                    ))
+                }
             }
             continue;
         }
@@ -118,7 +169,9 @@ fn parse_interface(source: &str) -> Result<(InterfaceConfig, Vec<String>), Impor
             return Err(parse_error(line_index, "expected Key = Value"));
         };
         let key = key.trim().to_ascii_lowercase();
-        if key.is_empty() { return Err(parse_error(line_index, "empty key")); }
+        if key.is_empty() {
+            return Err(parse_error(line_index, "empty key"));
+        }
         let value = unquote(value.trim());
         let target = match section {
             Some(Section::Interface) => &mut interface,
@@ -129,38 +182,109 @@ fn parse_interface(source: &str) -> Result<(InterfaceConfig, Vec<String>), Impor
             return Err(parse_error(line_index, &format!("duplicate key '{key}'")));
         }
     }
-    if !interface.contains_key("privatekey") { return Err(ImportError::Parse("[Interface] requires PrivateKey".into())); }
+    if !interface.contains_key("privatekey") {
+        return Err(ImportError::Parse("[Interface] requires PrivateKey".into()));
+    }
     let address = list_required(&interface, "address", "[Interface] Address")?;
     let private_key = required(&interface, "privatekey", "[Interface] PrivateKey")?.to_owned();
-    let listen_port = interface.get("listenport").map(|v| parse_number::<u16>(v, "ListenPort")).transpose()?;
-    let mtu = interface.get("mtu").map(|v| parse_number::<u16>(v, "MTU")).transpose()?.unwrap_or(1380);
-    let socket_fwmark = interface.get("fwmark").map(|v| parse_fwmark(v)).transpose()?;
+    let listen_port = interface
+        .get("listenport")
+        .map(|v| parse_number::<u16>(v, "ListenPort"))
+        .transpose()?;
+    let mtu = interface
+        .get("mtu")
+        .map(|v| parse_number::<u16>(v, "MTU"))
+        .transpose()?
+        .unwrap_or(1380);
+    let socket_fwmark = interface
+        .get("fwmark")
+        .map(|v| parse_fwmark(v))
+        .transpose()?;
     let mut warnings = Vec::new();
     for key in interface.keys() {
-        if !matches!(key.as_str(), "privatekey"|"address"|"listenport"|"mtu"|"fwmark"|
-            "dns"|"table"|"preup"|"postup"|"predown"|"postdown"|"saveconfig"|
-            "jc"|"jmin"|"jmax"|"s1"|"s2"|"s3"|"s4"|"h1"|"h2"|"h3"|"h4"|
-            "i1"|"i2"|"i3"|"i4"|"i5"|"headerprotectionkey"|"contentpaddingaddition"|
-            "rekeyaftertime"|"rekeytimeout"|"rejectaftertime"|"keepalivetimeout"|
-            "maxhandshakeattempts"|"randomtrailers"|"disablecookies") {
-            warnings.push(format!("[Interface] {key} is not supported and was not imported"));
+        if !matches!(
+            key.as_str(),
+            "privatekey"
+                | "address"
+                | "listenport"
+                | "mtu"
+                | "fwmark"
+                | "dns"
+                | "table"
+                | "preup"
+                | "postup"
+                | "predown"
+                | "postdown"
+                | "saveconfig"
+                | "jc"
+                | "jmin"
+                | "jmax"
+                | "s1"
+                | "s2"
+                | "s3"
+                | "s4"
+                | "h1"
+                | "h2"
+                | "h3"
+                | "h4"
+                | "i1"
+                | "i2"
+                | "i3"
+                | "i4"
+                | "i5"
+                | "headerprotectionkey"
+                | "contentpaddingaddition"
+                | "rekeyaftertime"
+                | "rekeytimeout"
+                | "rejectaftertime"
+                | "keepalivetimeout"
+                | "maxhandshakeattempts"
+                | "randomtrailers"
+                | "disablecookies"
+        ) {
+            warnings.push(format!(
+                "[Interface] {key} is not supported and was not imported"
+            ));
         }
     }
-    for key in ["dns","table","preup","postup","predown","postdown","saveconfig"] {
-        if interface.contains_key(key) { warnings.push(format!("[Interface] {} is not applied by btrouted", display_key(key))); }
+    for key in [
+        "dns",
+        "table",
+        "preup",
+        "postup",
+        "predown",
+        "postdown",
+        "saveconfig",
+    ] {
+        if interface.contains_key(key) {
+            warnings.push(format!(
+                "[Interface] {} is not applied by btrouted",
+                display_key(key)
+            ));
+        }
     }
 
     let mut parsed_peers = Vec::new();
     let mut endpoint_count = 0usize;
     let mut ipv6_enabled = address.iter().any(|a| a.contains(':'));
     for (index, values) in peers.iter().enumerate() {
-        let public_key = required(values, "publickey", &format!("[Peer {}] PublicKey", index+1))?.to_owned();
+        let public_key = required(
+            values,
+            "publickey",
+            &format!("[Peer {}] PublicKey", index + 1),
+        )?
+        .to_owned();
         let allowed_ips = list_optional(values, "allowedips");
         ipv6_enabled |= allowed_ips.iter().any(|a| a.contains(':'));
         let endpoint = values.get("endpoint").cloned();
-        if endpoint.is_some() { endpoint_count += 1; }
-        let persistent_keepalive_secs = values.get("persistentkeepalive").filter(|v| !v.eq_ignore_ascii_case("off") && *v != "0")
-            .map(|v| parse_number::<u16>(v, "PersistentKeepalive")).transpose()?;
+        if endpoint.is_some() {
+            endpoint_count += 1;
+        }
+        let persistent_keepalive_secs = values
+            .get("persistentkeepalive")
+            .filter(|v| !v.eq_ignore_ascii_case("off") && *v != "0")
+            .map(|v| parse_number::<u16>(v, "PersistentKeepalive"))
+            .transpose()?;
         parsed_peers.push(PeerConfig {
             public_key,
             preshared_key: values.get("presharedkey").cloned(),
@@ -169,8 +293,14 @@ fn parse_interface(source: &str) -> Result<(InterfaceConfig, Vec<String>), Impor
             persistent_keepalive_secs,
         });
         for key in values.keys() {
-            if !matches!(key.as_str(), "publickey"|"presharedkey"|"endpoint"|"allowedips"|"persistentkeepalive") {
-                warnings.push(format!("[Peer {}] {key} is not supported and was not imported", index+1));
+            if !matches!(
+                key.as_str(),
+                "publickey" | "presharedkey" | "endpoint" | "allowedips" | "persistentkeepalive"
+            ) {
+                warnings.push(format!(
+                    "[Peer {}] {key} is not supported and was not imported",
+                    index + 1
+                ));
             }
         }
     }
@@ -181,7 +311,9 @@ fn parse_interface(source: &str) -> Result<(InterfaceConfig, Vec<String>), Impor
     } else if endpoint_count == 0 {
         InterfaceRole::Server
     } else {
-        return Err(ImportError::Parse("ambiguous interface role: some peers have Endpoint and others do not".into()));
+        return Err(ImportError::Parse(
+            "ambiguous interface role: some peers have Endpoint and others do not".into(),
+        ));
     };
 
     let awg = parse_awg(&interface)?;
@@ -190,93 +322,234 @@ fn parse_interface(source: &str) -> Result<(InterfaceConfig, Vec<String>), Impor
         warnings.push("AWG generation inferred as 1.5 from I1-I5; early AWG releases share some of these parameters, so verify the peer generation if its profile also uses S3/S4 or ranged H values".into());
     }
     let config = InterfaceConfig {
-        protocol, role, address, mtu, ipv6_enabled, listen_port, private_key,
-        socket_fwmark, peers: parsed_peers, awg,
+        protocol,
+        role,
+        address,
+        mtu,
+        ipv6_enabled,
+        listen_port,
+        private_key,
+        socket_fwmark,
+        peers: parsed_peers,
+        awg,
     };
     Ok((config, warnings))
 }
 
-fn parse_awg(values: &HashMap<String,String>) -> Result<Option<AwgConfig>, ImportError> {
+fn parse_awg(values: &HashMap<String, String>) -> Result<Option<AwgConfig>, ImportError> {
     let mut a = AwgConfig::default();
-    macro_rules! num { ($key:literal,$field:ident) => { if let Some(v)=values.get($key) { a.$field=Some(parse_number::<u16>(v,$key)?); } }; }
-    macro_rules! string { ($key:literal,$field:ident) => { if let Some(v)=values.get($key) { a.$field=Some(v.clone()); } }; }
-    macro_rules! boolean { ($key:literal,$field:ident) => { if let Some(v)=values.get($key) { a.$field=Some(parse_bool(v,$key)?); } }; }
-    num!("jc",jc); num!("jmin",jmin); num!("jmax",jmax);
-    num!("s1",s1); num!("s2",s2); num!("s3",s3); num!("s4",s4);
-    string!("h1",h1); string!("h2",h2); string!("h3",h3); string!("h4",h4);
-    string!("i1",i1); string!("i2",i2); string!("i3",i3); string!("i4",i4); string!("i5",i5);
-    string!("headerprotectionkey",header_protection_key);
-    string!("contentpaddingaddition",content_padding_addition);
-    string!("rekeyaftertime",rekey_after_time); string!("rekeytimeout",rekey_timeout);
-    string!("rejectaftertime",reject_after_time); string!("keepalivetimeout",keepalive_timeout);
-    string!("maxhandshakeattempts",max_handshake_attempts);
-    boolean!("randomtrailers",random_trailers); boolean!("disablecookies",disable_cookies);
-    let any = ["jc","jmin","jmax","s1","s2","s3","s4","h1","h2","h3","h4","i1","i2","i3","i4","i5",
-        "headerprotectionkey","contentpaddingaddition","rekeyaftertime","rekeytimeout","rejectaftertime",
-        "keepalivetimeout","maxhandshakeattempts","randomtrailers","disablecookies"].iter().any(|k| values.contains_key(*k));
+    macro_rules! num {
+        ($key:literal,$field:ident) => {
+            if let Some(v) = values.get($key) {
+                a.$field = Some(parse_number::<u16>(v, $key)?);
+            }
+        };
+    }
+    macro_rules! string {
+        ($key:literal,$field:ident) => {
+            if let Some(v) = values.get($key) {
+                a.$field = Some(v.clone());
+            }
+        };
+    }
+    macro_rules! boolean {
+        ($key:literal,$field:ident) => {
+            if let Some(v) = values.get($key) {
+                a.$field = Some(parse_bool(v, $key)?);
+            }
+        };
+    }
+    num!("jc", jc);
+    num!("jmin", jmin);
+    num!("jmax", jmax);
+    num!("s1", s1);
+    num!("s2", s2);
+    num!("s3", s3);
+    num!("s4", s4);
+    string!("h1", h1);
+    string!("h2", h2);
+    string!("h3", h3);
+    string!("h4", h4);
+    string!("i1", i1);
+    string!("i2", i2);
+    string!("i3", i3);
+    string!("i4", i4);
+    string!("i5", i5);
+    string!("headerprotectionkey", header_protection_key);
+    string!("contentpaddingaddition", content_padding_addition);
+    string!("rekeyaftertime", rekey_after_time);
+    string!("rekeytimeout", rekey_timeout);
+    string!("rejectaftertime", reject_after_time);
+    string!("keepalivetimeout", keepalive_timeout);
+    string!("maxhandshakeattempts", max_handshake_attempts);
+    boolean!("randomtrailers", random_trailers);
+    boolean!("disablecookies", disable_cookies);
+    let any = [
+        "jc",
+        "jmin",
+        "jmax",
+        "s1",
+        "s2",
+        "s3",
+        "s4",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "i1",
+        "i2",
+        "i3",
+        "i4",
+        "i5",
+        "headerprotectionkey",
+        "contentpaddingaddition",
+        "rekeyaftertime",
+        "rekeytimeout",
+        "rejectaftertime",
+        "keepalivetimeout",
+        "maxhandshakeattempts",
+        "randomtrailers",
+        "disablecookies",
+    ]
+    .iter()
+    .any(|k| values.contains_key(*k));
     Ok(any.then_some(a))
 }
 
-fn detect_protocol(v: &HashMap<String,String>) -> ProtocolVersion {
+fn detect_protocol(v: &HashMap<String, String>) -> ProtocolVersion {
     let has = |keys: &[&str]| keys.iter().any(|k| v.contains_key(*k));
-    if has(&["randomtrailers","disablecookies"]) { return ProtocolVersion::Awg3_1; }
-    if has(&["headerprotectionkey","contentpaddingaddition","rekeyaftertime","rekeytimeout","rejectaftertime","keepalivetimeout","maxhandshakeattempts"]) {
+    if has(&["randomtrailers", "disablecookies"]) {
+        return ProtocolVersion::Awg3_1;
+    }
+    if has(&[
+        "headerprotectionkey",
+        "contentpaddingaddition",
+        "rekeyaftertime",
+        "rekeytimeout",
+        "rejectaftertime",
+        "keepalivetimeout",
+        "maxhandshakeattempts",
+    ]) {
         return ProtocolVersion::Awg3;
     }
-    let ranged_headers = ["h1","h2","h3","h4"].iter().any(|k| v.get(*k).is_some_and(|x| x.contains('-')));
-    if ranged_headers || has(&["s3","s4"]) && ["s3","s4"].iter().any(|k| v.get(*k).is_some_and(|x| x != "0")) {
+    let ranged_headers = ["h1", "h2", "h3", "h4"]
+        .iter()
+        .any(|k| v.get(*k).is_some_and(|x| x.contains('-')));
+    if ranged_headers
+        || has(&["s3", "s4"])
+            && ["s3", "s4"]
+                .iter()
+                .any(|k| v.get(*k).is_some_and(|x| x != "0"))
+    {
         return ProtocolVersion::Awg2;
     }
-    if has(&["i1","i2","i3","i4","i5"]) { return ProtocolVersion::Awg1_5; }
-    if has(&["jc","jmin","jmax","s1","s2","h1","h2","h3","h4"]) { return ProtocolVersion::Awg1; }
+    if has(&["i1", "i2", "i3", "i4", "i5"]) {
+        return ProtocolVersion::Awg1_5;
+    }
+    if has(&["jc", "jmin", "jmax", "s1", "s2", "h1", "h2", "h3", "h4"]) {
+        return ProtocolVersion::Awg1;
+    }
     ProtocolVersion::Wg
 }
 
-fn required<'a>(v: &'a HashMap<String,String>, key: &str, label: &str) -> Result<&'a str, ImportError> {
-    v.get(key).map(String::as_str).filter(|s| !s.is_empty()).ok_or_else(|| ImportError::Parse(format!("{label} is required")))
+fn required<'a>(
+    v: &'a HashMap<String, String>,
+    key: &str,
+    label: &str,
+) -> Result<&'a str, ImportError> {
+    v.get(key)
+        .map(String::as_str)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| ImportError::Parse(format!("{label} is required")))
 }
-fn list_required(v: &HashMap<String,String>, key: &str, label: &str) -> Result<Vec<String>, ImportError> {
-    let raw = required(v,key,label)?;
-    let items: Vec<_> = raw.split(',').map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()).collect();
-    if items.is_empty() { return Err(ImportError::Parse(format!("{label} must not be empty"))); }
+fn list_required(
+    v: &HashMap<String, String>,
+    key: &str,
+    label: &str,
+) -> Result<Vec<String>, ImportError> {
+    let raw = required(v, key, label)?;
+    let items: Vec<_> = raw
+        .split(',')
+        .map(|s| s.trim().to_owned())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if items.is_empty() {
+        return Err(ImportError::Parse(format!("{label} must not be empty")));
+    }
     Ok(items)
 }
-fn list_optional(v: &HashMap<String,String>, key: &str) -> Vec<String> {
-    v.get(key).map(|raw| raw.split(',').map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()).collect()).unwrap_or_default()
+fn list_optional(v: &HashMap<String, String>, key: &str) -> Vec<String> {
+    v.get(key)
+        .map(|raw| {
+            raw.split(',')
+                .map(|s| s.trim().to_owned())
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 fn parse_number<T: std::str::FromStr>(v: &str, key: &str) -> Result<T, ImportError> {
-    v.parse().map_err(|_| ImportError::Parse(format!("invalid {key} value '{v}'")))
+    v.parse()
+        .map_err(|_| ImportError::Parse(format!("invalid {key} value '{v}'")))
 }
 fn parse_fwmark(v: &str) -> Result<u32, ImportError> {
     if let Some(hex) = v.strip_prefix("0x").or_else(|| v.strip_prefix("0X")) {
-        u32::from_str_radix(hex,16).map_err(|_| ImportError::Parse(format!("invalid FwMark '{v}'")))
-    } else { parse_number(v,"FwMark") }
+        u32::from_str_radix(hex, 16)
+            .map_err(|_| ImportError::Parse(format!("invalid FwMark '{v}'")))
+    } else {
+        parse_number(v, "FwMark")
+    }
 }
 fn parse_bool(v: &str, key: &str) -> Result<bool, ImportError> {
-    match v.to_ascii_lowercase().as_str() { "true"|"1"|"yes" => Ok(true), "false"|"0"|"no" => Ok(false), _ => Err(ImportError::Parse(format!("invalid {key} boolean '{v}'"))) }
+    match v.to_ascii_lowercase().as_str() {
+        "true" | "1" | "yes" => Ok(true),
+        "false" | "0" | "no" => Ok(false),
+        _ => Err(ImportError::Parse(format!("invalid {key} boolean '{v}'"))),
+    }
 }
 fn unquote(v: &str) -> String {
     let v = v.trim();
-    if v.len() >= 2 && v.starts_with('"') && v.ends_with('"') { v[1..v.len()-1].replace("\\\"", "\"").replace("\\\\", "\\") }
-    else if v.len() >= 2 && v.starts_with('\'') && v.ends_with('\'') { v[1..v.len()-1].to_owned() }
-    else { v.to_owned() }
+    if v.len() >= 2 && v.starts_with('"') && v.ends_with('"') {
+        v[1..v.len() - 1]
+            .replace("\\\"", "\"")
+            .replace("\\\\", "\\")
+    } else if v.len() >= 2 && v.starts_with('\'') && v.ends_with('\'') {
+        v[1..v.len() - 1].to_owned()
+    } else {
+        v.to_owned()
+    }
 }
 fn strip_comment(v: &str) -> &str {
     let mut quoted = false;
     let mut escaped = false;
-    for (i,c) in v.char_indices() {
-        if c == '"' && !escaped { quoted = !quoted; }
-        if !quoted && (c == '#' || c == ';') { return &v[..i]; }
+    for (i, c) in v.char_indices() {
+        if c == '"' && !escaped {
+            quoted = !quoted;
+        }
+        if !quoted && (c == '#' || c == ';') {
+            return &v[..i];
+        }
         escaped = c == '\\' && !escaped;
-        if c != '\\' { escaped = false; }
+        if c != '\\' {
+            escaped = false;
+        }
     }
     v
 }
 fn parse_error(line: usize, message: &str) -> ImportError {
-    ImportError::Parse(format!("line {}: {message}", line+1))
+    ImportError::Parse(format!("line {}: {message}", line + 1))
 }
 fn display_key(key: &str) -> &str {
-    match key { "dns"=>"DNS","table"=>"Table","preup"=>"PreUp","postup"=>"PostUp","predown"=>"PreDown","postdown"=>"PostDown","saveconfig"=>"SaveConfig", _=>key }
+    match key {
+        "dns" => "DNS",
+        "table" => "Table",
+        "preup" => "PreUp",
+        "postup" => "PostUp",
+        "predown" => "PreDown",
+        "postdown" => "PostDown",
+        "saveconfig" => "SaveConfig",
+        _ => key,
+    }
 }
 
 #[cfg(test)]
@@ -299,24 +572,63 @@ PersistentKeepalive = 25
 
     #[test]
     fn imports_wireguard_client_and_reports_unmapped_options() {
-        let (cfg,warnings)=parse_interface(CLIENT).unwrap();
-        assert_eq!(cfg.protocol,ProtocolVersion::Wg);
-        assert_eq!(cfg.role,InterfaceRole::Client);
-        assert_eq!(cfg.address,vec!["10.0.0.2/32","fd00::2/128"]);
-        assert_eq!(cfg.listen_port,None);
+        let (cfg, warnings) = parse_interface(CLIENT).unwrap();
+        assert_eq!(cfg.protocol, ProtocolVersion::Wg);
+        assert_eq!(cfg.role, InterfaceRole::Client);
+        assert_eq!(cfg.address, vec!["10.0.0.2/32", "fd00::2/128"]);
+        assert_eq!(cfg.listen_port, None);
         assert!(cfg.ipv6_enabled);
-        assert_eq!(cfg.peers[0].persistent_keepalive_secs,Some(25));
-        assert!(warnings.iter().any(|w|w.contains("DNS")));
+        assert_eq!(cfg.peers[0].persistent_keepalive_secs, Some(25));
+        assert!(warnings.iter().any(|w| w.contains("DNS")));
     }
 
     #[test]
     fn infers_awg_generations_from_parameter_sets() {
-        let base = CLIENT.replace("DNS = 1.1.1.1\n","").replace("fd00::2/128","10.0.0.2/32").replace("AllowedIPs = 0.0.0.0/0, ::/0","AllowedIPs = 0.0.0.0/0");
-        assert_eq!(parse_interface(&base.replace("PersistentKeepalive = 25","Jc = 4\nS1 = 16\nPersistentKeepalive = 25")).unwrap().0.protocol,ProtocolVersion::Awg1);
-        assert_eq!(parse_interface(&base.replace("PersistentKeepalive = 25","I1 = <t>\nPersistentKeepalive = 25")).unwrap().0.protocol,ProtocolVersion::Awg1_5);
-        assert_eq!(parse_interface(&base.replace("PersistentKeepalive = 25","S3 = 16\nH1 = 1-100\nPersistentKeepalive = 25")).unwrap().0.protocol,ProtocolVersion::Awg2);
+        let base = CLIENT
+            .replace("DNS = 1.1.1.1\n", "")
+            .replace("fd00::2/128", "10.0.0.2/32")
+            .replace("AllowedIPs = 0.0.0.0/0, ::/0", "AllowedIPs = 0.0.0.0/0");
+        assert_eq!(
+            parse_interface(&base.replace(
+                "PersistentKeepalive = 25",
+                "Jc = 4\nS1 = 16\nPersistentKeepalive = 25"
+            ))
+            .unwrap()
+            .0
+            .protocol,
+            ProtocolVersion::Awg1
+        );
+        assert_eq!(
+            parse_interface(&base.replace(
+                "PersistentKeepalive = 25",
+                "I1 = <t>\nPersistentKeepalive = 25"
+            ))
+            .unwrap()
+            .0
+            .protocol,
+            ProtocolVersion::Awg1_5
+        );
+        assert_eq!(
+            parse_interface(&base.replace(
+                "PersistentKeepalive = 25",
+                "S3 = 16\nH1 = 1-100\nPersistentKeepalive = 25"
+            ))
+            .unwrap()
+            .0
+            .protocol,
+            ProtocolVersion::Awg2
+        );
         assert_eq!(parse_interface(&base.replace("PersistentKeepalive = 25","HeaderProtectionKey = 0000000000000000000000000000000000000000000000000000000000000000\nPersistentKeepalive = 25")).unwrap().0.protocol,ProtocolVersion::Awg3);
-        assert_eq!(parse_interface(&base.replace("PersistentKeepalive = 25","RandomTrailers = true\nPersistentKeepalive = 25")).unwrap().0.protocol,ProtocolVersion::Awg3_1);
+        assert_eq!(
+            parse_interface(&base.replace(
+                "PersistentKeepalive = 25",
+                "RandomTrailers = true\nPersistentKeepalive = 25"
+            ))
+            .unwrap()
+            .0
+            .protocol,
+            ProtocolVersion::Awg3_1
+        );
     }
 
     #[test]

@@ -232,7 +232,7 @@ fn create_device(name: &str, interface: &InterfaceConfig) -> Result<DeviceHandle
         use_multi_queue: true,
         uapi_fd: -1,
         enable_uapi: false,
-        listen_port: Some(interface.listen_port),
+        listen_port: interface.listen_port,
         obf,
         amnezia,
         probe_reply_bytes_per_sec: None,

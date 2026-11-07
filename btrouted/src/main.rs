@@ -26,7 +26,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut yes = false;
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "-c" | "--config" => config_path = args.next().ok_or("--config requires a path")?.into(),
+            "-c" | "--config" => {
+                config_path = args.next().ok_or("--config requires a path")?.into()
+            }
             "--check" => check_only = true,
             "--yes" | "-y" => yes = true,
             "--import" => {
@@ -48,19 +50,31 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             eprintln!("Интерфейс '{name}' уже существует. Заменить его? [y/N]");
             let mut answer = String::new();
             std::io::stdin().read_line(&mut answer)?;
-            if !matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes" | "д" | "да") {
+            if !matches!(
+                answer.trim().to_ascii_lowercase().as_str(),
+                "y" | "yes" | "д" | "да"
+            ) {
                 println!("Импорт отменён; конфигурация не изменена.");
                 return Ok(());
             }
         }
         let report = btrouted::import::import_file(&source, &config_path, &name, exists)?;
-        println!("Импортирован интерфейс '{name}': {:?}, роль {:?}.", report.protocol, report.role);
-        if report.replaced { println!("Существующий интерфейс заменён; остальные интерфейсы и routing rules сохранены."); }
+        println!(
+            "Импортирован интерфейс '{name}': {:?}, роль {:?}.",
+            report.protocol, report.role
+        );
+        if report.replaced {
+            println!(
+                "Существующий интерфейс заменён; остальные интерфейсы и routing rules сохранены."
+            );
+        }
         if report.warnings.is_empty() {
             println!("Все распознанные параметры перенесены.");
         } else {
             println!("Параметры, которые не применяются и не были импортированы:");
-            for warning in report.warnings { println!("  - {warning}"); }
+            for warning in report.warnings {
+                println!("  - {warning}");
+            }
         }
         println!("Конфигурация сохранена: {}", config_path.display());
         return Ok(());
