@@ -27,7 +27,7 @@
 
 ## 2. UAPI-параметры AWG 3.1
 
-`btrouted` exposes these values in `[interfaces.awg]`. `I1-I5` accept the upstream signature-chain grammar as strings; `header_protection_key` is 64 hex characters; `content_padding_addition` and all five timer fields accept a uint32 value or an inclusive `MIN-MAX` range. `content_padding_mode` accepts `udp_window` (AWG 3.1) or `mtu` (AWG 3.0). AWG 3.0 defaults to `mtu`; AWG 3.1 defaults to `udp_window`. Invalid keys, signature chains, ranges, and timer values are rejected before interfaces are created.
+`vpn-relay` exposes the AWG parameters in `[interfaces.<name>.awg]`; the tunnel family is selected with `type = "awg"`. The AWG generation is inferred and validated by BoringTun from the configured parameter set; `vpn-relay` does not expose a generation field. `I1-I5` accept the upstream signature-chain grammar as strings; `header_protection_key` is 64 hex characters; `content_padding_addition` and all five timer fields accept a uint32 value or an inclusive `MIN-MAX` range. BoringTun selects the Content Padding algorithm from the detected generation: MTU-bounded for AWG 3.0 and UDP-window-bounded for AWG 3.1. This local implementation detail is not a vpn-relay TOML option. Invalid keys, signature chains, ranges, and timer values are rejected before interfaces are created.
 
 | Параметр | Формат | Default / смысл |
 |---|---|---|
@@ -82,7 +82,7 @@ Upstream issue [#189](https://github.com/amnezia-vpn/amneziawg-go/issues/189) д
 - Пустой handshake-confirmation keepalive также проходит transport padding path.
 - UDP window — high-water mark базовых исходящих transport datagrams до добавления padding/trailer. BoringTun обновляет его по исходящим пакетам, как upstream; входящий padded datagram не должен обучать локальное окно.
 
-CPA не ограничивает внешние handshake/cookie trailers — см. [upstream issue #185](https://github.com/amnezia-vpn/amneziawg-go/issues/185). В AWG 3.0 CPA выбирается и ограничивается относительно TUN MTU; в AWG 3.1 — относительно peer UDP window. BoringTun по умолчанию использует AWG 3.1; для AWG 3.0 задайте `content_padding_mode=mtu` через UAPI или `with_legacy_content_padding(true)` через библиотечный API. Режим локальный: его необходимо выбрать согласно версии/поведению удалённой реализации.
+CPA не ограничивает внешние handshake/cookie trailers — см. [upstream issue #185](https://github.com/amnezia-vpn/amneziawg-go/issues/185). В AWG 3.0 CPA выбирается и ограничивается относительно TUN MTU; в AWG 3.1 — относительно peer UDP window. BoringTun выбирает соответствующий алгоритм по поколению, определённому из конфигурации: MTU для AWG 3.0 и UDP window для AWG 3.1. В vpn-relay этот выбор не настраивается отдельно.
 
 ## 6. DisableCookies: безопасность
 
