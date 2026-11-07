@@ -58,16 +58,18 @@ impl Runtime {
         let routing = RoutingPlan::from_config(&config);
         let mut devices = Vec::with_capacity(config.interfaces.len());
 
-        for (interface, socket_fwmark) in config.interfaces.iter().zip(socket_fwmarks) {
-            let handle = create_device(interface)?;
-            linux::configure_interface(&interface.name, interface.mtu, &interface.addresses)?;
+        for ((interface_name, interface), socket_fwmark) in
+            config.interfaces.iter().zip(socket_fwmarks)
+        {
+            let handle = create_device(interface_name, interface)?;
+            linux::configure_interface(interface_name, interface.mtu, &interface.addresses)?;
             handle.set_private_key(x25519::StaticSecret::from(
                 decode_key(&interface.private_key, "private_key")
                     .map_err(|error| RuntimeError::Configuration(error.to_string()))?,
             ));
             handle.set_fwmark(socket_fwmark)?;
 
-            for peer in &interface.peers {
+            for peer in interface.peers.values() {
                 let public_key = x25519::PublicKey::from(
                     decode_key(&peer.public_key, "peer.public_key")
                         .map_err(|error| RuntimeError::Configuration(error.to_string()))?,
@@ -222,8 +224,8 @@ fn hex_key(key: &[u8; 32]) -> String {
     key.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-fn create_device(interface: &InterfaceConfig) -> Result<DeviceHandle, RuntimeError> {
-    let (obf, amnezia) = build_awg_config(interface)?;
+fn create_device(name: &str, interface: &InterfaceConfig) -> Result<DeviceHandle, RuntimeError> {
+    let (obf, amnezia) = build_awg_config(name, interface)?;
     let config = DeviceConfig {
         n_threads: 4,
         use_connected_socket: true,
@@ -235,10 +237,11 @@ fn create_device(interface: &InterfaceConfig) -> Result<DeviceHandle, RuntimeErr
         amnezia,
         probe_reply_bytes_per_sec: None,
     };
-    Ok(DeviceHandle::new(&interface.name, config)?)
+    Ok(DeviceHandle::new(name, config)?)
 }
 
 fn build_awg_config(
+    name: &str,
     interface: &InterfaceConfig,
 ) -> Result<(ObfuscationRanges, AmneziaConfig), RuntimeError> {
     if interface.protocol == ProtocolVersion::Wg {
@@ -250,7 +253,7 @@ fn build_awg_config(
         .awg
         .as_ref()
         .unwrap_or(&defaults)
-        .build(&interface.name, interface.protocol)
+        .build(name, interface.protocol)
         .map_err(|error| RuntimeError::Configuration(error.to_string()))
 }
 
