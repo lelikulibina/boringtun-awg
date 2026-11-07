@@ -171,6 +171,7 @@ dependencies = [
  "tracing-subscriber",
  "untrusted",
  "x25519-dalek",
+ "serde",
 ]
 
 [[package]]

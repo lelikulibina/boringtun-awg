@@ -1,5 +1,6 @@
 //! Import standard WireGuard and AmneziaWG INI configurations.
-use crate::config::{AwgConfig, Config, InterfaceConfig, InterfaceRole, PeerConfig, TunnelType};
+use crate::config::{Config, InterfaceConfig, InterfaceRole, PeerConfig, TunnelType};
+use boringtun::noise::amnezia::AmneziaWgConfig;
 use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -345,8 +346,8 @@ fn parse_interface(source: &str) -> Result<(InterfaceConfig, Vec<String>), Impor
     Ok((config, warnings))
 }
 
-fn parse_awg(values: &HashMap<String, String>) -> Result<Option<AwgConfig>, ImportError> {
-    let mut a = AwgConfig::default();
+fn parse_awg(values: &HashMap<String, String>) -> Result<Option<AmneziaWgConfig>, ImportError> {
+    let mut a = AmneziaWgConfig::default();
     macro_rules! num {
         ($key:literal,$field:ident) => {
             if let Some(v) = values.get($key) {

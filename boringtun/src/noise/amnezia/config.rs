@@ -3,6 +3,7 @@
 
 use super::super::handshake::ObfuscationRanges;
 use super::{AmneziaConfig, AmneziaWgVersion};
+use serde::{Deserialize, Serialize};
 use std::fmt;
 
 /// Complete AmneziaWG protocol configuration before normalization.
@@ -10,35 +11,62 @@ use std::fmt;
 /// Optional fields preserve whether a parameter was omitted or explicitly
 /// configured with its default value. This distinction is used to identify
 /// the protocol generation without guessing in downstream applications.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct AmneziaWgConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub jc: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub jmin: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub jmax: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub s1: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub s2: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub s3: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub s4: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub h1: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub h2: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub h3: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub h4: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub disable_cookies: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub random_trailers: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub i1: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub i2: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub i3: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub i4: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub i5: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub header_protection_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub content_padding_addition: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub rekey_after_time: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub rekey_timeout: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub reject_after_time: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub keepalive_timeout: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub max_handshake_attempts: Option<String>,
     /// Optional explicit protocol generation. When omitted, BoringTun infers
     /// the minimum compatible generation from the supplied parameters.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
 }
 

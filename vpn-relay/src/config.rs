@@ -1,4 +1,5 @@
 use base64::engine::general_purpose::STANDARD;
+use boringtun::noise::amnezia::AmneziaWgConfig;
 use base64::Engine as _;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::{BTreeMap, HashSet};
@@ -115,7 +116,7 @@ pub struct InterfaceConfig {
     #[serde(default)]
     pub peers: Vec<PeerConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub awg: Option<AwgConfig>,
+    pub awg: Option<AmneziaWgConfig>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -130,67 +131,6 @@ pub struct PeerConfig {
     pub allowed_ips: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub persistent_keepalive_secs: Option<u16>,
-}
-
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct AwgConfig {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub jc: Option<u16>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub jmin: Option<u16>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub jmax: Option<u16>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub s1: Option<u16>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub s2: Option<u16>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub s3: Option<u16>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub s4: Option<u16>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub h1: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub h2: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub h3: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub h4: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub disable_cookies: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub random_trailers: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub i1: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub i2: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub i3: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub i4: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub i5: Option<String>,
-    /// 64 hexadecimal characters (32-byte AWG 3.0+ header-protection key).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub header_protection_key: Option<String>,
-    /// Inclusive uint32 range, e.g. "10-100".
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub content_padding_addition: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rekey_after_time: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rekey_timeout: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reject_after_time: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub keepalive_timeout: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_handshake_attempts: Option<String>,
-    /// Optional AmneziaWG protocol generation override (1.0, 1.5, 2.0, 3.0, 3.1).
-    /// Version inference and compatibility validation are owned by BoringTun.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub version: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
