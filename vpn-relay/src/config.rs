@@ -347,7 +347,8 @@ impl Config {
             if interface.tunnel_type == TunnelType::WireGuard && interface.awg.is_some() {
                 return invalid(format!(
                     "interfaces.{}.awg is not valid for tunnel type 'wg'",
-                    interface_name                ));
+                    interface_name
+                ));
             }
             let mut peer_keys = HashSet::new();
             let mut owned_prefixes = HashSet::new();
@@ -696,7 +697,8 @@ egress = "awg-uplink"
             "destination = \"0.0.0.0/0\"",
             "source = \"10.10.0.0/24\"\ndestination = \"0.0.0.0/0\"\nnat = \"masquerade\"",
         );
-        let config = Config::parse_toml(&input).unwrap();        assert_eq!(
+        let config = Config::parse_toml(&input).unwrap();
+        assert_eq!(
             config.routing.rules[0].source.as_deref(),
             Some(&["10.10.0.0/24".to_owned()][..])
         );
@@ -1038,7 +1040,8 @@ egress = "awg-uplink"
         let config = Config::parse_toml(&input).unwrap();
         let error = crate::backend::BackendRegistry::default()
             .validate_config(&config)
-            .unwrap_err();        assert!(
+            .unwrap_err();
+        assert!(
             error.to_string().contains("H1-H4 ranges"),
             "unexpected validation error: {error}"
         );
