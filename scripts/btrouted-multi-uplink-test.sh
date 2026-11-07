@@ -147,8 +147,7 @@ log_level = "debug"
 stats_interval_secs = 1
 nft_table = "btrouted_mu_client_$SUFFIX"
 
-[[interfaces]]
-name = "wg-client"
+[interfaces.wg-client]
 protocol = "wg"
 role = "client"
 ipv6_enabled = true
@@ -157,8 +156,7 @@ listen_port = 51876
 private_key = "$CLIENT_PRIVATE"
 socket_fwmark = 5004
 
-[[interfaces.peers]]
-name = "router"
+[interfaces.wg-client.peers.router]
 public_key = "$ROUTER_INGRESS_PUBLIC"
 endpoint = "192.0.2.1:51871"
 allowed_ips = ["0.0.0.0/0", "::/0"]
@@ -171,8 +169,7 @@ log_level = "debug"
 stats_interval_secs = 1
 nft_table = "btrouted_mu_client2_$SUFFIX"
 
-[[interfaces]]
-name = "wg-client-2"
+[interfaces.wg-client-2]
 protocol = "wg"
 role = "client"
 ipv6_enabled = true
@@ -181,8 +178,7 @@ listen_port = 51877
 private_key = "$SECOND_CLIENT_PRIVATE"
 socket_fwmark = 5005
 
-[[interfaces.peers]]
-name = "router"
+[interfaces.wg-client-2.peers.router]
 public_key = "$ROUTER_INGRESS_PUBLIC"
 endpoint = "192.0.3.1:51871"
 allowed_ips = ["0.0.0.0/0", "::/0"]
@@ -196,8 +192,7 @@ stats_interval_secs = 1
 nft_table = "btrouted_mu_router_$SUFFIX"
 manage_ip_forwarding = true
 
-[[interfaces]]
-name = "wg-ingress"
+[interfaces.wg-ingress]
 protocol = "wg"
 role = "server"
 ipv6_enabled = true
@@ -206,18 +201,15 @@ listen_port = 51871
 private_key = "$ROUTER_INGRESS_PRIVATE"
 socket_fwmark = 5001
 
-[[interfaces.peers]]
-name = "client"
+[interfaces.wg-ingress.peers.client]
 public_key = "$CLIENT_PUBLIC"
 allowed_ips = ["10.77.0.2/32", "fd77::2/128"]
 
-[[interfaces.peers]]
-name = "client-2"
+[interfaces.wg-ingress.peers.client-2]
 public_key = "$SECOND_CLIENT_PUBLIC"
 allowed_ips = ["10.77.0.3/32", "fd77::3/128"]
 
-[[interfaces]]
-name = "awg-primary"
+[interfaces.awg-primary]
 protocol = "awg3_1"
 role = "client"
 ipv6_enabled = true
@@ -226,15 +218,13 @@ listen_port = 51872
 private_key = "$ROUTER_PRIMARY_PRIVATE"
 socket_fwmark = 5002
 
-[[interfaces.peers]]
-name = "primary-server"
+[interfaces.awg-primary.peers.primary-server]
 public_key = "$PRIMARY_PUBLIC"
 endpoint = "198.18.1.2:51873"
 allowed_ips = ["0.0.0.0/0", "::/0"]
 persistent_keepalive_secs = 1
 
-[[interfaces]]
-name = "awg-secondary"
+[interfaces.awg-secondary]
 protocol = "awg2"
 role = "client"
 ipv6_enabled = true
@@ -243,8 +233,7 @@ listen_port = 51874
 private_key = "$ROUTER_SECONDARY_PRIVATE"
 socket_fwmark = 5003
 
-[[interfaces.peers]]
-name = "secondary-server"
+[interfaces.awg-secondary.peers.secondary-server]
 public_key = "$SECONDARY_PUBLIC"
 endpoint = "198.18.2.2:51875"
 allowed_ips = ["0.0.0.0/0", "::/0"]
@@ -302,8 +291,7 @@ log_level = "debug"
 stats_interval_secs = 1
 nft_table = "btrouted_mu_primary_$SUFFIX"
 
-[[interfaces]]
-name = "up-primary"
+[interfaces.up-primary]
 protocol = "awg3_1"
 role = "server"
 ipv6_enabled = true
@@ -312,8 +300,7 @@ listen_port = 51873
 private_key = "$PRIMARY_PRIVATE"
 socket_fwmark = 6001
 
-[[interfaces.peers]]
-name = "router"
+[interfaces.up-primary.peers.router]
 public_key = "$ROUTER_PRIMARY_PUBLIC"
 allowed_ips = ["10.20.0.1/32", "fd20::1/128", "fd77::2/128"]
 TOML
@@ -324,8 +311,7 @@ log_level = "debug"
 stats_interval_secs = 1
 nft_table = "btrouted_mu_secondary_$SUFFIX"
 
-[[interfaces]]
-name = "up-secondary"
+[interfaces.up-secondary]
 protocol = "awg2"
 role = "server"
 ipv6_enabled = true
@@ -334,8 +320,7 @@ listen_port = 51875
 private_key = "$SECONDARY_PRIVATE"
 socket_fwmark = 6002
 
-[[interfaces.peers]]
-name = "router"
+[interfaces.up-secondary.peers.router]
 public_key = "$ROUTER_SECONDARY_PUBLIC"
 allowed_ips = ["10.77.0.2/32", "10.77.0.3/32", "fd77::2/128", "fd77::3/128"]
 TOML
