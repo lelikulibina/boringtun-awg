@@ -574,7 +574,9 @@ impl AmneziaConfig {
     /// parameters. The generation controls version-specific packet behavior.
     pub(crate) fn with_detected_version(mut self, parameters: &[(&str, &str)]) -> Self {
         if let Some(version) = AmneziaWgVersion::detect_from_parameters(parameters) {
-            let version = self.protocol_version.map_or(version, |current| current.max(version));
+            let version = self
+                .protocol_version
+                .map_or(version, |current| current.max(version));
             self.protocol_version = Some(version);
             self.legacy_content_padding = version == AmneziaWgVersion::V3;
         }
