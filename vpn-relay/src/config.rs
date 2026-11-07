@@ -629,13 +629,27 @@ impl AwgConfig {
                 }
             };
         }
-        if self.jc.is_some() { version_parameters.push(("jc", "")); }
-        if self.jmin.is_some() { version_parameters.push(("jmin", "")); }
-        if self.jmax.is_some() { version_parameters.push(("jmax", "")); }
-        if self.s1.is_some() { version_parameters.push(("s1", "")); }
-        if self.s2.is_some() { version_parameters.push(("s2", "")); }
-        if self.s3.is_some() { version_parameters.push(("s3", "")); }
-        if self.s4.is_some() { version_parameters.push(("s4", "")); }
+        if self.jc.is_some() {
+            version_parameters.push(("jc", ""));
+        }
+        if self.jmin.is_some() {
+            version_parameters.push(("jmin", ""));
+        }
+        if self.jmax.is_some() {
+            version_parameters.push(("jmax", ""));
+        }
+        if self.s1.is_some() {
+            version_parameters.push(("s1", ""));
+        }
+        if self.s2.is_some() {
+            version_parameters.push(("s2", ""));
+        }
+        if self.s3.is_some() {
+            version_parameters.push(("s3", ""));
+        }
+        if self.s4.is_some() {
+            version_parameters.push(("s4", ""));
+        }
         present!("h1", self.h1.as_deref());
         present!("h2", self.h2.as_deref());
         present!("h3", self.h3.as_deref());
