@@ -403,7 +403,7 @@ impl Config {
 
             if interface.tunnel_type == TunnelType::WireGuard && interface.awg.is_some() {
                 return invalid(format!(
-                    "interfaces.{}.awg is not valid for protocol 'wg'",
+                    "interfaces.{}.awg is not valid for tunnel type 'wg'",
                     interface_name
                 ));
             }
@@ -1080,12 +1080,12 @@ egress = "awg-uplink"
     #[test]
     fn rejects_overlapping_awg_header_ranges() {
         let input = valid_config().replace("h2 = \"101-200\"", "h2 = \"50-200\"");
-        let error = Config::parse_toml(&input).unwrap_err();
+        let config = Config::parse_toml(&input).unwrap();
+        let error = crate::backend::BackendRegistry::default()
+            .validate_config(&config)
+            .unwrap_err();
         assert!(
-            matches!(
-                &error,
-                ConfigError::Validation(message) if message.contains("H1-H4 ranges")
-            ),
+            error.to_string().contains("H1-H4 ranges"),
             "unexpected validation error: {error}"
         );
     }
