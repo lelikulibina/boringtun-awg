@@ -847,6 +847,28 @@ egress = "awg-uplink"
     }
 
     #[test]
+    fn explicit_awg_version_is_forwarded_to_boringtun_validation() {
+        let explicit = valid_config().replace(
+            "h4 = \"301-400\"",
+            "h4 = \"301-400\"\nversion = \"3.1\"",
+        );
+        let config = Config::parse_toml(&explicit).unwrap();
+        crate::backend::BackendRegistry::default()
+            .validate_config(&config)
+            .unwrap();
+
+        let conflicting = valid_config().replace(
+            "h4 = \"301-400\"",
+            "h4 = \"301-400\"\nversion = \"1.0\"",
+        );
+        let config = Config::parse_toml(&conflicting).unwrap();
+        let error = crate::backend::BackendRegistry::default()
+            .validate_config(&config)
+            .unwrap_err();
+        assert!(error.to_string().contains("conflicts with parameters"));
+    }
+
+    #[test]
     fn rejects_invalid_awg_extension_values() {
         for (field, value) in [
             ("header_protection_key", "\"abcd\""),
