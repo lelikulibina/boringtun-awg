@@ -302,6 +302,14 @@ mod tests {
     }
 
     #[test]
+    fn supported_generation_list_is_complete_and_stable() {
+        assert_eq!(
+            AmneziaWgVersion::ALL.map(|version| version.as_str()),
+            ["1.0", "1.5", "2.0", "3.0", "3.1"]
+        );
+    }
+
+    #[test]
     fn newer_generation_parameters_extend_earlier_profiles() {
         let input = AmneziaWgConfig {
             i1: Some("<t>".into()),
