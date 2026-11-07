@@ -586,7 +586,6 @@ impl AwgConfig {
     }
 }
 
-
 /// Parsed peer endpoint. DNS names are validated but deliberately not resolved
 /// while loading configuration; resolution belongs to daemon startup/reconnect.
 #[derive(Clone, Debug, Eq, PartialEq)]
