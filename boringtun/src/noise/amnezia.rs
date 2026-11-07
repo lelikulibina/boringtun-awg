@@ -13,7 +13,6 @@ use crate::noise::errors::WireGuardError;
 use crate::noise::signature::SignatureChain;
 use chacha20::cipher::{KeyIvInit, StreamCipher};
 use rand_core::RngCore;
-use serde::{Deserialize, Serialize};
 use std::convert::{TryFrom, TryInto};
 use std::time::Duration;
 
