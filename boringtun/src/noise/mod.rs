@@ -3054,7 +3054,7 @@ mod tests {
             ),
             (
                 amnezia::AmneziaWgConfig {
-                    random_trailers: Some(false),
+                    random_trailers: Some(true),
                     content_padding_addition: Some("100".into()),
                     ..Default::default()
                 }
