@@ -55,9 +55,6 @@ impl RoutingPlan {
             .filter(|(_, interface)| interface.role == InterfaceRole::Client)
             .map(|(name, _)| name.as_str())
             .collect();
-        egress_names.sort_unstable();
-        egress_names.dedup();
-
         let routing_marks = config
             .resolved_routing_fwmarks()
             .expect("RoutingPlan::from_config requires a validated configuration");
