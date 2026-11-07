@@ -150,9 +150,9 @@ nftables не должен переписывать чужие таблицы и
 ## Предлагаемая TOML-модель
 
 - [daemon]: логирование, пути, интервал статистики, политика привилегий.
-- [[interfaces]]: имя, протокол/версия, роль, адреса TUN, MTU, listen port, private key, socket mark.
-- [[interfaces.peers]]: public key, PSK, endpoint, AllowedIPs, keepalive.
-- [interfaces.awg]: параметры конкретной версии AWG.
+- [interfaces.<имя>]: именованная секция интерфейса с протоколом/версией, ролью, адресами TUN, MTU, listen port, private key и socket mark.
+- [interfaces.<имя>.peers.<имя_пира>]: именованная секция пира с public key, PSK, endpoint, AllowedIPs и keepalive.
+- [interfaces.<имя>.awg]: параметры конкретной версии AWG.
 - [[routing.rules]]: обязательные ingress/egress, необязательные source/destination (один CIDR или массив CIDR), priority и NAT mode (`none`/`masquerade`).
 - [routing]: nft table name, mark base и политика управления forwarding.
 
