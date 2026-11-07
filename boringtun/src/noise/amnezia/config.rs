@@ -64,10 +64,6 @@ pub struct AmneziaWgConfig {
     pub keepalive_timeout: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_handshake_attempts: Option<String>,
-    /// Optional explicit protocol generation. When omitted, BoringTun infers
-    /// the minimum compatible generation from the supplied parameters.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub version: Option<AmneziaWgVersion>,
 }
 
 /// Invalid AmneziaWG configuration or incompatible parameter combination.
@@ -191,28 +187,15 @@ impl AmneziaWgConfig {
             "maxhandshakeattempts",
             self.max_handshake_attempts.as_deref()
         );
-        if self.random_trailers.is_some() {
+        if self.random_trailers == Some(true) {
             parameters.push(("randomtrailers", ""));
         }
-        if self.disable_cookies.is_some() {
+        if self.disable_cookies == Some(true) {
             parameters.push(("disablecookies", ""));
         }
-        let detected_version = AmneziaWgVersion::detect_from_parameters(&parameters);
-        let selected_version = self
-            .version
-            .unwrap_or_else(|| detected_version.unwrap_or(AmneziaWgVersion::V1));
-
-        if let Some(required_version) = detected_version {
-            if selected_version < required_version {
-                return Err(error(format!(
-                    "explicit AmneziaWG version {} conflicts with parameters requiring version {} or newer",
-                    selected_version.as_str(),
-                    required_version.as_str()
-                )));
-            }
+        if let Some(detected_version) = AmneziaWgVersion::detect_from_parameters(&parameters) {
+            config = config.with_protocol_version(detected_version);
         }
-
-        config = config.with_protocol_version(selected_version);
 
         for (name, value, slot) in [
             ("rekey_after_time", self.rekey_after_time.as_deref(), 0u8),
@@ -335,7 +318,14 @@ mod tests {
             ),
             (
                 AmneziaWgConfig {
-                    random_trailers: Some(false),
+                    random_trailers: Some(true),
+                    ..Default::default()
+                },
+                AmneziaWgVersion::V3_1,
+            ),
+            (
+                AmneziaWgConfig {
+                    disable_cookies: Some(true),
                     ..Default::default()
                 },
                 AmneziaWgVersion::V3_1,
@@ -361,7 +351,7 @@ mod tests {
             i1: Some("<t>".into()),
             s3: Some(0),
             header_protection_key: Some("00".repeat(32)),
-            random_trailers: Some(false),
+            random_trailers: Some(true),
             ..Default::default()
         };
         let (_, normalized) = input.build().unwrap();
@@ -369,67 +359,26 @@ mod tests {
     }
 
     #[test]
-    fn explicit_version_is_supported_and_controls_protocol_behavior() {
+    fn disabled_31_toggles_do_not_select_generation_31() {
         let (_, config) = AmneziaWgConfig {
-            version: Some(AmneziaWgVersion::V3_1),
+            random_trailers: Some(false),
+            disable_cookies: Some(false),
             content_padding_addition: Some("10-20".into()),
-            ..Default::default()
-        }
-        .build()
-        .unwrap();
-        assert_eq!(config.protocol_version(), Some(AmneziaWgVersion::V3_1));
-        assert!(!config.content_padding_uses_mtu);
-
-        let (_, config) = AmneziaWgConfig {
-            version: Some(AmneziaWgVersion::V3),
-            header_protection_key: Some("00".repeat(32)),
             ..Default::default()
         }
         .build()
         .unwrap();
         assert_eq!(config.protocol_version(), Some(AmneziaWgVersion::V3));
         assert!(config.content_padding_uses_mtu);
-    }
 
-    #[test]
-    fn rejects_explicit_versions_that_conflict_with_parameter_generations() {
-        for (version, input) in [
-            (
-                AmneziaWgVersion::V1,
-                AmneziaWgConfig {
-                    i1: Some("<t>".into()),
-                    ..Default::default()
-                },
-            ),
-            (
-                AmneziaWgVersion::V2,
-                AmneziaWgConfig {
-                    header_protection_key: Some("00".repeat(32)),
-                    ..Default::default()
-                },
-            ),
-            (
-                AmneziaWgVersion::V3,
-                AmneziaWgConfig {
-                    random_trailers: Some(false),
-                    ..Default::default()
-                },
-            ),
-        ] {
-            let input = AmneziaWgConfig {
-                version: Some(version),
-                ..input
-            };
-            assert!(
-                input.build().is_err(),
-                "version {version:?} must not silently accept newer-generation parameters"
-            );
+        let (_, config) = AmneziaWgConfig {
+            random_trailers: Some(false),
+            disable_cookies: Some(false),
+            ..Default::default()
         }
-    }
-
-    #[test]
-    fn rejects_unknown_explicit_version() {
-        assert_eq!(AmneziaWgVersion::parse("4.0"), None);
+        .build()
+        .unwrap();
+        assert_eq!(config.protocol_version(), None);
     }
 
     #[test]
