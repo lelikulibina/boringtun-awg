@@ -75,7 +75,7 @@ manage_ip_forwarding = true
 type = "wg"
 role = "server"
 ipv6_enabled = false
-addresses = ["10.10.0.1/24"]
+address = ["10.10.0.1/24"]
 listen_port = 51820
 private_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 socket_fwmark = 4097
@@ -84,7 +84,7 @@ socket_fwmark = 4097
 type = "awg"
 role = "client"
 ipv6_enabled = true
-addresses = ["10.20.0.2/32"]
+address = ["10.20.0.2/32"]
 listen_port = 51821
 private_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 socket_fwmark = 4098
@@ -101,7 +101,7 @@ disable_cookies = false
 type = "awg"
 role = "client"
 ipv6_enabled = false
-addresses = ["10.30.0.2/32"]
+address = ["10.30.0.2/32"]
 listen_port = 51822
 private_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 socket_fwmark = 4099

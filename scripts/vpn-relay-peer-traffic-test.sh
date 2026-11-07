@@ -99,7 +99,7 @@ nft_table = "vpn_relay_peer_srv_$SUFFIX"
 [interfaces.wg-peer-test]
 type = "$PROTO"
 role = "server"
-addresses = ["10.77.0.1/24"]
+address = ["10.77.0.1/24"]
 listen_port = 51871
 private_key = "$SERVER_PRIVATE"
 socket_fwmark = 5001
@@ -126,7 +126,7 @@ nft_table = "vpn_relay_peer_cli_$SUFFIX"
 [interfaces.wg-peer-test]
 type = "$PROTO"
 role = "client"
-addresses = ["10.77.0.2/24"]
+address = ["10.77.0.2/24"]
 listen_port = 51872
 private_key = "$CLIENT_PRIVATE"
 socket_fwmark = 5002
