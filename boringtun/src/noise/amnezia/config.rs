@@ -187,10 +187,10 @@ impl AmneziaWgConfig {
             "maxhandshakeattempts",
             self.max_handshake_attempts.as_deref()
         );
-        if self.random_trailers == Some(true) {
+        if self.random_trailers.is_some() {
             parameters.push(("randomtrailers", ""));
         }
-        if self.disable_cookies == Some(true) {
+        if self.disable_cookies.is_some() {
             parameters.push(("disablecookies", ""));
         }
         if let Some(detected_version) = AmneziaWgVersion::detect_from_parameters(&parameters) {
@@ -359,7 +359,7 @@ mod tests {
     }
 
     #[test]
-    fn disabled_31_toggles_do_not_select_generation_31() {
+    fn explicit_disabled_31_parameters_still_identify_generation_31() {
         let (_, config) = AmneziaWgConfig {
             random_trailers: Some(false),
             disable_cookies: Some(false),
@@ -368,8 +368,8 @@ mod tests {
         }
         .build()
         .unwrap();
-        assert_eq!(config.protocol_version(), Some(AmneziaWgVersion::V3));
-        assert!(config.content_padding_uses_mtu);
+        assert_eq!(config.protocol_version(), Some(AmneziaWgVersion::V3_1));
+        assert!(!config.content_padding_uses_mtu);
 
         let (_, config) = AmneziaWgConfig {
             random_trailers: Some(false),
@@ -378,7 +378,7 @@ mod tests {
         }
         .build()
         .unwrap();
-        assert_eq!(config.protocol_version(), None);
+        assert_eq!(config.protocol_version(), Some(AmneziaWgVersion::V3_1));
     }
 
     #[test]
