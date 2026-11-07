@@ -807,6 +807,12 @@ egress = "awg-uplink"
             .validate_config(&config)
             .unwrap_err();
         assert!(error.to_string().contains("conflicts with parameters"));
+
+        let unsupported = valid_config().replace(
+            "h4 = \"301-400\"",
+            "h4 = \"301-400\"\nversion = \"4.0\"",
+        );
+        assert!(Config::parse_toml(&unsupported).is_err());
     }
 
     #[test]
