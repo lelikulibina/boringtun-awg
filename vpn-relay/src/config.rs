@@ -100,7 +100,6 @@ pub struct InterfaceConfig {
     #[serde(rename = "type")]
     pub tunnel_type: TunnelType,
     pub role: InterfaceRole,
-    #[serde(alias = "addresses")]
     pub address: Vec<String>,
     #[serde(default = "default_mtu")]
     pub mtu: u16,
@@ -803,6 +802,12 @@ egress = "awg-uplink"
             config.routing.rules[0].destination.as_ref().unwrap().len(),
             2
         );
+    }
+
+    #[test]
+    fn configuration_uses_only_the_canonical_singular_address_key() {
+        let input = valid_config().replace("address =", "addresses =");
+        assert!(Config::parse_toml(&input).is_err());
     }
 
     #[test]
