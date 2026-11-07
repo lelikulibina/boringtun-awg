@@ -486,7 +486,8 @@ impl Config {
                     rule.priority, rule.ingress
                 ));
             }
-            let ingress = self.interfaces
+            let ingress = self
+                .interfaces
                 .get(rule.ingress.as_str())
                 .ok_or_else(|| {
                     ConfigError::Validation(format!(
@@ -494,7 +495,8 @@ impl Config {
                         rule.ingress
                     ))
                 })?;
-            let egress = self.interfaces
+            let egress = self
+                .interfaces
                 .get(rule.egress.as_str())
                 .ok_or_else(|| {
                     ConfigError::Validation(format!(
@@ -1104,6 +1106,34 @@ egress = "awg-uplink"
         assert!(config.interfaces.contains_key("wg-server"));
         assert!(config.interfaces["wg-server"].peers.contains_key("client-1"));
         assert!(config.interfaces["awg-uplink"].peers.contains_key("server"));
+    }
+
+    #[test]
+    fn named_interface_and_peer_sections_populate_map_keys() {
+        let config = Config::parse_toml(&valid_config()).unwrap();
+        assert_eq!(
+            config.interfaces.keys().map(String::as_str).collect::<Vec<_>>(),
+            vec!["awg-uplink", "wg-server"]
+        );
+        assert_eq!(
+            config.interfaces["wg-server"]
+                .peers
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            vec!["client-1"]
+        );
+        assert!(!config.interfaces["awg-uplink"].peers.is_empty());
+    }
+
+    #[test]
+    fn rejects_duplicate_peer_public_keys_across_distinct_named_peers() {
+        let input = valid_config().replace(
+            "[interfaces.awg-uplink]",
+            "[interfaces.wg-server.peers.client-2]\npublic_key = \"{KEY}\"\nallowed_ips = [\"10.10.0.3/32\"]\n\n[interfaces.awg-uplink]",
+        );
+        let error = Config::parse_toml(&input).unwrap_err();
+        assert!(error.to_string().contains("duplicate peer public keys"));
     }
 
     #[test]
