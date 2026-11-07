@@ -3040,10 +3040,31 @@ mod tests {
 
     #[test]
     fn cpa_awg30_and_awg31_modes_apply_their_distinct_limits_end_to_end() {
-        for (legacy, expected_ip_plaintext_len) in [(true, 30usize), (false, 129usize)] {
-            let config = AmneziaConfig::new(0, 0, 0, 0)
-                .with_content_padding_addition(100, 100)
-                .with_legacy_content_padding(legacy);
+        let configurations = [
+            (
+                amnezia::AmneziaWgConfig {
+                    header_protection_key: Some("00".repeat(32)),
+                    content_padding_addition: Some("100".into()),
+                    ..Default::default()
+                }
+                .build()
+                .unwrap()
+                .1,
+                30usize,
+            ),
+            (
+                amnezia::AmneziaWgConfig {
+                    random_trailers: Some(false),
+                    content_padding_addition: Some("100".into()),
+                    ..Default::default()
+                }
+                .build()
+                .unwrap()
+                .1,
+                129usize,
+            ),
+        ];
+        for (config, expected_ip_plaintext_len) in configurations {
             let (mut sender, mut receiver) = create_two_tuns_and_handshake_with_amnezia(config);
             sender.set_mtu(30);
 
