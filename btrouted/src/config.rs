@@ -486,24 +486,18 @@ impl Config {
                     rule.priority, rule.ingress
                 ));
             }
-            let ingress = self
-                .interfaces
-                .get(rule.ingress.as_str())
-                .ok_or_else(|| {
-                    ConfigError::Validation(format!(
-                        "routing rule references unknown ingress '{}'",
-                        rule.ingress
-                    ))
-                })?;
-            let egress = self
-                .interfaces
-                .get(rule.egress.as_str())
-                .ok_or_else(|| {
-                    ConfigError::Validation(format!(
-                        "routing rule references unknown egress '{}'",
-                        rule.egress
-                    ))
-                })?;
+            let ingress = self.interfaces.get(rule.ingress.as_str()).ok_or_else(|| {
+                ConfigError::Validation(format!(
+                    "routing rule references unknown ingress '{}'",
+                    rule.ingress
+                ))
+            })?;
+            let egress = self.interfaces.get(rule.egress.as_str()).ok_or_else(|| {
+                ConfigError::Validation(format!(
+                    "routing rule references unknown egress '{}'",
+                    rule.egress
+                ))
+            })?;
             if rule.ingress == rule.egress {
                 return invalid(format!(
                     "routing rule cannot use '{}' as both ingress and egress",
@@ -1012,8 +1006,14 @@ egress = "awg-uplink"
             &valid_config().replace("protocol = \"awg3_1\"", "protocol = \"awg3_0\""),
         )
         .unwrap();
-        assert_eq!(legacy.interfaces["awg-uplink"].protocol, ProtocolVersion::Awg3);
-        assert_eq!(explicit.interfaces["awg-uplink"].protocol, ProtocolVersion::Awg3);
+        assert_eq!(
+            legacy.interfaces["awg-uplink"].protocol,
+            ProtocolVersion::Awg3
+        );
+        assert_eq!(
+            explicit.interfaces["awg-uplink"].protocol,
+            ProtocolVersion::Awg3
+        );
     }
 
     #[test]
@@ -1066,7 +1066,10 @@ egress = "awg-uplink"
     #[test]
     fn ipv6_is_blocked_by_default_on_every_interface() {
         let config = Config::parse_toml(&valid_config()).unwrap();
-        assert!(config.interfaces.values().all(|interface| !interface.ipv6_enabled));
+        assert!(config
+            .interfaces
+            .values()
+            .all(|interface| !interface.ipv6_enabled));
     }
 
     #[test]
@@ -1102,9 +1105,14 @@ egress = "awg-uplink"
         let config = Config::parse_toml(&valid_config()).unwrap();
         assert_eq!(config.interfaces.len(), 2);
         assert_eq!(config.routing.rules.len(), 2);
-        assert_eq!(config.interfaces["awg-uplink"].protocol, ProtocolVersion::Awg3_1);
+        assert_eq!(
+            config.interfaces["awg-uplink"].protocol,
+            ProtocolVersion::Awg3_1
+        );
         assert!(config.interfaces.contains_key("wg-server"));
-        assert!(config.interfaces["wg-server"].peers.contains_key("client-1"));
+        assert!(config.interfaces["wg-server"]
+            .peers
+            .contains_key("client-1"));
         assert!(config.interfaces["awg-uplink"].peers.contains_key("server"));
     }
 
@@ -1112,7 +1120,11 @@ egress = "awg-uplink"
     fn named_interface_and_peer_sections_populate_map_keys() {
         let config = Config::parse_toml(&valid_config()).unwrap();
         assert_eq!(
-            config.interfaces.keys().map(String::as_str).collect::<Vec<_>>(),
+            config
+                .interfaces
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
             vec!["awg-uplink", "wg-server"]
         );
         assert_eq!(
