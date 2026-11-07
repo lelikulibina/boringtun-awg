@@ -91,6 +91,29 @@ mod version_tests {
     }
 
     #[test]
+    fn cumulative_parameters_select_the_newest_generation() {
+        assert_eq!(
+            Version::detect_from_parameters(&[("i1", "<t>"), ("s3", "0")]),
+            Some(Version::V2)
+        );
+        assert_eq!(
+            Version::detect_from_parameters(&[
+                ("s3", "0"),
+                ("headerprotectionkey", "key"),
+                ("rekey_timeout", "3-7"),
+            ]),
+            Some(Version::V3)
+        );
+        assert_eq!(
+            Version::detect_from_parameters(&[
+                ("headerprotectionkey", "key"),
+                ("randomtrailers", "false"),
+            ]),
+            Some(Version::V3_1)
+        );
+    }
+
+    #[test]
     fn ranged_header_values_identify_awg_v2() {
         assert_eq!(
             Version::detect_from_parameters(&[("h1", "100-200")]),
