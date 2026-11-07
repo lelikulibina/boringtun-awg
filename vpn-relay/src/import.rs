@@ -2,6 +2,7 @@
 use crate::config::{
     AwgConfig, Config, InterfaceConfig, InterfaceRole, PeerConfig, ProtocolVersion,
 };
+use boringtun::noise::amnezia::AmneziaWgVersion;
 use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -317,10 +318,18 @@ fn parse_interface(source: &str) -> Result<(InterfaceConfig, Vec<String>), Impor
     };
 
     let awg = parse_awg(&interface)?;
-    let protocol = detect_protocol(&interface);
-    if protocol == ProtocolVersion::Awg1_5 {
-        warnings.push("AWG generation inferred as 1.5 from I1-I5; early AWG releases share some of these parameters, so verify the peer generation if its profile also uses S3/S4 or ranged H values".into());
-    }
+    let parameters: Vec<_> = interface
+        .iter()
+        .map(|(name, value)| (name.as_str(), value.as_str()))
+        .collect();
+    let protocol = match AmneziaWgVersion::detect_from_parameters(&parameters) {
+        Some(AmneziaWgVersion::V1) => ProtocolVersion::Awg1,
+        Some(AmneziaWgVersion::V1_5) => ProtocolVersion::Awg1_5,
+        Some(AmneziaWgVersion::V2) => ProtocolVersion::Awg2,
+        Some(AmneziaWgVersion::V3) => ProtocolVersion::Awg3,
+        Some(AmneziaWgVersion::V3_1) => ProtocolVersion::Awg3_1,
+        None => ProtocolVersion::Wg,
+    };
     let config = InterfaceConfig {
         protocol,
         role,
@@ -414,37 +423,6 @@ fn parse_awg(values: &HashMap<String, String>) -> Result<Option<AwgConfig>, Impo
     .iter()
     .any(|k| values.contains_key(*k));
     Ok(any.then_some(a))
-}
-
-fn detect_protocol(v: &HashMap<String, String>) -> ProtocolVersion {
-    let has = |keys: &[&str]| keys.iter().any(|k| v.contains_key(*k));
-    if has(&["randomtrailers", "disablecookies"]) {
-        return ProtocolVersion::Awg3_1;
-    }
-    if has(&[
-        "headerprotectionkey",
-        "contentpaddingaddition",
-        "rekeyaftertime",
-        "rekeytimeout",
-        "rejectaftertime",
-        "keepalivetimeout",
-        "maxhandshakeattempts",
-    ]) {
-        return ProtocolVersion::Awg3;
-    }
-    let ranged_headers = ["h1", "h2", "h3", "h4"]
-        .iter()
-        .any(|k| v.get(*k).is_some_and(|x| x.contains('-')));
-    if ranged_headers || has(&["s3", "s4"]) {
-        return ProtocolVersion::Awg2;
-    }
-    if has(&["i1", "i2", "i3", "i4", "i5"]) {
-        return ProtocolVersion::Awg1_5;
-    }
-    if has(&["jc", "jmin", "jmax", "s1", "s2", "h1", "h2", "h3", "h4"]) {
-        return ProtocolVersion::Awg1;
-    }
-    ProtocolVersion::Wg
 }
 
 fn required<'a>(

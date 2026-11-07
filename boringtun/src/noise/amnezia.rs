@@ -16,6 +16,61 @@ use rand_core::RngCore;
 use std::convert::{TryFrom, TryInto};
 use std::time::Duration;
 
+
+/// AmneziaWG protocol generation implemented by this BoringTun build.
+///
+/// This describes the protocol profile, not a negotiated handshake field.
+/// AmneziaWG peers must be configured for compatible profiles independently.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub enum AmneziaWgVersion {
+    V1,
+    V1_5,
+    V2,
+    V3,
+    V3_1,
+}
+
+impl AmneziaWgVersion {
+    /// Infer the AmneziaWG generation from the parameter names and values
+    /// present in an imported configuration.
+    ///
+    /// The caller passes the original parameter set, preserving the
+    /// distinction between an omitted parameter and an explicitly configured
+    /// default value. None means that no AmneziaWG-specific parameter was
+    /// supplied, so the configuration is plain WireGuard.
+    pub fn detect_from_parameters(parameters: &[(&str, &str)]) -> Option<Self> {
+        let has = |names: &[&str]| parameters.iter().any(|(name, _)| names.contains(name));
+        let ranged_headers = parameters.iter().any(|(name, value)| {
+            matches!(*name, "h1" | "h2" | "h3" | "h4") && value.contains('-')
+        });
+
+        if has(&["randomtrailers", "disablecookies"]) {
+            return Some(Self::V3_1);
+        }
+        if has(&[
+            "headerprotectionkey",
+            "contentpaddingaddition",
+            "rekeyaftertime",
+            "rekeytimeout",
+            "rejectaftertime",
+            "keepalivetimeout",
+            "maxhandshakeattempts",
+        ]) {
+            return Some(Self::V3);
+        }
+        if ranged_headers || has(&["s3", "s4"]) {
+            return Some(Self::V2);
+        }
+        if has(&["i1", "i2", "i3", "i4", "i5"]) {
+            return Some(Self::V1_5);
+        }
+        if has(&["jc", "jmin", "jmax", "s1", "s2", "h1", "h2", "h3", "h4"]) {
+            return Some(Self::V1);
+        }
+        None
+    }
+}
+
 const DNS_OPT_FIXED_LEN: usize = 11;
 const DNS_OPT_MIN_WIRE_SIZE: usize = DNS_OPT_FIXED_LEN + 4;
 const DEFAULT_JUNK_PACKET_SIZE_MIN: u16 = 50;
