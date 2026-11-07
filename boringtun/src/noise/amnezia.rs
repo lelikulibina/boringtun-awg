@@ -23,7 +23,7 @@ pub use config::{AmneziaWgConfig, AmneziaWgConfigError};
 ///
 /// This describes the protocol profile, not a negotiated handshake field.
 /// AmneziaWG peers must be configured for compatible profiles independently.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum AmneziaWgVersion {
     V1,
     V1_5,
@@ -574,6 +574,7 @@ impl AmneziaConfig {
     /// parameters. The generation controls version-specific packet behavior.
     pub(crate) fn with_detected_version(mut self, parameters: &[(&str, &str)]) -> Self {
         if let Some(version) = AmneziaWgVersion::detect_from_parameters(parameters) {
+            let version = self.protocol_version.map_or(version, |current| current.max(version));
             self.protocol_version = Some(version);
             self.legacy_content_padding = version == AmneziaWgVersion::V3;
         }
@@ -594,7 +595,7 @@ impl AmneziaConfig {
         self
     }
 
-    /// Enable AmneziaWG 3.1 header protection with a 32-byte ChaCha20 key.
+    /// Enable AmneziaWG 3.0+ header protection with a 32-byte ChaCha20 key.
     /// Passing an all-zero key disables protection, as in amneziawg-go.
     pub fn with_header_protection_key(mut self, key: [u8; 32]) -> Self {
         self.header_protection_key = key;
@@ -614,16 +615,6 @@ impl AmneziaConfig {
     /// Set the full uint32 ContentPaddingAddition range used by the AWG UAPI.
     pub fn with_content_padding_addition_range(mut self, min: u32, max: u32) -> Self {
         self.content_padding_addition = (min, max);
-        self
-    }
-
-    /// Select AWG 3.0's legacy MTU-bounded ContentPaddingAddition semantics.
-    ///
-    /// The default (`false`) matches AWG 3.1, which clamps CPA to the peer UDP
-    /// high-water mark. AWG 3.0 instead clamps it to the inner TUN MTU.
-    /// This is a local compatibility setting; AWG does not negotiate versions.
-    pub fn with_legacy_content_padding(mut self, enabled: bool) -> Self {
-        self.legacy_content_padding = enabled;
         self
     }
 
@@ -2347,9 +2338,14 @@ mod tests {
 
     #[test]
     fn content_padding_legacy_mode_matches_awg30_mtu_clamping() {
-        let legacy = AmneziaConfig::new(0, 0, 0, 0)
-            .with_content_padding_addition(100, 100)
-            .with_legacy_content_padding(true);
+        let legacy = AmneziaWgConfig {
+            header_protection_key: Some("00".repeat(32)),
+            content_padding_addition: Some("100".into()),
+            ..Default::default()
+        }
+        .build()
+        .unwrap()
+        .1;
         let mut rng = ChaCha8Rng::seed_from_u64(0xA030);
 
         // AWG 3.0 clamps against MTU - (packet_size % MTU), not UDP window.
@@ -2367,7 +2363,14 @@ mod tests {
             100
         );
 
-        let modern = AmneziaConfig::new(0, 0, 0, 0).with_content_padding_addition(100, 100);
+        let modern = AmneziaWgConfig {
+            random_trailers: Some(false),
+            content_padding_addition: Some("100".into()),
+            ..Default::default()
+        }
+        .build()
+        .unwrap()
+        .1;
         assert_eq!(
             modern.content_padding_size(1400, 1432, 1450, 1420, &mut rng),
             18,
