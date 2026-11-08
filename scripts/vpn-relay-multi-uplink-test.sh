@@ -149,7 +149,6 @@ nft_table = "vpn_relay_mu_client_$SUFFIX"
 
 [interfaces.wg-client]
 type = "wg"
-role = "client"
 ipv6_enabled = true
 address = ["10.77.0.2/24", "fd77::2/64"]
 listen_port = 51876
@@ -171,7 +170,6 @@ nft_table = "vpn_relay_mu_client2_$SUFFIX"
 
 [interfaces.wg-client-2]
 type = "wg"
-role = "client"
 ipv6_enabled = true
 address = ["10.77.0.3/24", "fd77::3/64"]
 listen_port = 51877
@@ -194,7 +192,6 @@ manage_ip_forwarding = true
 
 [interfaces.wg-ingress]
 type = "wg"
-role = "server"
 ipv6_enabled = true
 address = ["10.77.0.1/24", "fd77::1/64"]
 listen_port = 51871
@@ -211,7 +208,6 @@ allowed_ips = ["10.77.0.3/32", "fd77::3/128"]
 
 [interfaces.awg-primary]
 type = "awg"
-role = "client"
 ipv6_enabled = true
 address = ["10.20.0.1/24", "fd20::1/64"]
 listen_port = 51872
@@ -230,7 +226,6 @@ persistent_keepalive_secs = 1
 
 [interfaces.awg-secondary]
 type = "awg"
-role = "client"
 ipv6_enabled = true
 address = ["10.30.0.1/24", "fd30::1/64"]
 listen_port = 51874
@@ -305,7 +300,6 @@ nft_table = "vpn_relay_mu_primary_$SUFFIX"
 
 [interfaces.up-primary]
 type = "awg"
-role = "server"
 ipv6_enabled = true
 address = ["10.20.0.2/24", "fd20::2/64"]
 listen_port = 51873
@@ -329,7 +323,6 @@ nft_table = "vpn_relay_mu_secondary_$SUFFIX"
 
 [interfaces.up-secondary]
 type = "awg"
-role = "server"
 ipv6_enabled = true
 address = ["10.30.0.2/24", "fd30::2/64"]
 listen_port = 51875

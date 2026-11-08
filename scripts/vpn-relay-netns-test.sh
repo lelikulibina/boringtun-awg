@@ -73,7 +73,6 @@ manage_ip_forwarding = true
 
 [interfaces.wg-server]
 type = "wg"
-role = "server"
 ipv6_enabled = false
 address = ["10.10.0.1/24"]
 listen_port = 51820
@@ -82,7 +81,6 @@ socket_fwmark = 4097
 
 [interfaces.awg-primary]
 type = "awg"
-role = "client"
 ipv6_enabled = true
 address = ["10.20.0.2/32"]
 listen_port = 51821
@@ -99,7 +97,6 @@ disable_cookies = false
 
 [interfaces.awg-secondary]
 type = "awg"
-role = "client"
 ipv6_enabled = false
 address = ["10.30.0.2/32"]
 listen_port = 51822
@@ -210,6 +207,20 @@ for _ in $(seq 1 30); do
     sleep 1
 done
 ip netns exec "$NS" nft list table inet vpn_relay_it >/dev/null 2>&1 || fail "nftables table was not installed"
+
+# A second daemon in the same namespace must be rejected without disturbing
+# the already-running instance or its networking state.
+ip netns exec "$NS" "$BIN" --config "$TMP/config.toml" >"$TMP/duplicate.log" 2>&1 &
+DUPLICATE_PID=$!
+set +e
+wait "$DUPLICATE_PID"
+duplicate_status=$?
+set -e
+[[ $duplicate_status -ne 0 ]] || fail "daemon accepted a duplicate instance in the same namespace"
+grep -q "already running" "$TMP/duplicate.log" || fail "duplicate instance was rejected for an unexpected reason"
+kill -0 "$DAEMON_PID" 2>/dev/null || fail "original daemon exited after duplicate startup attempt"
+[[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "1" ]] || fail "duplicate startup changed IPv4 forwarding"
+
 [[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "1" ]] || fail "IPv4 forwarding was not enabled"
 [[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "1" ]] || fail "IPv6 forwarding was not enabled"
 
