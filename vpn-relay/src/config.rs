@@ -79,13 +79,6 @@ pub enum TunnelType {
     AmneziaWg,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum InterfaceRole {
-    Server,
-    Client,
-}
-
 /// Source NAT is a property of a selected routing rule, not of an interface.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -100,7 +93,6 @@ pub enum NatMode {
 pub struct InterfaceConfig {
     #[serde(rename = "type")]
     pub tunnel_type: TunnelType,
-    pub role: InterfaceRole,
     pub address: Vec<String>,
     #[serde(default = "default_mtu")]
     pub mtu: u16,
@@ -209,14 +201,16 @@ impl Config {
         Self::parse_toml(&input)
     }
 
-    /// Resolve the contiguous packet-mark range assigned to client interfaces.
-    /// The order matches RoutingPlan's lexicographically sorted egress list.
+    /// Resolve one packet mark for each distinct egress referenced by routing rules.
+    /// The order matches the lexicographically sorted egress list in RoutingPlan.
     pub fn resolved_routing_fwmarks(&self) -> Result<Vec<u32>, ConfigError> {
         let egress_count = self
-            .interfaces
-            .values()
-            .filter(|interface| interface.role == InterfaceRole::Client)
-            .count();
+            .routing
+            .rules
+            .iter()
+            .map(|rule| rule.egress.as_str())
+            .collect::<std::collections::BTreeSet<_>>()
+            .len();
         (0..egress_count)
             .map(|index| {
                 self.routing
@@ -404,34 +398,22 @@ impl Config {
                     rule.priority, rule.ingress
                 ));
             }
-            let ingress = self.interfaces.get(rule.ingress.as_str()).ok_or_else(|| {
-                ConfigError::Validation(format!(
+            if !self.interfaces.contains_key(rule.ingress.as_str()) {
+                return invalid(format!(
                     "routing rule references unknown ingress '{}'",
                     rule.ingress
-                ))
-            })?;
-            let egress = self.interfaces.get(rule.egress.as_str()).ok_or_else(|| {
-                ConfigError::Validation(format!(
+                ));
+            }
+            if !self.interfaces.contains_key(rule.egress.as_str()) {
+                return invalid(format!(
                     "routing rule references unknown egress '{}'",
                     rule.egress
-                ))
-            })?;
+                ));
+            }
             if rule.ingress == rule.egress {
                 return invalid(format!(
                     "routing rule cannot use '{}' as both ingress and egress",
                     rule.ingress
-                ));
-            }
-            if ingress.role != InterfaceRole::Server {
-                return invalid(format!(
-                    "routing ingress '{}' must have role = 'server'",
-                    rule.ingress
-                ));
-            }
-            if egress.role != InterfaceRole::Client {
-                return invalid(format!(
-                    "routing egress '{}' must have role = 'client'",
-                    rule.egress
                 ));
             }
             let source_prefixes = rule
@@ -637,7 +619,6 @@ manage_ip_forwarding = false
 
 [interfaces.wg-server]
 type = "wg"
-role = "server"
 address = ["10.10.0.1/24"]
 mtu = 1380
 listen_port = 51820
@@ -650,7 +631,6 @@ allowed_ips = ["10.10.0.2/32"]
 
 [interfaces.awg-uplink]
 type = "awg"
-role = "client"
 address = ["10.20.0.2/32"]
 mtu = 1380
 listen_port = 51821
@@ -1069,7 +1049,7 @@ egress = "awg-uplink"
         // server interface before parsing.
         let input = input.replace(
             "[interfaces.awg-uplink]",
-            "[interfaces.wg-backup]\ntype = \"wg\"\nrole = \"server\"\naddress = [\"10.11.0.1/24\"]\nlisten_port = 51823\nprivate_key = \"{KEY}\"\nsocket_fwmark = 4100\n\n[interfaces.awg-uplink]",
+            "[interfaces.wg-backup]\ntype = \"wg\"\naddress = [\"10.11.0.1/24\"]\nlisten_port = 51823\nprivate_key = \"{KEY}\"\nsocket_fwmark = 4100\n\n[interfaces.awg-uplink]",
         ).replace("priority = 100\ningress = \"wg-server\"\ndestination = \"::/0\"", "priority = 100\ningress = \"wg-backup\"\ndestination = \"::/0\" ")
         .replace("{KEY}", KEY);
         assert!(Config::parse_toml(&input).is_ok());
@@ -1102,18 +1082,23 @@ egress = "awg-uplink"
     }
 
     #[test]
-    fn rejects_wrong_interface_roles_for_routing_direction() {
-        let wrong_ingress = valid_config().replacen("role = \"server\"", "role = \"client\"", 1);
-        assert!(Config::parse_toml(&wrong_ingress)
-            .unwrap_err()
-            .to_string()
-            .contains("must have role = 'server'"));
+    fn interfaces_can_be_used_in_both_routing_directions() {
+        let input = valid_config().replace(
+            "priority = 110\ningress = \"wg-server\"\ndestination = \"::/0\"\negress = \"awg-uplink\"",
+            "priority = 110\ningress = \"wg-server\"\ndestination = \"::/0\"\negress = \"awg-uplink\"\n\n[[routing.rules]]\npriority = 120\ningress = \"awg-uplink\"\ndestination = \"10.0.0.0/24\"\negress = \"wg-server\""
+        );
+        let config = Config::parse_toml(&input).unwrap();
+        assert_eq!(config.resolved_routing_fwmarks().unwrap().len(), 2);
+    }
 
-        let wrong_egress = valid_config().replacen("role = \"client\"", "role = \"server\"", 1);
-        assert!(Config::parse_toml(&wrong_egress)
-            .unwrap_err()
-            .to_string()
-            .contains("must have role = 'client'"));
+    #[test]
+    fn routing_marks_are_allocated_only_for_distinct_configured_egresses() {
+        let mut config = Config::parse_toml(&valid_config()).unwrap();
+        config.routing.rules.truncate(1);
+        assert_eq!(
+            config.resolved_routing_fwmarks().unwrap(),
+            vec![config.routing.mark_base]
+        );
     }
 
     #[test]

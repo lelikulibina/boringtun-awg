@@ -1,5 +1,5 @@
 //! Import standard WireGuard and AmneziaWG INI configurations.
-use crate::config::{Config, InterfaceConfig, InterfaceRole, PeerConfig, TunnelType};
+use crate::config::{Config, InterfaceConfig, PeerConfig, TunnelType};
 use boringtun::noise::amnezia::AmneziaWgConfig;
 use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
@@ -23,7 +23,6 @@ pub enum ImportError {
 #[derive(Debug)]
 pub struct ImportReport {
     pub tunnel_type: TunnelType,
-    pub role: InterfaceRole,
     pub warnings: Vec<String>,
     pub replaced: bool,
 }
@@ -78,7 +77,6 @@ pub fn import_file(
         atomic_write(config_path, rendered.as_bytes())?;
         Ok(ImportReport {
             tunnel_type: interface.tunnel_type,
-            role: interface.role,
             warnings,
             replaced,
         })
@@ -103,7 +101,6 @@ pub fn import_file(
         atomic_write(config_path, rendered.as_bytes())?;
         Ok(ImportReport {
             tunnel_type: interface.tunnel_type,
-            role: interface.role,
             warnings,
             replaced: false,
         })
@@ -274,7 +271,6 @@ fn parse_interface(source: &str) -> Result<(InterfaceConfig, Vec<String>), Impor
     }
 
     let mut parsed_peers = Vec::new();
-    let mut endpoint_count = 0usize;
     let mut ipv6_enabled = address.iter().any(|a| a.contains(':'));
     for (index, values) in peers.iter().enumerate() {
         let public_key = required(
@@ -286,9 +282,6 @@ fn parse_interface(source: &str) -> Result<(InterfaceConfig, Vec<String>), Impor
         let allowed_ips = list_optional(values, "allowedips");
         ipv6_enabled |= allowed_ips.iter().any(|a| a.contains(':'));
         let endpoint = values.get("endpoint").cloned();
-        if endpoint.is_some() {
-            endpoint_count += 1;
-        }
         let persistent_keepalive_secs = values
             .get("persistentkeepalive")
             .filter(|v| !v.eq_ignore_ascii_case("off") && *v != "0")
@@ -313,18 +306,6 @@ fn parse_interface(source: &str) -> Result<(InterfaceConfig, Vec<String>), Impor
             }
         }
     }
-    let role = if peers.is_empty() {
-        return Err(ImportError::Parse("cannot infer interface role: no [Peer] sections; specify at least one peer so Endpoint presence can distinguish client from server".into()));
-    } else if endpoint_count == peers.len() {
-        InterfaceRole::Client
-    } else if endpoint_count == 0 {
-        InterfaceRole::Server
-    } else {
-        return Err(ImportError::Parse(
-            "ambiguous interface role: some peers have Endpoint and others do not".into(),
-        ));
-    };
-
     let awg = parse_awg(&interface)?;
     let tunnel_type = if awg.is_some() {
         TunnelType::AmneziaWg
@@ -333,7 +314,6 @@ fn parse_interface(source: &str) -> Result<(InterfaceConfig, Vec<String>), Impor
     };
     let config = InterfaceConfig {
         tunnel_type,
-        role,
         address,
         mtu,
         ipv6_enabled,
@@ -545,10 +525,9 @@ PersistentKeepalive = 25
 "#;
 
     #[test]
-    fn imports_wireguard_client_and_reports_unmapped_options() {
+    fn imports_wireguard_profiles_without_inferring_router_roles() {
         let (cfg, warnings) = parse_interface(CLIENT).unwrap();
         assert_eq!(cfg.tunnel_type, TunnelType::WireGuard);
-        assert_eq!(cfg.role, InterfaceRole::Client);
         assert_eq!(cfg.address, vec!["10.0.0.2/32", "fd00::2/128"]);
         assert_eq!(cfg.listen_port, None);
         assert!(cfg.ipv6_enabled);
@@ -621,11 +600,11 @@ PersistentKeepalive = 25
     }
 
     #[test]
-    fn rejects_mixed_endpoint_role_inference() {
+    fn imports_mixed_peer_endpoint_configuration_without_guessing_a_role() {
         let input = format!(
             "{}\n[Peer]\nPublicKey = CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC=\nAllowedIPs = 10.0.0.3/32\n",
             CLIENT
         );
-        assert!(parse_interface(&input).is_err());
+        assert!(parse_interface(&input).is_ok());
     }
 }

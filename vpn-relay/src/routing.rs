@@ -4,7 +4,7 @@
 //! validated TOML configuration into deterministic nftables and policy-routing
 //! operations; the runtime layer can apply these operations transactionally.
 
-use crate::config::{Config, InterfaceRole, NatMode};
+use crate::config::{Config, NatMode};
 use std::collections::BTreeMap;
 
 const FIRST_ROUTING_TABLE: u32 = 10_000;
@@ -51,9 +51,9 @@ impl RoutingPlan {
     pub fn from_config(config: &Config) -> Self {
         let egress_names: Vec<_> = config
             .interfaces
-            .iter()
-            .filter(|(_, interface)| interface.role == InterfaceRole::Client)
-            .map(|(name, _)| name.as_str())
+            .keys()
+            .filter(|name| config.routing.rules.iter().any(|rule| &rule.egress == *name))
+            .map(String::as_str)
             .collect();
         let routing_marks = config
             .resolved_routing_fwmarks()
@@ -412,7 +412,6 @@ mod tests {
             r#"
 [interfaces.wg-server]
 type = "wg"
-role = "server"
 ipv6_enabled = true
 address = ["10.0.0.1/24"]
 listen_port = 51820
@@ -421,7 +420,6 @@ socket_fwmark = 4097
 
 [interfaces.awg-primary]
 type = "awg"
-role = "client"
 ipv6_enabled = true
 address = ["10.1.0.2/32"]
 listen_port = 51821
@@ -430,7 +428,6 @@ socket_fwmark = 4098
 
 [interfaces.awg-secondary]
 type = "awg"
-role = "client"
 ipv6_enabled = true
 address = ["10.2.0.2/32"]
 listen_port = 51822
