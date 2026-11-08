@@ -52,7 +52,13 @@ impl RoutingPlan {
         let egress_names: Vec<_> = config
             .interfaces
             .keys()
-            .filter(|name| config.routing.rules.iter().any(|rule| &rule.egress == *name))
+            .filter(|name| {
+                config
+                    .routing
+                    .rules
+                    .iter()
+                    .any(|rule| &rule.egress == *name)
+            })
             .map(String::as_str)
             .collect();
         let routing_marks = config

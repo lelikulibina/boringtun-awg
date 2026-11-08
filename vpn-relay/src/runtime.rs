@@ -280,10 +280,8 @@ mod tests {
 
     #[test]
     fn instance_lock_rejects_a_second_process_and_releases_on_drop() {
-        let path = std::env::temp_dir().join(format!(
-            "vpn-relay-lock-test-{}.lock",
-            std::process::id()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("vpn-relay-lock-test-{}.lock", std::process::id()));
         let _ = std::fs::remove_file(&path);
         let first = InstanceLock::acquire(&path).unwrap();
         assert!(matches!(
