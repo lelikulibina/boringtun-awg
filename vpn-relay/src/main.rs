@@ -59,10 +59,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         let report = vpn_relay::import::import_file(&source, &config_path, &name, exists)?;
-        println!(
-            "Импортирован интерфейс '{name}': {:?}, роль {:?}.",
-            report.tunnel_type, report.role
-        );
+        println!("Импортирован интерфейс '{name}': {:?}.", report.tunnel_type);
         if report.replaced {
             println!(
                 "Существующий интерфейс заменён; остальные интерфейсы и routing rules сохранены."

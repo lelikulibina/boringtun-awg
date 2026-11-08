@@ -3,12 +3,12 @@ use crate::backend::{BackendError, BackendRegistry, TunnelHandle, TunnelSnapshot
 use crate::config::Config;
 use crate::linux::{self, LinuxError};
 use crate::routing::RoutingPlan;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
 use std::fs::{File, OpenOptions};
 use std::os::fd::AsRawFd;
-use std::os::unix::fs::OpenOptionsExt;
-use std::path::Path;
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
 
@@ -42,16 +42,38 @@ pub struct Runtime {
     _instance_lock: InstanceLock,
 }
 
-struct InstanceLock { _file: File }
+struct InstanceLock {
+    _file: File,
+}
 
 impl InstanceLock {
+    /// Key the lock by the current network namespace inode. This allows
+    /// independent daemons in separate namespaces while preventing duplicate
+    /// instances inside the same namespace.
+    fn path_for_netns_inode(inode: u64) -> PathBuf {
+        PathBuf::from(format!("/run/vpn-relay-netns-{inode}.lock"))
+    }
+
+    fn current_netns_path() -> Result<PathBuf, RuntimeError> {
+        let metadata = std::fs::metadata("/proc/self/ns/net")
+            .map_err(|error| RuntimeError::InstanceLock(error.to_string()))?;
+        Ok(Self::path_for_netns_inode(metadata.ino()))
+    }
+
     fn acquire(path: &Path) -> Result<Self, RuntimeError> {
-        let file = OpenOptions::new().read(true).write(true).create(true).mode(0o600).open(path)
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .mode(0o600)
+            .open(path)
             .map_err(|error| RuntimeError::InstanceLock(error.to_string()))?;
         let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
         if result != 0 {
             let error = std::io::Error::last_os_error();
-            if error.kind() == std::io::ErrorKind::WouldBlock { return Err(RuntimeError::AlreadyRunning(path.display().to_string())); }
+            if error.kind() == std::io::ErrorKind::WouldBlock {
+                return Err(RuntimeError::AlreadyRunning(path.display().to_string()));
+            }
             return Err(RuntimeError::InstanceLock(error.to_string()));
         }
         Ok(Self { _file: file })
@@ -70,7 +92,8 @@ impl Runtime {
         config
             .validate()
             .map_err(|error| RuntimeError::Configuration(error.to_string()))?;
-        let instance_lock = InstanceLock::acquire(Path::new("/run/vpn-relay.lock"))?;
+        let lock_path = InstanceLock::current_netns_path()?;
+        let instance_lock = InstanceLock::acquire(&lock_path)?;
         let socket_fwmarks = config
             .resolved_socket_fwmarks()
             .map_err(|error| RuntimeError::Configuration(error.to_string()))?;
@@ -270,5 +293,17 @@ mod tests {
         drop(first);
         assert!(InstanceLock::acquire(&path).is_ok());
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn network_namespace_lock_paths_are_keyed_by_namespace_inode() {
+        assert_ne!(
+            InstanceLock::path_for_netns_inode(100),
+            InstanceLock::path_for_netns_inode(200)
+        );
+        assert_eq!(
+            InstanceLock::current_netns_path().unwrap(),
+            InstanceLock::current_netns_path().unwrap()
+        );
     }
 }

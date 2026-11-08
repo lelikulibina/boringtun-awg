@@ -79,7 +79,7 @@ sudo target/debug/vpn-relay --config /etc/vpn-relay/config.toml --import wg0.con
 
 If the interface name already exists, the importer asks before replacing it. Use `--yes` for non-interactive replacement. The import changes only the selected interface; other interfaces and routing rules remain intact. A missing `ListenPort` is imported as automatic UDP port selection. Unsupported wg-quick directives (for example `DNS`, `Table`, and hooks) are listed in the import report rather than silently applied.
 
-The daemon configuration uses the singular `address` key, matching the original WireGuard/AmneziaWG `Address` directive. AmneziaWG protocol generation is inferred and validated inside BoringTun from the configured parameters and enabled features; no separate version setting is needed.
+The daemon configuration uses the singular `address` key, matching the original WireGuard/AmneziaWG `Address` directive. AmneziaWG protocol generation is inferred and validated inside BoringTun from the configured parameters and enabled features; no separate version setting is needed. Interface direction is not configured separately: `routing.rules` defines ingress and egress, and a tunnel may participate in either or both directions. Routing packet marks are allocated only for distinct egress interfaces referenced by those rules.
 
 Replace all example keys and endpoint hostnames before starting the daemon. Then run:
 

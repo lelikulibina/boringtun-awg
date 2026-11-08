@@ -10,7 +10,6 @@ manage_ip_forwarding = false
 
 [interfaces.wg-server]
 type = "wg"
-role = "server"
 ipv6_enabled = true
 address = ["10.10.0.1/24"]
 mtu = 1380
@@ -24,7 +23,6 @@ persistent_keepalive_secs = 25
 
 [interfaces.awg-primary]
 type = "awg"
-role = "client"
 ipv6_enabled = true
 address = ["10.20.0.2/32"]
 mtu = 1380
@@ -71,7 +69,6 @@ persistent_keepalive_secs = 25
 
 [interfaces.awg-secondary]
 type = "awg"
-role = "client"
 ipv6_enabled = true
 address = ["10.30.0.2/32"]
 mtu = 1380
