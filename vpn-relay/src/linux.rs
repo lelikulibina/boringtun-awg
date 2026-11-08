@@ -1,6 +1,7 @@
 //! Linux command execution for daemon-owned network resources.
 use crate::routing::RoutingPlan;
 use std::io::Write;
+use serde_json::Value;
 use std::process::{Command, Stdio};
 
 // Reserved iproute2 protocol tag identifying resources owned by vpn-relay.
@@ -50,88 +51,49 @@ pub fn run_ip(args: &[String]) -> Result<(), LinuxError> {
     run("ip", args)
 }
 
-/// Replace only the table named by this daemon's configuration, then apply
-/// its complete nft batch. nft processes the batch transactionally.
-pub fn apply_nft(plan: &RoutingPlan) -> Result<(), LinuxError> {
-    let existing = Command::new("nft")
-        .args(["list", "table", &plan.nft_family, &plan.nft_table])
-        .output()
-        .map_err(|source| LinuxError::Spawn {
-            program: "nft".into(),
-            source,
-        })?;
-    let mut script = String::new();
-    if existing.status.success() {
-        let current = String::from_utf8_lossy(&existing.stdout);
-        if !current.contains("comment \"managed by vpn-relay\"") {
-            return Err(LinuxError::Conflict {
-                resource: format!("nft table {} {}", plan.nft_family, plan.nft_table),
-                details: "table exists but has no vpn-relay ownership comment".into(),
-            });
-        }
-        script.push_str(&format!(
-            "delete table {} {}\n",
-            plan.nft_family, plan.nft_table
-        ));
-    }
-    script.push_str(&plan.nft_script());
+/// Return true only when the nftables table object itself carries our ownership marker.
+fn table_is_owned(json: &str, family: &str, name: &str) -> bool {
+    let Ok(document) = serde_json::from_str::<Value>(json) else { return false; };
+    document.get("nftables").and_then(Value::as_array).is_some_and(|items| items.iter().any(|item| {
+        let Some(table) = item.get("table") else { return false; };
+        table.get("family").and_then(Value::as_str) == Some(family)
+            && table.get("name").and_then(Value::as_str) == Some(name)
+            && table.get("comment").and_then(Value::as_str) == Some("managed by vpn-relay")
+    }))
+}
 
-    let mut child = Command::new("nft")
-        .args(["-f", "-"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|source| LinuxError::Spawn {
-            program: "nft".into(),
-            source,
-        })?;
-    child
-        .stdin
-        .take()
-        .expect("piped stdin")
-        .write_all(script.as_bytes())
-        .map_err(|source| LinuxError::Spawn {
-            program: "nft stdin".into(),
-            source,
-        })?;
-    let output = child
-        .wait_with_output()
-        .map_err(|source| LinuxError::Spawn {
-            program: "nft".into(),
-            source,
-        })?;
-    if output.status.success() {
-        return Ok(());
+fn inspect_nft_table(plan: &RoutingPlan) -> Result<bool, LinuxError> {
+    let existing = Command::new("nft").args(["-j", "list", "table", &plan.nft_family, &plan.nft_table]).output()
+        .map_err(|source| LinuxError::Spawn { program: "nft".into(), source })?;
+    if !existing.status.success() {
+        let stderr = String::from_utf8_lossy(&existing.stderr);
+        if stderr.contains("No such file or directory") || stderr.contains("does not exist") { return Ok(false); }
+        return Err(LinuxError::Command { program: "nft -j list table".into(), status: existing.status.to_string(), stderr: stderr.trim().into() });
     }
-    Err(LinuxError::Command {
-        program: "nft -f -".into(),
-        status: output.status.to_string(),
-        stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
-    })
+    if table_is_owned(&String::from_utf8_lossy(&existing.stdout), &plan.nft_family, &plan.nft_table) {
+        Ok(true)
+    } else {
+        Err(LinuxError::Conflict { resource: format!("nft table {} {}", plan.nft_family, plan.nft_table), details: "table exists but its table-level ownership marker is absent or invalid".into() })
+    }
+}
+
+/// Replace only a table whose table-level metadata proves ownership.
+pub fn apply_nft(plan: &RoutingPlan) -> Result<(), LinuxError> {
+    let mut script = String::new();
+    if inspect_nft_table(plan)? { script.push_str(&format!("delete table {} {}\n", plan.nft_family, plan.nft_table)); }
+    script.push_str(&plan.nft_script());
+    let mut child = Command::new("nft").args(["-f", "-"]).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped())
+        .spawn().map_err(|source| LinuxError::Spawn { program: "nft".into(), source })?;
+    child.stdin.take().expect("piped stdin").write_all(script.as_bytes())
+        .map_err(|source| LinuxError::Spawn { program: "nft stdin".into(), source })?;
+    let output = child.wait_with_output().map_err(|source| LinuxError::Spawn { program: "nft".into(), source })?;
+    if output.status.success() { return Ok(()); }
+    Err(LinuxError::Command { program: "nft -f -".into(), status: output.status.to_string(), stderr: String::from_utf8_lossy(&output.stderr).trim().into() })
 }
 
 pub fn remove_nft(plan: &RoutingPlan) {
-    let Ok(existing) = Command::new("nft")
-        .args(["list", "table", &plan.nft_family, &plan.nft_table])
-        .output()
-    else {
-        return;
-    };
-    if !existing.status.success()
-        || !String::from_utf8_lossy(&existing.stdout).contains("comment \"managed by vpn-relay\"")
-    {
-        return;
-    }
-    let _ = run(
-        "nft",
-        &[
-            "delete".into(),
-            "table".into(),
-            plan.nft_family.clone(),
-            plan.nft_table.clone(),
-        ],
-    );
+    if !matches!(inspect_nft_table(plan), Ok(true)) { return; }
+    let _ = run("nft", &["delete".into(), "table".into(), plan.nft_family.clone(), plan.nft_table.clone()]);
 }
 
 fn rule_has_owned_identity(line: &str, mark: u32, table: &str) -> bool {
@@ -488,6 +450,17 @@ pub fn configure_interface(name: &str, mtu: u16, addresses: &[String]) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nft_ownership_requires_table_level_comment_and_exact_identity() {
+        let owned = r#"{"nftables":[{"table":{"family":"inet","name":"vpn_relay","comment":"managed by vpn-relay"}}]}"#;
+        assert!(table_is_owned(owned, "inet", "vpn_relay"));
+        assert!(!table_is_owned(owned, "ip", "vpn_relay"));
+        assert!(!table_is_owned(owned, "inet", "other"));
+        let rule_comment = r#"{"nftables":[{"table":{"family":"inet","name":"vpn_relay"}},{"rule":{"family":"inet","table":"vpn_relay","comment":"managed by vpn-relay"}}]}"#;
+        assert!(!table_is_owned(rule_comment, "inet", "vpn_relay"));
+        assert!(!table_is_owned("not json", "inet", "vpn_relay"));
+    }
 
     #[test]
     fn recognizes_only_exact_daemon_owned_ip_rules() {

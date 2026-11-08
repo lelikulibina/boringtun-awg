@@ -5,6 +5,10 @@ use crate::linux::{self, LinuxError};
 use crate::routing::RoutingPlan;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
+use std::fs::{File, OpenOptions};
+use std::os::fd::AsRawFd;
+use std::os::unix::fs::OpenOptionsExt;
+use std::path::Path;
 
 static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
 
@@ -22,6 +26,10 @@ pub enum RuntimeError {
     Configuration(String),
     #[error("failed to enable IP forwarding: {0}")]
     Forwarding(String),
+    #[error("another vpn-relay instance is already running (lock: {0})")]
+    AlreadyRunning(String),
+    #[error("failed to acquire daemon instance lock: {0}")]
+    InstanceLock(String),
     #[error("failed to install signal handler: {0}")]
     Signal(String),
 }
@@ -31,6 +39,23 @@ pub struct Runtime {
     routing: RoutingPlan,
     stats_interval: Duration,
     forwarding_state: Option<ForwardingState>,
+    _instance_lock: InstanceLock,
+}
+
+struct InstanceLock { _file: File }
+
+impl InstanceLock {
+    fn acquire(path: &Path) -> Result<Self, RuntimeError> {
+        let file = OpenOptions::new().read(true).write(true).create(true).mode(0o600).open(path)
+            .map_err(|error| RuntimeError::InstanceLock(error.to_string()))?;
+        let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+        if result != 0 {
+            let error = std::io::Error::last_os_error();
+            if error.kind() == std::io::ErrorKind::WouldBlock { return Err(RuntimeError::AlreadyRunning(path.display().to_string())); }
+            return Err(RuntimeError::InstanceLock(error.to_string()));
+        }
+        Ok(Self { _file: file })
+    }
 }
 
 struct ForwardingState {
@@ -45,6 +70,7 @@ impl Runtime {
         config
             .validate()
             .map_err(|error| RuntimeError::Configuration(error.to_string()))?;
+        let instance_lock = InstanceLock::acquire(Path::new("/run/vpn-relay.lock"))?;
         let socket_fwmarks = config
             .resolved_socket_fwmarks()
             .map_err(|error| RuntimeError::Configuration(error.to_string()))?;
@@ -91,6 +117,7 @@ impl Runtime {
             routing,
             stats_interval: Duration::from_secs(config.daemon.stats_interval_secs),
             forwarding_state,
+            _instance_lock: instance_lock,
         })
     }
 
@@ -222,4 +249,26 @@ fn enable_forwarding() -> Result<ForwardingState, RuntimeError> {
 fn restore_forwarding(state: &ForwardingState) {
     let _ = write_sysctl("net.ipv4.ip_forward", &state.ipv4);
     let _ = write_sysctl("net.ipv6.conf.all.forwarding", &state.ipv6);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn instance_lock_rejects_a_second_process_and_releases_on_drop() {
+        let path = std::env::temp_dir().join(format!(
+            "vpn-relay-lock-test-{}.lock",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        let first = InstanceLock::acquire(&path).unwrap();
+        assert!(matches!(
+            InstanceLock::acquire(&path),
+            Err(RuntimeError::AlreadyRunning(_))
+        ));
+        drop(first);
+        assert!(InstanceLock::acquire(&path).is_ok());
+        let _ = std::fs::remove_file(&path);
+    }
 }

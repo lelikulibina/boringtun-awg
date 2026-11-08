@@ -161,8 +161,6 @@ QUICK_PROFILES = [
         "AWG 2.x baseline",
         "bulk data integrity — AWG 3.0",
         "bulk data integrity — AWG 3.1",
-        "accelerated rekey",
-        "rekey packet-loss recovery",
         "all AWG 3.1 extensions combined",
         "CPS I1-I5 combined",
     }
@@ -182,6 +180,13 @@ AWG30_PROFILES = [
         "randomized timers",
         "CPS I1-I5 combined",
     }
+]
+
+# Keep the fast job representative without running the exhaustive generation
+# matrix: one bidirectional AWG 3.0 transport profile is enough here.
+AWG30_QUICK_PROFILES = [
+    profile for profile in AWG30_PROFILES
+    if profile[0] in {"AWG 2.x baseline", "bulk data integrity — AWG 3.0"}
 ]
 
 
@@ -1091,7 +1096,7 @@ def main() -> int:
     else:
         selected_profiles = PROFILES if full_matrix else QUICK_PROFILES
         suite_name = "full" if full_matrix else "quick"
-        print(f"MODE: {suite_name} interoperability suite ({len(selected_profiles) * 2} directional scenarios)")
+        print(f"MODE: {suite_name} AWG 3.1 interoperability suite ({len(selected_profiles) * 2} directional scenarios)")
         for name, extra, awg_enabled in selected_profiles:
             for bt_is_server in (True, False):
                 total += 1
@@ -1105,8 +1110,9 @@ def main() -> int:
                     role = "BoringTun server" if bt_is_server else "amneziawg-go server"
                     print(f"FAIL {name} ({role}): {error}", file=sys.stderr)
     if awg30 is not None and not performance:
-        print(f"MODE: official AWG 3.0.0 reference suite ({len(AWG30_PROFILES) * 2} directional scenarios)")
-        for name, extra, awg_enabled in AWG30_PROFILES:
+        selected_awg30_profiles = AWG30_PROFILES if full_matrix else AWG30_QUICK_PROFILES
+        print(f"MODE: official AWG 3.0.0 reference suite ({len(selected_awg30_profiles) * 2} directional scenarios)")
+        for name, extra, awg_enabled in selected_awg30_profiles:
             for bt_is_server in (True, False):
                 total += 1
                 try:
