@@ -49,7 +49,7 @@ dump_namespace_diagnostics() {
     ip netns exec "$ns" nft -a list ruleset >&2 || true
     if [[ "$ns" == "$CLIENT_NS" ]]; then
         ip -n "$ns" -4 route get 192.0.2.1 mark 5002 >&2 || true
-        ip -n "$ns" -4 route get 192.0.2.1 mark 0x80000000 >&2 || true
+        ip -n "$ns" -4 route get 10.77.0.1 >&2 || true
     fi
 }
 
@@ -172,7 +172,7 @@ inner_route=""
 routing_ready=0
 for _ in $(seq 1 40); do
     socket_route="$(ip -n "$CLIENT_NS" route get 192.0.2.1 mark 5002 2>&1 || true)"
-    inner_route="$(ip -n "$CLIENT_NS" route get 192.0.2.1 mark 0x80000000 2>&1 || true)"
+    inner_route="$(ip -n "$CLIENT_NS" route get 10.77.0.1 2>&1 || true)"
     if grep -q "dev $CLIENT_VETH" <<<"$socket_route" \
         && grep -q "dev wg-peer-test" <<<"$inner_route" \
         && ip netns exec "$CLIENT_NS" nft list table inet "vpn_relay_peer_cli_$SUFFIX" >/dev/null 2>&1 \
@@ -184,11 +184,11 @@ for _ in $(seq 1 40); do
 done
 [[ "$routing_ready" -eq 1 ]] || fail "daemon routing setup did not become ready (socket: $socket_route; inner: $inner_route)"
 
-# Outer encrypted UDP sockets must use the main underlay route, while packets
-# carrying the inner-routing mark must use the TUN egress table. This catches
-# accidental mark overlap and the most common tunnel-loop regression.
+# Outer encrypted UDP sockets must use the main underlay route, while
+# packets addressed to the remote tunnel peer must use the TUN interface.
+# This catches accidental socket-mark overlap and tunnel-loop regressions.
 grep -q "dev $CLIENT_VETH" <<<"$socket_route" || fail "outer UDP socket mark escaped the underlay route: $socket_route"
-grep -q "dev wg-peer-test" <<<"$inner_route" || fail "inner routing mark did not select the TUN egress: $inner_route"
+grep -q "dev wg-peer-test" <<<"$inner_route" || fail "remote tunnel address did not route through the TUN: $inner_route"
 
 # A successful ping requires an authenticated handshake and real encrypted
 # packet delivery over the veth-backed UDP underlay.
