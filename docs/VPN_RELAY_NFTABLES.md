@@ -490,3 +490,27 @@ network namespace:
 - `vpn-relay/src/config.rs` — конфигурационная модель и validation.
 - `scripts/vpn-relay-netns-test.sh` — privileged network namespace integration.
 - `vpn-relay/vpn-relay.example.toml` — пример routing rules и daemon settings.
+
+
+## 15. Conntrack decision identity и startup ordering
+
+Каждое новое соединение, совпавшее с routing rule, получает два независимых
+значения:
+
+- `meta mark` — выбирает таблицу маршрутизации конкретного egress;
+- `ct mark` — идентифицирует именно то routing decision, которое выбрано
+  классификатором.
+
+Несколько правил могут иметь один routing mark, если используют один egress,
+но conntrack decision id у них различается. Это важно, когда у правил разные
+NAT actions. Established original-direction пакеты восстанавливают meta mark
+из conntrack decision id. Reply-direction пакеты используют main table и
+разрешаются FORWARD только для обратной пары интерфейсов с тем же decision id.
+
+NAT проверяет conntrack decision id вместе с исходной ingress/egress парой.
+Он не выполняет повторный выбор по source/destination selectors, поэтому
+пересекающиеся selectors не могут переключить NAT action после выбора маршрута.
+
+Startup выполняется в безопасном порядке: nftables policy, policy routes,
+затем IP forwarding. При отказе policy routing удаляется установленная nftables
+table; при отказе включения forwarding откатываются policy routes и nftables.

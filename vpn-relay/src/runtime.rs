@@ -115,24 +115,28 @@ impl Runtime {
             devices.push(handle);
         }
 
+        // Install the fail-closed packet policy before adding policy routes or
+        // enabling kernel forwarding. This prevents a startup window in which
+        // managed TUN traffic could be forwarded without the firewall policy.
+        linux::apply_nft(&routing)?;
+
+        if let Err(error) = linux::apply_policy_routing(&routing) {
+            linux::remove_nft(&routing);
+            return Err(error.into());
+        }
+
         let forwarding_state = if config.daemon.manage_ip_forwarding {
-            Some(enable_forwarding()?)
+            match enable_forwarding() {
+                Ok(state) => Some(state),
+                Err(error) => {
+                    linux::remove_policy_routing(&routing);
+                    linux::remove_nft(&routing);
+                    return Err(error);
+                }
+            }
         } else {
             None
         };
-        if let Err(error) = linux::apply_policy_routing(&routing) {
-            if let Some(state) = &forwarding_state {
-                restore_forwarding(state);
-            }
-            return Err(error.into());
-        }
-        if let Err(error) = linux::apply_nft(&routing) {
-            linux::remove_policy_routing(&routing);
-            if let Some(state) = &forwarding_state {
-                restore_forwarding(state);
-            }
-            return Err(error.into());
-        }
 
         tracing::info!(interfaces = devices.len(), "vpn-relay runtime started");
         Ok(Self {

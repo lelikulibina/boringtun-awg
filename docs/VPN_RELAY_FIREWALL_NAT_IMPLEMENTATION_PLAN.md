@@ -206,15 +206,19 @@ to = "203.0.113.10"
 - [x] Выделить внутреннюю модель выбранного правила: `RoutingDecision`
   содержит ingress, egress, source/destination selectors, отдельные поля
   routing mark и conntrack mark, а также NAT action.
-- [x] Оба mark получают одно значение из единого egress mark allocation;
-  classifier записывает их явно в meta mark и ct mark.
-- [ ] Генерировать классификацию новых соединений из единого упорядоченного
-  набора решений.
-- [ ] Сохранить выбранный egress в conntrack mark для всего потока.
-- [ ] Применять NAT по сохранённому решению, не повторяя независимый выбор
-  по потенциально отличающимся селекторам.
-- [ ] Зафиксировать поведение при overlapping routing selectors и одинаковом
-  egress у нескольких правил.
+- [x] Routing mark назначается egress-интерфейсу и разделяется решениями,
+  использующими один uplink.
+- [x] Conntrack mark уникально идентифицирует выбранное routing decision,
+  даже если несколько правил используют один egress.
+- [x] Классификация новых соединений записывает routing mark и уникальный
+  conntrack mark из одного упорядоченного набора решений.
+- [x] Для established original-direction пакетов routing mark восстанавливается
+  по conntrack decision id; reply-direction возвращается в main table.
+- [x] FORWARD reply и NAT используют тот же уникальный conntrack decision id.
+- [x] NAT ограничен исходной ingress/egress парой, поэтому чужой conntrack mark
+  сам по себе не может применить NAT на произвольном интерфейсе.
+- [~] Unit tests описывают пересекающиеся selectors с одним egress и разными
+  NAT actions; реальное поведение nftables и packet-level тест ещё ожидают CI.
 - [ ] Проверить отсутствие коллизий socket fwmark и routing marks.
 - [ ] Сохранить детерминированность генерации nftables/iproute2 plan.
 
@@ -288,7 +292,12 @@ unmanaged output остаётся неизменным.
 
 - [ ] Сформировать полный immutable plan до изменения системного состояния.
 - [ ] Установить все необходимые ресурсы в безопасном порядке.
-- [ ] Не допускать включения forwarding/маршрутов до установки защитных правил.
+- [x] Установить nftables fail-closed policy до policy routes и включения IP
+  forwarding; при ошибке последующих шагов откатывать уже установленные
+  policy routes и nftables table.
+- [~] Проверить startup rollback при конфликте nft table, ip rule и route
+  отдельным network-namespace тестом; повторный CI после изменения порядка
+  установки ожидается.
 - [ ] Сделать rollback симметричным каждому успешному шагу.
 - [ ] Не удалять чужие ip rules/routes/nftables objects.
 - [ ] Проверить частичные ошибки на каждом шаге установки.
@@ -327,6 +336,8 @@ unmanaged output остаётся неизменным.
 | 2026-11-09 | Добавлены packet-level INPUT/OUTPUT probes | Peer traffic test запускает TCP listeners на обоих концах, проверяет разрешённый порт 8080 и отдельно INPUT deny/OUTPUT deny на 8081; iperf3 TCP/UDP 5201 также явно разрешён | В работе |
 | 2026-11-09 | Выделена модель `RoutingDecision` | Routing classifier, FORWARD и NAT используют один список решений; CI после переименования выявил устаревший публичный re-export `NftRule`, исправление внесено | В работе |
 | 2026-11-09 | Добавлена conntrack-aware обработка ответного трафика INPUT/OUTPUT | Явные allow rules ограничены original direction; established/related reply принимается только на managed interface; добавлены unit assertions | В работе |
+| 2026-11-09 | Разделены routing mark и conntrack decision id | Уникальный conntrack id назначается каждому routing decision; established route restore, обратный FORWARD и NAT используют этот id; NAT ограничен исходной парой интерфейсов | Ожидает полного CI и packet-level проверки |
+| 2026-11-09 | Изменён порядок startup | nftables policy устанавливается до policy routing и включения forwarding; ошибка последующих шагов удаляет уже установленные ресурсы | Ожидает network-namespace CI |
 
 ## 14. Правила ведения плана
 
