@@ -247,7 +247,11 @@ fn install_signal_handlers() -> Result<(), RuntimeError> {
         {
             return Err(RuntimeError::Signal("SIGINT".into()));
         }
-        if libc::signal(libc::SIGTERM, request_shutdown as libc::sighandler_t) == libc::SIG_ERR {
+        if libc::signal(
+            libc::SIGTERM,
+            request_shutdown as *const () as libc::sighandler_t,
+        ) == libc::SIG_ERR
+        {
             return Err(RuntimeError::Signal("SIGTERM".into()));
         }
     }
