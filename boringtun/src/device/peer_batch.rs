@@ -232,6 +232,80 @@ mod tests {
         }
     }
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "requires root and /dev/net/tun"]
+    fn replacement_updates_and_clears_peer_fields_then_removes_peer() {
+        use super::super::DeviceConfig;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        static NEXT_INTERFACE: AtomicUsize = AtomicUsize::new(9000);
+        let name = format!("utun{}", NEXT_INTERFACE.fetch_add(1, Ordering::Relaxed));
+        let mut device = DeviceHandle::new(
+            &name,
+            DeviceConfig {
+                n_threads: 1,
+                ..DeviceConfig::default()
+            },
+        )
+        .expect("create test tunnel device");
+
+        device.set_private_key(x25519::StaticSecret::from([1u8; 32]));
+        let public_key = x25519::PublicKey::from(x25519::StaticSecret::from([2u8; 32]));
+        let psk = [3u8; 32];
+        let endpoint = "127.0.0.1:51820".parse().unwrap();
+        let first_prefix = AllowedIP {
+            addr: "10.10.0.0".parse().unwrap(),
+            cidr: 24,
+        };
+
+        device
+            .replace_peers(&[PeerConfig {
+                public_key: *public_key.as_bytes(),
+                endpoint: Some(endpoint),
+                allowed_ips: vec![first_prefix],
+                persistent_keepalive: Some((25, 25)),
+                preshared_key: Some(psk),
+            }])
+            .expect("install initial peer");
+        let initial = device.snapshot().expect("initial snapshot");
+        assert_eq!(initial.peers.len(), 1);
+        let original_index = initial.peers[0].index;
+
+        let invalid = [
+            config(*public_key.as_bytes(), vec![]),
+            config(*public_key.as_bytes(), vec![]),
+        ];
+        assert!(device.replace_peers(&invalid).is_err());
+
+        let second_prefix = AllowedIP {
+            addr: "10.20.0.0".parse().unwrap(),
+            cidr: 24,
+        };
+        device
+            .replace_peers(&[PeerConfig {
+                public_key: *public_key.as_bytes(),
+                endpoint: None,
+                allowed_ips: vec![second_prefix],
+                persistent_keepalive: None,
+                preshared_key: None,
+            }])
+            .expect("replace peer and clear optional fields");
+
+        let updated = device.snapshot().expect("updated snapshot");
+        assert_eq!(updated.peers.len(), 1);
+        assert_eq!(updated.peers[0].index, original_index);
+        assert_eq!(updated.peers[0].endpoint, None);
+        assert_eq!(updated.peers[0].persistent_keepalive, None);
+        assert_eq!(updated.peers[0].allowed_ips, vec![second_prefix]);
+
+        device.replace_peers(&[]).expect("remove all peers");
+        assert!(device.snapshot().expect("empty snapshot").peers.is_empty());
+
+        device.shutdown();
+        device.wait();
+    }
+
     #[test]
     fn peer_batch_validation_accepts_distinct_and_nested_prefixes() {
         let configs = [
