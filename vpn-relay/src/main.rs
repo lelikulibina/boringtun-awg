@@ -35,8 +35,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 replace_peers_interface = Some(
                     args.next()
                         .ok_or("--replace-peers requires an interface name")?,
-                );
-            },
+                )
+            },,
             "--yes" | "-y" => yes = true,
             "--import" => {
                 let source = args.next().ok_or("--import requires a source .conf path")?;
