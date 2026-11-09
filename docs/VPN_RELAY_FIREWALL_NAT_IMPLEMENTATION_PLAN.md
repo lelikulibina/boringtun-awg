@@ -3,7 +3,7 @@
 > Рабочая ветка: `feature/vpn-relay-firewall-nat`
 > Базовая ветка: `feature/boringtun-router-daemon`
 > Базовый commit: `ad3f35d2790e7e47c8d050fb7b3c206c69ac2aa4`
-> Последнее обновление: 2026-11-09 (packet-level проверки conntrack/NAT и уточнение lifecycle)
+> Последнее обновление: 2026-11-09 (backend preflight, сохранение DNS endpoint и CI run 42680908328)
 >
 > Этот документ является рабочим журналом реализации. Статусы меняются только
 > после фактического изменения кода и выполнения соответствующих проверок.
@@ -296,6 +296,9 @@ unmanaged output остаётся неизменным.
 
 - [x] Сформировать и валидировать Config, socket marks, RoutingPlan и backend
   config до изменения системного состояния.
+- [x] Разрешить peer endpoint на этапе backend preflight и передавать точные
+  `SocketAddr` в создание туннеля без повторного DNS lookup; подготовленное
+  состояние проверяется на соответствие числу peers.
 - [x] Установить ресурсы в безопасном порядке: fail-closed nftables policy →
   TUN interfaces → policy routes → IP forwarding.
 - [x] Установить nftables fail-closed policy до policy routes и включения IP
@@ -456,3 +459,5 @@ unmanaged output остаётся неизменным.
 | 2026-11-09 | Добавлены packet-level loopback и foreign INPUT/OUTPUT base-chain probes | Проверяется доступность локального TCP listener через 127.0.0.1 и то, что foreign accept chains с priority -10 не отменяют последующий deny vpn-relay; ожидает CI | В работе |
 
 | 2026-11-09 | Расширены packet-level проверки coexistence и NAT scope | Добавлены foreign FORWARD accept-chain probe, проверка локальных INPUT/OUTPUT source addresses без NAT и захват запрещённого FORWARD на обоих uplink; ожидает полного CI | В работе |
+
+| 2026-11-09 | Backend preflight сохраняет разрешённые peer endpoints | Коммиты 8c2f23e, fe2b83f, ea98f71, db44a2c; `PreparedInterface` переносит точные `SocketAddr` из preflight в создание BoringTun без повторного DNS resolve; unit test проверяет подготовленный literal endpoint | Завершено; CI run 42680908328, attempt 2: all-systems-go success. Attempt 1 падал на ICMPv6 INPUT deny, повторная integration job прошла; первопричина первого сбоя не установлена |
