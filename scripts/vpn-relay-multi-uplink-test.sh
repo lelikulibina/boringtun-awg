@@ -221,7 +221,7 @@ socket_fwmark = 5001
 
 [[interfaces.wg-ingress.peers]]
 public_key = "$CLIENT_PUBLIC"
-allowed_ips = ["10.77.0.2/32", "fd77::2/128"]
+allowed_ips = ["10.77.0.0/24", "fd77::/64"]
 
 [[interfaces.wg-ingress.peers]]
 public_key = "$SECOND_CLIENT_PUBLIC"
@@ -774,5 +774,40 @@ for _ in $(seq 1 40); do
     sleep 0.25
 done
 [[ "$secondary_recovered" -eq 1 ]] || fail "secondary uplink did not recover both exception routes after remote daemon restart"
+
+# Nested AllowedIPs must resolve to the most-specific peer. The first
+# client owns the broad prefixes while the second client owns the more-specific
+# .3 addresses. Spoofing .3 from the first peer must be rejected by BoringTun
+# before the packet is written to the router TUN.
+ip -n "$CLIENT_NS" address add 10.77.0.3/32 dev wg-client
+ip -n "$CLIENT_NS" -6 address add fd77::3/128 dev wg-client nodad
+
+ip netns exec "$ROUTER_NS" timeout 3 tcpdump -nn -i wg-ingress -c 1 \
+    'icmp and src host 10.77.0.3 and dst host 10.77.0.1' \
+    >"$TMP/overlapping-allowedips-v4.log" 2>&1 &
+capture_pid=$!
+sleep 0.25
+if ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.3 -c 1 -W 1 10.77.0.1; then
+    fail "BoringTun accepted IPv4 source spoofing from a peer that owns only an overlapping broader prefix"
+fi
+set +e
+wait "$capture_pid"
+overlap_v4_status=$?
+set -e
+[[ "$overlap_v4_status" -eq 124 ]] || fail "IPv4 source spoofing reached router TUN despite more-specific AllowedIPs ownership (tcpdump status $overlap_v4_status)"
+
+ip netns exec "$ROUTER_NS" timeout 3 tcpdump -nn -i wg-ingress -c 1 \
+    'icmp6 and src host fd77::3 and dst host fd77::1' \
+    >"$TMP/overlapping-allowedips-v6.log" 2>&1 &
+capture_pid=$!
+sleep 0.25
+if ip netns exec "$CLIENT_NS" ping -6 -n -I fd77::3 -c 1 -W 1 fd77::1; then
+    fail "BoringTun accepted IPv6 source spoofing from a peer that owns only an overlapping broader prefix"
+fi
+set +e
+wait "$capture_pid"
+overlap_v6_status=$?
+set -e
+[[ "$overlap_v6_status" -eq 124 ]] || fail "IPv6 source spoofing reached router TUN despite more-specific AllowedIPs ownership (tcpdump status $overlap_v6_status)"
 
 echo "vpn-relay multi-uplink test passed: IPv4/IPv6 static default/exceptions, bidirectional ICMP/TCP/UDP, outer UDP underlay isolation, independent uplink handshake recovery"
