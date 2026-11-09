@@ -358,17 +358,6 @@ ip netns exec "$SERVER_NS" sysctl -q -w net.ipv4.conf.default.rp_filter=0
 ip netns exec "$SERVER_NS" sysctl -q -w "net.ipv4.conf.${SERVER_VETH}.rp_filter=0"
 ip netns exec "$SERVER_NS" sysctl -q -w net.ipv4.conf.wg-peer-test.rp_filter=0
 
-# Isolate the client-side conntrack entry for the physical request in
-# another zone. This models a reply arriving over a different path: the
-# forged packet is NEW to the client's OUTPUT hook (so the explicit test
-# allow can transmit it), while it remains REPLY to the server's original
-# host flow. The server must reject it because that flow has no local-flow tag.
-ip netns exec "$CLIENT_NS" nft -f - <<NFT
-add table inet vpn_relay_test_zone_$SUFFIX
-add chain inet vpn_relay_test_zone_$SUFFIX prerouting { type filter hook prerouting priority raw; policy accept; }
-add rule inet vpn_relay_test_zone_$SUFFIX prerouting iifname "$CLIENT_VETH" ip saddr 192.0.2.10 udp sport 18080 ct zone set 1
-NFT
-
 # A host-originated UDP flow uses the physical underlay and therefore must not
 # acquire vpn-relay's managed-flow conntrack tag. A peer then forges its reply
 # through the TUN using the exact reverse tuple. The packet must reach the TUN
@@ -382,10 +371,17 @@ sock.settimeout(4)
 payload, _ = sock.recvfrom(128)
 if payload != b"host-flow-probe":
     raise SystemExit(f"unexpected probe payload: {payload!r}")
+print("client received host-flow probe")
 sock.sendto(b"forged-reply", ("192.0.2.10", 18080))
+print("client sent forged reply through managed TUN")
 PY
 spoof_pid=$!
 TCP_PIDS+=("$spoof_pid")
+ip netns exec "$CLIENT_NS" timeout 5 tcpdump -nn -i "$CLIENT_VETH" -c 1 \
+    'udp and src host 192.0.2.10 and dst host 192.0.2.20 and dst port 18081' \
+    >"$TMP/forged-reply-underlay.log" 2>&1 &
+underlay_capture_pid=$!
+TCP_PIDS+=("$underlay_capture_pid")
 sleep 0.25
 ip netns exec "$SERVER_NS" timeout 5 tcpdump -nn -i wg-peer-test -c 1 \
     'udp and src host 192.0.2.20 and dst host 192.0.2.10 and dst port 18080' \
@@ -406,6 +402,7 @@ except socket.timeout:
 else:
     raise SystemExit(f"untagged reply bypassed managed INPUT deny: {payload!r}")
 PY
+wait "$underlay_capture_pid" || fail "host-flow probe did not reach client over unmanaged underlay"
 wait "$capture_pid" || fail "forged reply did not reach the server TUN; test is inconclusive"
 wait "$spoof_pid" || fail "client failed to send the forged conntrack reply"
 
