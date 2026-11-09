@@ -72,7 +72,7 @@ impl Device {
                         allowed_ip.addr, allowed_ip.cidr
                     )));
                 }
-                let network = IpNetwork::new_truncate(allowed_ip.addr, allowed_ip.cidr as u32)
+                let network = IpNetwork::new_truncate(allowed_ip.addr, allowed_ip.cidr)
                     .map_err(|_| Error::PeerSetup("invalid AllowedIP prefix".to_owned()))?;
                 let normalized = AllowedIP {
                     addr: network.network_address(),
