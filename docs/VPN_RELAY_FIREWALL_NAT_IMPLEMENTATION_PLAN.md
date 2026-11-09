@@ -361,3 +361,6 @@ unmanaged output остаётся неизменным.
 
 
 | 2026-11-09 | Документация packet path и peer identity синхронизирована с реализацией | В `docs/VPN_RELAY_NFTABLES.md` уже присутствуют Mermaid-схема hook order, правила INPUT/OUTPUT/FORWARD/NAT, семантика протоколов/портов и границы AllowedIPs/peer identity; соответствующие пункты плана отмечены выполненными | Готово |
+
+
+| 2026-11-09 | Расширена проверка сохранности чужих policy routes | Network-namespace startup rollback test теперь одновременно создаёт чужие IPv4 и IPv6 default routes в зарезервированной таблице; daemon должен отказать до перезаписи, сохранить обе записи и убрать собственные ресурсы | Ожидает CI |

@@ -201,11 +201,14 @@ ip -n "$NS" -6 rule show | grep -Fq 'fwmark 0x1000/0xffff0000 lookup main' || fa
 ip -n "$NS" -4 rule del priority 8000 fwmark 0x1000/0xffff0000 lookup main
 ip -n "$NS" -6 rule del priority 8000 fwmark 0x1000/0xffff0000 lookup main
 
-# A pre-existing route in a reserved table must also be preserved.
+# Pre-existing routes in reserved IPv4 and IPv6 tables must both be preserved.
 ip -n "$NS" -4 route replace default dev main0 table 10000 proto static
-expect_startup_failure route-conflict.log "foreign routing-table route"
-ip -n "$NS" -4 route show table 10000 | grep -Fq 'default dev main0 proto static' || fail "foreign route in table 10000 was overwritten"
+ip -n "$NS" -6 route replace default dev main0 table 10000 proto static
+expect_startup_failure route-conflict.log "foreign routing-table routes"
+ip -n "$NS" -4 route show table 10000 | grep -Fq 'default dev main0 proto static' || fail "foreign IPv4 route in table 10000 was overwritten"
+ip -n "$NS" -6 route show table 10000 | grep -Fq 'default dev main0 proto static' || fail "foreign IPv6 route in table 10000 was overwritten"
 ip -n "$NS" -4 route del default dev main0 table 10000 proto static
+ip -n "$NS" -6 route del default dev main0 table 10000 proto static
 
 ip netns exec "$NS" "$BIN" --config "$TMP/config.toml" >"$TMP/daemon.log" 2>&1 &
 DAEMON_PID=$!
