@@ -384,6 +384,7 @@ impl Runtime {
             {
                 std::thread::sleep(Duration::from_secs(1));
                 elapsed += 1;
+                self.accept_control_connections();
             }
             if SHUTDOWN_REQUESTED.load(Ordering::Relaxed) {
                 break;
@@ -528,6 +529,52 @@ mod tests {
         drop(first);
         assert!(InstanceLock::acquire(&path).is_ok());
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn control_socket_is_private_and_removed_on_drop() {
+        let path = std::env::temp_dir().join(format!(
+            "vpn-relay-control-{}-{}.sock",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        let _ = std::fs::remove_file(&path);
+        let socket = ControlSocket::bind(path.clone()).unwrap();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        assert!(UnixStream::connect(&path).is_ok());
+        drop(socket);
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn control_socket_refuses_to_replace_regular_files() {
+        let path = std::env::temp_dir().join(format!(
+            "vpn-relay-control-file-{}.sock",
+            std::process::id()
+        ));
+        std::fs::write(&path, b"do not replace").unwrap();
+        assert!(matches!(
+            ControlSocket::bind(path.clone()),
+            Err(RuntimeError::Control(_))
+        ));
+        assert_eq!(std::fs::read(&path).unwrap(), b"do not replace");
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn control_socket_recovers_stale_socket_files() {
+        let path = std::env::temp_dir().join(format!(
+            "vpn-relay-control-stale-{}.sock",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        let stale = UnixListener::bind(&path).unwrap();
+        drop(stale);
+        let socket = ControlSocket::bind(path.clone()).unwrap();
+        assert!(path.exists());
+        drop(socket);
+        assert!(!path.exists());
     }
 
     #[test]
