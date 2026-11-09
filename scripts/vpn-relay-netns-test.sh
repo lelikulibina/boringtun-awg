@@ -324,11 +324,12 @@ REAL_NFT="$(command -v nft)"
 mkdir -p "$TMP/fail-nft-bin"
 cat >"$TMP/fail-nft-bin/nft" <<EOF
 #!/bin/sh
-if [ -f "$TMP/fail-nft" ] && [ "$1" = "-f" ]; then
+if [ -f "$TMP/fail-nft" ] && [ "\$1" = "-f" ]; then
+    cat >/dev/null
     echo "injected nftables transaction failure" >&2
     exit 42
 fi
-exec "$REAL_NFT" "$@"
+exec "$REAL_NFT" "\$@"
 EOF
 chmod +x "$TMP/fail-nft-bin/nft"
 
@@ -481,9 +482,9 @@ kill -0 "$DAEMON_PID" 2>/dev/null || fail "daemon exited after peer-only replace
 # An immutable tunnel parameter change must be rejected without disturbing the
 # currently active runtime configuration.
 cp "$TMP/config.toml" "$TMP/config-before-immutable-reload.toml"
-sed -i 's/mtu = 1380/mtu = 1400/g' "$TMP/config.toml"
+sed -i 's/listen_port = 51820/listen_port = 51830/' "$TMP/config.toml"
 if ip netns exec "$NS" "$BIN" --config "$TMP/config.toml" --reload >"$TMP/reload-immutable.log" 2>&1; then
-    fail "runtime reload accepted an immutable tunnel MTU change"
+    fail "runtime reload accepted an immutable tunnel listen-port change"
 fi
 mv "$TMP/config-before-immutable-reload.toml" "$TMP/config.toml"
 kill -0 "$DAEMON_PID" 2>/dev/null || fail "daemon exited after rejecting an immutable reload"

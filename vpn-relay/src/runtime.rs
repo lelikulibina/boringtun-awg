@@ -419,9 +419,7 @@ impl Runtime {
                             self.replace_peers(&interface, peers)
                         }
                         ControlRequest::ReloadConfig { toml } => Config::parse_toml(&toml)
-                            .map_err(|error| {
-                                RuntimeError::Configuration(error.to_string())
-                            })
+                            .map_err(|error| RuntimeError::Configuration(error.to_string()))
                             .and_then(|candidate| self.reload_config(candidate)),
                     };
                     match result {
