@@ -3,7 +3,7 @@
 > Рабочая ветка: `feature/vpn-relay-firewall-nat`
 > Базовая ветка: `feature/boringtun-router-daemon`
 > Базовый commit: `ad3f35d2790e7e47c8d050fb7b3c206c69ac2aa4`
-> Последнее обновление: 2026-11-09 (первый этап реализации)
+> Последнее обновление: 2026-11-09 (первый этап реализации и интеграционная настройка)
 >
 > Этот документ является рабочим журналом реализации. Статусы меняются только
 > после фактического изменения кода и выполнения соответствующих проверок.
@@ -120,7 +120,10 @@
 - [x] OUTPUT проверяет фактический oifname; outer UDP, ушедший через underlay,
   не попадает под managed OUTPUT deny.
 - [ ] Проверить ruleset командой nft в network namespace.
-- [ ] Добавить packet-level netns tests для INPUT/OUTPUT.
+- [~] Существующий peer traffic netns test обновлён явными INPUT/OUTPUT
+  allow rules: туннельный обмен больше не должен полагаться на неявный доступ
+  к локальным адресам. Результат нового CI ожидается.
+- [ ] Добавить отдельные negative packet-level netns tests для INPUT/OUTPUT.
 
 - [x] Добавлен `[firewall]` с независимыми `input.rules` и `output.rules`.
 - [x] Правило разрешения привязано к одному существующему managed interface.
@@ -129,7 +132,8 @@
 - [x] Пустые списки, порт 0, неизвестные интерфейсы, IPv6 CIDR на интерфейсе
   с выключенным IPv6 и селекторы неправильного направления отклоняются.
 - [x] Отсутствие allow rules означает deny для соответствующего managed hook.
-- [ ] Добавить отдельные parser tests на все новые отрицательные случаи.
+- [x] Добавлены parser tests на неизвестные интерфейсы и селекторы неверного
+  направления; остальные отрицательные случаи ещё требуют отдельного покрытия.
 - [ ] Добавить packet-level netns tests для INPUT/OUTPUT.
 
 
@@ -305,7 +309,8 @@ unmanaged output остаётся неизменным.
 | 2026-11-09 | Добавлен рабочий план реализации | Commit 93244b354acef1344c9ab9ec2600372633de3ea6 | Завершено |
 | 2026-11-09 | Проверены BoringTun AllowedIPs ingress validation и backend routing lookup | Просмотрены `Device::peer_owns`, `WriteToTunnelV4/V6`, `peers_by_ip` | Завершено |
 | 2026-11-09 | Уточнена модель NAT: действие остаётся в routing rule | Отдельная NAT-секция не нужна, так как egress уже выбирается routing rule | Завершено |
-| 2026-11-09 | Добавлены INPUT/OUTPUT chains, explicit allow rules и managed default deny | Unit/parser tests добавлены; CI ещё не запускался | В работе |
+| 2026-11-09 | Добавлены INPUT/OUTPUT chains, explicit allow rules и managed default deny | Unit/parser tests; CI run 42625442963: unit tests, clippy, rustfmt, feature checks и AWG interoperability успешны; peer traffic integration упал из-за отсутствующих explicit allow rules | В работе |
+| 2026-11-09 | Peer traffic netns scenario переведён на явные INPUT/OUTPUT allow rules | Сервер и клиент разрешают только адрес противоположного tunnel peer; ожидается повторная интеграционная проверка | В работе |
 
 ## 14. Правила ведения плана
 

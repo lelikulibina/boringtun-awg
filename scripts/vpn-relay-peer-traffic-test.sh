@@ -106,6 +106,18 @@ socket_fwmark = 5001
 [[interfaces.wg-peer-test.peers]]
 public_key = "$CLIENT_PUBLIC"
 allowed_ips = ["10.77.0.2/32"]
+
+# INPUT/OUTPUT are deny-by-default for managed interfaces. This traffic test
+# intentionally opts in to the peer's tunnel address in both directions.
+[firewall.input]
+[[firewall.input.rules]]
+interface = "wg-peer-test"
+source = ["10.77.0.2/32"]
+
+[firewall.output]
+[[firewall.output.rules]]
+interface = "wg-peer-test"
+destination = ["10.77.0.2/32"]
 TOML
 
 if [[ "$PROTO" == "awg" ]]; then
@@ -134,6 +146,16 @@ public_key = "$SERVER_PUBLIC"
 endpoint = "192.0.2.1:51871"
 allowed_ips = ["10.77.0.1/32"]
 persistent_keepalive_secs = 1
+
+[firewall.input]
+[[firewall.input.rules]]
+interface = "wg-peer-test"
+source = ["10.77.0.1/32"]
+
+[firewall.output]
+[[firewall.output.rules]]
+interface = "wg-peer-test"
+destination = ["10.77.0.1/32"]
 TOML
 
 if [[ "$PROTO" == "awg" ]]; then
