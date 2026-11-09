@@ -14,7 +14,23 @@ pub(super) struct BoringTunBackend;
 
 impl TunnelBackend for BoringTunBackend {
     fn validate(&self, name: &str, interface: &InterfaceConfig) -> Result<(), BackendError> {
-        build_awg_config(name, interface).map(|_| ())
+        build_awg_config(name, interface)?;
+
+        // Resolve every configured endpoint during preflight, before runtime
+        // installs nftables or creates any tunnel interface. Creation resolves
+        // again so the live socket uses a current DNS result; this early pass
+        // catches invalid/unresolvable endpoints before system state changes.
+        for (index, peer) in interface.peers.iter().enumerate() {
+            if let Some(endpoint) = peer.endpoint.as_deref() {
+                resolve_endpoint(endpoint).map_err(|error| {
+                    BackendError::new(format!(
+                        "interfaces.{name}.peers[{index}].endpoint: {error}"
+                    ))
+                })?;
+            }
+        }
+
+        Ok(())
     }
 
     fn create(
@@ -135,6 +151,37 @@ fn build_awg_config(
     config
         .build()
         .map_err(|error| BackendError::new(format!("interfaces.{name}.awg: {error}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn backend_preflight_resolves_peer_endpoints_before_runtime_setup() {
+        let mut interface: InterfaceConfig = toml::from_str(
+            r#"
+                type = "wg"
+                address = ["10.0.0.1/24"]
+                private_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+                [[peers]]
+                public_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+                endpoint = "vpn-relay-preflight.invalid:51820"
+                allowed_ips = ["10.0.0.2/32"]
+            "#,
+        )
+        .expect("valid interface shape");
+
+        let error = BoringTunBackend
+            .validate("wg-preflight", &interface)
+            .expect_err("reserved .invalid endpoint must not resolve");
+        assert!(error.to_string().contains("peers[0].endpoint"));
+
+        interface.peers[0].endpoint = Some("192.0.2.10:51820".to_owned());
+        BoringTunBackend
+            .validate("wg-preflight", &interface)
+            .expect("literal endpoint should pass preflight");
+    }
 }
 
 fn resolve_endpoint(value: &str) -> Result<SocketAddr, BackendError> {
