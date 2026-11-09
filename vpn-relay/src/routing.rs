@@ -274,16 +274,23 @@ impl RoutingPlan {
                 }
                 append_firewall_protocol_selector(&mut selectors, rule);
                 output.push_str(&format!(
-                    "add rule {} {} input {} ct state new,established,related ct direction original accept\n",
-                    self.nft_family, self.nft_table, selectors
+                    "add rule {} {} input {} ct state new,established,related ct direction original ct mark set (ct mark & 0x{:08x}) | 0x{:08x} accept\n",
+                    self.nft_family,
+                    self.nft_table,
+                    selectors,
+                    CONNTRACK_MARK_PRESERVE_MASK,
+                    LOCAL_FLOW_CONNTRACK_MARK
                 ));
             }
         }
-        // Only reply-direction traffic for host-initiated connections may
-        // enter through managed interfaces without an explicit INPUT rule.
+        // Only replies to explicitly admitted host-initiated flows may enter
+        // through managed interfaces without a separate INPUT allow rule.
         output.push_str(&format!(
-            "add rule {} {} input iifname @managed_interfaces ct state established,related ct direction reply accept\n",
-            self.nft_family, self.nft_table
+            "add rule {} {} input iifname @managed_interfaces ct state established,related ct direction reply ct mark & 0x{:08x} == 0x{:08x} accept\n",
+            self.nft_family,
+            self.nft_table,
+            CONNTRACK_MARK_MASK,
+            LOCAL_FLOW_CONNTRACK_MARK
         ));
         output.push_str(&format!(
             "add rule {} {} input iifname @managed_interfaces drop\n",
@@ -306,16 +313,23 @@ impl RoutingPlan {
                 }
                 append_firewall_protocol_selector(&mut selectors, rule);
                 output.push_str(&format!(
-                    "add rule {} {} output {} ct state new,established,related ct direction original accept\n",
-                    self.nft_family, self.nft_table, selectors
+                    "add rule {} {} output {} ct state new,established,related ct direction original ct mark set (ct mark & 0x{:08x}) | 0x{:08x} accept\n",
+                    self.nft_family,
+                    self.nft_table,
+                    selectors,
+                    CONNTRACK_MARK_PRESERVE_MASK,
+                    LOCAL_FLOW_CONNTRACK_MARK
                 ));
             }
         }
-        // Permit reply packets for client-initiated flows only after INPUT
-        // admitted their original-direction packets.
+        // Permit replies to client-initiated flows only after INPUT admitted
+        // their original-direction packets and tagged the conntrack entry.
         output.push_str(&format!(
-            "add rule {} {} output oifname @managed_interfaces ct state established,related ct direction reply accept\n",
-            self.nft_family, self.nft_table
+            "add rule {} {} output oifname @managed_interfaces ct state established,related ct direction reply ct mark & 0x{:08x} == 0x{:08x} accept\n",
+            self.nft_family,
+            self.nft_table,
+            CONNTRACK_MARK_MASK,
+            LOCAL_FLOW_CONNTRACK_MARK
         ));
         output.push_str(&format!(
             "add rule {} {} output oifname @managed_interfaces drop\n",
