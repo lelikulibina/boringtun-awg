@@ -29,6 +29,7 @@ pub struct NftRule {
     pub egress: String,
     pub mark: u32,
     pub nat: NatMode,
+    pub nat_to: Option<std::net::IpAddr>,
     /// IPv6 selectors are emitted only when both ends permit IPv6.
     pub ipv6_enabled: bool,
 }
@@ -110,6 +111,7 @@ impl RoutingPlan {
                 egress: rule.egress.clone(),
                 mark: egress_marks[rule.egress.as_str()],
                 nat: rule.nat,
+                nat_to: rule.nat_to,
                 ipv6_enabled: config
                     .interfaces
                     .get(rule.ingress.as_str())
@@ -331,6 +333,18 @@ impl RoutingPlan {
                     append_cidr_selector(&mut selectors, family, "saddr", &sources);
                     append_cidr_selector(&mut selectors, family, "daddr", &destinations);
                 }
+                if rule.nat == NatMode::Snat {
+                    let address = rule.nat_to.expect("validated SNAT rule has nat_to");
+                    let required_family = if address.is_ipv4() { "ip" } else { "ip6" };
+                    if family.is_some_and(|selected| selected != required_family) {
+                        continue;
+                    }
+                    selectors.push_str(if address.is_ipv4() {
+                        " meta nfproto ipv4"
+                    } else {
+                        " meta nfproto ipv6"
+                    });
+                }
                 match rule.nat {
                     NatMode::None => output.push_str(&format!(
                         "add rule {} {} postrouting {} return\n",
@@ -340,6 +354,14 @@ impl RoutingPlan {
                         "add rule {} {} postrouting {} masquerade\n",
                         self.nft_family, self.nft_table, selectors
                     )),
+                    NatMode::Snat => {
+                        let address = rule.nat_to.expect("validated SNAT rule has nat_to");
+                        let family = if address.is_ipv4() { "ip" } else { "ip6" };
+                        output.push_str(&format!(
+                            "add rule {} {} postrouting {} snat {} to {}\n",
+                            self.nft_family, self.nft_table, selectors, family, address
+                        ));
+                    }
                 }
             }
         }
@@ -660,6 +682,18 @@ egress = "awg-primary"
         assert!(script.contains("iifname @managed_interfaces meta mark set 0"));
         assert!(script.contains("ct direction reply meta mark set 0"));
         assert!(script.contains("ct direction original ct mark 0x80000000 meta mark set ct mark"));
+    }
+
+    #[test]
+    fn nft_static_snat_is_emitted_for_the_selected_address_family() {
+        let mut config = sample_config();
+        config.routing.rules[0].nat = NatMode::Snat;
+        config.routing.rules[0].nat_to = Some("203.0.113.10".parse().unwrap());
+        let script = RoutingPlan::from_config(&config).nft_script();
+        assert!(script.contains(
+            "postrouting iifname \\"wg-server\\" oifname \\"awg-secondary\\" ct mark 0x80000001 ip daddr 195.142.0.0/16 meta nfproto ipv4 snat ip to 203.0.113.10"
+        ));
+        assert!(!script.contains("snat ip6"));
     }
 
     #[test]

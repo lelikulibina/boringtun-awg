@@ -89,6 +89,7 @@ pub enum NatMode {
     #[default]
     None,
     Masquerade,
+    Snat,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -210,6 +211,9 @@ pub struct RoutingRule {
     pub egress: String,
     #[serde(default)]
     pub nat: NatMode,
+    /// Required only for static source NAT.
+    #[serde(default)]
+    pub nat_to: Option<IpAddr>,
 }
 
 #[derive(Deserialize)]
@@ -487,6 +491,33 @@ impl Config {
                         .collect::<Result<Vec<_>, _>>()
                 })
                 .transpose()?;
+
+            match rule.nat {
+                NatMode::Snat => {
+                    let Some(address) = rule.nat_to else {
+                        return invalid("routing.rules.nat_to is required when nat = \"snat\"");
+                    };
+                    let ingress_ipv6 = self.interfaces[&rule.ingress].ipv6_enabled;
+                    let egress_ipv6 = self.interfaces[&rule.egress].ipv6_enabled;
+                    if address.is_ipv6() && !(ingress_ipv6 && egress_ipv6) {
+                        return invalid(format!(
+                            "routing rule {} -> {} uses IPv6 SNAT but IPv6 is disabled on ingress or egress",
+                            rule.ingress, rule.egress
+                        ));
+                    }
+                    let family_matches = source_prefixes.as_ref().is_some_and(|prefixes|
+                        prefixes.iter().any(|(prefix, _)| prefix.is_ipv4() == address.is_ipv4()))
+                        || destination_prefixes.as_ref().is_some_and(|prefixes|
+                        prefixes.iter().any(|(prefix, _)| prefix.is_ipv4() == address.is_ipv4()));
+                    if (source_prefixes.is_some() || destination_prefixes.is_some()) && !family_matches {
+                        return invalid("routing.rules.nat_to address family must match at least one source/destination selector family");
+                    }
+                }
+                NatMode::None | NatMode::Masquerade if rule.nat_to.is_some() => {
+                    return invalid("routing.rules.nat_to is valid only when nat = \"snat\"");
+                }
+                NatMode::None | NatMode::Masquerade => {}
+            }
 
             if let (Some(sources), Some(destinations)) = (&source_prefixes, &destination_prefixes) {
                 let has_common_family = sources.iter().any(|source| {
