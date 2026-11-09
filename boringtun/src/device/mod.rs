@@ -8,11 +8,11 @@ pub mod drop_privileges;
 #[cfg(test)]
 mod integration_tests;
 pub mod peer;
+mod peer_batch;
 mod probe_budget;
 mod probe_reply;
-mod peer_batch;
-pub use peer_batch::PeerConfig;
 mod reply_policy;
+pub use peer_batch::PeerConfig;
 
 #[cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos"))]
 #[path = "kqueue.rs"]

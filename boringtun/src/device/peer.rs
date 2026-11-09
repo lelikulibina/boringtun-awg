@@ -117,7 +117,10 @@ impl Peer {
                 // The socket is dropped regardless; a shutdown error is not
                 // allowed to turn a configuration update into a panic.
                 if let Err(error) = conn.shutdown(Shutdown::Both) {
-                    tracing::debug!(?error, "Failed to gracefully shut down replaced peer endpoint");
+                    tracing::debug!(
+                        ?error,
+                        "Failed to gracefully shut down replaced peer endpoint"
+                    );
                 }
             }
 

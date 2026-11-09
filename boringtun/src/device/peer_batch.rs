@@ -97,7 +97,9 @@ impl Device {
         // error here leaves the previous peer set and all its sessions intact.
         let mut staged = HashMap::new();
         if configs.iter().any(|config| {
-            !self.peers.contains_key(&x25519::PublicKey::from(config.public_key))
+            !self
+                .peers
+                .contains_key(&x25519::PublicKey::from(config.public_key))
         }) {
             let private_key = require_key_pair(&self.key_pair)?.0.clone();
             for config in configs {
@@ -120,12 +122,7 @@ impl Device {
                 .map_err(Error::PeerSetup)?;
                 tunn.set_mtu(self.mtu.load(std::sync::atomic::Ordering::Relaxed));
 
-                let mut peer = Peer::new(
-                    tunn,
-                    index,
-                    config.endpoint,
-                    config.preshared_key,
-                );
+                let mut peer = Peer::new(tunn, index, config.endpoint, config.preshared_key);
                 peer.set_persistent_keepalive_range(config.persistent_keepalive);
                 staged.insert(
                     public_key,
@@ -159,11 +156,7 @@ impl Device {
             next_peers.insert(public_key, Arc::clone(&peer));
             next_peers_by_idx.insert(index, Arc::clone(&peer));
             for allowed_ip in &config.allowed_ips {
-                next_peers_by_ip.insert(
-                    allowed_ip.addr,
-                    allowed_ip.cidr as u32,
-                    Arc::clone(&peer),
-                );
+                next_peers_by_ip.insert(allowed_ip.addr, allowed_ip.cidr as u32, Arc::clone(&peer));
             }
         }
 
