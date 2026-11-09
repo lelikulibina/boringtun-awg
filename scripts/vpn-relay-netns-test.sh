@@ -451,6 +451,11 @@ protocol = "udp"
 ports = [53]
 TOML
 
+# Reserve the first dynamic table slot with foreign state. Reload must skip
+# this slot rather than adopting or deleting another process's resources.
+ip -n "$NS" -4 route add 203.0.113.0/24 dev lo table 11000 proto 99
+ip -n "$NS" -4 rule add priority 12000 fwmark 0x40000000 lookup 11000
+
 touch "$TMP/fail-nft"
 if ip netns exec "$NS" "$BIN" --config "$TMP/config.toml" --reload >"$TMP/reload-failure.log" 2>&1; then
     fail "runtime reload unexpectedly succeeded with injected nftables failure"
@@ -462,10 +467,10 @@ grep -Fq 'ip daddr 195.142.0.0/16' <<<"$chain_after_failed_reload" || fail "fail
 if grep -Fq 'ip daddr 198.51.100.0/24' <<<"$chain_after_failed_reload"; then
     fail "failed reload partially installed the new routing classifier"
 fi
-if ip -n "$NS" -4 rule show | grep -Fq 'fwmark 0x90000000 lookup 11000 proto 242'; then
+if ip -n "$NS" -4 rule show | grep -Fq 'fwmark 0x90000000 lookup 11001 proto 242'; then
     fail "failed reload left behind a staged policy-routing rule"
 fi
-if ip -n "$NS" -4 route show table 11000 | grep -q .; then
+if ip -n "$NS" -4 route show table 11001 | grep -q .; then
     fail "failed reload left behind a staged policy-routing route"
 fi
 
@@ -477,8 +482,10 @@ grep -Fq 'ip daddr 198.51.100.0/24' <<<"$chain_after_reload" || fail "successful
 if grep -Fq 'ip daddr 195.142.0.0/16' <<<"$chain_after_reload"; then
     fail "successful reload retained the old routing selector"
 fi
-ip -n "$NS" -4 rule show | grep -Fq 'fwmark 0x90000000 lookup 11000 proto 242' || fail "successful reload did not install the new routing rule"
-ip -n "$NS" -4 route show table 11000 | grep -Fq 'default dev awg-secondary proto 242' || fail "successful reload did not install the new egress route"
+ip -n "$NS" -4 rule show | grep -Fq 'fwmark 0x90000000 lookup 11001 proto 242' || fail "successful reload did not install the new routing rule"
+ip -n "$NS" -4 route show table 11001 | grep -Fq 'default dev awg-secondary proto 242' || fail "successful reload did not install the new egress route"
+ip -n "$NS" -4 route show table 11000 | grep -Fq '203.0.113.0/24 dev lo proto 99' || fail "reload modified the foreign route table"
+ip -n "$NS" -4 rule show | grep -Fq 'fwmark 0x40000000 lookup 11000' || fail "reload modified the foreign rule referencing table 11000"
 for old_mark in 0x80000000 0x80000001; do
     if ip -n "$NS" -4 rule show | grep -Fq "fwmark $old_mark"; then
         fail "successful reload retained an old routing mark rule ($old_mark)"

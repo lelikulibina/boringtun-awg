@@ -176,6 +176,15 @@ fn rule_has_owned_identity(line: &str, mark: u32, table: &str) -> bool {
     selector.trim() == format!("from all fwmark 0x{mark:x} lookup {table} proto {ROUTING_PROTOCOL}")
 }
 
+fn rule_uses_table(line: &str, table_id: u32) -> bool {
+    let fields: Vec<_> = line.split_whitespace().collect();
+    let Some(index) = fields.iter().position(|field| *field == "lookup") else {
+        return false;
+    };
+    let table = table_id.to_string();
+    fields.get(index + 1).copied() == Some(table.as_str())
+}
+
 fn parse_fwmark_value(value: &str) -> Option<u32> {
     if let Some(hex) = value
         .strip_prefix("0x")
@@ -277,6 +286,19 @@ fn ensure_policy_slots_available(plan: &RoutingPlan) -> Result<(), LinuxError> {
                 }
             }
             for egress in &plan.egresses {
+                if rule_uses_table(line, egress.table_id) {
+                    let expected = priority == egress.ip_rule_priority
+                        && rule_has_owned_identity(line, egress.mark, &egress.table_id.to_string());
+                    if !expected {
+                        return Err(LinuxError::Conflict {
+                            resource: format!(
+                                "IPv{family} rule referencing route table {}",
+                                egress.table_id
+                            ),
+                            details: line.trim().to_owned(),
+                        });
+                    }
+                }
                 if rule_matches_fwmark(line, egress.mark) {
                     let expected = priority == egress.ip_rule_priority
                         && rule_has_owned_identity(line, egress.mark, &egress.table_id.to_string());
