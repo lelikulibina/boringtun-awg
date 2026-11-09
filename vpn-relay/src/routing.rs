@@ -239,9 +239,9 @@ impl RoutingPlan {
             ));
         }
 
-        // INPUT is scoped to managed ingress. No generic established/related
-        // accept precedes the deny rule: that could bypass INPUT deny using a
-        // conntrack entry created by the host.
+        // INPUT is scoped to managed ingress. Explicit allow rules admit
+        // original-direction client traffic; only reply-direction packets for
+        // host-initiated connections are accepted by conntrack state.
         for rule in &self.input_rules {
             for (family, sources, _) in firewall_rule_family_variants(rule, true) {
                 let mut selectors = format!("iifname \"{}\"", rule.interface);
@@ -647,10 +647,10 @@ egress = "awg-primary"
         });
 
         let script = RoutingPlan::from_config(&config).nft_script();
-        assert!(script.contains("input iifname \"wg-server\" ip saddr 10.0.0.2/32 tcp dport { 22, 443 } ct state new,established,related accept"));
+        assert!(script.contains("input iifname \"wg-server\" ip saddr 10.0.0.2/32 tcp dport { 22, 443 } ct state new,established,related ct direction original accept"));
         assert!(script.contains("input iifname @managed_interfaces ct state established,related ct direction reply accept"));
         assert!(script.contains("input iifname @managed_interfaces drop"));
-        assert!(script.contains("output oifname \"awg-primary\" ip daddr 10.0.0.0/24 udp dport { 53 } ct state new,established,related accept"));
+        assert!(script.contains("output oifname \"awg-primary\" ip daddr 10.0.0.0/24 udp dport { 53 } ct state new,established,related ct direction original accept"));
         assert!(script.contains("output oifname @managed_interfaces ct state established,related ct direction reply accept"));
         assert!(script.contains("output oifname @managed_interfaces drop"));
         assert!(script.contains("forward iifname @managed_interfaces drop"));
