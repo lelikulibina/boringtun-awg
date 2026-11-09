@@ -28,6 +28,9 @@ pub struct Config {
     pub interfaces: BTreeMap<String, InterfaceConfig>,
     #[serde(default)]
     pub routing: RoutingConfig,
+    /// Explicit exceptions to the managed-interface INPUT/OUTPUT deny policies.
+    #[serde(default)]
+    pub firewall: FirewallConfig,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -123,6 +126,48 @@ pub struct PeerConfig {
     pub allowed_ips: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub persistent_keepalive_secs: Option<u16>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FirewallConfig {
+    #[serde(default)]
+    pub input: FirewallRuleSet,
+    #[serde(default)]
+    pub output: FirewallRuleSet,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FirewallRuleSet {
+    #[serde(default)]
+    pub rules: Vec<FirewallRule>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum FirewallProtocol {
+    Tcp,
+    Udp,
+    Icmp,
+    Icmpv6,
+}
+
+/// An allow exception scoped to one managed interface. INPUT rules may use
+/// source CIDRs; OUTPUT rules may use destination CIDRs. Missing selectors
+/// intentionally mean any address/protocol on that interface.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FirewallRule {
+    pub interface: String,
+    #[serde(default, deserialize_with = "deserialize_optional_cidrs")]
+    pub source: Option<Vec<String>>,
+    #[serde(default, deserialize_with = "deserialize_optional_cidrs")]
+    pub destination: Option<Vec<String>>,
+    #[serde(default)]
+    pub protocol: Option<FirewallProtocol>,
+    #[serde(default)]
+    pub ports: Option<Vec<u16>>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -453,6 +498,61 @@ impl Config {
                     return invalid(
                         "routing.rules.source and destination must share at least one address family",
                     );
+                }
+            }
+        }
+
+        for (direction, rules, is_input) in [
+            ("firewall.input", &self.firewall.input.rules, true),
+            ("firewall.output", &self.firewall.output.rules, false),
+        ] {
+            for (index, rule) in rules.iter().enumerate() {
+                let path = format!("{direction}.rules[{index}]");
+                let Some(interface) = self.interfaces.get(&rule.interface) else {
+                    return invalid(format!(
+                        "{path} references unknown interface '{}'",
+                        rule.interface
+                    ));
+                };
+                if is_input && rule.destination.is_some() {
+                    return invalid(format!("{path}.destination is not valid for INPUT rules"));
+                }
+                if !is_input && rule.source.is_some() {
+                    return invalid(format!("{path}.source is not valid for OUTPUT rules"));
+                }
+                for (field, prefixes) in [
+                    ("source", rule.source.as_ref()),
+                    ("destination", rule.destination.as_ref()),
+                ] {
+                    if let Some(prefixes) = prefixes {
+                        if prefixes.is_empty() {
+                            return invalid(format!("{path}.{field} must not be an empty list"));
+                        }
+                        for prefix in prefixes {
+                            let (address, _) = parse_prefix(prefix, &format!("{path}.{field}"))?;
+                            if address.is_ipv6() && !interface.ipv6_enabled {
+                                return invalid(format!(
+                                    "{path}.{field} contains IPv6 CIDR {prefix}, but interface '{}' has IPv6 disabled",
+                                    rule.interface
+                                ));
+                            }
+                        }
+                    }
+                }
+                if let Some(ports) = &rule.ports {
+                    if ports.is_empty() || ports.contains(&0) {
+                        return invalid(format!(
+                            "{path}.ports must contain one or more ports in 1..=65535"
+                        ));
+                    }
+                    if !matches!(
+                        rule.protocol,
+                        Some(FirewallProtocol::Tcp | FirewallProtocol::Udp)
+                    ) {
+                        return invalid(format!(
+                            "{path}.ports requires protocol = \"tcp\" or \"udp\""
+                        ));
+                    }
                 }
             }
         }

@@ -3,7 +3,7 @@
 > Рабочая ветка: `feature/vpn-relay-firewall-nat`
 > Базовая ветка: `feature/boringtun-router-daemon`
 > Базовый commit: `ad3f35d2790e7e47c8d050fb7b3c206c69ac2aa4`
-> Последнее обновление: 2026-11-09
+> Последнее обновление: 2026-11-09 (первый этап реализации)
 >
 > Этот документ является рабочим журналом реализации. Статусы меняются только
 > после фактического изменения кода и выполнения соответствующих проверок.
@@ -47,15 +47,23 @@
 
 - [x] Создать отдельную рабочую ветку от актуального commit исходной ветки.
 - [x] Проверить базовый commit и структуру vpn-relay.
-- [~] Сверить документ `docs/VPN_RELAY_NFTABLES.md` с текущими реализациями
+- [x] Сверить документ `docs/VPN_RELAY_NFTABLES.md` с текущими реализациями
   `config.rs`, `routing.rs`, `linux.rs`, `runtime.rs`.
-- [ ] Составить карту существующих unit и network-namespace тестов.
-- [ ] Зафиксировать точные текущие правила marks, conntrack, NAT и порядок
-  установки/удаления ресурсов.
-- [ ] Проверить реализацию AllowedIPs в BoringTun: входная проверка source IP,
-  выбор peer по destination IP, поведение при перекрывающихся префиксах.
+- [x] Найти существующие unit tests и network-namespace сценарии:
+  `routing.rs`, `config.rs`, `vpn-relay-netns-test.sh`,
+  `vpn-relay-peer-traffic-test.sh`, `vpn-relay-multi-uplink-test.sh`.
+- [x] Зафиксировать текущие marks, conntrack, NAT и lifecycle: routing marks
+  сохраняются в ct mark; reply direction возвращается в main table; NAT сейчас
+  выбирается свойством routing rule; Runtime включает forwarding, устанавливает
+  policy routing, затем nftables.
+- [x] Проверить реализацию AllowedIPs в BoringTun: после decapsulation оба
+  варианта `WriteToTunnelV4/V6` проверяют `Device::peer_owns(peer, addr)`
+  до записи в TUN. Исходный адрес проверяется по единому trie
+  `peers_by_ip`, что защищает от source spoofing между peer.
 - [ ] Проверить реальный путь peer-to-peer трафика на одном TUN и определить,
-  проходит ли он Linux FORWARD hook.
+  проходит ли он Linux FORWARD hook. Код backend направляет TUN-пакет по
+  destination через `peers_by_ip`; окончательный вывод требует packet-level
+  теста в network namespace.
 
 Критерий приёмки: инвентаризация отражает код базового commit, а не только
 предыдущую документацию; все выявленные расхождения внесены в этот журнал.
@@ -100,6 +108,20 @@
 а не только строки сгенерированного nftables script.
 
 ## 5. Этап 2 — конфигурационная модель
+
+### Реализованная часть первого прохода
+
+- [x] Добавлен `[firewall]` с независимыми `input.rules` и `output.rules`.
+- [x] Правило разрешения привязано к одному существующему managed interface.
+- [x] Поддержаны source CIDR для INPUT и destination CIDR для OUTPUT.
+- [x] Поддержаны TCP, UDP, ICMP и ICMPv6; порты разрешены только для TCP/UDP.
+- [x] Пустые списки, порт 0, неизвестные интерфейсы, IPv6 CIDR на интерфейсе
+  с выключенным IPv6 и селекторы неправильного направления отклоняются.
+- [x] Отсутствие allow rules означает deny для соответствующего managed hook.
+- [ ] Добавить отдельные parser tests на все новые отрицательные случаи.
+- [ ] Добавить packet-level netns tests для INPUT/OUTPUT.
+
+
 
 Предварительная структура должна быть простой и строго типизированной:
 
@@ -148,9 +170,9 @@ to = "203.0.113.10"
 - [ ] Описать протоколы TCP/UDP/ICMP/ICMPv6 и семантику портов.
 - [ ] Описать IPv4/IPv6 CIDR и поведение при смешанных семействах.
 - [ ] Добавить NAT action `Snat(IpAddr)` наряду с `None` и `Masquerade`.
-- [ ] Определить, остаётся ли NAT свойством routing rule или становится отдельной
-  секцией с однозначной ссылкой на routing decision. Не допускать двух
-  независимых правил выбора egress.
+- [x] Зафиксировать NAT как свойство выбранного routing rule. Отдельная
+  `[[nat.rules]]` секция не вводится: это исключает второй независимый
+  механизм выбора ingress/egress. Расширение добавит адрес SNAT к routing rule.
 - [ ] Валидировать ссылки на интерфейсы, address family, пустые списки,
   дубликаты и неоднозначные совпадения.
 - [ ] Обновить пример TOML и CLI `--check` tests.
@@ -178,7 +200,7 @@ to = "203.0.113.10"
 
 ## 7. Этап 4 — реализация INPUT deny
 
-- [ ] Добавить INPUT base chain в таблицу vpn-relay с policy accept, поскольку
+- [x] Добавить INPUT base chain в таблицу vpn-relay с policy accept, поскольку
   глобальный INPUT namespace принадлежит системному firewall.
 - [ ] Сначала обработать invalid.
 - [ ] Применить явные разрешения только к managed ingress.
@@ -195,7 +217,7 @@ to = "203.0.113.10"
 ## 8. Этап 5 — OUTPUT managed
 
 - [ ] Создавать output base chain независимо от IPv6-disabled gating.
-- [ ] Фильтровать только пакеты с фактическим managed TUN egress.
+- [x] Фильтровать только пакеты с фактическим managed TUN egress.
 - [ ] Определить безопасную модель default deny и явных разрешений.
 - [ ] Не блокировать socket-marked outer UDP, направленный через underlay.
 - [ ] Не влиять на физический/unmanaged egress.
@@ -268,7 +290,10 @@ unmanaged output остаётся неизменным.
 | Дата | Изменение | Проверки | Статус |
 |---|---|---|---|
 | 2026-11-09 | Создана ветка `feature/vpn-relay-firewall-nat` от `ad3f35d2790e7e47c8d050fb7b3c206c69ac2aa4` | GitHub branch ref проверен | Завершено |
-| 2026-11-09 | Добавлен рабочий план реализации | Будет зафиксирован отдельным commit | В работе |
+| 2026-11-09 | Добавлен рабочий план реализации | Commit 93244b354acef1344c9ab9ec2600372633de3ea6 | Завершено |
+| 2026-11-09 | Проверены BoringTun AllowedIPs ingress validation и backend routing lookup | Просмотрены `Device::peer_owns`, `WriteToTunnelV4/V6`, `peers_by_ip` | Завершено |
+| 2026-11-09 | Уточнена модель NAT: действие остаётся в routing rule | Отдельная NAT-секция не нужна, так как egress уже выбирается routing rule | Завершено |
+| 2026-11-09 | Добавлены INPUT/OUTPUT chains, explicit allow rules и managed default deny | Unit/parser tests добавлены; CI ещё не запускался | В работе |
 
 ## 14. Правила ведения плана
 
