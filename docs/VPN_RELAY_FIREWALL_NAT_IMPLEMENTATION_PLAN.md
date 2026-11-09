@@ -96,7 +96,8 @@
 - [ ] Сохраняется запрет нового потока без routing rule.
 - [ ] Сохраняется разрешение только выбранной пары ingress/egress.
 - [ ] Ответный трафик разрешённого потока проходит только в обратную пару.
-- [ ] Неверный/нулевой/чужой conntrack mark не открывает транзит.
+- [x] Неверный/нулевой/чужой conntrack mark не открывает транзит; для host
+  INPUT/OUTPUT reply дополнительно требуется отдельный `0x80000000` tag.
 - [ ] NAT не меняет поведение фильтрации и не применяется к запрещённым потокам.
 
 ### Владение и lifecycle
@@ -238,10 +239,12 @@ to = "203.0.113.10"
 - [x] Применять явные разрешения только к managed ingress.
 - [x] Запрещать остальные пакеты с managed ingress до любого общего
   established/related accept, способного обойти политику.
-- [~] Разделены conntrack original/reply направления: явные INPUT/OUTPUT
-  allow rules принимают original direction; established/related reply traffic
-  разрешается отдельно и только на managed interfaces. Нужна проверка nft и
-  реальным трафиком.
+- [x] Разделены conntrack original/reply направления: явные INPUT/OUTPUT
+  allow rules принимают original direction и устанавливают host-flow tag
+  `0x80000000`; reply разрешается только при совпадении этого tag. Это не
+  позволяет established flow, начатому через unmanaged egress, обходить
+  managed INPUT deny. Unit assertions обновлены; packet-level negative test
+  для forged reply ещё требуется.
 - [ ] Не блокировать loopback и unmanaged ingress.
 - [ ] Добавить IPv4/IPv6 и ICMPv6 тесты.
 - [ ] Проверить взаимодействие с другими nftables base chains.
@@ -368,3 +371,5 @@ unmanaged output остаётся неизменным.
 
 | 2026-11-09 | Проверен anti-spoofing на уровне BoringTun | После decapsulation IPv4/IPv6 пакет попадает в TUN только если `Device::peer_owns` подтверждает владение source IP через единый `peers_by_ip` индекс; regression tests проверяют передачу prefix между peers | Backend-проверка подтверждена; packet-level race tests остаются |
 | 2026-11-09 | Проверена граница peer isolation | Multi-uplink netns test проверяет запрет .3 → .2; nftables не получает peer identity после decapsulation, source anti-spoofing выполняется BoringTun | Требует повторного успешного CI после исправления тестового firewall |
+
+| 2026-11-09 | Привязаны INPUT/OUTPUT replies к явной авторизации исходного host flow | Allow rules выставляют отдельный high-16-bit ct mark tag `0x80000000`; reply rules требуют его; младшие 16 бит сохраняются; unit assertions обновлены | Ожидает nft/netns CI и packet-level forged-reply test |

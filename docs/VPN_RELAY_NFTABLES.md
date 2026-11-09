@@ -61,10 +61,12 @@ Firewall INPUT rules используют source CIDR, OUTPUT rules — destinat
 selectors.
 
 - `meta mark` содержит routing mark egress и выбирает iproute2 table.
-- Старшие 16 бит `ct mark` содержат идентификатор routing decision.
-- Младшие 16 бит `ct mark` сохраняются для host policy/QoS.
-- Диапазон старших бит `0x4001`–`0x4fff` зарезервирован за vpn-relay;
+- Старшие 16 бит `ct mark` зарезервированы за vpn-relay.
+- Диапазон `0x4001`–`0x4fff` содержит идентификаторы routing decisions;
   конфигурация ограничена 4095 routing rules.
+- Значение `0x8000` помечает локальные host flows, прошедшие явное INPUT
+  или OUTPUT разрешение.
+- Младшие 16 бит `ct mark` сохраняются для host policy/QoS.
 
 Для нового flow prerouting классифицирует пакет по ingress, source и
 destination. При совпадении выставляются оба mark и выполняется return.
@@ -85,8 +87,9 @@ INPUT base chain:
 1. Отбрасывает `ct state invalid` только для managed ingress.
 2. Разрешает original-direction пакеты, совпавшие с явными
    `[firewall.input.rules]`.
-3. Разрешает established/related reply-direction пакеты для host-initiated
-   flows, пришедшие через managed interfaces.
+3. Разрешает established/related reply-direction пакеты, только если
+   conntrack entry имеет host-flow tag `0x80000000`, установленный явным
+   OUTPUT allow rule для исходного host-initiated flow.
 4. Отбрасывает весь остальной managed ingress.
 
 Пакеты с unmanaged ingress и loopback не охватываются этими правилами.
@@ -94,13 +97,20 @@ INPUT allow rule не является разрешением FORWARD.
 
 ## OUTPUT: host traffic в managed TUN
 
+INPUT/OUTPUT allow rules устанавливают host-flow tag, меняя только старшие
+16 бит `ct mark` и сохраняя младшие 16. Поэтому established/related сам по
+себе не является разрешением: reply на физическом интерфейсе или на flow,
+не прошедший managed allow rule, не получает этот tag и не принимается через
+managed TUN.
+
 OUTPUT base chain:
 
 1. Отбрасывает `ct state invalid` только при фактическом managed TUN egress.
 2. Разрешает original-direction пакеты, совпавшие с явными
    `[firewall.output.rules]`.
-3. Разрешает established/related reply-direction пакеты для flows,
-   инициированных клиентом через managed TUN.
+3. Разрешает established/related reply-direction пакеты, только если
+   conntrack entry имеет host-flow tag `0x80000000`, установленный явным
+   INPUT allow rule для исходного client-initiated flow.
 4. Отбрасывает остальной managed egress.
 
 Проверяется фактический `oifname`, а не socket mark. Поэтому внешний
