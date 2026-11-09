@@ -298,7 +298,7 @@ source = "10.77.0.2/32"
 destination = "198.51.100.0/24"
 egress = "awg-primary"
 nat = "snat"
-nat_to = "10.20.0.1"
+nat_to = "10.20.0.99"
 
 [[routing.rules]]
 priority = 100
@@ -344,16 +344,16 @@ disable_cookies = false
 
 [[interfaces.up-primary.peers]]
 public_key = "$ROUTER_PRIMARY_PUBLIC"
-allowed_ips = ["10.20.0.1/32", "fd20::1/128", "fd77::2/128"]
+allowed_ips = ["10.20.0.1/32", "10.20.0.99/32", "fd20::1/128", "fd77::2/128"]
 [firewall.input]
 [[firewall.input.rules]]
 interface = "up-primary"
-source = ["10.77.0.0/24", "fd77::/64", "10.20.0.1/32", "fd20::1/128"]
+source = ["10.77.0.0/24", "fd77::/64", "10.20.0.1/32", "10.20.0.99/32", "fd20::1/128"]
 
 [firewall.output]
 [[firewall.output.rules]]
 interface = "up-primary"
-destination = ["10.77.0.0/24", "fd77::/64", "10.20.0.1/32", "fd20::1/128"]
+destination = ["10.77.0.0/24", "fd77::/64", "10.20.0.1/32", "10.20.0.99/32", "fd20::1/128"]
 
 TOML
 
@@ -534,7 +534,7 @@ ip netns exec "$CLIENT_NS" ping -6 -n -I fd77::2 -c 4 -W 2 2001:db8:195:1::1 \
 # Static SNAT must use the configured address rather than infer it from
 # the egress interface. This destination is hosted only behind awg-primary.
 ip netns exec "$PRIMARY_NS" timeout 5 tcpdump -nn -i up-primary -c 1 \
-    'icmp and src host 10.20.0.1 and dst host 198.51.100.3' \
+    'icmp and src host 10.20.0.99 and dst host 198.51.100.3' \
     >"$TMP/nat-static-snat-capture.log" 2>&1 &
 capture_pid=$!
 sleep 0.25
@@ -542,7 +542,7 @@ ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -c 1 -W 2 198.51.100.3 \
     || fail "static SNAT IPv4 probe failed"
 wait "$capture_pid" || fail "could not capture static SNAT IPv4 packet"
 grep -Eq '10\.20\.0\.1 > 198\.51\.100\.3' "$TMP/nat-static-snat-capture.log" \
-    || fail "static SNAT did not use configured nat_to address 10.20.0.1"
+    || fail "static SNAT did not use configured nat_to address 10.20.0.99"
 
 # Observe inner packets at the remote TUNs. This proves NAT semantics rather
 # than merely checking that a masquerade statement exists in nftables.
