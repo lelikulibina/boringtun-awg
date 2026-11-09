@@ -571,6 +571,8 @@ impl Config {
                 if !is_input && rule.source.is_some() {
                     return invalid(format!("{path}.source is not valid for OUTPUT rules"));
                 }
+                let mut has_ipv4_selector = false;
+                let mut has_ipv6_selector = false;
                 for (field, prefixes) in [
                     ("source", rule.source.as_ref()),
                     ("destination", rule.destination.as_ref()),
@@ -581,6 +583,8 @@ impl Config {
                         }
                         for prefix in prefixes {
                             let (address, _) = parse_prefix(prefix, &format!("{path}.{field}"))?;
+                            has_ipv6_selector |= address.is_ipv6();
+                            has_ipv4_selector |= address.is_ipv4();
                             if address.is_ipv6() && !interface.ipv6_enabled {
                                 return invalid(format!(
                                     "{path}.{field} contains IPv6 CIDR {prefix}, but interface '{}' has IPv6 disabled",
@@ -589,6 +593,25 @@ impl Config {
                             }
                         }
                     }
+                }
+                match rule.protocol {
+                    Some(FirewallProtocol::Icmp) if has_ipv6_selector => {
+                        return invalid(format!(
+                            "{path}.protocol = \"icmp\" cannot be combined with IPv6 CIDR selectors"
+                        ));
+                    }
+                    Some(FirewallProtocol::Icmpv6) if has_ipv4_selector => {
+                        return invalid(format!(
+                            "{path}.protocol = \"icmpv6\" cannot be combined with IPv4 CIDR selectors"
+                        ));
+                    }
+                    Some(FirewallProtocol::Icmpv6) if !interface.ipv6_enabled => {
+                        return invalid(format!(
+                            "{path}.protocol = \"icmpv6\" requires IPv6 to be enabled on interface '{}'",
+                            rule.interface
+                        ));
+                    }
+                    _ => {}
                 }
                 if let Some(ports) = &rule.ports {
                     if ports.is_empty() || ports.contains(&0) {
@@ -854,6 +877,42 @@ egress = "awg-uplink"
             valid_config()
         );
         assert!(Config::parse_toml(&wrong_direction).is_err());
+    }
+
+    #[test]
+    fn firewall_icmp_protocol_must_match_selector_address_family() {
+        let icmp_v6_selector = format!(
+            "{}\n[[firewall.input.rules]]\ninterface = \"wg-server\"\nsource = [\"2001:db8::2/128\"]\nprotocol = \"icmp\"\n",
+            valid_config().replace(
+                "socket_fwmark = 4097",
+                "socket_fwmark = 4097\nipv6_enabled = true",
+            )
+        );
+        assert!(Config::parse_toml(&icmp_v6_selector)
+            .unwrap_err()
+            .to_string()
+            .contains("icmp\\" cannot be combined with IPv6"));
+
+        let icmp_v4_selector = format!(
+            "{}\n[[firewall.output.rules]]\ninterface = \"awg-uplink\"\ndestination = [\"10.0.0.0/24\"]\nprotocol = \"icmpv6\"\n",
+            valid_config().replace(
+                "socket_fwmark = 4098",
+                "socket_fwmark = 4098\nipv6_enabled = true",
+            )
+        );
+        assert!(Config::parse_toml(&icmp_v4_selector)
+            .unwrap_err()
+            .to_string()
+            .contains("icmpv6\\" cannot be combined with IPv4"));
+
+        let disabled_icmpv6 = format!(
+            "{}\n[[firewall.input.rules]]\ninterface = \"wg-server\"\nprotocol = \"icmpv6\"\n",
+            valid_config()
+        );
+        assert!(Config::parse_toml(&disabled_icmpv6)
+            .unwrap_err()
+            .to_string()
+            .contains("icmpv6\\" requires IPv6"));
     }
 
     #[test]
