@@ -430,13 +430,20 @@ PY
 }
 expect_tcp "$CLIENT_NS" 10.77.0.1 8080 allow "client to server allowed INPUT/OUTPUT"
 expect_tcp "$SERVER_NS" 10.77.0.2 8080 allow "server to client allowed INPUT/OUTPUT"
+
+foreign_counter() {
+    ip netns exec "$SERVER_NS" nft list chain inet "foreign_filter_$SUFFIX" "$1" \
+        | grep -oE 'counter packets [0-9]+' | awk '{print $3}'
+}
+foreign_input_before="$(foreign_counter input)"
+foreign_output_before="$(foreign_counter output)"
 expect_tcp "$CLIENT_NS" 10.77.0.1 8081 deny "server INPUT default deny"
 expect_tcp "$SERVER_NS" 10.77.0.2 8081 deny "server OUTPUT default deny"
 
-foreign_input="$(ip netns exec "$SERVER_NS" nft list chain inet "foreign_filter_$SUFFIX" input)"
-foreign_output="$(ip netns exec "$SERVER_NS" nft list chain inet "foreign_filter_$SUFFIX" output)"
-grep -Eq 'counter packets [1-9][0-9]* bytes' <<<"$foreign_input" || fail "foreign INPUT accept chain did not observe the denied packet"
-grep -Eq 'counter packets [1-9][0-9]* bytes' <<<"$foreign_output" || fail "foreign OUTPUT accept chain did not observe the denied packet"
+foreign_input_after="$(foreign_counter input)"
+foreign_output_after="$(foreign_counter output)"
+[[ "$foreign_input_after" -gt "$foreign_input_before" ]] || fail "foreign INPUT accept chain did not observe the denied packet"
+[[ "$foreign_output_after" -gt "$foreign_output_before" ]] || fail "foreign OUTPUT accept chain did not observe the denied packet"
 
 # Both foreign chains accepted the packets first; vpn-relay must still apply
 # its later deny verdict. Require packet counters to prove hook traversal.

@@ -535,12 +535,13 @@ ip netns exec "$SECOND_CLIENT_NS" ping -n -I 10.77.0.3 -c 3 -W 2 10.77.0.1 \
 
 # Peers on the same WG server are isolated from one another. The kernel has
 # a connected route back through the same TUN, but there is no explicit rule.
+foreign_forward_before="$(ip netns exec "$ROUTER_NS" nft list chain inet "foreign_filter_$SUFFIX" forward | grep -oE 'counter packets [0-9]+' | awk '{print $3}')"
 if ip netns exec "$SECOND_CLIENT_NS" ping -n -I 10.77.0.3 -c 2 -W 1 10.77.0.2 >/dev/null 2>&1; then
     fail "two peers on one WG server communicated without a routing rule"
 fi
 
-foreign_forward="$(ip netns exec "$ROUTER_NS" nft list chain inet "foreign_filter_$SUFFIX" forward)"
-grep -Eq 'counter packets [1-9][0-9]* bytes' <<<"$foreign_forward" || fail "foreign FORWARD accept chain did not observe peer-isolation traffic"
+foreign_forward_after="$(ip netns exec "$ROUTER_NS" nft list chain inet "foreign_filter_$SUFFIX" forward | grep -oE 'counter packets [0-9]+' | awk '{print $3}')"
+[[ "$foreign_forward_after" -gt "$foreign_forward_before" ]] || fail "foreign FORWARD accept chain did not observe peer-isolation traffic"
 
 # A valid ingress interface is not sufficient: the source selector must match.
 if ip netns exec "$SECOND_CLIENT_NS" ping -n -I 10.77.0.3 -c 2 -W 1 203.0.113.1 >/dev/null 2>&1; then
