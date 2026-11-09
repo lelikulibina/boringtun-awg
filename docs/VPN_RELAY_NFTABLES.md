@@ -9,6 +9,37 @@
 - `vpn-relay/src/runtime.rs` — startup/shutdown, блокировка экземпляра и sysctl.
 - `vpn-relay/src/backend/` — backend-neutral lifecycle и BoringTun WG/AWG backend.
 
+## Путь пакета и порядок hooks
+
+Ниже показан путь для managed TUN ingress. Локальный и транзитный трафик
+разделяются после prerouting; OUTPUT проверяет фактический интерфейс,
+выбранный маршрутизацией ядра.
+
+```mermaid
+flowchart TD
+    A[Пакет входит через managed TUN] --> B[prerouting: IPv6 gate и conntrack]
+    B --> C{Направление conntrack}
+    C -->|reply| D[Сброс packet mark; main table]
+    C -->|original / new| E[Восстановить decision или классифицировать]
+    E --> F{Есть RoutingDecision?}
+    F -->|нет| G[FORWARD deny для managed ingress]
+    F -->|да| H[meta mark выбирает egress route table]
+    D --> I{Результат route lookup}
+    H --> I
+    I -->|локальный адрес| J[INPUT: explicit allow / tagged reply]
+    I -->|другой интерфейс| K[FORWARD: ingress/egress + decision id]
+    L[Локально созданный пакет] --> M[route lookup]
+    M --> N[OUTPUT: проверка фактического managed oif]
+    K --> O[POSTROUTING: NAT только для разрешённого original flow]
+    N --> P[Выход]
+    J --> Q[Локальный socket]
+    O --> P
+```
+
+Для OUTPUT пакетов conntrack host-flow tag выставляется только явным allow
+правилом. INPUT/OUTPUT reply допускается только в reply direction при наличии
+этого tag; одного `ct state established,related` недостаточно.
+
 ## Область управления
 
 vpn-relay управляет только трафиком, который входит или выходит через

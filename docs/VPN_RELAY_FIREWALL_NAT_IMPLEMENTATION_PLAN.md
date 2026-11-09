@@ -3,7 +3,7 @@
 > Рабочая ветка: `feature/vpn-relay-firewall-nat`
 > Базовая ветка: `feature/boringtun-router-daemon`
 > Базовый commit: `ad3f35d2790e7e47c8d050fb7b3c206c69ac2aa4`
-> Последнее обновление: 2026-11-09 (первый этап реализации и интеграционная настройка)
+> Последнее обновление: 2026-11-09 (packet-level проверки conntrack/NAT и уточнение lifecycle)
 >
 > Этот документ является рабочим журналом реализации. Статусы меняются только
 > после фактического изменения кода и выполнения соответствующих проверок.
@@ -350,3 +350,8 @@ unmanaged output остаётся неизменным.
 
 | 2026-11-09 | CI для host-flow conntrack tag и текущей firewall/NAT реализации | Run 42646765536: all-systems-go success; unit tests, clippy, rustfmt, feature checks, AWG 3.1 interoperability, netns routing, WG/AWG bidirectional traffic и multi-uplink packet tests прошли | Завершено |
 | 2026-11-09 | Добавлен forged-reply packet probe | Проверяет, что reply к host-originated unmanaged UDP flow виден на managed TUN, но блокируется INPUT без host-flow conntrack tag | Ожидает CI |
+
+
+| 2026-11-09 | Удалён дублирующийся OUTPUT reply probe; forged-reply сценарий дополнен отдельной проверкой underlay и диагностикой отправителя | Коммиты 8543b36, e8fb434; ожидается новый CI. Предыдущий run 42654386211 выявил, что forged reply не доходил до server TUN; добавлены захват исходного host-flow на клиентском underlay и логирование отправки | В работе |
+| 2026-11-09 | Статический SNAT проверяется адресом, отличным от адреса egress TUN | Коммит bdcf1d7: nat_to=10.20.0.99, peer AllowedIPs и endpoint INPUT/OUTPUT selectors расширены для обратного пути; ожидается packet-level CI | В работе |
+| 2026-11-09 | OUTPUT reply probe разделён на один сценарий без дублирования | Удалён повторный блок, который повторно отправлял тот же UDP запрос и ошибочно завершал тест; основной сценарий подтверждает получение запроса сервисом, EPERM на ответе и отсутствие пакета на клиентском TUN | Ожидает CI |
