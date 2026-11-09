@@ -8,6 +8,10 @@ use std::net::{IpAddr, SocketAddr};
 use std::path::Path;
 use std::str::FromStr;
 
+/// Number of unique routing decisions representable in vpn-relay's reserved
+/// conntrack mark field (12 decision bits plus a 4-bit namespace prefix).
+pub(crate) const MAX_ROUTING_DECISIONS: usize = 0x0fff;
+
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
     #[error("failed to read configuration: {0}")]
@@ -327,6 +331,11 @@ impl Config {
     }
 
     pub fn validate(&self) -> Result<(), ConfigError> {
+        if self.routing.rules.len() > MAX_ROUTING_DECISIONS {
+            return invalid(format!(
+                "[routing].rules supports at most {MAX_ROUTING_DECISIONS} entries because conntrack decision marks have a reserved 12-bit id field"
+            ));
+        }
         if self.interfaces.is_empty() {
             return invalid("at least one interface must be configured");
         }

@@ -4,14 +4,16 @@
 //! validated TOML configuration into deterministic nftables and policy-routing
 //! operations; the runtime layer can apply these operations transactionally.
 
-use crate::config::{Config, FirewallProtocol, FirewallRule, NatMode};
+use crate::config::{Config, FirewallProtocol, FirewallRule, NatMode, MAX_ROUTING_DECISIONS};
 use std::collections::BTreeMap;
 
 const FIRST_ROUTING_TABLE: u32 = 10_000;
 const FIRST_IP_RULE_PRIORITY: u32 = 10_000;
 const SOCKET_MAIN_RULE_PRIORITY: u32 = 9_000;
-// Keep conntrack decision ids in a dedicated mark range, separate from the
-// default egress routing marks and ordinary low-valued conntrack marks.
+// vpn-relay owns the high 16 bits of ct mark for decision identity and
+// preserves the low 16 bits for host policy/QoS marks.
+const CONNTRACK_MARK_MASK: u32 = 0xffff_0000;
+const CONNTRACK_MARK_PRESERVE_MASK: u32 = !CONNTRACK_MARK_MASK;
 const FIRST_CONNTRACK_MARK: u32 = 0x4000_0000;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -136,11 +138,9 @@ impl RoutingPlan {
         // Persist the exact selected rule in conntrack. Decisions sharing an
         // egress still need distinct identifiers when their NAT differs.
         for (index, decision) in decisions.iter_mut().enumerate() {
-            let offset = u32::try_from(index + 1)
-                .expect("routing decision count must fit in a conntrack mark");
-            decision.conntrack_mark = FIRST_CONNTRACK_MARK
-                .checked_add(offset)
-                .expect("routing decision count exceeds the reserved conntrack mark range");
+            let decision_id = u32::try_from(index + 1)
+                .expect("validated routing decision count must fit in a conntrack mark");
+            decision.conntrack_mark = FIRST_CONNTRACK_MARK | (decision_id << 16);
         }
 
         let to_firewall_rule = |rule: &FirewallRule| NftFirewallRule {
@@ -318,7 +318,7 @@ impl RoutingPlan {
         ));
         for decision in &self.decisions {
             output.push_str(&format!(
-                "add rule {} {} prerouting iifname @managed_interfaces ct state established,related ct direction original ct mark 0x{:x} meta mark set 0x{:x} return\n",
+                "add rule {} {} prerouting iifname @managed_interfaces ct state established,related ct direction original ct mark & 0xffff0000 == 0x{:08x} meta mark set 0x{:x} return\n",
                 self.nft_family, self.nft_table, decision.conntrack_mark, decision.routing_mark
             ));
         }
@@ -331,7 +331,7 @@ impl RoutingPlan {
                     append_cidr_selector(&mut selectors, family, "daddr", &destinations);
                 }
                 output.push_str(&format!(
-                    "add rule {} {} prerouting {} meta mark set 0x{:x} ct mark set 0x{:x} return\n",
+                    "add rule {} {} prerouting {} meta mark set 0x{:x} ct mark set (ct mark & 0x0000ffff) | 0x{:08x} return\n",
                     self.nft_family,
                     self.nft_table,
                     selectors,
@@ -353,7 +353,7 @@ impl RoutingPlan {
         }
         for rule in &self.decisions {
             output.push_str(&format!(
-                "add rule {} {} forward iifname \"{}\" oifname \"{}\" ct state established,related ct mark 0x{:x} accept\n",
+                "add rule {} {} forward iifname \"{}\" oifname \"{}\" ct state established,related ct mark & 0xffff0000 == 0x{:08x} accept\n",
                 self.nft_family, self.nft_table, rule.egress, rule.ingress, rule.conntrack_mark
             ));
         }
@@ -367,7 +367,7 @@ impl RoutingPlan {
         // repeating selector matching and risking a different overlapping rule.
         for rule in &self.decisions {
             let selector = format!(
-                "iifname \"{}\" oifname \"{}\" ct mark 0x{:x}",
+                "iifname \"{}\" oifname \"{}\" ct mark & 0xffff0000 == 0x{:08x}",
                 rule.ingress, rule.egress, rule.conntrack_mark
             );
             match rule.nat {
@@ -696,12 +696,12 @@ egress = "awg-primary"
         config.routing.rules.truncate(1);
         let script = RoutingPlan::from_config(&config).nft_script();
         assert!(script.contains(
-            "prerouting iifname \"wg-server\" ct state new meta mark set 0x80000000 ct mark set 0x40000001 return"
+            "prerouting iifname \"wg-server\" ct state new meta mark set 0x80000000 ct mark set (ct mark & 0x0000ffff) | 0x40010000 return"
         ));
         assert!(!script.contains("prerouting iifname \"wg-server\" ct state new ip saddr"));
         assert!(!script.contains("prerouting iifname \"wg-server\" ct state new ip daddr"));
         assert!(script.contains(
-            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark 0x40000001 return"
+            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark & 0xffff0000 == 0x40010000 return"
         ));
     }
 
@@ -751,7 +751,7 @@ egress = "awg-primary"
         assert!(script.contains("iifname @managed_interfaces meta mark set 0"));
         assert!(script.contains("ct direction reply meta mark set 0"));
         assert!(
-            script.contains("ct direction original ct mark 0x40000001 meta mark set 0x80000001")
+            script.contains("ct direction original ct mark & 0xffff0000 == 0x40010000 meta mark set 0x80000001")
         );
     }
 
@@ -762,7 +762,7 @@ egress = "awg-primary"
         config.routing.rules[0].nat_to = Some("203.0.113.10".parse().unwrap());
         let script = RoutingPlan::from_config(&config).nft_script();
         assert!(script.contains(
-            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark 0x40000001 meta nfproto ipv4 snat ip to 203.0.113.10"
+            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark & 0xffff0000 == 0x40010000 meta nfproto ipv4 snat ip to 203.0.113.10"
         ));
         assert!(!script.contains("snat ip6"));
     }
@@ -774,7 +774,7 @@ egress = "awg-primary"
         config.routing.rules[0].nat = NatMode::Masquerade;
         let script = RoutingPlan::from_config(&config).nft_script();
         assert!(script.contains(
-            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark 0x40000001 masquerade"
+            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark & 0xffff0000 == 0x40010000 masquerade"
         ));
         assert!(!script.contains("masquerade return"));
     }
@@ -863,12 +863,12 @@ egress = "awg-primary"
             Some(&["0.0.0.0/0".to_owned()][..])
         );
         assert_eq!(plan.decisions[0].routing_mark, 0x8000_0001);
-        assert_eq!(plan.decisions[0].conntrack_mark, 0x4000_0001);
+        assert_eq!(plan.decisions[0].conntrack_mark, 0x4001_0000);
         assert_eq!(plan.decisions[2].routing_mark, 0x8000_0000);
-        assert_eq!(plan.decisions[2].conntrack_mark, 0x4000_0003);
+        assert_eq!(plan.decisions[2].conntrack_mark, 0x4003_0000);
         let script = plan.nft_script();
         assert!(script.contains(
-            "ip daddr 195.142.0.0/16 meta mark set 0x80000001 ct mark set 0x40000001 return"
+            "ip daddr 195.142.0.0/16 meta mark set 0x80000001 ct mark set (ct mark & 0x0000ffff) | 0x40010000 return"
         ));
         assert!(script.contains("iifname \"wg-server\""));
     }
@@ -958,10 +958,10 @@ egress = "awg-primary"
             "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark 0x40000001 return"
         ));
         assert!(script.contains(
-            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark 0x40000002 masquerade"
+            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark & 0xffff0000 == 0x40020000 masquerade"
         ));
         assert!(!script.contains(
-            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark 0x40000001 masquerade"
+            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark & 0xffff0000 == 0x40010000 masquerade"
         ));
     }
     #[test]
