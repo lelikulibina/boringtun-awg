@@ -137,6 +137,7 @@ ip -n "$SECONDARY_NS" address add 195.142.1.1/32 dev lo
 ip -n "$SECONDARY_NS" address add 79.100.22.1/32 dev lo
 ip -n "$PRIMARY_NS" address add 198.51.101.1/32 dev lo
 ip -n "$PRIMARY_NS" address add 198.51.100.2/32 dev lo
+ip -n "$PRIMARY_NS" address add 198.51.100.3/32 dev lo
 ip -n "$SECONDARY_NS" address add 198.51.100.2/32 dev lo
 ip -n "$SECONDARY_NS" -6 address add 2001:db8:195:1::1/128 dev lo
 ip -n "$PRIMARY_NS" -6 address add 2001:db8:2::1/128 dev lo
@@ -296,7 +297,8 @@ ingress = "wg-ingress"
 source = "10.77.0.2/32"
 destination = "198.51.100.0/24"
 egress = "awg-primary"
-nat = "masquerade"
+nat = "snat"
+nat_to = "10.20.0.1"
 
 [[routing.rules]]
 priority = 100
@@ -445,6 +447,7 @@ ip -n "$CLIENT_NS" route replace 195.142.1.1/32 dev wg-client
 ip -n "$CLIENT_NS" route replace 79.100.22.1/32 dev wg-client
 ip -n "$CLIENT_NS" route replace 198.51.101.1/32 dev wg-client
 ip -n "$CLIENT_NS" route replace 198.51.100.2/32 dev wg-client
+ip -n "$CLIENT_NS" route replace 198.51.100.3/32 dev wg-client
 ip -n "$CLIENT_NS" -6 route replace 2001:db8:1::1/128 dev wg-client
 ip -n "$CLIENT_NS" -6 route replace 2001:db8:195:1::1/128 dev wg-client
 ip -n "$CLIENT_NS" -6 route replace 2001:db8:2::1/128 dev wg-client
@@ -527,6 +530,19 @@ ip netns exec "$CLIENT_NS" ping -6 -n -I fd77::2 -c 4 -W 2 2001:db8:1::1 \
     || fail "IPv6 default traffic did not traverse awg-primary"
 ip netns exec "$CLIENT_NS" ping -6 -n -I fd77::2 -c 4 -W 2 2001:db8:195:1::1 \
     || fail "IPv6 exception traffic did not traverse awg-secondary"
+
+# Static SNAT must use the configured address rather than infer it from
+# the egress interface. This destination is hosted only behind awg-primary.
+ip netns exec "$PRIMARY_NS" timeout 5 tcpdump -nn -i up-primary -c 1 \
+    'icmp and src host 10.20.0.1 and dst host 198.51.100.3' \
+    >"$TMP/nat-static-snat-capture.log" 2>&1 &
+capture_pid=$!
+sleep 0.25
+ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -c 1 -W 2 198.51.100.3 \
+    || fail "static SNAT IPv4 probe failed"
+wait "$capture_pid" || fail "could not capture static SNAT IPv4 packet"
+grep -Eq '10\\.20\\.0\\.1 > 198\\.51\\.100\\.3' "$TMP/nat-static-snat-capture.log" \
+    || fail "static SNAT did not use configured nat_to address 10.20.0.1"
 
 # Observe inner packets at the remote TUNs. This proves NAT semantics rather
 # than merely checking that a masquerade statement exists in nftables.
