@@ -163,12 +163,12 @@ persistent_keepalive_secs = 1
 [firewall.input]
 [[firewall.input.rules]]
 interface = "wg-client"
-source = ["10.77.0.1/32", "fd77::1/128"]
+source = ["0.0.0.0/0", "::/0"]
 
 [firewall.output]
 [[firewall.output.rules]]
 interface = "wg-client"
-destination = ["10.77.0.1/32", "fd77::1/128"]
+destination = ["0.0.0.0/0", "::/0"]
 
 TOML
 
