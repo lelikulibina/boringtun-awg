@@ -188,8 +188,13 @@ impl Runtime {
         let mut next = current.clone();
         next.peers = peers;
         let prepared = self.backends.prepare_interface(interface_name, &next)?;
-        let index = self.interfaces.keys().position(|name| name == interface_name)
-            .ok_or_else(|| RuntimeError::Configuration(format!("unknown interface '{interface_name}'")))?;
+        let index = self
+            .interfaces
+            .keys()
+            .position(|name| name == interface_name)
+            .ok_or_else(|| {
+                RuntimeError::Configuration(format!("unknown interface '{interface_name}'"))
+            })?;
         self.devices[index].replace_peers(&next, &prepared)?;
         self.interfaces.insert(interface_name.to_owned(), next);
         tracing::info!(interface = interface_name, "runtime peer set replaced");

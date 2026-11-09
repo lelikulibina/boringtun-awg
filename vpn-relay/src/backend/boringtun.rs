@@ -83,7 +83,10 @@ impl TunnelBackend for BoringTunBackend {
             .replace_peers(&peers)
             .map_err(|error| BackendError::new(error.to_string()))?;
 
-        Ok(Box::new(BoringTunHandle { name: name.to_owned(), device }))
+        Ok(Box::new(BoringTunHandle {
+            name: name.to_owned(),
+            device,
+        }))
     }
 }
 
@@ -143,28 +146,44 @@ fn build_peer_configs(
             "prepared peer endpoint count does not match interface peer count",
         ));
     }
-    interface.peers.iter().zip(&prepared.peer_endpoints).map(|(peer, endpoint)| {
-        let public_key = decode_key(&peer.public_key, "peer.public_key")
-            .map_err(|error| BackendError::new(error.to_string()))?;
-        let preshared_key = peer.preshared_key.as_ref()
-            .map(|value| decode_key(value, "peer.preshared_key")
-                .map_err(|error| BackendError::new(error.to_string())))
-            .transpose()?;
-        let allowed_ips = peer.allowed_ips.iter().map(|prefix| {
-            AllowedIP::from_str(prefix).map_err(|error| {
-                BackendError::new(format!("interfaces.{name}: invalid AllowedIP {prefix}: {error}"))
+    interface
+        .peers
+        .iter()
+        .zip(&prepared.peer_endpoints)
+        .map(|(peer, endpoint)| {
+            let public_key = decode_key(&peer.public_key, "peer.public_key")
+                .map_err(|error| BackendError::new(error.to_string()))?;
+            let preshared_key = peer
+                .preshared_key
+                .as_ref()
+                .map(|value| {
+                    decode_key(value, "peer.preshared_key")
+                        .map_err(|error| BackendError::new(error.to_string()))
+                })
+                .transpose()?;
+            let allowed_ips = peer
+                .allowed_ips
+                .iter()
+                .map(|prefix| {
+                    AllowedIP::from_str(prefix).map_err(|error| {
+                        BackendError::new(format!(
+                            "interfaces.{name}: invalid AllowedIP {prefix}: {error}"
+                        ))
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let persistent_keepalive = peer
+                .persistent_keepalive_secs
+                .map(|seconds| (u32::from(seconds), u32::from(seconds)));
+            Ok(PeerConfig {
+                public_key,
+                endpoint: *endpoint,
+                allowed_ips,
+                persistent_keepalive,
+                preshared_key,
             })
-        }).collect::<Result<Vec<_>, _>>()?;
-        let persistent_keepalive = peer.persistent_keepalive_secs
-            .map(|seconds| (u32::from(seconds), u32::from(seconds)));
-        Ok(PeerConfig {
-            public_key,
-            endpoint: *endpoint,
-            allowed_ips,
-            persistent_keepalive,
-            preshared_key,
         })
-    }).collect()
+        .collect()
 }
 
 fn build_awg_config(

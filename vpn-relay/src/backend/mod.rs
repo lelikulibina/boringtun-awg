@@ -101,7 +101,9 @@ impl BackendRegistry {
         interface: &InterfaceConfig,
     ) -> Result<PreparedInterface, BackendError> {
         match interface.tunnel_type {
-            TunnelType::WireGuard | TunnelType::AmneziaWg => self.boringtun.prepare(name, interface),
+            TunnelType::WireGuard | TunnelType::AmneziaWg => {
+                self.boringtun.prepare(name, interface)
+            }
         }
     }
 
