@@ -258,7 +258,7 @@ impl RoutingPlan {
         // Keep the drop scoped to managed ingress so unrelated host traffic
         // remains outside vpn-relay's firewall ownership.
         output.push_str(&format!(
-            "add rule {} {} input iifname @managed_interfaces ct state invalid drop\\n",
+            "add rule {} {} input iifname @managed_interfaces ct state invalid drop\n",
             self.nft_family, self.nft_table
         ));
         // INPUT is scoped to managed ingress. Explicit allow rules admit
@@ -291,7 +291,7 @@ impl RoutingPlan {
         // Invalid conntrack state must not be admitted by a broad protocol
         // or address allow rule on a managed TUN egress.
         output.push_str(&format!(
-            "add rule {} {} output oifname @managed_interfaces ct state invalid drop\\n",
+            "add rule {} {} output oifname @managed_interfaces ct state invalid drop\n",
             self.nft_family, self.nft_table
         ));
         // OUTPUT is scoped to the actual managed TUN egress. Socket-marked
