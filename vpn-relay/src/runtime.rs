@@ -174,7 +174,7 @@ impl Runtime {
     }
 
     /// Keep the daemon alive, publish peer counters, and stop cleanly on SIGINT/SIGTERM.
-    pub fn run(mut self) -> Result<(), RuntimeError> {
+    pub fn run(self) -> Result<(), RuntimeError> {
         install_signal_handlers()?;
         while !SHUTDOWN_REQUESTED.load(Ordering::Relaxed) {
             let mut elapsed = 0;
@@ -210,12 +210,7 @@ impl Runtime {
             }
         }
 
-        for device in &self.devices {
-            device.shutdown();
-        }
-        for device in &mut self.devices {
-            device.wait();
-        }
+        // Runtime::drop performs the single ordered shutdown sequence.
         Ok(())
     }
 }
@@ -245,7 +240,7 @@ impl Drop for Runtime {
 fn install_signal_handlers() -> Result<(), RuntimeError> {
     SHUTDOWN_REQUESTED.store(false, Ordering::Relaxed);
     unsafe {
-        if libc::signal(libc::SIGINT, request_shutdown as libc::sighandler_t) == libc::SIG_ERR {
+        if libc::signal(libc::SIGINT, request_shutdown as *const () as libc::sighandler_t) == libc::SIG_ERR {
             return Err(RuntimeError::Signal("SIGINT".into()));
         }
         if libc::signal(libc::SIGTERM, request_shutdown as libc::sighandler_t) == libc::SIG_ERR {
@@ -299,8 +294,12 @@ fn enable_forwarding() -> Result<ForwardingState, RuntimeError> {
 }
 
 fn restore_forwarding(state: &ForwardingState) {
-    let _ = write_sysctl("net.ipv4.ip_forward", &state.ipv4);
-    let _ = write_sysctl("net.ipv6.conf.all.forwarding", &state.ipv6);
+    if let Err(error) = write_sysctl("net.ipv4.ip_forward", &state.ipv4) {
+        tracing::warn!(%error, "failed to restore IPv4 forwarding state");
+    }
+    if let Err(error) = write_sysctl("net.ipv6.conf.all.forwarding", &state.ipv6) {
+        tracing::warn!(%error, "failed to restore IPv6 forwarding state");
+    }
 }
 
 #[cfg(test)]
