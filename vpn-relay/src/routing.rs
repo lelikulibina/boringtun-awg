@@ -480,10 +480,12 @@ fn firewall_rule_family_variants(
 fn append_firewall_protocol_selector(selectors: &mut String, rule: &NftFirewallRule) {
     if let Some(protocol) = rule.protocol {
         selectors.push_str(match protocol {
-            FirewallProtocol::Tcp => " tcp",
-            FirewallProtocol::Udp => " udp",
-            FirewallProtocol::Icmp => " icmp",
-            FirewallProtocol::Icmpv6 => " icmpv6",
+            FirewallProtocol::Tcp if rule.ports.is_some() => " tcp",
+            FirewallProtocol::Tcp => " meta l4proto tcp",
+            FirewallProtocol::Udp if rule.ports.is_some() => " udp",
+            FirewallProtocol::Udp => " meta l4proto udp",
+            FirewallProtocol::Icmp => " meta l4proto icmp",
+            FirewallProtocol::Icmpv6 => " meta l4proto ipv6-icmp",
         });
     }
     if let Some(ports) = &rule.ports {
@@ -657,6 +659,29 @@ egress = "awg-primary"
         assert!(script.contains("output oifname @managed_interfaces ct state established,related ct direction reply accept"));
         assert!(script.contains("output oifname @managed_interfaces drop"));
         assert!(script.contains("forward iifname @managed_interfaces drop"));
+    }
+
+    #[test]
+    fn icmp_firewall_rules_use_valid_l4_protocol_selectors() {
+        let mut config = sample_config();
+        config.firewall.input.rules.push(FirewallRule {
+            interface: "wg-server".to_owned(),
+            source: Some(vec!["10.0.0.2/32".to_owned()]),
+            destination: None,
+            protocol: Some(FirewallProtocol::Icmp),
+            ports: None,
+        });
+        config.firewall.output.rules.push(FirewallRule {
+            interface: "awg-primary".to_owned(),
+            source: None,
+            destination: Some(vec!["2001:db8::/32".to_owned()]),
+            protocol: Some(FirewallProtocol::Icmpv6),
+            ports: None,
+        });
+
+        let script = RoutingPlan::from_config(&config).nft_script();
+        assert!(script.contains("input iifname \"wg-server\" ip saddr 10.0.0.2/32 meta l4proto icmp ct state"));
+        assert!(script.contains("output oifname \"awg-primary\" ip6 daddr 2001:db8::/32 meta l4proto ipv6-icmp ct state"));
     }
 
     #[test]
