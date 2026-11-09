@@ -411,14 +411,17 @@ ip netns exec "$CLIENT_NS" timeout 3 tcpdump -nn -i wg-peer-test -c 1 \
     >"$TMP/unmanaged-input-reply-tun.log" 2>&1 &
 capture_pid=$!
 TCP_PIDS+=("$capture_pid")
-ip netns exec "$SERVER_NS" python3 -u - <<'PY' >"$TMP/unmanaged-input-server.log" 2>&1 &
+ip netns exec "$SERVER_NS" python3 -u - "$TMP/unmanaged-input-server.received" <<'PY' >"$TMP/unmanaged-input-server.log" 2>&1 &
 import socket
+import sys
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.bind(("192.0.2.11", 18080))
 sock.settimeout(3)
 payload, _ = sock.recvfrom(128)
 if payload != b"unmanaged-input-probe":
     raise SystemExit(f"unexpected request payload: {payload!r}")
+with open(sys.argv[1], "w", encoding="utf-8") as marker:
+    marker.write("received\\n")
 print("server received unmanaged INPUT probe")
 try:
     sock.sendto(b"unmanaged-input-reply", ("192.0.2.21", 18081))
@@ -447,12 +450,9 @@ set +e
 wait "$server_reply_pid"
 server_reply_status=$?
 set -e
-if [[ "$server_reply_status" -ne 0 ]]; then
-    grep -Fq "server received unmanaged INPUT probe" "$TMP/unmanaged-input-server.log" \
-        || fail "server did not receive unmanaged INPUT probe"
-    grep -Fq "PermissionError: [Errno 1] Operation not permitted" "$TMP/unmanaged-input-server.log" \
-        || fail "server failed for a reason other than managed OUTPUT rejection"
-fi
+[[ -f "$TMP/unmanaged-input-server.received" ]] || fail "server did not receive unmanaged INPUT probe"
+grep -Eq 'managed OUTPUT rejected reply|PermissionError: \\[Errno 1\\] Operation not permitted' \
+    "$TMP/unmanaged-input-server.log" || fail "server did not report an OUTPUT firewall rejection (exit $server_reply_status)"
 set +e
 wait "$capture_pid"
 output_capture_status=$?
