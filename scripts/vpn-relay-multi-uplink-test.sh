@@ -472,6 +472,7 @@ ip -n "$CLIENT_NS" route replace 198.51.100.3/32 dev wg-client
 ip -n "$CLIENT_NS" -6 route replace 2001:db8:1::1/128 dev wg-client
 ip -n "$CLIENT_NS" -6 route replace 2001:db8:195:1::1/128 dev wg-client
 ip -n "$CLIENT_NS" -6 route replace 2001:db8:2::1/128 dev wg-client
+ip -n "$CLIENT_NS" -6 route replace 2001:db8:3::1/128 dev wg-client
 ip -n "$SECOND_CLIENT_NS" route replace 203.0.113.1/32 dev wg-client-2
 ip -n "$SECOND_CLIENT_NS" route replace 195.142.1.1/32 dev wg-client-2
 ip -n "$SECOND_CLIENT_NS" route replace 198.51.100.3/32 dev wg-client-2
@@ -517,7 +518,7 @@ fi
 if ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -c 2 -W 1 198.51.101.1 >/dev/null 2>&1; then
     fail "unmatched IPv4 destination escaped routing isolation"
 fi
-if ip netns exec "$CLIENT_NS" ping -6 -n -I fd77::2 -c 2 -W 1 2001:db8:2::1 >/dev/null 2>&1; then
+if ip netns exec "$CLIENT_NS" ping -6 -n -I fd77::2 -c 2 -W 1 2001:db8:3::1 >/dev/null 2>&1; then
     fail "unmatched IPv6 destination escaped routing isolation"
 fi
 
