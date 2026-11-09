@@ -326,7 +326,17 @@ for table in 10000 10001; do
 done
 
 REAL_NFT="$(command -v nft)"
+REAL_IP="$(command -v ip)"
 mkdir -p "$TMP/fail-nft-bin"
+cat >"$TMP/fail-nft-bin/ip" <<EOF
+#!/bin/sh
+if [ -f "$TMP/fail-route" ] && [ "\$1" = "-4" ] && [ "\$2" = "route" ] \
+    && [ "\$3" = "replace" ] && [ "\$6" = "awg-secondary" ] && [ "\$8" = "11001" ]; then
+    echo "injected reload policy-route failure" >&2
+    exit 42
+fi
+exec "$REAL_IP" "\$@"
+EOF
 cat >"$TMP/fail-nft-bin/nft" <<EOF
 #!/bin/sh
 if [ -f "$TMP/fail-nft" ] && [ "\$1" = "-f" ]; then
@@ -460,6 +470,24 @@ TOML
 # this slot rather than adopting or deleting another process's resources.
 ip -n "$NS" -4 route add 203.0.113.0/24 dev lo table 11000 proto 99
 ip -n "$NS" -4 rule add priority 12000 fwmark 0x40000000 lookup 11000
+
+# Inject failure while staging the new egress route. The old policy
+# route and nft classifier must remain active and no partial new route may leak.
+touch "$TMP/fail-route"
+if ip netns exec "$NS" "$BIN" --config "$TMP/config.toml" --reload >"$TMP/reload-route-failure.log" 2>&1; then
+    fail "runtime reload unexpectedly succeeded with injected policy-route failure"
+fi
+rm -f "$TMP/fail-route"
+kill -0 "$DAEMON_PID" 2>/dev/null || fail "daemon exited after policy-route staging rollback"
+chain_after_route_failure="$(ip netns exec "$NS" nft list chain inet vpn_relay_it prerouting)"
+grep -Fq 'ip daddr 195.142.0.0/16' <<<"$chain_after_route_failure" || fail "route failure changed the active nftables classifier"
+if ip -n "$NS" -4 rule show | grep -Fq 'fwmark 0x90000000 lookup 11001 proto 242'; then
+    fail "route failure left behind a staged policy-routing rule"
+fi
+if ip -n "$NS" -4 route show table 11001 | grep -q .; then
+    fail "route failure left behind a staged policy-routing route"
+fi
+ip -n "$NS" -4 route show table 10000 | grep -Fq 'default dev awg-primary proto 242' || fail "route failure removed the previous active egress route"
 
 touch "$TMP/fail-nft"
 if ip netns exec "$NS" "$BIN" --config "$TMP/config.toml" --reload >"$TMP/reload-failure.log" 2>&1; then

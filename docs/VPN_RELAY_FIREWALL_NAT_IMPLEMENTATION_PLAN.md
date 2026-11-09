@@ -595,12 +595,15 @@ Noise sessions для peer, чьи параметры не менялись; н�
   peers и staged routes; неуспешный rollback переводит daemon в fatal shutdown.
 - Ещё не завершены failure-injection тест ошибки route install, тест rollback
   нескольких peer devices и проверка непрерывного трафика во время reload.
-- **Открытый security issue:** `RoutingPlan::from_config` назначает
-  `conntrack_mark` decision IDs по текущему порядку правил. Добавление,
-  удаление или перестановка решений может повторно использовать ID, пока
-  conntrack entries со старой конфигурацией ещё существуют. До завершения
-  stable conntrack decision identity нельзя считать reload полностью безопасным
-  для долгоживущих соединений.
+- **Conntrack decision identity реализована:** история решений сохраняется
+  атомарной заменой приватного файла `/run/vpn-relay-netns-{inode}.marks`
+  с проверкой владельца, типа файла, hard-link count и прав `0600`.
+  Неизменившиеся решения сохраняют mark; новые решения получают ранее не
+  использованный ID из отдельного namespace `0x5...`. Legacy marks `0x4...`
+  загружаются и сохраняются для уже существующих conntrack entries, но новые
+  решения их не используют. Поэтому upgrade без history-файла также не
+  переинтерпретирует старые conntrack marks. Переполнение 4095 новых ID
+  приводит к отказу reload, а не к повторному использованию.
 
 | 2026-11-09 | Реализован runtime reload и интерфейс управления | Runtime сохраняет authoritative Config и предыдущие endpoint resolutions; выполняет preflight всех изменённых peer sets, sequential commit с rollback, atomic nftables replacement и fatal shutdown при rollback failure. Добавлены control socket операции `reload_config`/`replace_peers`, CLI `--reload`, README и network-namespace failure-injection test. CI 42698384452 подтвердил базовый runtime commit: tests, clippy, rustfmt, feature checks, AWG 3.1, netns packet tests и all-systems-go прошли; CLI и новые reload netns сценарии ожидают CI | Реализовано, ожидает расширенного CI |
 
@@ -613,3 +616,8 @@ Noise sessions для peer, чьи параметры не менялись; н�
 
 
 | 2026-11-10 | Подтверждена миграция policy-routing и сохранение dynamic slots | Run 42705792288: rustfmt, clippy, check_features, tests, AWG 3.1, isolated namespace reload/failure injection, bidirectional WG/AWG traffic и packet-level multi-uplink — success; all-systems-go success. Windows job skipped | Подтверждено CI |
+
+
+| 2026-11-10 | Стабилизирована идентичность conntrack decisions между reload и restart | История decision marks сохраняется на диск атомарно; старые `0x4...` marks остаются валидными, новые выделяются из отдельного `0x5...` namespace. Добавлены тесты на стабильность при перестановке правил, сохранение legacy marks, запрет повторного использования, повреждённые/небезопасные state files. CI run 42708944656 на commit 24b799a: rustfmt, clippy, check_features, tests, AWG 3.1, integration-tests и all-systems-go — success; Windows job skipped | Подтверждено CI |
+
+| 2026-11-10 | Добавлен failure-injection тест ошибки staging policy route при reload | Daemon запускается с ip wrapper; ошибка установки нового egress route должна оставить старый nft classifier и старый route активными, а частично созданные ресурсы candidate plan удалить. Изменение ожидает CI; отдельно остаются multi-device peer rollback и непрерывный packet traffic во время reload | Ожидает CI |
