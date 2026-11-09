@@ -230,6 +230,58 @@ fn persist_conntrack_mark_history(
     Ok(())
 }
 
+fn commit_peer_replacements(
+    devices: &mut [Box<dyn TunnelHandle>],
+    changed_interfaces: &[(usize, String)],
+    candidate: &Config,
+    prepared: &std::collections::BTreeMap<String, PreparedInterface>,
+) -> Result<Vec<usize>, (Vec<usize>, RuntimeError)> {
+    let mut committed = Vec::with_capacity(changed_interfaces.len());
+    for (index, name) in changed_interfaces {
+        let Some(interface) = candidate.interfaces.get(name) else {
+            return Err((committed, RuntimeError::Configuration(format!("candidate is missing interface '{name}' during peer commit"))));
+        };
+        let Some(prepared_interface) = prepared.get(name) else {
+            return Err((committed, RuntimeError::Configuration(format!("candidate is missing prepared backend configuration for '{name}'"))));
+        };
+        let Some(device) = devices.get_mut(*index) else {
+            return Err((committed, RuntimeError::Configuration(format!("candidate interface '{name}' has no matching tunnel device"))));
+        };
+        if let Err(error) = device.replace_peers(interface, prepared_interface) {
+            return Err((committed, RuntimeError::Backend(error)));
+        }
+        committed.push(*index);
+    }
+    Ok(committed)
+}
+
+fn rollback_peer_replacements(
+    devices: &mut [Box<dyn TunnelHandle>],
+    committed: &[usize],
+    previous_config: &Config,
+    previous_prepared: &std::collections::BTreeMap<String, PreparedInterface>,
+) -> Vec<String> {
+    let mut failures = Vec::new();
+    for index in committed.iter().rev().copied() {
+        let Some((name, interface)) = previous_config.interfaces.iter().nth(index) else {
+            failures.push(format!("missing previous interface at device index {index}"));
+            continue;
+        };
+        let Some(prepared) = previous_prepared.get(name) else {
+            failures.push(format!("missing previous prepared configuration for '{name}'"));
+            continue;
+        };
+        let Some(device) = devices.get_mut(index) else {
+            failures.push(format!("missing tunnel device for '{name}' at index {index}"));
+            continue;
+        };
+        if let Err(error) = device.replace_peers(interface, prepared) {
+            failures.push(format!("{name}: {error}"));
+        }
+    }
+    failures
+}
+
 struct ForwardingState {
     ipv4: String,
     ipv6: String,
@@ -528,24 +580,13 @@ impl Runtime {
             }
         }
 
-        let mut committed = Vec::new();
-        for (index, name) in changed_interfaces {
-            let next_interface = candidate.interfaces.get(&name).ok_or_else(|| {
-                RuntimeError::Configuration(format!(
-                    "candidate is missing interface '{name}' during peer commit"
-                ))
-            })?;
-            let next_prepared = prepared.get(&name).ok_or_else(|| {
-                RuntimeError::Configuration(format!(
-                    "candidate is missing prepared backend configuration for '{name}'"
-                ))
-            })?;
-            if let Err(error) = self.devices[index].replace_peers(next_interface, next_prepared) {
+        let committed = match commit_peer_replacements(&mut self.devices, &changed_interfaces, &candidate, &prepared) {
+            Ok(committed) => committed,
+            Err((committed, error)) => {
                 self.rollback_reload(&committed, route_resources_changed.then_some(&next_routing))?;
-                return Err(error.into());
+                return Err(error);
             }
-            committed.push(index);
-        }
+        };
 
         if self.routing != next_routing {
             if let Err(error) = linux::apply_nft(&next_routing) {
@@ -603,25 +644,7 @@ impl Runtime {
     }
 
     fn rollback_peer_replacements(&mut self, committed: &[usize]) -> Vec<String> {
-        let mut failures = Vec::new();
-        for index in committed.iter().rev().copied() {
-            let Some((name, interface)) = self.config.interfaces.iter().nth(index) else {
-                failures.push(format!(
-                    "missing previous interface at device index {index}"
-                ));
-                continue;
-            };
-            let Some(prepared) = self.prepared_interfaces.get(name) else {
-                failures.push(format!(
-                    "missing previous prepared configuration for '{name}'"
-                ));
-                continue;
-            };
-            if let Err(error) = self.devices[index].replace_peers(interface, prepared) {
-                failures.push(format!("{name}: {error}"));
-            }
-        }
-        failures
+        rollback_peer_replacements(&mut self.devices, committed, &self.config, &self.prepared_interfaces)
     }
 
     fn accept_control_connections(&mut self) {
@@ -981,6 +1004,86 @@ mod tests {
         assert!(path.exists());
         drop(socket);
         assert!(!path.exists());
+    }
+
+    struct FaultInjectingTunnel { name: String, peers: Vec<String>, calls: usize, fail_calls: std::collections::HashSet<usize> }
+
+    impl TunnelHandle for FaultInjectingTunnel {
+        fn snapshot(&self) -> Result<TunnelSnapshot, BackendError> {
+            Ok(TunnelSnapshot { name: self.name.clone(), peers: self.peers.iter().map(|key| {
+                let mut public_key = [0u8; 32];
+                public_key[0] = key.as_bytes().first().copied().unwrap_or_default();
+                TunnelPeerSnapshot { public_key, tx_bytes: 0, rx_bytes: 0, time_since_last_handshake: None }
+            }).collect() })
+        }
+        fn replace_peers(&mut self, interface: &crate::config::InterfaceConfig, _prepared: &PreparedInterface) -> Result<(), BackendError> {
+            self.calls += 1;
+            if self.fail_calls.contains(&self.calls) {
+                return Err(BackendError::new(format!("injected peer replacement failure on {} call {}", self.name, self.calls)));
+            }
+            self.peers = interface.peers.iter().map(|peer| peer.public_key.clone()).collect();
+            Ok(())
+        }
+        fn shutdown(&self) {}
+        fn wait(&mut self) {}
+    }
+
+    fn peer_interface(peer_key: &str) -> crate::config::InterfaceConfig {
+        crate::config::InterfaceConfig {
+            tunnel_type: crate::config::TunnelType::WireGuard, address: vec!["10.0.0.1/24".to_owned()],
+            mtu: 1380, ipv6_enabled: false, listen_port: None, private_key: "private".to_owned(),
+            socket_fwmark: None, peers: vec![PeerConfig { public_key: peer_key.to_owned(), preshared_key: None,
+                endpoint: None, allowed_ips: vec!["10.0.0.2/32".to_owned()], persistent_keepalive_secs: None }],
+            awg: None,
+        }
+    }
+
+    fn peer_test_config(wg0: &str, wg1: &str) -> Config {
+        Config { daemon: crate::config::DaemonConfig::default(),
+            interfaces: [("wg0".to_owned(), peer_interface(wg0)), ("wg1".to_owned(), peer_interface(wg1))].into_iter().collect(),
+            routing: crate::config::RoutingConfig::default(), firewall: crate::config::FirewallConfig::default() }
+    }
+
+    fn peer_test_prepared() -> std::collections::BTreeMap<String, PreparedInterface> {
+        [("wg0".to_owned(), PreparedInterface { peer_endpoints: vec![None] }),
+         ("wg1".to_owned(), PreparedInterface { peer_endpoints: vec![None] })].into_iter().collect()
+    }
+
+    #[test]
+    fn multi_device_peer_commit_failure_rolls_back_previously_committed_device() {
+        let previous = peer_test_config("old-a", "old-b");
+        let candidate = peer_test_config("new-a", "new-b");
+        let prepared = peer_test_prepared();
+        let mut devices: Vec<Box<dyn TunnelHandle>> = vec![
+            Box::new(FaultInjectingTunnel { name: "wg0".to_owned(), peers: vec!["old-a".to_owned()], calls: 0, fail_calls: std::collections::HashSet::new() }),
+            Box::new(FaultInjectingTunnel { name: "wg1".to_owned(), peers: vec!["old-b".to_owned()], calls: 0, fail_calls: [1].into_iter().collect() }),
+        ];
+        let changed = vec![(0, "wg0".to_owned()), (1, "wg1".to_owned())];
+        let (committed, error) = commit_peer_replacements(&mut devices, &changed, &candidate, &prepared).expect_err("second device must fail");
+        assert_eq!(committed, vec![0]);
+        assert!(error.to_string().contains("injected peer replacement failure"));
+        let failures = rollback_peer_replacements(&mut devices, &committed, &previous, &prepared);
+        assert!(failures.is_empty(), "rollback failed: {failures:?}");
+        let restored = devices[0].snapshot().unwrap();
+        assert_eq!(restored.peers.len(), 1);
+        assert_eq!(restored.peers[0].public_key[0], b'o');
+    }
+
+    #[test]
+    fn multi_device_peer_rollback_failure_is_reported_for_fatal_shutdown() {
+        let previous = peer_test_config("old-a", "old-b");
+        let candidate = peer_test_config("new-a", "new-b");
+        let prepared = peer_test_prepared();
+        let mut devices: Vec<Box<dyn TunnelHandle>> = vec![
+            Box::new(FaultInjectingTunnel { name: "wg0".to_owned(), peers: vec!["old-a".to_owned()], calls: 0, fail_calls: [2].into_iter().collect() }),
+            Box::new(FaultInjectingTunnel { name: "wg1".to_owned(), peers: vec!["old-b".to_owned()], calls: 0, fail_calls: [1].into_iter().collect() }),
+        ];
+        let changed = vec![(0, "wg0".to_owned()), (1, "wg1".to_owned())];
+        let (committed, _) = commit_peer_replacements(&mut devices, &changed, &candidate, &prepared).expect_err("second device must fail");
+        let failures = rollback_peer_replacements(&mut devices, &committed, &previous, &prepared);
+        assert_eq!(failures.len(), 1);
+        assert!(failures[0].contains("wg0"));
+        assert!(failures[0].contains("injected peer replacement failure"));
     }
 
     fn sample_conntrack_decision() -> crate::routing::RoutingDecision {
