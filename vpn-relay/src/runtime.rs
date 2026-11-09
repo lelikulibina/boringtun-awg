@@ -142,8 +142,8 @@ fn load_conntrack_mark_history(
     drop(metadata);
     validate_private_state_file(path)?;
 
-    let bytes = fs::read(path)
-        .map_err(|error| RuntimeError::ConntrackMarkState(error.to_string()))?;
+    let bytes =
+        fs::read(path).map_err(|error| RuntimeError::ConntrackMarkState(error.to_string()))?;
     if bytes.len() > 4 * 1024 * 1024 {
         return Err(RuntimeError::ConntrackMarkState(
             "state file exceeds 4 MiB".to_owned(),
@@ -314,8 +314,7 @@ impl Runtime {
         let instance_lock = InstanceLock::acquire(&lock_path)?;
         let control_socket = ControlSocket::bind(InstanceLock::current_control_path()?)?;
         let conntrack_mark_state_path = InstanceLock::current_conntrack_mark_state_path()?;
-        let mut conntrack_mark_history =
-            load_conntrack_mark_history(&conntrack_mark_state_path)?;
+        let mut conntrack_mark_history = load_conntrack_mark_history(&conntrack_mark_state_path)?;
         let socket_fwmarks = config
             .resolved_socket_fwmarks()
             .map_err(|error| RuntimeError::Configuration(error.to_string()))?;
