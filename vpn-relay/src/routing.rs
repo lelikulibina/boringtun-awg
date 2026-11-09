@@ -669,7 +669,7 @@ egress = "awg-primary"
         config.routing.rules.truncate(1);
         let script = RoutingPlan::from_config(&config).nft_script();
         assert!(script.contains(
-            "prerouting iifname \"wg-server\" ct state new meta mark set 0x80000000 ct mark set meta mark return"
+            "prerouting iifname \"wg-server\" ct state new meta mark set 0x80000000 ct mark set 0x80000000 return"
         ));
         assert!(!script.contains("prerouting iifname \"wg-server\" ct state new ip saddr"));
         assert!(!script.contains("prerouting iifname \"wg-server\" ct state new ip daddr"));
@@ -839,7 +839,7 @@ egress = "awg-primary"
         assert_eq!(plan.decisions[2].conntrack_mark, 0x8000_0000);
         let script = plan.nft_script();
         assert!(script.contains(
-            "ip daddr 195.142.0.0/16 meta mark set 0x80000001 ct mark set meta mark return"
+            "ip daddr 195.142.0.0/16 meta mark set 0x80000001 ct mark set 0x80000001 return"
         ));
         assert!(script.contains("iifname \"wg-server\""));
     }

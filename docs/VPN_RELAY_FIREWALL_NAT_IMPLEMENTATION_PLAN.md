@@ -206,8 +206,8 @@ to = "203.0.113.10"
 - [x] Выделить внутреннюю модель выбранного правила: `RoutingDecision`
   содержит ingress, egress, source/destination selectors, отдельные поля
   routing mark и conntrack mark, а также NAT action.
-- [~] Оба mark пока намеренно получают одно значение из единого egress mark
-  allocation; раздельные поля не позволяют случайно смешать их назначение.
+- [x] Оба mark получают одно значение из единого egress mark allocation;
+  classifier записывает их явно в meta mark и ct mark.
 - [ ] Генерировать классификацию новых соединений из единого упорядоченного
   набора решений.
 - [ ] Сохранить выбранный egress в conntrack mark для всего потока.
