@@ -351,11 +351,13 @@ if payload != b"host-flow-probe":
 sock.sendto(b"forged-reply", ("192.0.2.10", 18080))
 PY
 spoof_pid=$!
+TCP_PIDS+=("$spoof_pid")
 sleep 0.25
 ip netns exec "$SERVER_NS" timeout 5 tcpdump -nn -i wg-peer-test -c 1 \
     'udp and src host 192.0.2.20 and dst host 192.0.2.10 and dst port 18080' \
     >"$TMP/forged-reply-tun.log" 2>&1 &
 capture_pid=$!
+TCP_PIDS+=("$capture_pid")
 sleep 0.25
 ip netns exec "$SERVER_NS" python3 - <<'PY'
 import socket

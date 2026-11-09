@@ -61,10 +61,10 @@
   варианта `WriteToTunnelV4/V6` проверяют `Device::peer_owns(peer, addr)`
   до записи в TUN. Исходный адрес проверяется по единому trie
   `peers_by_ip`, что защищает от source spoofing между peer.
-- [ ] Проверить реальный путь peer-to-peer трафика на одном TUN и определить,
-  проходит ли он Linux FORWARD hook. Код backend направляет TUN-пакет по
-  destination через `peers_by_ip`; окончательный вывод требует packet-level
-  теста в network namespace.
+- [x] Проверить реальный peer-to-peer путь на одном TUN: multi-uplink
+  network-namespace test разрешает обоим клиентам проходить firewall endpoint,
+  затем подтверждает, что .3 → .2 блокируется при отсутствии routing decision.
+  Проверка прошла в CI run 42646765536.
 
 Критерий приёмки: инвентаризация отражает код базового commit, а не только
 предыдущую документацию; все выявленные расхождения внесены в этот журнал.
@@ -125,13 +125,14 @@
 - [x] Нет общего established/related accept, обходящего INPUT deny.
 - [x] OUTPUT проверяет фактический oifname; outer UDP, ушедший через underlay,
   не попадает под managed OUTPUT deny.
-- [ ] Проверить ruleset командой nft в network namespace.
-- [~] Существующий peer traffic netns test обновлён явными INPUT/OUTPUT
-  allow rules: туннельный обмен больше не должен полагаться на неявный доступ
-  к локальным адресам. Результат нового CI ожидается.
-- [~] Добавлены negative packet-level probes в peer traffic netns test: TCP/8081
-  должен блокироваться на server INPUT и server OUTPUT независимо; CI для
-  последнего изменения ещё не завершён.
+- [x] Проверить ruleset командой nft в network namespace.
+- [x] Peer traffic netns test использует явные INPUT/OUTPUT allow rules.
+- [x] Packet-level probes подтверждают разрешённый TCP/8080 и запрет TCP/8081
+  отдельно на server INPUT и server OUTPUT; также проверяется ICMP.
+- [~] Добавлен отдельный forged-reply probe: host-originated UDP flow идёт через
+  unmanaged underlay, а ответ с точным обратным tuple приходит через managed
+  TUN; пакет должен быть виден на TUN, но не должен попасть в host socket.
+  Ожидает CI.
 
 - [x] Добавлен `[firewall]` с независимыми `input.rules` и `output.rules`.
 - [x] Правило разрешения привязано к одному существующему managed interface.
@@ -147,44 +148,12 @@
 
 
 
-Предварительная структура должна быть простой и строго типизированной:
-
-```toml
-[firewall]
-# INPUT deny и OUTPUT managed — зафиксированные политики проекта.
-# FORWARD остаётся deny по умолчанию.
-# Конкретные разрешения задаются отдельными rules.
-
-[[firewall.input.rules]]
-interface = "wg-server"
-source = ["10.10.0.2/32"]
-protocol = "tcp"
-ports = [22]
-action = "accept"
-
-[[firewall.output.rules]]
-interface = "awg-primary"
-protocol = "tcp"
-ports = [443]
-action = "accept"
-
-[[nat.rules]]
-ingress = "wg-server"
-egress = "awg-primary"
-source = ["10.10.0.0/24"]
-type = "masquerade"
-
-[[nat.rules]]
-ingress = "wg-server"
-egress = "awg-secondary"
-source = ["10.20.0.0/24"]
-type = "snat"
-to = "203.0.113.10"
-```
-
-Это иллюстрация направления API, не обещание окончательного синтаксиса.
-Перед добавлением полей необходимо сверить их с существующей моделью
-`routing.rules` и выбрать один источник истины для egress/NAT selection.
+Текущая конфигурационная модель уже реализована и показана в
+`vpn-relay/vpn-relay.example.toml`: INPUT/OUTPUT allow rules задаются через
+`[firewall.input.rules]` и `[firewall.output.rules]`, а NAT action и
+`nat_to` являются свойствами выбранного `[[routing.rules]]`. Отдельная
+`[[nat.rules]]` модель не используется, чтобы не создавать второй источник
+истины для выбора ingress/egress.
 
 Задачи:
 
@@ -199,7 +168,7 @@ to = "203.0.113.10"
   механизм выбора ingress/egress. Расширение добавит адрес SNAT к routing rule.
 - [ ] Валидировать ссылки на интерфейсы, address family, пустые списки,
   дубликаты и неоднозначные совпадения.
-- [ ] Обновить пример TOML и CLI `--check` tests.
+- [x] Обновить пример TOML и CLI `--check` tests.
 - [ ] Проверить deny_unknown_fields и сообщения об ошибках.
 
 Критерий приёмки: конфигурация не может выразить неоднозначную или
@@ -225,8 +194,10 @@ to = "203.0.113.10"
   сам по себе не может применить NAT на произвольном интерфейсе.
 - [~] Unit tests описывают пересекающиеся selectors с одним egress и разными
   NAT actions; реальное поведение nftables и packet-level тест ещё ожидают CI.
-- [ ] Проверить отсутствие коллизий socket fwmark и routing marks.
-- [ ] Сохранить детерминированность генерации nftables/iproute2 plan.
+- [x] Проверить отсутствие коллизий socket fwmark и routing marks: parser tests
+  покрывают явные дубликаты, пересечение диапазонов и автоматическое выделение.
+- [x] Сохранить детерминированность генерации nftables/iproute2 plan; решения и
+  egress marks строятся из упорядоченных коллекций.
 
 Критерий приёмки: маршрут, FORWARD и NAT не могут выбрать разные routing rules
 для одного потока; unit tests покрывают приоритеты и пересечения.
@@ -267,12 +238,15 @@ unmanaged output остаётся неизменным.
 
 ## 9. Этап 6 — NAT extended
 
-- [ ] Сохранить `none` как отсутствие трансляции.
-- [ ] Реализовать IPv4 `masquerade`.
+- [x] Сохранить `none` как отсутствие трансляции; packet capture подтверждает
+  исходный IPv4 и IPv6 source на remote uplink.
+- [x] Реализовать IPv4 `masquerade`; packet capture подтверждает SNAT на адрес
+  primary TUN.
 - [x] Реализовать IPv4 статический `snat` через `nat = "snat"` и обязательный
   `nat_to` в routing rule.
-- [ ] Проверить необходимость и корректную поддержку IPv6 masquerade/SNAT;
-  неподдерживаемые варианты должны отклоняться валидацией.
+- [x] Проверить IPv6 masquerade: packet capture подтверждает замену source на
+  IPv6 адрес primary TUN. IPv6 static SNAT дополнительно требует отдельного
+  packet-level test; parser проверяет family и ipv6_enabled.
 - [ ] Связать NAT с единственным routing decision и conntrack state.
 - [ ] Проверить несколько правил, приоритеты, перекрывающиеся CIDR и разные egress.
 - [ ] Проверить отсутствие NAT на INPUT/OUTPUT и запрещённом FORWARD.
@@ -373,3 +347,6 @@ unmanaged output остаётся неизменным.
 | 2026-11-09 | Проверена граница peer isolation | Multi-uplink netns test проверяет запрет .3 → .2; nftables не получает peer identity после decapsulation, source anti-spoofing выполняется BoringTun | Требует повторного успешного CI после исправления тестового firewall |
 
 | 2026-11-09 | Привязаны INPUT/OUTPUT replies к явной авторизации исходного host flow | Allow rules выставляют отдельный high-16-bit ct mark tag `0x80000000`; reply rules требуют его; младшие 16 бит сохраняются; unit assertions обновлены | Ожидает nft/netns CI и packet-level forged-reply test |
+
+| 2026-11-09 | CI для host-flow conntrack tag и текущей firewall/NAT реализации | Run 42646765536: all-systems-go success; unit tests, clippy, rustfmt, feature checks, AWG 3.1 interoperability, netns routing, WG/AWG bidirectional traffic и multi-uplink packet tests прошли | Завершено |
+| 2026-11-09 | Добавлен forged-reply packet probe | Проверяет, что reply к host-originated unmanaged UDP flow виден на managed TUN, но блокируется INPUT без host-flow conntrack tag | Ожидает CI |
