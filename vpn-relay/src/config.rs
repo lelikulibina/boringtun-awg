@@ -940,13 +940,11 @@ egress = "awg-uplink"
     fn reload_compatibility_rejects_policy_route_resource_changes() {
         let current = Config::parse_toml(&valid_config()).unwrap();
 
-        let changed_mark_base = Config::parse_toml(
-            &valid_config().replacen(
-                "[[routing.rules]]",
-                "[routing]\nmark_base = 0x90000000\n\n[[routing.rules]]",
-                1,
-            ),
-        )
+        let changed_mark_base = Config::parse_toml(&valid_config().replacen(
+            "[[routing.rules]]",
+            "[routing]\nmark_base = 0x90000000\n\n[[routing.rules]]",
+            1,
+        ))
         .unwrap();
         assert!(current
             .validate_reload_compatibility(&changed_mark_base)
@@ -955,10 +953,7 @@ egress = "awg-uplink"
             .contains("routing.mark_base"));
 
         let removed_egress = Config::parse_toml(
-            &valid_config().replace(
-                "egress = \"awg-uplink\"",
-                "egress = \"wg-server\"",
-            ),
+            &valid_config().replace("egress = \"awg-uplink\"", "egress = \"wg-server\""),
         );
         assert!(removed_egress.is_err(), "self-routing must remain invalid");
         let mut no_egress_text = valid_config();
@@ -1004,7 +999,7 @@ egress = "awg-uplink"
             .validate_reload_compatibility(&changed_socket_mark)
             .unwrap_err()
             .to_string()
-            .contains("socket fwmarks"));
+            .contains("immutable tunnel parameters"));
 
         let added_interface = Config::parse_toml(&format!(
             "{}\n[interfaces.extra]\ntype = \"wg\"\naddress = [\"10.30.0.1/24\"]\nprivate_key = \"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\"\n",
