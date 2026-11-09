@@ -26,7 +26,7 @@ pub struct EgressPlan {
     pub ipv6_enabled: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, serde::Serialize)]
+#[derive(Clone, Debug, serde::Deserialize, Eq, PartialEq, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RoutingDecision {
     pub priority: u32,
