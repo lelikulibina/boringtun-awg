@@ -317,7 +317,7 @@ unmanaged output остаётся неизменным.
 
 - [ ] Обновить `docs/VPN_RELAY_NFTABLES.md` по фактической реализации.
 - [ ] Добавить архитектурную схему packet path и порядок hooks.
-- [ ] Документировать INPUT/OUTPUT/FORWARD/NAT, conntrack, marks и ownership.
+- [x] Документировать INPUT/OUTPUT/FORWARD/NAT, conntrack, marks и ownership.
 - [ ] Документировать границы AllowedIPs и peer isolation.
 - [ ] Обновить `vpn-relay/vpn-relay.example.toml`.
 - [ ] Добавить unit, parser и packet-level integration tests в CI.
@@ -356,3 +356,7 @@ unmanaged output остаётся неизменным.
 5. Не отмечать CI завершённым, пока соответствующий workflow run не завершён.
 6. Не объединять несвязанные этапы в один большой commit.
 7. Не менять исходную ветку; рабочие изменения вести только в этой ветке.
+
+| 2026-11-09 | Добавлен ранний drop invalid для managed INPUT/OUTPUT | Правила ограничены managed ingress/egress; добавлены unit assertions; исправлено экранирование newline в nft script | Ожидает CI |
+| 2026-11-09 | Исправлен multi-uplink packet test для второго клиента | Второй клиентский firewall теперь разрешает тестовый routed трафик; предыдущий failure был вызван его собственным OUTPUT deny до router ingress | Ожидает повторный packet-level CI |
+| 2026-11-09 | Переписана документация nftables | Документ соответствует текущим INPUT/OUTPUT/FORWARD, conntrack decision IDs, NAT, IPv6 gating, ownership и runtime; явно описана граница peer identity | Готово |
