@@ -19,7 +19,7 @@ trap cleanup EXIT
 
 fail() {
     echo "vpn-relay namespace test: $*" >&2
-    for log in "$TMP/daemon.log" "$TMP/conflict.log" "$TMP/policy-conflict.log" "$TMP/route-conflict.log" "$TMP/policy-shadow-conflict.log" "$TMP/partial-setup-conflict.log"; do
+    for log in "$TMP/daemon.log" "$TMP/conflict.log" "$TMP/policy-conflict.log" "$TMP/route-conflict.log" "$TMP/policy-shadow-conflict.log" "$TMP/partial-setup-conflict.log" "$TMP/partial-policy-route.log" "$TMP/partial-forwarding.log"; do
         if [[ -f "$log" ]]; then
             cat "$log" >&2
         fi
@@ -30,7 +30,12 @@ fail() {
 expect_startup_failure() {
     local log="$1"
     local description="$2"
-    ip netns exec "$NS" "$BIN" --config "$TMP/config.toml" >"$TMP/$log" 2>&1 &
+    local path_prefix="${3:-}"
+    if [[ -n "$path_prefix" ]]; then
+        ip netns exec "$NS" env PATH="$path_prefix:$PATH" "$BIN" --config "$TMP/config.toml" >"$TMP/$log" 2>&1 &
+    else
+        ip netns exec "$NS" "$BIN" --config "$TMP/config.toml" >"$TMP/$log" 2>&1 &
+    fi
     DAEMON_PID=$!
     for _ in $(seq 1 30); do
         state="$(ps -o stat= -p "$DAEMON_PID" 2>/dev/null | tr -d ' ' || true)"
@@ -257,6 +262,63 @@ fi
 [[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "0" ]] || fail "partial setup failure changed IPv4 forwarding"
 [[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "0" ]] || fail "partial setup failure changed IPv6 forwarding"
 ip -n "$NS" link del wg-server
+
+# Inject an iproute2 failure after the first egress has installed its IPv4
+# route and rule. Rollback must remove those partial resources as well as the
+# socket rules and the fail-closed nftables table.
+REAL_IP="$(command -v ip)"
+mkdir -p "$TMP/fail-ip"
+cat >"$TMP/fail-ip/ip" <<EOF
+#!/bin/sh
+if [ "\$1" = "-6" ] && [ "\$2" = "route" ] && [ "\$3" = "replace" ] \
+    && [ "\$4" = "default" ] && [ "\$6" = "awg-primary" ] && [ "\$8" = "10000" ]; then
+    echo "injected IPv6 policy-route failure" >&2
+    exit 42
+fi
+exec "$REAL_IP" "\$@"
+EOF
+chmod +x "$TMP/fail-ip/ip"
+expect_startup_failure partial-policy-route.log "injected IPv6 policy-route failure" "$TMP/fail-ip"
+for family in -4 -6; do
+    if ip -n "$NS" "$family" rule show | grep -Eq 'fwmark 0x(80000000|80000001|1001|1002|1003)'; then
+        fail "policy rules leaked after partial policy-routing failure for $family"
+    fi
+done
+for table in 10000 10001; do
+    for family in -4 -6; do
+        if ip -n "$NS" "$family" route show table "$table" | grep -Eq 'default dev (awg-primary|awg-secondary) proto 242'; then
+            fail "policy routes leaked from table $table after partial policy-routing failure for $family"
+        fi
+    done
+done
+
+# Fail IPv6 forwarding after IPv4 forwarding has already been enabled. The
+# daemon must restore IPv4 immediately and remove the routes, TUNs and nft
+# policy that were installed earlier in startup.
+REAL_SYSCTL="$(command -v sysctl)"
+mkdir -p "$TMP/fail-sysctl"
+cat >"$TMP/fail-sysctl/sysctl" <<EOF
+#!/bin/sh
+if [ "\$1" = "-w" ] && [ "\$2" = "net.ipv6.conf.all.forwarding=1" ]; then
+    echo "injected IPv6 forwarding failure" >&2
+    exit 42
+fi
+exec "$REAL_SYSCTL" "\$@"
+EOF
+chmod +x "$TMP/fail-sysctl/sysctl"
+expect_startup_failure partial-forwarding.log "injected IPv6 forwarding failure" "$TMP/fail-sysctl"
+for family in -4 -6; do
+    if ip -n "$NS" "$family" rule show | grep -Eq 'fwmark 0x(80000000|80000001|1001|1002|1003)'; then
+        fail "policy rules leaked after partial forwarding failure for $family"
+    fi
+done
+for table in 10000 10001; do
+    for family in -4 -6; do
+        if ip -n "$NS" "$family" route show table "$table" | grep -Eq 'default dev (awg-primary|awg-secondary) proto 242'; then
+            fail "policy routes leaked from table $table after partial forwarding failure for $family"
+        fi
+    done
+done
 
 ip netns exec "$NS" "$BIN" --config "$TMP/config.toml" >"$TMP/daemon.log" 2>&1 &
 DAEMON_PID=$!
