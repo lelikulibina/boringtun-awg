@@ -419,6 +419,7 @@ sock.settimeout(3)
 payload, _ = sock.recvfrom(128)
 if payload != b"unmanaged-input-probe":
     raise SystemExit(f"unexpected request payload: {payload!r}")
+print("server received unmanaged INPUT probe")
 try:
     sock.sendto(b"unmanaged-input-reply", ("192.0.2.21", 18081))
 except PermissionError:
@@ -442,7 +443,16 @@ except socket.timeout:
 else:
     raise SystemExit(f"untagged reply bypassed managed OUTPUT deny: {payload!r}")
 PY
-wait "$server_reply_pid" || fail "server did not receive unmanaged INPUT probe"
+set +e
+wait "$server_reply_pid"
+server_reply_status=$?
+set -e
+if [[ "$server_reply_status" -ne 0 ]]; then
+    grep -Fq "server received unmanaged INPUT probe" "$TMP/unmanaged-input-server.log" \
+        || fail "server did not receive unmanaged INPUT probe"
+    grep -Fq "PermissionError: [Errno 1] Operation not permitted" "$TMP/unmanaged-input-server.log" \
+        || fail "server failed for a reason other than managed OUTPUT rejection"
+fi
 set +e
 wait "$capture_pid"
 output_capture_status=$?
