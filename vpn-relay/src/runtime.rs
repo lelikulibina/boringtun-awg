@@ -99,7 +99,7 @@ impl Runtime {
             .map_err(|error| RuntimeError::Configuration(error.to_string()))?;
         let routing = RoutingPlan::from_config(&config);
         let backends = BackendRegistry::default();
-        backends.validate_config(&config)?;
+        let prepared_interfaces = backends.prepare_config(&config)?;
 
         // Install the fail-closed policy before creating or bringing up any
         // TUN interface. The nftables rules refer to interface names and do
@@ -117,6 +117,7 @@ impl Runtime {
                     interface_name,
                     interface,
                     socket_fwmark,
+                    prepared_interfaces.get(interface_name).expect("every interface was preflighted"),
                 )?;
                 devices.push(handle);
                 linux::configure_interface(interface_name, interface.mtu, &interface.address)?;
