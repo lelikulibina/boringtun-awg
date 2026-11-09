@@ -98,29 +98,41 @@ impl Runtime {
             .resolved_socket_fwmarks()
             .map_err(|error| RuntimeError::Configuration(error.to_string()))?;
         let routing = RoutingPlan::from_config(&config);
-        let mut devices = Vec::with_capacity(config.interfaces.len());
         let backends = BackendRegistry::default();
         backends.validate_config(&config)?;
 
-        for ((interface_name, interface), socket_fwmark) in
-            config.interfaces.iter().zip(socket_fwmarks)
-        {
-            let handle = backends.create(
-                interface.tunnel_type,
-                interface_name,
-                interface,
-                socket_fwmark,
-            )?;
-            linux::configure_interface(interface_name, interface.mtu, &interface.address)?;
-            devices.push(handle);
-        }
-
-        // Install the fail-closed packet policy before adding policy routes or
-        // enabling kernel forwarding. This prevents a startup window in which
-        // managed TUN traffic could be forwarded without the firewall policy.
+        // Install the fail-closed policy before creating or bringing up any
+        // TUN interface. The nftables rules refer to interface names and do
+        // not require the links to exist yet. This closes the window even
+        // when forwarding was already enabled before vpn-relay started.
         linux::apply_nft(&routing)?;
 
+        let mut devices = Vec::with_capacity(config.interfaces.len());
+        let setup_result = (|| -> Result<(), RuntimeError> {
+            for ((interface_name, interface), socket_fwmark) in
+                config.interfaces.iter().zip(socket_fwmarks)
+            {
+                let handle = backends.create(
+                    interface.tunnel_type,
+                    interface_name,
+                    interface,
+                    socket_fwmark,
+                )?;
+                devices.push(handle);
+                linux::configure_interface(interface_name, interface.mtu, &interface.address)?;
+            }
+            Ok(())
+        })();
+        if let Err(error) = setup_result {
+            // Dropping the handles stops and joins any workers created before
+            // the failing interface; the firewall is removed only afterwards.
+            drop(devices);
+            linux::remove_nft(&routing);
+            return Err(error);
+        }
+
         if let Err(error) = linux::apply_policy_routing(&routing) {
+            drop(devices);
             linux::remove_nft(&routing);
             return Err(error.into());
         }
@@ -130,6 +142,7 @@ impl Runtime {
                 Ok(state) => Some(state),
                 Err(error) => {
                     linux::remove_policy_routing(&routing);
+                    drop(devices);
                     linux::remove_nft(&routing);
                     return Err(error);
                 }

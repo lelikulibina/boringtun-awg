@@ -338,7 +338,7 @@ unmanaged output остаётся неизменным.
 | 2026-11-09 | Выделена модель `RoutingDecision` | Routing classifier, FORWARD и NAT используют один список решений; CI после переименования выявил устаревший публичный re-export `NftRule`, исправление внесено | В работе |
 | 2026-11-09 | Добавлена conntrack-aware обработка ответного трафика INPUT/OUTPUT | Явные allow rules ограничены original direction; established/related reply принимается только на managed interface; добавлены unit assertions | В работе |
 | 2026-11-09 | Разделены routing mark и conntrack decision id | Уникальный conntrack id назначается каждому routing decision; established route restore, обратный FORWARD и NAT используют этот id; NAT ограничен исходной парой интерфейсов | Ожидает полного CI и packet-level проверки |
-| 2026-11-09 | Изменён порядок startup | nftables policy устанавливается до policy routing и включения forwarding; ошибка последующих шагов удаляет уже установленные ресурсы | Ожидает network-namespace CI |
+| 2026-11-09 | Изменён порядок startup | nftables policy устанавливается до создания/поднятия TUN, policy routing и включения forwarding; ошибки последующих шагов откатывают ресурсы и backend handles | Ожидает network-namespace CI |
 
 ## 14. Правила ведения плана
 
