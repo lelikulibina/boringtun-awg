@@ -832,9 +832,8 @@ egress = "awg-primary"
         assert_eq!(plan.decisions[2].routing_mark, 0x8000_0000);
         assert_eq!(plan.decisions[2].conntrack_mark, 3);
         let script = plan.nft_script();
-        assert!(script.contains(
-            "ip daddr 195.142.0.0/16 meta mark set 0x80000001 ct mark set 0x1 return"
-        ));
+        assert!(script
+            .contains("ip daddr 195.142.0.0/16 meta mark set 0x80000001 ct mark set 0x1 return"));
         assert!(script.contains("iifname \"wg-server\""));
     }
 
@@ -910,8 +909,14 @@ egress = "awg-primary"
         config.routing.rules[1].nat = NatMode::Masquerade;
 
         let plan = RoutingPlan::from_config(&config);
-        assert_ne!(plan.decisions[0].conntrack_mark, plan.decisions[1].conntrack_mark);
-        assert_eq!(plan.decisions[0].routing_mark, plan.decisions[1].routing_mark);
+        assert_ne!(
+            plan.decisions[0].conntrack_mark,
+            plan.decisions[1].conntrack_mark
+        );
+        assert_eq!(
+            plan.decisions[0].routing_mark,
+            plan.decisions[1].routing_mark
+        );
         let script = plan.nft_script();
         assert!(script.contains("postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark 0x1 return"));
         assert!(script.contains("postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark 0x2 masquerade"));
