@@ -23,7 +23,7 @@ trap cleanup EXIT
 
 fail() {
     echo "vpn-relay namespace test: $*" >&2
-    for log in "$TMP/daemon.log" "$TMP/conflict.log" "$TMP/policy-conflict.log" "$TMP/route-conflict.log" "$TMP/policy-shadow-conflict.log" "$TMP/partial-setup-conflict.log" "$TMP/partial-policy-route.log" "$TMP/partial-forwarding.log" "$TMP/reload-failure.log" "$TMP/reload-immutable.log"; do
+    for log in "$TMP/daemon.log" "$TMP/conflict.log" "$TMP/policy-conflict.log" "$TMP/route-conflict.log" "$TMP/policy-shadow-conflict.log" "$TMP/partial-setup-conflict.log" "$TMP/partial-policy-route.log" "$TMP/partial-forwarding.log" "$TMP/reload-failure.log" "$TMP/reload-route-failure.log" "$TMP/reload-immutable.log"; do
         if [[ -f "$log" ]]; then
             cat "$log" >&2
         fi
@@ -346,7 +346,7 @@ if [ -f "$TMP/fail-nft" ] && [ "\$1" = "-f" ]; then
 fi
 exec "$REAL_NFT" "\$@"
 EOF
-chmod +x "$TMP/fail-nft-bin/nft"
+chmod +x "$TMP/fail-nft-bin/ip" "$TMP/fail-nft-bin/nft"
 
 ip netns exec "$NS" env PATH="$TMP/fail-nft-bin:$PATH" "$BIN" --config "$TMP/config.toml" >"$TMP/daemon.log" 2>&1 &
 DAEMON_PID=$!
