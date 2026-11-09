@@ -1203,8 +1203,7 @@ mod tests {
         let (committed, _) =
             commit_peer_replacements(&mut devices, &changed, &candidate, &prepared)
                 .expect_err("second device must fail");
-        let failures =
-            rollback_peer_replacements(&mut devices, &committed, &previous, &prepared);
+        let failures = rollback_peer_replacements(&mut devices, &committed, &previous, &prepared);
         assert_eq!(failures.len(), 1);
         assert!(failures[0].contains("wg0"));
         assert!(failures[0].contains("injected peer replacement failure"));
