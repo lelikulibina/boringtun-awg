@@ -48,7 +48,11 @@ pub trait TunnelHandle: Send {
 
 /// Creates running tunnel instances for a specific tunnel family.
 pub(crate) trait TunnelBackend: Send + Sync {
-    fn prepare(&self, name: &str, interface: &InterfaceConfig) -> Result<PreparedInterface, BackendError>;
+    fn prepare(
+        &self,
+        name: &str,
+        interface: &InterfaceConfig,
+    ) -> Result<PreparedInterface, BackendError>;
 
     fn create(
         &self,
@@ -71,12 +75,18 @@ impl BackendRegistry {
         &self,
         config: &Config,
     ) -> Result<std::collections::BTreeMap<String, PreparedInterface>, BackendError> {
-        config.interfaces.iter().map(|(name, interface)| {
-            let prepared = match interface.tunnel_type {
-                TunnelType::WireGuard | TunnelType::AmneziaWg => self.boringtun.prepare(name, interface)?,
-            };
-            Ok((name.clone(), prepared))
-        }).collect()
+        config
+            .interfaces
+            .iter()
+            .map(|(name, interface)| {
+                let prepared = match interface.tunnel_type {
+                    TunnelType::WireGuard | TunnelType::AmneziaWg => {
+                        self.boringtun.prepare(name, interface)?
+                    }
+                };
+                Ok((name.clone(), prepared))
+            })
+            .collect()
     }
 
     pub fn validate_config(&self, config: &Config) -> Result<(), BackendError> {
@@ -93,7 +103,8 @@ impl BackendRegistry {
     ) -> Result<Box<dyn TunnelHandle>, BackendError> {
         match tunnel_type {
             TunnelType::WireGuard | TunnelType::AmneziaWg => {
-                self.boringtun.create(name, interface, socket_fwmark, prepared)
+                self.boringtun
+                    .create(name, interface, socket_fwmark, prepared)
             }
         }
     }

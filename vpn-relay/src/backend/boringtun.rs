@@ -1,6 +1,9 @@
 //! BoringTun implementation of the generic tunnel backend contract.
 
-use super::{BackendError, PreparedInterface, TunnelBackend, TunnelHandle, TunnelPeerSnapshot, TunnelSnapshot};
+use super::{
+    BackendError, PreparedInterface, TunnelBackend, TunnelHandle, TunnelPeerSnapshot,
+    TunnelSnapshot,
+};
 use crate::config::{decode_key, EndpointHost, InterfaceConfig, PeerEndpoint, TunnelType};
 use boringtun::device::{AllowedIP, DeviceConfig, DeviceHandle};
 use boringtun::noise::amnezia::{AmneziaConfig, AmneziaWgConfig};
@@ -13,16 +16,31 @@ use std::str::FromStr;
 pub(super) struct BoringTunBackend;
 
 impl TunnelBackend for BoringTunBackend {
-    fn prepare(&self, name: &str, interface: &InterfaceConfig) -> Result<PreparedInterface, BackendError> {
+    fn prepare(
+        &self,
+        name: &str,
+        interface: &InterfaceConfig,
+    ) -> Result<PreparedInterface, BackendError> {
         build_awg_config(name, interface)?;
 
         // Resolve all endpoints before runtime mutates host networking. Keep
         // these exact results so creation does not perform a second DNS lookup.
-        let peer_endpoints = interface.peers.iter().enumerate().map(|(index, peer)| {
-            peer.endpoint.as_deref().map(resolve_endpoint).transpose().map_err(|error| {
-                BackendError::new(format!("interfaces.{name}.peers[{index}].endpoint: {error}"))
+        let peer_endpoints = interface
+            .peers
+            .iter()
+            .enumerate()
+            .map(|(index, peer)| {
+                peer.endpoint
+                    .as_deref()
+                    .map(resolve_endpoint)
+                    .transpose()
+                    .map_err(|error| {
+                        BackendError::new(format!(
+                            "interfaces.{name}.peers[{index}].endpoint: {error}"
+                        ))
+                    })
             })
-        }).collect::<Result<Vec<_>, _>>()?;
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(PreparedInterface { peer_endpoints })
     }
 
@@ -34,7 +52,9 @@ impl TunnelBackend for BoringTunBackend {
         prepared: &PreparedInterface,
     ) -> Result<Box<dyn TunnelHandle>, BackendError> {
         if prepared.peer_endpoints.len() != interface.peers.len() {
-            return Err(BackendError::new("prepared peer endpoint count does not match interface peer count"));
+            return Err(BackendError::new(
+                "prepared peer endpoint count does not match interface peer count",
+            ));
         }
         let (obf, amnezia) = build_awg_config(name, interface)?;
         let config = DeviceConfig {
@@ -177,7 +197,10 @@ mod tests {
         let prepared = BoringTunBackend
             .prepare("wg-preflight", &interface)
             .expect("literal endpoint should pass preflight");
-        assert_eq!(prepared.peer_endpoints, vec![Some("192.0.2.10:51820".parse().unwrap())]);
+        assert_eq!(
+            prepared.peer_endpoints,
+            vec![Some("192.0.2.10:51820".parse().unwrap())]
+        );
     }
 }
 
