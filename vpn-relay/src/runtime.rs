@@ -38,8 +38,8 @@ pub enum RuntimeError {
     Signal(String),
     #[error("control socket error: {0}")]
     Control(String),
-    #[error("peer rollback failed; daemon must stop: {0}")]
-    FatalRollback(String),
+    #[error("runtime transaction rollback or cleanup failed; daemon must stop: {0}")]
+    FatalTransition(String),
 }
 
 pub struct Runtime {
@@ -48,6 +48,7 @@ pub struct Runtime {
     prepared_interfaces: std::collections::BTreeMap<String, PreparedInterface>,
     backends: BackendRegistry,
     routing: RoutingPlan,
+    retired_routing: Vec<RoutingPlan>,
     stats_interval: Duration,
     forwarding_state: Option<ForwardingState>,
     control_socket: ControlSocket,
@@ -257,6 +258,7 @@ impl Runtime {
             prepared_interfaces,
             backends,
             routing,
+            retired_routing: Vec::new(),
             stats_interval,
             forwarding_state,
             control_socket,
@@ -295,6 +297,9 @@ impl Runtime {
     /// committed first; the nftables table is then replaced in one kernel
     /// transaction. Any later failure restores already committed peer sets.
     pub fn reload_config(&mut self, candidate: Config) -> Result<(), RuntimeError> {
+        if let Some(error) = &self.fatal_error {
+            return Err(RuntimeError::FatalTransition(error.clone()));
+        }
         candidate
             .validate()
             .map_err(|error| RuntimeError::Configuration(error.to_string()))?;
@@ -302,18 +307,22 @@ impl Runtime {
             .validate_reload_compatibility(&candidate)
             .map_err(|error| RuntimeError::Configuration(error.to_string()))?;
 
-        let next_routing = RoutingPlan::from_config(&candidate);
-        if self.routing.egresses != next_routing.egresses
-            || self.routing.socket_marks != next_routing.socket_marks
-        {
+        let mut next_routing = RoutingPlan::from_config(&candidate);
+        if self.routing.socket_marks != next_routing.socket_marks {
             return Err(RuntimeError::Configuration(
-                "candidate changes live policy-routing resources; restart vpn-relay".to_owned(),
+                "candidate changes live socket fwmarks; restart vpn-relay".to_owned(),
             ));
+        }
+        let route_resources_changed = self.routing.egresses != next_routing.egresses;
+        if route_resources_changed {
+            let mut occupied = self.retired_routing.clone();
+            occupied.push(self.routing.clone());
+            linux::allocate_policy_routing_resources(&mut next_routing, &occupied)?;
         }
 
         // Resolve and validate every changed peer set before the first live
-        // device is touched. Keep the exact old endpoint resolutions for
-        // unchanged peers so a later rollback never depends on fresh DNS.
+        // device or routing resource is touched. Keep exact old endpoint
+        // resolutions for unchanged peers so rollback never depends on DNS.
         let mut prepared = self.prepared_interfaces.clone();
         let mut changed_interfaces = Vec::new();
         for (index, (name, next_interface)) in candidate.interfaces.iter().enumerate() {
@@ -324,6 +333,15 @@ impl Runtime {
             let next_prepared = self.backends.prepare_interface(name, next_interface)?;
             prepared.insert(name.clone(), next_prepared);
             changed_interfaces.push((index, name.clone()));
+        }
+
+        // New policy routes use disjoint marks, tables and priorities. They are
+        // installed while the old nft classifier still emits only old marks.
+        if route_resources_changed {
+            if let Err(error) = linux::apply_egress_policy_routing(&next_routing) {
+                self.rollback_reload(&[], Some(&next_routing))?;
+                return Err(error.into());
+            }
         }
 
         let mut committed = Vec::new();
@@ -339,7 +357,10 @@ impl Runtime {
                 ))
             })?;
             if let Err(error) = self.devices[index].replace_peers(next_interface, next_prepared) {
-                self.rollback_peer_replacements(&committed)?;
+                self.rollback_reload(
+                    &committed,
+                    route_resources_changed.then_some(&next_routing),
+                )?;
                 return Err(error.into());
             }
             committed.push(index);
@@ -347,20 +368,63 @@ impl Runtime {
 
         if self.routing != next_routing {
             if let Err(error) = linux::apply_nft(&next_routing) {
-                self.rollback_peer_replacements(&committed)?;
+                self.rollback_reload(
+                    &committed,
+                    route_resources_changed.then_some(&next_routing),
+                )?;
                 return Err(error.into());
             }
         }
 
+        let previous_routing = self.routing.clone();
         self.config = candidate;
         self.prepared_interfaces = prepared;
         self.routing = next_routing;
         self.stats_interval = Duration::from_secs(self.config.daemon.stats_interval_secs);
+
+        // Only after nftables selects the new marks can old policy routes be
+        // removed. Retain the old plan until cleanup succeeds so Drop can retry.
+        if route_resources_changed {
+            self.retired_routing.push(previous_routing.clone());
+            if let Err(error) = linux::remove_egress_policy_routing(&previous_routing) {
+                let details = format!(
+                    "new routing plan is active but old policy routes could not be removed: {error}"
+                );
+                self.fatal_error = Some(details.clone());
+                return Err(RuntimeError::FatalTransition(details));
+            }
+            self.retired_routing.pop();
+        }
+
         tracing::info!("runtime configuration reloaded");
         Ok(())
     }
 
-    fn rollback_peer_replacements(&mut self, committed: &[usize]) -> Result<(), RuntimeError> {
+    fn rollback_reload(
+        &mut self,
+        committed: &[usize],
+        staged_routing: Option<&RoutingPlan>,
+    ) -> Result<(), RuntimeError> {
+        let mut failures = self.rollback_peer_replacements(committed);
+        if let Some(plan) = staged_routing {
+            self.retired_routing.push(plan.clone());
+            if let Err(error) = linux::remove_egress_policy_routing(plan) {
+                failures.push(format!("staged policy routes: {error}"));
+            } else {
+                self.retired_routing.pop();
+            }
+        }
+
+        if failures.is_empty() {
+            return Ok(());
+        }
+
+        let details = failures.join("; ");
+        self.fatal_error = Some(details.clone());
+        Err(RuntimeError::FatalTransition(details))
+    }
+
+    fn rollback_peer_replacements(&mut self, committed: &[usize]) -> Vec<String> {
         let mut failures = Vec::new();
         for index in committed.iter().rev().copied() {
             let Some((name, interface)) = self.config.interfaces.iter().nth(index) else {
@@ -379,13 +443,7 @@ impl Runtime {
                 failures.push(format!("{name}: {error}"));
             }
         }
-        if failures.is_empty() {
-            return Ok(());
-        }
-
-        let details = failures.join("; ");
-        self.fatal_error = Some(details.clone());
-        Err(RuntimeError::FatalRollback(details))
+        failures
     }
 
     fn accept_control_connections(&mut self) {
@@ -513,7 +571,7 @@ impl Runtime {
         while !SHUTDOWN_REQUESTED.load(Ordering::Relaxed) {
             self.accept_control_connections();
             if let Some(error) = &self.fatal_error {
-                return Err(RuntimeError::FatalRollback(error.clone()));
+                return Err(RuntimeError::FatalTransition(error.clone()));
             }
             let mut elapsed = 0;
             while elapsed < self.stats_interval.as_secs()
@@ -569,6 +627,11 @@ impl Drop for Runtime {
             device.wait();
         }
 
+        for retired in &self.retired_routing {
+            if let Err(error) = linux::remove_egress_policy_routing(retired) {
+                tracing::warn!(%error, "failed to remove retired policy-routing resources");
+            }
+        }
         linux::remove_policy_routing(&self.routing);
         self.devices.clear();
         linux::remove_nft(&self.routing);

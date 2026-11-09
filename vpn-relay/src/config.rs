@@ -290,11 +290,6 @@ impl Config {
                 "reload cannot change resolved socket fwmarks; restart vpn-relay to apply them",
             );
         }
-        if self.routing.mark_base != next.routing.mark_base {
-            return invalid(
-                "reload cannot change routing.mark_base while policy routing is active",
-            );
-        }
         let current_egresses: std::collections::BTreeSet<_> = self
             .routing
             .rules
@@ -307,9 +302,17 @@ impl Config {
             .iter()
             .map(|rule| rule.egress.as_str())
             .collect();
-        if current_egresses != next_egresses {
+        let current_marks: std::collections::BTreeSet<_> =
+            self.resolved_routing_fwmarks()?.into_iter().collect();
+        let next_marks: std::collections::BTreeSet<_> =
+            next.resolved_routing_fwmarks()?.into_iter().collect();
+        let policy_resources_unchanged =
+            current_egresses == next_egresses && current_marks == next_marks;
+        if !policy_resources_unchanged
+            && current_marks.intersection(&next_marks).next().is_some()
+        {
             return invalid(
-                "reload cannot change the set of routing egress interfaces; restart vpn-relay to rebuild policy routes",
+                "reload requires old and new routing mark ranges to be disjoint when policy-routing resources change",
             );
         }
 
@@ -936,7 +939,7 @@ egress = "awg-uplink"
     }
 
     #[test]
-    fn reload_compatibility_rejects_policy_route_resource_changes() {
+    fn reload_compatibility_allows_disjoint_policy_route_resource_changes() {
         let current = Config::parse_toml(&valid_config()).unwrap();
 
         let changed_mark_base = Config::parse_toml(&valid_config().replacen(
@@ -945,27 +948,41 @@ egress = "awg-uplink"
             1,
         ))
         .unwrap();
-        assert!(current
+        current
             .validate_reload_compatibility(&changed_mark_base)
-            .unwrap_err()
-            .to_string()
-            .contains("routing.mark_base"));
+            .unwrap();
 
-        let removed_egress = Config::parse_toml(
-            &valid_config().replace("egress = \"awg-uplink\"", "egress = \"wg-server\""),
-        );
-        assert!(removed_egress.is_err(), "self-routing must remain invalid");
-        let mut no_egress_text = valid_config();
-        let routing_rules_start = no_egress_text
-            .find("[[routing.rules]]")
-            .expect("routing rules fixture");
-        no_egress_text.truncate(routing_rules_start);
-        let no_egress = Config::parse_toml(&no_egress_text).unwrap();
+        let mut changed_egress = current.clone();
+        changed_egress.routing.rules.truncate(1);
+        changed_egress.routing.rules[0].ingress = "awg-uplink".to_owned();
+        changed_egress.routing.rules[0].egress = "wg-server".to_owned();
+        changed_egress.routing.mark_base = 0x9000_0000;
+        changed_egress.validate().unwrap();
+        current
+            .validate_reload_compatibility(&changed_egress)
+            .unwrap();
+
+        let mut no_egress = current.clone();
+        no_egress.routing.rules.clear();
+        no_egress.validate().unwrap();
+        current.validate_reload_compatibility(&no_egress).unwrap();
+    }
+
+    #[test]
+    fn reload_compatibility_rejects_overlapping_policy_route_mark_ranges() {
+        let current = Config::parse_toml(&valid_config()).unwrap();
+        let mut changed_egress = current.clone();
+        changed_egress.routing.rules.truncate(1);
+        changed_egress.routing.rules[0].ingress = "awg-uplink".to_owned();
+        changed_egress.routing.rules[0].egress = "wg-server".to_owned();
+        // Keep the old mark base: the same numeric mark would select a
+        // different egress while both old and new policy rules are installed.
+        changed_egress.validate().unwrap();
         assert!(current
-            .validate_reload_compatibility(&no_egress)
+            .validate_reload_compatibility(&changed_egress)
             .unwrap_err()
             .to_string()
-            .contains("set of routing egress"));
+            .contains("mark ranges to be disjoint"));
     }
 
     #[test]

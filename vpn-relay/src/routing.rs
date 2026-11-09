@@ -7,8 +7,8 @@
 use crate::config::{Config, FirewallProtocol, FirewallRule, NatMode};
 use std::collections::BTreeMap;
 
-const FIRST_ROUTING_TABLE: u32 = 10_000;
-const FIRST_IP_RULE_PRIORITY: u32 = 10_000;
+pub(crate) const FIRST_ROUTING_TABLE: u32 = 10_000;
+pub(crate) const FIRST_IP_RULE_PRIORITY: u32 = 10_000;
 const SOCKET_MAIN_RULE_PRIORITY: u32 = 9_000;
 // vpn-relay owns the high 16 bits of ct mark for routing decision identity
 // and managed host-flow authorization; the low 16 bits remain host policy/QoS.

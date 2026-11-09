@@ -1,5 +1,5 @@
 //! Linux command execution for daemon-owned network resources.
-use crate::routing::RoutingPlan;
+use crate::routing::{RoutingPlan, FIRST_IP_RULE_PRIORITY, FIRST_ROUTING_TABLE};
 use serde_json::Value;
 use std::io::Write;
 use std::process::{Command, Stdio};
@@ -23,6 +23,10 @@ pub enum LinuxError {
     },
     #[error("refusing to modify non-daemon network resource {resource}: {details}")]
     Conflict { resource: String, details: String },
+    #[error("policy-routing cleanup failed: {0}")]
+    Cleanup(String),
+    #[error("{operation}; rollback failed: {rollback}")]
+    Rollback { operation: String, rollback: String },
 }
 
 fn output(program: &str, args: &[String]) -> Result<std::process::Output, LinuxError> {
@@ -315,11 +319,7 @@ fn ensure_policy_slots_available(plan: &RoutingPlan) -> Result<(), LinuxError> {
             }
         }
 
-        for egress in plan
-            .egresses
-            .iter()
-            .filter(|egress| family != "-6" || egress.ipv6_enabled)
-        {
+        for egress in &plan.egresses {
             let args = vec![
                 family.into(),
                 "route".into(),
@@ -355,48 +355,82 @@ fn ensure_policy_slots_available(plan: &RoutingPlan) -> Result<(), LinuxError> {
     Ok(())
 }
 
-pub fn apply_policy_routing(plan: &RoutingPlan) -> Result<(), LinuxError> {
-    ensure_policy_slots_available(plan)?;
-    for mark in &plan.socket_marks {
-        // Keep encrypted outer IPv6 transport on the main table even when inner IPv6 is disabled.
-        for family in ["-4", "-6"] {
-            let args = vec![
-                family.into(),
-                "rule".into(),
-                "del".into(),
-                "priority".into(),
-                "9000".into(),
-                "fwmark".into(),
-                format!("0x{:x}", mark),
-                "lookup".into(),
-                "main".into(),
-                "protocol".into(),
-                ROUTING_PROTOCOL.into(),
-            ];
-            let _ = run("ip", &args);
-            let args = vec![
-                family.into(),
-                "rule".into(),
-                "add".into(),
-                "priority".into(),
-                "9000".into(),
-                "fwmark".into(),
-                format!("0x{:x}", mark),
-                "lookup".into(),
-                "main".into(),
-                "protocol".into(),
-                ROUTING_PROTOCOL.into(),
-            ];
-            if let Err(error) = run("ip", &args) {
-                remove_policy_routing(plan);
-                return Err(error);
+/// Allocate a second, disjoint set of table IDs and rule priorities for a
+/// live routing-plan transition. Existing plans are never reused while active.
+pub fn allocate_policy_routing_resources(
+    plan: &mut RoutingPlan,
+    occupied: &[RoutingPlan],
+) -> Result<(), LinuxError> {
+    if plan.egresses.is_empty() {
+        return Ok(());
+    }
+
+    let last_index = u32::try_from(plan.egresses.len() - 1).map_err(|_| {
+        LinuxError::Conflict {
+            resource: "policy-routing slots".to_owned(),
+            details: "egress count does not fit in an iproute2 slot index".to_owned(),
+        }
+    })?;
+    let max_offset = 32_765u32
+        .saturating_sub(FIRST_IP_RULE_PRIORITY)
+        .saturating_sub(last_index);
+    if max_offset < 1_000 {
+        return Err(LinuxError::Conflict {
+            resource: "policy-routing slots".to_owned(),
+            details: "no dynamic rule-priority range remains below the main-table rule".to_owned(),
+        });
+    }
+
+    for offset in 1_000..=max_offset {
+        let mut candidate = plan.clone();
+        for (index, egress) in candidate.egresses.iter_mut().enumerate() {
+            let slot = offset + index as u32;
+            egress.table_id = FIRST_ROUTING_TABLE + slot;
+            egress.ip_rule_priority = FIRST_IP_RULE_PRIORITY + slot;
+        }
+
+        let overlaps_active_resources = candidate.egresses.iter().any(|candidate_egress| {
+            occupied.iter().any(|active| {
+                active.egresses.iter().any(|active_egress| {
+                    candidate_egress.table_id == active_egress.table_id
+                        || candidate_egress.ip_rule_priority == active_egress.ip_rule_priority
+                })
+            })
+        });
+        if overlaps_active_resources {
+            continue;
+        }
+
+        match ensure_policy_slots_available(&candidate) {
+            Ok(()) => {
+                plan.egresses = candidate.egresses;
+                return Ok(());
             }
+            Err(LinuxError::Conflict { resource, .. })
+                if candidate.egresses.iter().any(|egress| {
+                    resource.ends_with(&format!("rule priority {}", egress.ip_rule_priority))
+                        || resource.ends_with(&format!("route table {}", egress.table_id))
+                }) =>
+            {
+                continue;
+            }
+            Err(error) => return Err(error),
         }
     }
 
+    Err(LinuxError::Conflict {
+        resource: "dynamic policy-routing slots".to_owned(),
+        details: "no unused route-table and rule-priority pair was found".to_owned(),
+    })
+}
+
+/// Install only egress routes and fwmark rules. Socket-mark rules are deliberately
+/// left untouched so they remain continuously active during a plan transition.
+pub fn apply_egress_policy_routing(plan: &RoutingPlan) -> Result<(), LinuxError> {
+    ensure_policy_slots_available(plan)?;
+
     for egress in &plan.egresses {
         if !egress.ipv6_enabled {
-            // Remove stale daemon-owned IPv6 policy left by an earlier enabled configuration.
             let stale_rule = [
                 "-6".into(),
                 "rule".into(),
@@ -425,11 +459,11 @@ pub fn apply_policy_routing(plan: &RoutingPlan) -> Result<(), LinuxError> {
             let _ = run("ip", &stale_rule);
             let _ = run("ip", &stale_route);
         }
+
         for &family in RoutingPlan::ip_families(egress) {
             let priority = egress.ip_rule_priority.to_string();
             let mark = format!("0x{:x}", egress.mark);
             let table = egress.table_id.to_string();
-            // A stale rule from a previous daemon instance is removed first.
             let _ = run(
                 "ip",
                 &[
@@ -479,10 +513,123 @@ pub fn apply_policy_routing(plan: &RoutingPlan) -> Result<(), LinuxError> {
                     ],
                 )
             }) {
+                return match remove_egress_policy_routing(plan) {
+                    Ok(()) => Err(error),
+                    Err(rollback) => Err(LinuxError::Rollback {
+                        operation: error.to_string(),
+                        rollback: rollback.to_string(),
+                    }),
+                };
+            }
+        }
+    }
+    Ok(())
+}
+
+fn run_ip_cleanup(args: &[String]) -> Result<(), LinuxError> {
+    match run("ip", args) {
+        Ok(()) => Ok(()),
+        Err(LinuxError::Command { stderr, .. })
+            if stderr.contains("No such file or directory")
+                || stderr.contains("No such process")
+                || stderr.contains("FIB table does not exist") =>
+        {
+            Ok(())
+        }
+        Err(error) => Err(error),
+    }
+}
+
+/// Remove only egress rules/routes tagged with vpn-relay's protocol marker.
+/// Missing resources are already clean; any other failure is reported.
+pub fn remove_egress_policy_routing(plan: &RoutingPlan) -> Result<(), LinuxError> {
+    let mut failures = Vec::new();
+    for egress in &plan.egresses {
+        for family in ["-4", "-6"] {
+            let rule = [
+                family.into(),
+                "rule".into(),
+                "del".into(),
+                "priority".into(),
+                egress.ip_rule_priority.to_string(),
+                "fwmark".into(),
+                format!("0x{:x}", egress.mark),
+                "lookup".into(),
+                egress.table_id.to_string(),
+                "protocol".into(),
+                ROUTING_PROTOCOL.into(),
+            ];
+            if let Err(error) = run_ip_cleanup(&rule) {
+                failures.push(error.to_string());
+            }
+
+            let route = [
+                family.into(),
+                "route".into(),
+                "del".into(),
+                "default".into(),
+                "dev".into(),
+                egress.interface.clone(),
+                "table".into(),
+                egress.table_id.to_string(),
+                "proto".into(),
+                ROUTING_PROTOCOL.into(),
+            ];
+            if let Err(error) = run_ip_cleanup(&route) {
+                failures.push(error.to_string());
+            }
+        }
+    }
+
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(LinuxError::Cleanup(failures.join("; ")))
+    }
+}
+
+pub fn apply_policy_routing(plan: &RoutingPlan) -> Result<(), LinuxError> {
+    ensure_policy_slots_available(plan)?;
+    for mark in &plan.socket_marks {
+        // Keep encrypted outer IPv6 transport on the main table even when inner IPv6 is disabled.
+        for family in ["-4", "-6"] {
+            let args = vec![
+                family.into(),
+                "rule".into(),
+                "del".into(),
+                "priority".into(),
+                "9000".into(),
+                "fwmark".into(),
+                format!("0x{:x}", mark),
+                "lookup".into(),
+                "main".into(),
+                "protocol".into(),
+                ROUTING_PROTOCOL.into(),
+            ];
+            let _ = run("ip", &args);
+            let args = vec![
+                family.into(),
+                "rule".into(),
+                "add".into(),
+                "priority".into(),
+                "9000".into(),
+                "fwmark".into(),
+                format!("0x{:x}", mark),
+                "lookup".into(),
+                "main".into(),
+                "protocol".into(),
+                ROUTING_PROTOCOL.into(),
+            ];
+            if let Err(error) = run("ip", &args) {
                 remove_policy_routing(plan);
                 return Err(error);
             }
         }
+    }
+
+    if let Err(error) = apply_egress_policy_routing(plan) {
+        remove_policy_routing(plan);
+        return Err(error);
     }
     Ok(())
 }
@@ -508,41 +655,7 @@ pub fn remove_policy_routing(plan: &RoutingPlan) {
             );
         }
     }
-    for egress in &plan.egresses {
-        for family in ["-4", "-6"] {
-            let _ = run(
-                "ip",
-                &[
-                    family.into(),
-                    "rule".into(),
-                    "del".into(),
-                    "priority".into(),
-                    egress.ip_rule_priority.to_string(),
-                    "fwmark".into(),
-                    format!("0x{:x}", egress.mark),
-                    "lookup".into(),
-                    egress.table_id.to_string(),
-                    "protocol".into(),
-                    ROUTING_PROTOCOL.into(),
-                ],
-            );
-            let _ = run(
-                "ip",
-                &[
-                    family.into(),
-                    "route".into(),
-                    "del".into(),
-                    "default".into(),
-                    "dev".into(),
-                    egress.interface.clone(),
-                    "table".into(),
-                    egress.table_id.to_string(),
-                    "proto".into(),
-                    ROUTING_PROTOCOL.into(),
-                ],
-            );
-        }
-    }
+    let _ = remove_egress_policy_routing(plan);
 }
 
 pub fn configure_interface(name: &str, mtu: u16, addresses: &[String]) -> Result<(), LinuxError> {
