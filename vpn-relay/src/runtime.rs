@@ -222,8 +222,20 @@ impl Runtime {
 
 impl Drop for Runtime {
     fn drop(&mut self) {
+        // Stop datapath workers first, but keep the firewall active until all
+        // managed TUN links have been destroyed. This matters when the host's
+        // original forwarding state was already enabled.
+        for device in &self.devices {
+            device.shutdown();
+        }
+        for device in &mut self.devices {
+            device.wait();
+        }
+
         linux::remove_policy_routing(&self.routing);
+        self.devices.clear();
         linux::remove_nft(&self.routing);
+
         if let Some(state) = &self.forwarding_state {
             restore_forwarding(state);
         }

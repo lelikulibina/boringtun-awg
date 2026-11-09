@@ -198,7 +198,15 @@ ip netns exec "$NS" "$BIN" --config "$TMP/config.toml" >"$TMP/daemon.log" 2>&1 &
 DAEMON_PID=$!
 
 for _ in $(seq 1 30); do
-    if ip netns exec "$NS" nft list table inet vpn_relay_it >/dev/null 2>&1; then
+    ready=1
+    ip netns exec "$NS" nft list table inet vpn_relay_it >/dev/null 2>&1 || ready=0
+    for iface in wg-server awg-primary awg-secondary; do
+        ip netns exec "$NS" ip link show dev "$iface" >/dev/null 2>&1 || ready=0
+    done
+    [[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "1" ]] || ready=0
+    [[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "1" ]] || ready=0
+    ip -n "$NS" -4 rule show | grep -Fq 'fwmark 0x80000000 lookup 10000 proto 242' || ready=0
+    if [[ $ready -eq 1 ]]; then
         break
     fi
     if ! kill -0 "$DAEMON_PID" 2>/dev/null; then
@@ -207,6 +215,11 @@ for _ in $(seq 1 30); do
     sleep 1
 done
 ip netns exec "$NS" nft list table inet vpn_relay_it >/dev/null 2>&1 || fail "nftables table was not installed"
+for iface in wg-server awg-primary awg-secondary; do
+    ip netns exec "$NS" ip link show dev "$iface" >/dev/null 2>&1 || fail "TUN interface $iface was not created"
+done
+[[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "1" ]] || fail "IPv4 forwarding was not enabled during startup"
+[[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "1" ]] || fail "IPv6 forwarding was not enabled during startup"
 
 # A second daemon in the same namespace must be rejected without disturbing
 # the already-running instance or its networking state.
@@ -273,7 +286,7 @@ grep -Fq 'oifname @ipv6_blocked_interfaces meta nfproto ipv6 drop' <<<"$output_c
 grep -Fq 'ct direction reply meta mark set 0' <<<"$chain" || fail "reply packet mark reset is missing"
 
 grep -Fq 'iifname "wg-server" ct state new ip daddr 195.142.0.0/16 meta mark set 0x80000001 ct mark set 0x40000001 return' <<<"$chain" || fail "secondary exception rule missing"
-grep -Fq 'iifname "wg-server" ct state new ip daddr 0.0.0.0/0 meta mark set 0x80000000 ct mark set meta mark return' <<<"$chain" || fail "primary default rule missing"
+grep -Fq 'iifname "wg-server" ct state new ip daddr 0.0.0.0/0 meta mark set 0x80000000 ct mark set 0x40000003 return' <<<"$chain" || fail "primary default rule missing"
 
 kill -TERM "$DAEMON_PID"
 wait "$DAEMON_PID" || fail "daemon returned an error during graceful shutdown"
