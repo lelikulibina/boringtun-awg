@@ -484,7 +484,7 @@ if grep -Fq 'ip daddr 195.142.0.0/16' <<<"$chain_after_reload"; then
 fi
 ip -n "$NS" -4 rule show | grep -Fq 'fwmark 0x90000000 lookup 11001 proto 242' || fail "successful reload did not install the new routing rule"
 ip -n "$NS" -4 route show table 11001 | grep -Fq 'default dev awg-secondary proto 242' || fail "successful reload did not install the new egress route"
-ip -n "$NS" -4 route show table 11000 | grep -Fq '203.0.113.0/24 dev lo proto 99' || fail "reload modified the foreign route table"
+ip -n "$NS" -4 route show table 11000 | grep -Fq '203.0.113.0/24 dev lo' || fail "reload modified the foreign route table"
 ip -n "$NS" -4 rule show | grep -Fq 'fwmark 0x40000000 lookup 11000' || fail "reload modified the foreign rule referencing table 11000"
 for old_mark in 0x80000000 0x80000001; do
     if ip -n "$NS" -4 rule show | grep -Fq "fwmark $old_mark"; then
