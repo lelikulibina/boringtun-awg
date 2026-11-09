@@ -751,9 +751,9 @@ egress = "awg-primary"
         assert!(script.contains("forward oifname @managed_interfaces drop"));
         assert!(script.contains("iifname @managed_interfaces meta mark set 0"));
         assert!(script.contains("ct direction reply meta mark set 0"));
-        assert!(
-            script.contains("ct direction original ct mark & 0xffff0000 == 0x40010000 meta mark set 0x80000001")
-        );
+        assert!(script.contains(
+            "ct direction original ct mark & 0xffff0000 == 0x40010000 meta mark set 0x80000001"
+        ));
     }
 
     #[test]
