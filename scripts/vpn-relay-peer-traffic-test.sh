@@ -90,6 +90,10 @@ ip -n "$SERVER_NS" link set "$SERVER_VETH" up
 ip -n "$CLIENT_NS" link set "$CLIENT_VETH" up
 ip -n "$SERVER_NS" address add 192.0.2.1/24 dev "$SERVER_VETH"
 ip -n "$CLIENT_NS" address add 192.0.2.2/24 dev "$CLIENT_VETH"
+# Secondary underlay addresses let the test spoof a reply without changing
+# the endpoint route used by the encrypted UDP transport.
+ip -n "$SERVER_NS" address add 192.0.2.10/24 dev "$SERVER_VETH"
+ip -n "$CLIENT_NS" address add 192.0.2.20/24 dev "$CLIENT_VETH"
 
 cat >"$TMP/server.toml" <<TOML
 [daemon]
@@ -106,7 +110,7 @@ socket_fwmark = 5001
 
 [[interfaces.wg-peer-test.peers]]
 public_key = "$CLIENT_PUBLIC"
-allowed_ips = ["10.77.0.2/32"]
+allowed_ips = ["10.77.0.2/32", "192.0.2.20/32"]
 
 # Exercise INPUT and OUTPUT defaults: server allows TCP/8080 and iperf3 TCP/UDP 5201; the client
 # also allows TCP/8081 for isolated negative probes so the negative probes isolate the server hooks.
@@ -170,7 +174,7 @@ socket_fwmark = 5002
 [[interfaces.wg-peer-test.peers]]
 public_key = "$SERVER_PUBLIC"
 endpoint = "192.0.2.1:51871"
-allowed_ips = ["10.77.0.1/32"]
+allowed_ips = ["10.77.0.1/32", "192.0.2.10/32"]
 persistent_keepalive_secs = 1
 
 [firewall.input]
@@ -207,6 +211,13 @@ interface = "wg-peer-test"
 destination = ["10.77.0.1/32"]
 protocol = "udp"
 ports = [5201]
+
+# Used only by the conntrack reply-isolation regression probe below.
+[[firewall.output.rules]]
+interface = "wg-peer-test"
+destination = ["192.0.2.10/32"]
+protocol = "udp"
+ports = [18080]
 TOML
 
 if [[ "$PROTO" == "awg" ]]; then
@@ -236,6 +247,11 @@ for _ in $(seq 1 40); do
 done
 ip -n "$SERVER_NS" link show dev wg-peer-test >/dev/null 2>&1 || fail "server TUN did not appear"
 ip -n "$CLIENT_NS" link show dev wg-peer-test >/dev/null 2>&1 || fail "client TUN did not appear"
+# Force only the spoof-test destination through the tunnel. The primary
+# endpoint (192.0.2.1) remains on the physical underlay for socket-fwmark tests.
+ip -n "$CLIENT_NS" route replace 192.0.2.10/32 dev wg-peer-test
+spoof_route="$(ip -n "$CLIENT_NS" route get 192.0.2.10 2>&1 || true)"
+grep -q "dev wg-peer-test" <<<"$spoof_route" || fail "spoof-test destination did not route through TUN: $spoof_route"
 
 # TUN creation happens before policy routing and nftables installation. Wait
 # for the daemon's externally observable routing state instead of racing the
@@ -318,6 +334,44 @@ expect_tcp "$CLIENT_NS" 10.77.0.1 8080 allow "client to server allowed INPUT/OUT
 expect_tcp "$SERVER_NS" 10.77.0.2 8080 allow "server to client allowed INPUT/OUTPUT"
 expect_tcp "$CLIENT_NS" 10.77.0.1 8081 deny "server INPUT default deny"
 expect_tcp "$SERVER_NS" 10.77.0.2 8081 deny "server OUTPUT default deny"
+
+# A host-originated UDP flow uses the physical underlay and therefore must not
+# acquire vpn-relay's managed-flow conntrack tag. A peer then forges its reply
+# through the TUN using the exact reverse tuple. The packet must reach the TUN
+# (AllowedIPs and routing are valid) but INPUT must drop it because the
+# conntrack entry was not authorized by a managed OUTPUT rule.
+ip netns exec "$CLIENT_NS" python3 -u - <<'PY' >"$TMP/forged-reply-client.log" 2>&1 &
+import socket
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+sock.bind(("192.0.2.20", 18081))
+sock.settimeout(4)
+payload, _ = sock.recvfrom(128)
+if payload != b"host-flow-probe":
+    raise SystemExit(f"unexpected probe payload: {payload!r}")
+sock.sendto(b"forged-reply", ("192.0.2.10", 18080))
+PY
+spoof_pid=$!
+sleep 0.25
+ip netns exec "$SERVER_NS" timeout 5 tcpdump -nn -i wg-peer-test -c 1 \
+    'udp and src host 192.0.2.20 and dst host 192.0.2.10 and dst port 18080' \
+    >"$TMP/forged-reply-tun.log" 2>&1 &
+capture_pid=$!
+sleep 0.25
+ip netns exec "$SERVER_NS" python3 - <<'PY'
+import socket
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+sock.bind(("192.0.2.10", 18080))
+sock.settimeout(2)
+sock.sendto(b"host-flow-probe", ("192.0.2.20", 18081))
+try:
+    payload, _ = sock.recvfrom(128)
+except socket.timeout:
+    print("reply to unmanaged host flow blocked on managed INPUT")
+else:
+    raise SystemExit(f"untagged reply bypassed managed INPUT deny: {payload!r}")
+PY
+wait "$capture_pid" || fail "forged reply did not reach the server TUN; test is inconclusive"
+wait "$spoof_pid" || fail "client failed to send the forged conntrack reply"
 
 # Observe the real encrypted UDP transport: it must be visible on the physical
 # underlay veth and must never reappear as an outer packet on the TUN device.
