@@ -831,6 +831,32 @@ egress = "awg-uplink"
     }
 
     #[test]
+    fn static_snat_requires_an_address_and_matching_enabled_family() {
+        let missing_address = valid_config().replacen(
+            "egress = \"awg-uplink\"",
+            "egress = \"awg-uplink\"\nnat = \"snat\"",
+            1,
+        );
+        assert!(Config::parse_toml(&missing_address).is_err());
+
+        let valid_snat = valid_config().replacen(
+            "egress = \"awg-uplink\"",
+            "egress = \"awg-uplink\"\nnat = \"snat\"\nnat_to = \"203.0.113.9\"",
+            1,
+        );
+        let parsed = Config::parse_toml(&valid_snat).unwrap();
+        assert_eq!(parsed.routing.rules[0].nat, NatMode::Snat);
+        assert_eq!(parsed.routing.rules[0].nat_to, Some("203.0.113.9".parse().unwrap()));
+
+        let disabled_ipv6 = valid_config().replacen(
+            "egress = \"awg-uplink\"",
+            "egress = \"awg-uplink\"\nnat = \"snat\"\nnat_to = \"2001:db8::1\"",
+            1,
+        );
+        assert!(Config::parse_toml(&disabled_ipv6).is_err());
+    }
+
+    #[test]
     fn routing_rule_nat_defaults_to_none_and_supports_source_selector() {
         let input = valid_config().replace(
             "destination = \"0.0.0.0/0\"",
