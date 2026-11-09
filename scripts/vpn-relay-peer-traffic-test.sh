@@ -192,7 +192,7 @@ nft_table = "vpn_relay_peer_cli_$SUFFIX"
 [interfaces.wg-peer-test]
 type = "$PROTO"
 ipv6_enabled = true
-address = ["10.77.0.2/24", "fd77::2/64", "fd77::3/128"]
+address = ["10.77.0.2/24", "fd77::2/64"]
 listen_port = 51872
 private_key = "$CLIENT_PRIVATE"
 socket_fwmark = 5002
@@ -434,7 +434,7 @@ expect_tcp6 "$SERVER_NS" fd77::2 8082 allow "IPv6 server to client allowed INPUT
 expect_tcp6 "$CLIENT_NS" fd77::1 8083 deny "IPv6 server INPUT default deny"
 expect_tcp6 "$SERVER_NS" fd77::2 8083 deny "IPv6 server OUTPUT default deny"
 
-# ICMPv6 uses the same explicit allow-list semantics as TCP. A second,
+# Add the secondary source only after the baseline traffic checks so it cannot\n# influence the kernel source-address selection in earlier probes.\nip -n "$CLIENT_NS" -6 address add fd77::3/128 dev wg-peer-test\n\n# ICMPv6 uses the same explicit allow-list semantics as TCP. A second,
 # authenticated client address is deliberately absent from the server INPUT
 # source selector: the echo request must reach the TUN but receive no reply.
 ip netns exec "$SERVER_NS" timeout 5 tcpdump -nn -i wg-peer-test -c 1 \
