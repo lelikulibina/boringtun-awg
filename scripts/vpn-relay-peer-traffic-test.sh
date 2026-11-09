@@ -58,7 +58,7 @@ fail() {
     echo "vpn-relay peer traffic test ($PROTO): $*" >&2
     dump_namespace_diagnostics "$CLIENT_NS"
     dump_namespace_diagnostics "$SERVER_NS"
-    for log in "$TMP/server.log" "$TMP/client.log" "$TMP/server-iperf.log" "$TMP/client-iperf.log" "$TMP/forged-reply-client.log" "$TMP/forged-reply-tun.log"; do
+    for log in "$TMP/server.log" "$TMP/client.log" "$TMP/server-iperf.log" "$TMP/client-iperf.log" "$TMP/forged-reply-client.log" "$TMP/forged-reply-tun.log" "$TMP/unmanaged-input-server.log" "$TMP/unmanaged-input-reply-tun.log"; do
         if [[ -f "$log" ]]; then
             echo "--- $log ---" >&2
             cat "$log" >&2
@@ -354,6 +354,9 @@ table inet vpn_relay_test_notrack_$SUFFIX {
 }
 NFT
 ip netns exec "$SERVER_NS" sysctl -q -w net.ipv4.conf.all.rp_filter=0
+ip netns exec "$SERVER_NS" sysctl -q -w net.ipv4.conf.default.rp_filter=0
+ip netns exec "$SERVER_NS" sysctl -q -w "net.ipv4.conf.${SERVER_VETH}.rp_filter=0"
+ip netns exec "$SERVER_NS" sysctl -q -w net.ipv4.conf.wg-peer-test.rp_filter=0
 
 # A host-originated UDP flow uses the physical underlay and therefore must not
 # acquire vpn-relay's managed-flow conntrack tag. A peer then forges its reply
@@ -400,6 +403,9 @@ wait "$spoof_pid" || fail "client failed to send the forged conntrack reply"
 # managed TUN, but the original flow never passed managed INPUT and therefore
 # has no host-flow tag. OUTPUT must drop the reply before it reaches the TUN.
 ip netns exec "$CLIENT_NS" sysctl -q -w net.ipv4.conf.all.rp_filter=0
+ip netns exec "$CLIENT_NS" sysctl -q -w net.ipv4.conf.default.rp_filter=0
+ip netns exec "$CLIENT_NS" sysctl -q -w "net.ipv4.conf.${CLIENT_VETH}.rp_filter=0"
+ip netns exec "$CLIENT_NS" sysctl -q -w net.ipv4.conf.wg-peer-test.rp_filter=0
 ip netns exec "$CLIENT_NS" timeout 3 tcpdump -nn -i wg-peer-test -c 1 \
     'udp and src host 192.0.2.11 and dst host 192.0.2.21 and dst port 18081' \
     >"$TMP/unmanaged-input-reply-tun.log" 2>&1 &
