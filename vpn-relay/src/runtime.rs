@@ -1054,7 +1054,7 @@ mod tests {
                     .map(|key| {
                         let mut public_key = [0u8; 32];
                         public_key[0] = key.as_bytes().first().copied().unwrap_or_default();
-                        TunnelPeerSnapshot {
+                        crate::backend::TunnelPeerSnapshot {
                             public_key,
                             tx_bytes: 0,
                             rx_bytes: 0,
