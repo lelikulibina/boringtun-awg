@@ -58,7 +58,7 @@ fail() {
     echo "vpn-relay peer traffic test ($PROTO): $*" >&2
     dump_namespace_diagnostics "$CLIENT_NS"
     dump_namespace_diagnostics "$SERVER_NS"
-    for log in "$TMP/server.log" "$TMP/client.log" "$TMP/server-iperf.log" "$TMP/client-iperf.log"; do
+    for log in "$TMP/server.log" "$TMP/client.log" "$TMP/server-iperf.log" "$TMP/client-iperf.log" "$TMP/forged-reply-client.log" "$TMP/forged-reply-tun.log"; do
         if [[ -f "$log" ]]; then
             echo "--- $log ---" >&2
             cat "$log" >&2
@@ -334,6 +334,21 @@ expect_tcp "$CLIENT_NS" 10.77.0.1 8080 allow "client to server allowed INPUT/OUT
 expect_tcp "$SERVER_NS" 10.77.0.2 8080 allow "server to client allowed INPUT/OUTPUT"
 expect_tcp "$CLIENT_NS" 10.77.0.1 8081 deny "server INPUT default deny"
 expect_tcp "$SERVER_NS" 10.77.0.2 8081 deny "server OUTPUT default deny"
+
+# The physical request is deliberately untracked in the client namespace:
+# this keeps the forged reverse packet a NEW local flow on the client, so its
+# OUTPUT allow rule can transmit it through the TUN. The server still tracks
+# the original underlay flow and sees the TUN packet as its ESTABLISHED reply.
+ip netns exec "$CLIENT_NS" nft -f - <<NFT
+table inet vpn_relay_test_notrack_$SUFFIX {
+    chain prerouting {
+        type filter hook prerouting priority raw; policy accept;
+        iifname "$CLIENT_VETH" ip saddr 192.0.2.10 ip daddr 192.0.2.20 \
+            udp sport 18080 udp dport 18081 notrack
+    }
+}
+NFT
+ip netns exec "$SERVER_NS" sysctl -q -w net.ipv4.conf.all.rp_filter=0
 
 # A host-originated UDP flow uses the physical underlay and therefore must not
 # acquire vpn-relay's managed-flow conntrack tag. A peer then forges its reply
