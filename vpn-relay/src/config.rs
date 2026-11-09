@@ -891,7 +891,7 @@ egress = "awg-uplink"
         assert!(Config::parse_toml(&icmp_v6_selector)
             .unwrap_err()
             .to_string()
-            .contains("icmp\\" cannot be combined with IPv6"));
+            .contains("icmp\" cannot be combined with IPv6"));
 
         let icmp_v4_selector = format!(
             "{}\n[[firewall.output.rules]]\ninterface = \"awg-uplink\"\ndestination = [\"10.0.0.0/24\"]\nprotocol = \"icmpv6\"\n",
@@ -903,7 +903,7 @@ egress = "awg-uplink"
         assert!(Config::parse_toml(&icmp_v4_selector)
             .unwrap_err()
             .to_string()
-            .contains("icmpv6\\" cannot be combined with IPv4"));
+            .contains("icmpv6\" cannot be combined with IPv4"));
 
         let disabled_icmpv6 = format!(
             "{}\n[[firewall.input.rules]]\ninterface = \"wg-server\"\nprotocol = \"icmpv6\"\n",
@@ -912,7 +912,7 @@ egress = "awg-uplink"
         assert!(Config::parse_toml(&disabled_icmpv6)
             .unwrap_err()
             .to_string()
-            .contains("icmpv6\\" requires IPv6"));
+            .contains("icmpv6\" requires IPv6"));
     }
 
     #[test]
