@@ -48,50 +48,11 @@ impl DeviceHandle {
 
 impl Device {
     fn replace_peer_set(&mut self, configs: &[PeerConfig]) -> Result<(), Error> {
-        let mut desired = HashMap::with_capacity(configs.len());
-        let mut prefixes = HashSet::new();
-
-        // Validate the entire declarative input before allocating or changing
-        // any live peer state.
-        for config in configs {
-            let public_key = x25519::PublicKey::from(config.public_key);
-            if desired.insert(public_key, config).is_some() {
-                return Err(Error::PeerSetup(
-                    "peer set contains a duplicate public key".to_owned(),
-                ));
-            }
-
-            for allowed_ip in &config.allowed_ips {
-                let max_prefix = match allowed_ip.addr {
-                    IpAddr::V4(_) => 32,
-                    IpAddr::V6(_) => 128,
-                };
-                if allowed_ip.cidr > max_prefix {
-                    return Err(Error::PeerSetup(format!(
-                        "invalid AllowedIP prefix length: {}/{}",
-                        allowed_ip.addr, allowed_ip.cidr
-                    )));
-                }
-                let network = IpNetwork::new_truncate(allowed_ip.addr, allowed_ip.cidr)
-                    .map_err(|_| Error::PeerSetup("invalid AllowedIP prefix".to_owned()))?;
-                let normalized = AllowedIP {
-                    addr: network.network_address(),
-                    cidr: network.netmask(),
-                };
-                if normalized != *allowed_ip {
-                    return Err(Error::PeerSetup(format!(
-                        "AllowedIP is not a canonical network prefix: {}/{}",
-                        allowed_ip.addr, allowed_ip.cidr
-                    )));
-                }
-                if !prefixes.insert(normalized) {
-                    return Err(Error::PeerSetup(format!(
-                        "peer set assigns the same AllowedIP more than once: {}/{}",
-                        normalized.addr, normalized.cidr
-                    )));
-                }
-            }
-        }
+        validate_peer_configs(configs)?;
+        let desired: HashSet<x25519::PublicKey> = configs
+            .iter()
+            .map(|config| x25519::PublicKey::from(config.public_key))
+            .collect();
 
         // Prepare every new Tunn/Peer before touching the current maps. An
         // error here leaves the previous peer set and all its sessions intact.
@@ -145,12 +106,20 @@ impl Device {
             let peer = if let Some(existing) = self.peers.get(&public_key) {
                 Arc::clone(existing)
             } else {
-                Arc::clone(&staged.get(&public_key).expect("new peer was staged").peer)
+                Arc::clone(
+                    &staged
+                        .get(&public_key)
+                        .ok_or_else(|| Error::PeerSetup("new peer was not staged".to_owned()))?
+                        .peer,
+                )
             };
             let index = if let Some(existing) = self.peers.get(&public_key) {
                 existing.lock().index()
             } else {
-                staged.get(&public_key).expect("new peer was staged").index
+                staged
+                    .get(&public_key)
+                    .ok_or_else(|| Error::PeerSetup("new peer was not staged".to_owned()))?
+                    .index
             };
 
             next_peers.insert(public_key, Arc::clone(&peer));
@@ -187,7 +156,7 @@ impl Device {
 
         // Retire removed peers only after all replacement maps are ready.
         for (public_key, peer) in &self.peers {
-            if !desired.contains_key(public_key) {
+            if !desired.contains(public_key) {
                 peer.lock().shutdown_endpoint();
             }
         }
@@ -198,5 +167,117 @@ impl Device {
 
         tracing::info!(peer_count = configs.len(), "Peer set replaced");
         Ok(())
+    }
+}
+
+/// Validate declarative peer input without touching the device or allocating
+/// live peer resources.
+fn validate_peer_configs(configs: &[PeerConfig]) -> Result<(), Error> {
+    let mut public_keys = HashSet::with_capacity(configs.len());
+    let mut prefixes = HashSet::new();
+
+    for config in configs {
+        let public_key = x25519::PublicKey::from(config.public_key);
+        if !public_keys.insert(public_key) {
+            return Err(Error::PeerSetup(
+                "peer set contains a duplicate public key".to_owned(),
+            ));
+        }
+
+        for allowed_ip in &config.allowed_ips {
+            let max_prefix = match allowed_ip.addr {
+                IpAddr::V4(_) => 32,
+                IpAddr::V6(_) => 128,
+            };
+            if allowed_ip.cidr > max_prefix {
+                return Err(Error::PeerSetup(format!(
+                    "invalid AllowedIP prefix length: {}/{}",
+                    allowed_ip.addr, allowed_ip.cidr
+                )));
+            }
+            let network = IpNetwork::new_truncate(allowed_ip.addr, allowed_ip.cidr)
+                .map_err(|_| Error::PeerSetup("invalid AllowedIP prefix".to_owned()))?;
+            let normalized = AllowedIP {
+                addr: network.network_address(),
+                cidr: network.netmask(),
+            };
+            if normalized != *allowed_ip {
+                return Err(Error::PeerSetup(format!(
+                    "AllowedIP is not a canonical network prefix: {}/{}",
+                    allowed_ip.addr, allowed_ip.cidr
+                )));
+            }
+            if !prefixes.insert(normalized) {
+                return Err(Error::PeerSetup(format!(
+                    "peer set assigns the same AllowedIP more than once: {}/{}",
+                    normalized.addr, normalized.cidr
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn config(public_key: [u8; 32], allowed_ips: Vec<AllowedIP>) -> PeerConfig {
+        PeerConfig {
+            public_key,
+            endpoint: None,
+            allowed_ips,
+            persistent_keepalive: None,
+            preshared_key: None,
+        }
+    }
+
+    #[test]
+    fn peer_batch_validation_accepts_distinct_and_nested_prefixes() {
+        let configs = [
+            config(
+                [1; 32],
+                vec![AllowedIP {
+                    addr: "10.0.0.0".parse().unwrap(),
+                    cidr: 24,
+                }],
+            ),
+            config(
+                [2; 32],
+                vec![AllowedIP {
+                    addr: "10.0.0.1".parse().unwrap(),
+                    cidr: 32,
+                }],
+            ),
+        ];
+        assert!(validate_peer_configs(&configs).is_ok());
+    }
+
+    #[test]
+    fn peer_batch_validation_rejects_duplicate_public_keys() {
+        let configs = [config([1; 32], vec![]), config([1; 32], vec![])];
+        assert!(validate_peer_configs(&configs).is_err());
+    }
+
+    #[test]
+    fn peer_batch_validation_rejects_duplicate_prefix_ownership() {
+        let prefix = AllowedIP {
+            addr: "10.0.0.0".parse().unwrap(),
+            cidr: 24,
+        };
+        let configs = [config([1; 32], vec![prefix]), config([2; 32], vec![prefix])];
+        assert!(validate_peer_configs(&configs).is_err());
+    }
+
+    #[test]
+    fn peer_batch_validation_rejects_noncanonical_prefixes() {
+        let configs = [config(
+            [1; 32],
+            vec![AllowedIP {
+                addr: "10.0.0.1".parse().unwrap(),
+                cidr: 24,
+            }],
+        )];
+        assert!(validate_peer_configs(&configs).is_err());
     }
 }
