@@ -160,7 +160,7 @@
 - [ ] Определить, какие firewall policies являются фиксированными defaults,
   а какие настраиваемыми параметрами.
 - [ ] Описать типизированные INPUT/OUTPUT rule selectors.
-- [ ] Описать протоколы TCP/UDP/ICMP/ICMPv6 и семантику портов.
+- [x] Описать протоколы TCP/UDP/ICMP/ICMPv6 и семантику портов в `docs/VPN_RELAY_NFTABLES.md`.
 - [ ] Описать IPv4/IPv6 CIDR и поведение при смешанных семействах.
 - [ ] Добавить NAT action `Snat(IpAddr)` наряду с `None` и `Masquerade`.
 - [x] Зафиксировать NAT как свойство выбранного routing rule. Отдельная
@@ -298,9 +298,9 @@ unmanaged output остаётся неизменным.
 ## 12. Этап 9 — документация и CI
 
 - [x] Обновить `docs/VPN_RELAY_NFTABLES.md` по фактической реализации.
-- [ ] Добавить архитектурную схему packet path и порядок hooks.
+- [x] Добавить архитектурную схему packet path и порядок hooks в `docs/VPN_RELAY_NFTABLES.md`.
 - [x] Документировать INPUT/OUTPUT/FORWARD/NAT, conntrack, marks и ownership.
-- [ ] Документировать границы AllowedIPs и peer isolation.
+- [x] Документировать границы AllowedIPs и peer isolation; отдельно указано, что nftables не видит cryptographic peer identity после decapsulation.
 - [ ] Обновить `vpn-relay/vpn-relay.example.toml`.
 - [ ] Добавить unit, parser и packet-level integration tests в CI.
 - [ ] Выполнить rustfmt, clippy, cargo test, feature checks и все netns tests.
@@ -358,3 +358,6 @@ unmanaged output остаётся неизменным.
 
 
 | 2026-11-09 | Исправлен IPv6 unmatched-destination probe | CI run 42659938329 показал, что прежний адрес `2001:db8:2::1` одновременно использовался отдельным разрешённым правилом статического IPv6 SNAT; негативный тест ошибочно проверял разрешённый поток. Проверка перенесена на `2001:db8:3::1`, для которого нет routing decision. Повторная packet-level проверка ожидается в следующем CI run | В работе |
+
+
+| 2026-11-09 | Документация packet path и peer identity синхронизирована с реализацией | В `docs/VPN_RELAY_NFTABLES.md` уже присутствуют Mermaid-схема hook order, правила INPUT/OUTPUT/FORWARD/NAT, семантика протоколов/портов и границы AllowedIPs/peer identity; соответствующие пункты плана отмечены выполненными | Готово |
