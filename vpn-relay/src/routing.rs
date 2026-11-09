@@ -320,7 +320,11 @@ impl RoutingPlan {
                 }
                 output.push_str(&format!(
                     "add rule {} {} prerouting {} meta mark set 0x{:x} ct mark set 0x{:x} return\n",
-                    self.nft_family, self.nft_table, selectors, rule.routing_mark, rule.conntrack_mark
+                    self.nft_family,
+                    self.nft_table,
+                    selectors,
+                    rule.routing_mark,
+                    rule.conntrack_mark
                 ));
             }
         }
@@ -506,7 +510,9 @@ fn nft_family_match(prefix: &str) -> &'static str {
     }
 }
 
-fn rule_family_variants(rule: &RoutingDecision) -> Vec<(Option<&'static str>, Vec<String>, Vec<String>)> {
+fn rule_family_variants(
+    rule: &RoutingDecision,
+) -> Vec<(Option<&'static str>, Vec<String>, Vec<String>)> {
     let families = |prefixes: &Option<Vec<String>>| -> Vec<&'static str> {
         prefixes
             .as_ref()
