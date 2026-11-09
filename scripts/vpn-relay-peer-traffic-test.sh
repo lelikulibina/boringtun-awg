@@ -94,6 +94,8 @@ ip -n "$CLIENT_NS" address add 192.0.2.2/24 dev "$CLIENT_VETH"
 # the endpoint route used by the encrypted UDP transport.
 ip -n "$SERVER_NS" address add 192.0.2.10/24 dev "$SERVER_VETH"
 ip -n "$CLIENT_NS" address add 192.0.2.20/24 dev "$CLIENT_VETH"
+ip -n "$SERVER_NS" address add 192.0.2.11/24 dev "$SERVER_VETH"
+ip -n "$CLIENT_NS" address add 192.0.2.21/24 dev "$CLIENT_VETH"
 
 cat >"$TMP/server.toml" <<TOML
 [daemon]
@@ -110,7 +112,7 @@ socket_fwmark = 5001
 
 [[interfaces.wg-peer-test.peers]]
 public_key = "$CLIENT_PUBLIC"
-allowed_ips = ["10.77.0.2/32", "192.0.2.20/32"]
+allowed_ips = ["10.77.0.2/32", "192.0.2.20/32", "192.0.2.21/32"]
 
 # Exercise INPUT and OUTPUT defaults: server allows TCP/8080 and iperf3 TCP/UDP 5201; the client
 # also allows TCP/8081 for isolated negative probes so the negative probes isolate the server hooks.
@@ -174,7 +176,7 @@ socket_fwmark = 5002
 [[interfaces.wg-peer-test.peers]]
 public_key = "$SERVER_PUBLIC"
 endpoint = "192.0.2.1:51871"
-allowed_ips = ["10.77.0.1/32", "192.0.2.10/32"]
+allowed_ips = ["10.77.0.1/32", "192.0.2.10/32", "192.0.2.11/32"]
 persistent_keepalive_secs = 1
 
 [firewall.input]
@@ -252,6 +254,9 @@ ip -n "$CLIENT_NS" link show dev wg-peer-test >/dev/null 2>&1 || fail "client TU
 ip -n "$CLIENT_NS" route replace 192.0.2.10/32 dev wg-peer-test
 spoof_route="$(ip -n "$CLIENT_NS" route get 192.0.2.10 2>&1 || true)"
 grep -q "dev wg-peer-test" <<<"$spoof_route" || fail "spoof-test destination did not route through TUN: $spoof_route"
+ip -n "$SERVER_NS" route replace 192.0.2.21/32 dev wg-peer-test
+reply_route="$(ip -n "$SERVER_NS" route get 192.0.2.21 2>&1 || true)"
+grep -q "dev wg-peer-test" <<<"$reply_route" || fail "reply-isolation destination did not route through TUN: $reply_route"
 
 # TUN creation happens before policy routing and nftables installation. Wait
 # for the daemon's externally observable routing state instead of racing the
@@ -389,6 +394,50 @@ else:
 PY
 wait "$capture_pid" || fail "forged reply did not reach the server TUN; test is inconclusive"
 wait "$spoof_pid" || fail "client failed to send the forged conntrack reply"
+
+# Symmetric OUTPUT check: a client request reaches a host service over the
+# unmanaged physical interface. The service's reply is routed toward the
+# managed TUN, but the original flow never passed managed INPUT and therefore
+# has no host-flow tag. OUTPUT must drop the reply before it reaches the TUN.
+ip netns exec "$CLIENT_NS" sysctl -q -w net.ipv4.conf.all.rp_filter=0
+ip netns exec "$CLIENT_NS" timeout 3 tcpdump -nn -i wg-peer-test -c 1 \
+    'udp and src host 192.0.2.11 and dst host 192.0.2.21 and dst port 18081' \
+    >"$TMP/unmanaged-input-reply-tun.log" 2>&1 &
+capture_pid=$!
+TCP_PIDS+=("$capture_pid")
+ip netns exec "$SERVER_NS" python3 -u - <<'PY' >"$TMP/unmanaged-input-server.log" 2>&1 &
+import socket
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+sock.bind(("192.0.2.11", 18080))
+sock.settimeout(3)
+payload, _ = sock.recvfrom(128)
+if payload != b"unmanaged-input-probe":
+    raise SystemExit(f"unexpected request payload: {payload!r}")
+sock.sendto(b"unmanaged-input-reply", ("192.0.2.21", 18081))
+print("host service attempted reply over managed TUN")
+PY
+server_reply_pid=$!
+TCP_PIDS+=("$server_reply_pid")
+sleep 0.25
+ip netns exec "$CLIENT_NS" python3 - <<'PY'
+import socket
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+sock.bind(("192.0.2.21", 18081))
+sock.settimeout(2)
+sock.sendto(b"unmanaged-input-probe", ("192.0.2.11", 18080))
+try:
+    payload, _ = sock.recvfrom(128)
+except socket.timeout:
+    print("reply to unmanaged INPUT flow blocked on managed OUTPUT")
+else:
+    raise SystemExit(f"untagged reply bypassed managed OUTPUT deny: {payload!r}")
+PY
+wait "$server_reply_pid" || fail "server did not receive unmanaged INPUT probe"
+set +e
+wait "$capture_pid"
+output_capture_status=$?
+set -e
+[[ "$output_capture_status" -eq 124 ]] || fail "reply to unmanaged INPUT flow reached the client TUN (tcpdump status $output_capture_status)"
 
 # Observe the real encrypted UDP transport: it must be visible on the physical
 # underlay veth and must never reappear as an outer packet on the TUN device.
