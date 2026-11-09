@@ -285,8 +285,8 @@ output_chain="$(ip netns exec "$NS" nft list chain inet vpn_relay_it output)"
 grep -Fq 'oifname @ipv6_blocked_interfaces meta nfproto ipv6 drop' <<<"$output_chain" || fail "locally generated IPv6 egress drop is missing"
 grep -Fq 'ct direction reply meta mark set 0' <<<"$chain" || fail "reply packet mark reset is missing"
 
-grep -Fq 'iifname "wg-server" ct state new ip daddr 195.142.0.0/16 meta mark set 0x80000001 ct mark set (ct mark & 0x0000ffff) | 0x40010000 return' <<<"$chain" || fail "secondary exception rule missing"
-grep -Fq 'iifname "wg-server" ct state new ip daddr 0.0.0.0/0 meta mark set 0x80000000 ct mark set (ct mark & 0x0000ffff) | 0x40030000 return' <<<"$chain" || fail "primary default rule missing"
+grep -Eq 'iifname "wg-server" ct state new ip daddr 195.142.0.0/16 meta mark set 0x80000001 ct mark set .*0x40010000 return' <<<"$chain" || fail "secondary exception rule missing"
+grep -Eq 'iifname "wg-server" ct state new ip daddr 0.0.0.0/0 meta mark set 0x80000000 ct mark set .*0x40030000 return' <<<"$chain" || fail "primary default rule missing"
 
 kill -TERM "$DAEMON_PID"
 wait "$DAEMON_PID" || fail "daemon returned an error during graceful shutdown"

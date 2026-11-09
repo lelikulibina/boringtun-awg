@@ -126,7 +126,8 @@ fail-closed поведения: случайный транзит через л�
    соответствующего семейства IP.
 4. При совпадении:
    - `meta mark` устанавливается в routing mark выбранного egress;
-   - это значение сохраняется в `ct mark`;
+   - отдельный decision id записывается в старшие 16 бит `ct mark`, младшие
+     16 бит сохраняются;
    - выполняется `return` из prerouting chain.
 
 Если ни одно правило не совпало, mark остаётся нулевым. Само по себе это ещё
@@ -136,9 +137,9 @@ fail-closed поведения: случайный транзит через л�
 ### 4.2. Последующие пакеты исходного направления
 
 Для уже установленного соединения (`established,related`) с направлением
-conntrack `original` prerouting проверяет `ct mark` по известным egress
-marks. При совпадении сохранённая метка восстанавливается в `meta mark`,
-после чего выполняется `return`.
+conntrack `original` prerouting проверяет старшие 16 бит `ct mark` по
+уникальному decision id. По нему восстанавливается routing mark соответствующего
+egress в `meta mark`, после чего выполняется `return`.
 
 Это позволяет всем пакетам одного потока использовать тот же egress,
 который был выбран для первого пакета. Правило не пересчитывается заново
@@ -195,7 +196,7 @@ iifname "INGRESS" oifname "EGRESS" \
 ```nft
 iifname "EGRESS" oifname "INGRESS" \
     ct state established,related \
-    ct mark ROUTING_MARK accept
+    ct mark & 0xffff0000 == DECISION_ID accept
 ```
 
 После разрешающих правил следуют два catch-all drop:
@@ -512,9 +513,13 @@ NAT проверяет conntrack decision id вместе с исходной in
 Он не выполняет повторный выбор по source/destination selectors, поэтому
 пересекающиеся selectors не могут переключить NAT action после выбора маршрута.
 
-Startup выполняется в безопасном порядке: nftables policy, policy routes,
-затем IP forwarding. При отказе policy routing удаляется установленная nftables
-table; при отказе включения forwarding откатываются policy routes и nftables.
+Startup выполняется в безопасном порядке: nftables policy, создание и поднятие
+TUN, policy routes, затем IP forwarding. При отказе последующих шагов ресурсы
+откатываются в обратном порядке.
+
+Shutdown останавливает backend workers, удаляет policy routes и TUN links,
+сохраняя firewall активным до исчезновения всех managed TUN. Затем удаляется
+nftables table и восстанавливается исходное состояние IP forwarding.
 
 
 При назначении decision id vpn-relay меняет только старшие 16 бит conntrack
