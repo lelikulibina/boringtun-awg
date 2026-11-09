@@ -26,7 +26,8 @@ pub struct EgressPlan {
     pub ipv6_enabled: bool,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, serde::Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct RoutingDecision {
     pub priority: u32,
     pub ingress: String,
@@ -70,6 +71,82 @@ pub struct RoutingPlan {
 }
 
 impl RoutingPlan {
+    /// Assign decision marks without reusing an ID that may still exist in
+    /// conntrack. The history is persisted for the lifetime of the network
+    /// namespace, so a daemon restart with a changed config cannot reinterpret
+    /// old conntrack entries as a different routing decision.
+    pub(crate) fn assign_stable_conntrack_marks(
+        &mut self,
+        history: &mut Vec<RoutingDecision>,
+    ) -> Result<(), String> {
+        Self::validate_conntrack_mark_history(history)?;
+
+        let mut used_ids: std::collections::BTreeSet<u32> = history
+            .iter()
+            .map(|decision| (decision.conntrack_mark & 0x0fff_0000) >> 16)
+            .collect();
+
+        for decision in &mut self.decisions {
+            let mut key = decision.clone();
+            key.conntrack_mark = 0;
+            let existing_mark = history.iter().find_map(|previous| {
+                let mut previous_key = previous.clone();
+                previous_key.conntrack_mark = 0;
+                (previous_key == key).then_some(previous.conntrack_mark)
+            });
+
+            if let Some(mark) = existing_mark {
+                decision.conntrack_mark = mark;
+                continue;
+            }
+
+            let id = (1..=0x0fff)
+                .find(|id| !used_ids.contains(id))
+                .ok_or_else(|| {
+                    "all 4095 vpn-relay conntrack decision IDs are reserved;                      existing conntrack entries must expire before new routing decisions can be added"
+                        .to_owned()
+                })?;
+            used_ids.insert(id);
+            decision.conntrack_mark = FIRST_CONNTRACK_MARK | (id << 16);
+            history.push(decision.clone());
+        }
+
+        Ok(())
+    }
+
+    /// Reject corrupted or ambiguous persisted history instead of risking
+    /// reuse of a mark that could still identify an older connection.
+    pub(crate) fn validate_conntrack_mark_history(
+        history: &[RoutingDecision],
+    ) -> Result<(), String> {
+        let mut used_ids = std::collections::BTreeSet::new();
+        let mut keys = Vec::with_capacity(history.len());
+
+        for decision in history {
+            let mark = decision.conntrack_mark;
+            let id = (mark & 0x0fff_0000) >> 16;
+            if mark & 0xf000_0000 != FIRST_CONNTRACK_MARK
+                || mark & 0x0000_ffff != 0
+                || id == 0
+                || id > 0x0fff
+                || !used_ids.insert(id)
+            {
+                return Err(format!(
+                    "invalid or duplicate persisted conntrack decision mark 0x{mark:08x}"
+                ));
+            }
+
+            let mut key = decision.clone();
+            key.conntrack_mark = 0;
+            if keys.contains(&key) {
+                return Err("duplicate persisted conntrack decision identity".to_owned());
+            }
+            keys.push(key);
+        }
+
+        Ok(())
+    }
+
     /// Build a deterministic plan from a fully validated configuration.
     pub fn from_config(config: &Config) -> Self {
         let egress_names: Vec<_> = config
@@ -996,6 +1073,78 @@ egress = "awg-primary"
             "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark & 0xffff0000 == 0x40010000 masquerade"
         ));
     }
+    #[test]
+    fn conntrack_decision_marks_are_stable_across_rule_reordering() {
+        let original_config = sample_config();
+        let original_plan = RoutingPlan::from_config(&original_config);
+        let original_marks: Vec<_> = original_plan
+            .decisions
+            .iter()
+            .map(|decision| (decision.priority, decision.conntrack_mark))
+            .collect();
+        let mut history = original_plan.decisions.clone();
+
+        let mut changed_config = sample_config();
+        changed_config.routing.rules[0].priority = 150;
+        changed_config.validate().unwrap();
+        let mut changed_plan = RoutingPlan::from_config(&changed_config);
+        changed_plan
+            .assign_stable_conntrack_marks(&mut history)
+            .unwrap();
+
+        assert_eq!(
+            changed_plan
+                .decisions
+                .iter()
+                .find(|decision| decision.priority == 20)
+                .unwrap()
+                .conntrack_mark,
+            original_marks[1].1
+        );
+        assert_eq!(
+            changed_plan
+                .decisions
+                .iter()
+                .find(|decision| decision.priority == 100)
+                .unwrap()
+                .conntrack_mark,
+            original_marks[2].1
+        );
+        let changed_mark = changed_plan
+            .decisions
+            .iter()
+            .find(|decision| decision.priority == 150)
+            .unwrap()
+            .conntrack_mark;
+        assert!(!original_marks.iter().any(|(_, mark)| *mark == changed_mark));
+        assert_eq!(changed_mark, 0x4004_0000);
+
+        // Restoring an exact historical decision is safe: old conntrack
+        // entries still describe the same ingress/selectors/egress/NAT action.
+        let mut restored_plan = RoutingPlan::from_config(&original_config);
+        restored_plan
+            .assign_stable_conntrack_marks(&mut history)
+            .unwrap();
+        for (decision, (_, mark)) in restored_plan.decisions.iter().zip(original_marks) {
+            assert_eq!(decision.conntrack_mark, mark);
+        }
+    }
+
+    #[test]
+    fn conntrack_mark_history_rejects_duplicate_or_invalid_ids() {
+        let mut history = RoutingPlan::from_config(&sample_config()).decisions;
+        history[1].conntrack_mark = history[0].conntrack_mark;
+        assert!(RoutingPlan::validate_conntrack_mark_history(&history)
+            .unwrap_err()
+            .contains("invalid or duplicate"));
+
+        let mut history = RoutingPlan::from_config(&sample_config()).decisions;
+        history[0].conntrack_mark = 0x8000_0000;
+        assert!(RoutingPlan::validate_conntrack_mark_history(&history)
+            .unwrap_err()
+            .contains("invalid or duplicate"));
+    }
+
     #[test]
     fn source_only_and_destination_only_rules_generate_family_specific_matches() {
         let mut config = sample_config();

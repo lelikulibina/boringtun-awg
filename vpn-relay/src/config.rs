@@ -87,7 +87,7 @@ pub enum TunnelType {
 }
 
 /// Source NAT is a property of a selected routing rule, not of an interface.
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NatMode {
     #[default]

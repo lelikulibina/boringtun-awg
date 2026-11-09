@@ -38,6 +38,8 @@ pub enum RuntimeError {
     Signal(String),
     #[error("control socket error: {0}")]
     Control(String),
+    #[error("conntrack decision-mark state error: {0}")]
+    ConntrackMarkState(String),
     #[error("runtime transaction rollback or cleanup failed; daemon must stop: {0}")]
     FatalTransition(String),
 }
@@ -49,6 +51,8 @@ pub struct Runtime {
     backends: BackendRegistry,
     routing: RoutingPlan,
     retired_routing: Vec<RoutingPlan>,
+    conntrack_mark_state_path: PathBuf,
+    conntrack_mark_history: Vec<crate::routing::RoutingDecision>,
     stats_interval: Duration,
     forwarding_state: Option<ForwardingState>,
     control_socket: ControlSocket,
@@ -79,6 +83,11 @@ impl InstanceLock {
         Ok(lock_path.with_extension("sock"))
     }
 
+    fn current_conntrack_mark_state_path() -> Result<PathBuf, RuntimeError> {
+        let lock_path = Self::current_netns_path()?;
+        Ok(lock_path.with_extension("marks"))
+    }
+
     fn acquire(path: &Path) -> Result<Self, RuntimeError> {
         let file = OpenOptions::new()
             .read(true)
@@ -97,6 +106,122 @@ impl InstanceLock {
         }
         Ok(Self { _file: file })
     }
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ConntrackMarkStateFile {
+    version: u32,
+    decisions: Vec<crate::routing::RoutingDecision>,
+}
+
+fn validate_private_state_file(path: &Path) -> Result<(), RuntimeError> {
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|error| RuntimeError::ConntrackMarkState(error.to_string()))?;
+    if !metadata.file_type().is_file()
+        || metadata.uid() != unsafe { libc::geteuid() }
+        || metadata.permissions().mode() & 0o777 != 0o600
+        || metadata.nlink() != 1
+    {
+        return Err(RuntimeError::ConntrackMarkState(format!(
+            "refusing to use non-private state file {}",
+            path.display()
+        )));
+    }
+    Ok(())
+}
+
+fn load_conntrack_mark_history(
+    path: &Path,
+) -> Result<Vec<crate::routing::RoutingDecision>, RuntimeError> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(RuntimeError::ConntrackMarkState(error.to_string())),
+    };
+    drop(metadata);
+    validate_private_state_file(path)?;
+
+    let bytes = fs::read(path)
+        .map_err(|error| RuntimeError::ConntrackMarkState(error.to_string()))?;
+    if bytes.len() > 4 * 1024 * 1024 {
+        return Err(RuntimeError::ConntrackMarkState(
+            "state file exceeds 4 MiB".to_owned(),
+        ));
+    }
+    let state: ConntrackMarkStateFile = serde_json::from_slice(&bytes)
+        .map_err(|error| RuntimeError::ConntrackMarkState(error.to_string()))?;
+    if state.version != 1 {
+        return Err(RuntimeError::ConntrackMarkState(format!(
+            "unsupported state file version {}",
+            state.version
+        )));
+    }
+    RoutingPlan::validate_conntrack_mark_history(&state.decisions)
+        .map_err(RuntimeError::ConntrackMarkState)?;
+    Ok(state.decisions)
+}
+
+fn persist_conntrack_mark_history(
+    path: &Path,
+    decisions: &[crate::routing::RoutingDecision],
+) -> Result<(), RuntimeError> {
+    RoutingPlan::validate_conntrack_mark_history(decisions)
+        .map_err(RuntimeError::ConntrackMarkState)?;
+
+    if path.exists() {
+        validate_private_state_file(path)?;
+    }
+
+    let temporary_path = path.with_extension(format!("marks.tmp-{}", std::process::id()));
+    if let Ok(metadata) = fs::symlink_metadata(&temporary_path) {
+        if !metadata.file_type().is_file()
+            || metadata.uid() != unsafe { libc::geteuid() }
+            || metadata.permissions().mode() & 0o777 != 0o600
+            || metadata.nlink() != 1
+        {
+            return Err(RuntimeError::ConntrackMarkState(format!(
+                "refusing to replace unsafe temporary state file {}",
+                temporary_path.display()
+            )));
+        }
+        fs::remove_file(&temporary_path)
+            .map_err(|error| RuntimeError::ConntrackMarkState(error.to_string()))?;
+    }
+
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&temporary_path)
+        .map_err(|error| RuntimeError::ConntrackMarkState(error.to_string()))?;
+    let state = ConntrackMarkStateFile {
+        version: 1,
+        decisions: decisions.to_vec(),
+    };
+    let write_result = serde_json::to_writer(&mut file, &state)
+        .map_err(|error| RuntimeError::ConntrackMarkState(error.to_string()))
+        .and_then(|()| {
+            file.sync_all()
+                .map_err(|error| RuntimeError::ConntrackMarkState(error.to_string()))
+        });
+    drop(file);
+    if let Err(error) = write_result {
+        let _ = fs::remove_file(&temporary_path);
+        return Err(error);
+    }
+
+    if let Err(error) = fs::rename(&temporary_path, path) {
+        let _ = fs::remove_file(&temporary_path);
+        return Err(RuntimeError::ConntrackMarkState(error.to_string()));
+    }
+    let parent = path.parent().ok_or_else(|| {
+        RuntimeError::ConntrackMarkState("state file path has no parent directory".to_owned())
+    })?;
+    File::open(parent)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|error| RuntimeError::ConntrackMarkState(error.to_string()))?;
+    Ok(())
 }
 
 struct ForwardingState {
@@ -188,10 +313,17 @@ impl Runtime {
         let lock_path = InstanceLock::current_netns_path()?;
         let instance_lock = InstanceLock::acquire(&lock_path)?;
         let control_socket = ControlSocket::bind(InstanceLock::current_control_path()?)?;
+        let conntrack_mark_state_path = InstanceLock::current_conntrack_mark_state_path()?;
+        let mut conntrack_mark_history =
+            load_conntrack_mark_history(&conntrack_mark_state_path)?;
         let socket_fwmarks = config
             .resolved_socket_fwmarks()
             .map_err(|error| RuntimeError::Configuration(error.to_string()))?;
-        let routing = RoutingPlan::from_config(&config);
+        let mut routing = RoutingPlan::from_config(&config);
+        routing
+            .assign_stable_conntrack_marks(&mut conntrack_mark_history)
+            .map_err(RuntimeError::ConntrackMarkState)?;
+        persist_conntrack_mark_history(&conntrack_mark_state_path, &conntrack_mark_history)?;
         let backends = BackendRegistry::default();
         let prepared_interfaces = backends.prepare_config(&config)?;
 
@@ -259,6 +391,8 @@ impl Runtime {
             backends,
             routing,
             retired_routing: Vec::new(),
+            conntrack_mark_state_path,
+            conntrack_mark_history,
             stats_interval,
             forwarding_state,
             control_socket,
@@ -308,6 +442,10 @@ impl Runtime {
             .map_err(|error| RuntimeError::Configuration(error.to_string()))?;
 
         let mut next_routing = RoutingPlan::from_config(&candidate);
+        let mut next_conntrack_mark_history = self.conntrack_mark_history.clone();
+        next_routing
+            .assign_stable_conntrack_marks(&mut next_conntrack_mark_history)
+            .map_err(RuntimeError::ConntrackMarkState)?;
         if self.routing.socket_marks != next_routing.socket_marks {
             return Err(RuntimeError::Configuration(
                 "candidate changes live socket fwmarks; restart vpn-relay".to_owned(),
@@ -359,6 +497,21 @@ impl Runtime {
             let next_prepared = self.backends.prepare_interface(name, next_interface)?;
             prepared.insert(name.clone(), next_prepared);
             changed_interfaces.push((index, name.clone()));
+        }
+
+        if next_conntrack_mark_history != self.conntrack_mark_history {
+            // Reserve new decision IDs before they can be written into conntrack.
+            // Failed reloads may leave unused IDs reserved; that is safe, while
+            // reusing an ID still present in conntrack would not be.
+            if let Err(error) = persist_conntrack_mark_history(
+                &self.conntrack_mark_state_path,
+                &next_conntrack_mark_history,
+            ) {
+                let details = format!("failed to persist conntrack decision marks: {error}");
+                self.fatal_error = Some(details.clone());
+                return Err(RuntimeError::FatalTransition(details));
+            }
+            self.conntrack_mark_history = next_conntrack_mark_history.clone();
         }
 
         // New policy routes use disjoint marks, tables and priorities. They are
@@ -823,6 +976,70 @@ mod tests {
         assert!(path.exists());
         drop(socket);
         assert!(!path.exists());
+    }
+
+    fn sample_conntrack_decision() -> crate::routing::RoutingDecision {
+        crate::routing::RoutingDecision {
+            priority: 10,
+            ingress: "wg-ingress".to_owned(),
+            source: Some(vec!["10.0.0.2/32".to_owned()]),
+            destination: Some(vec!["0.0.0.0/0".to_owned()]),
+            egress: "awg-uplink".to_owned(),
+            routing_mark: 0x8000_0001,
+            conntrack_mark: 0x4001_0000,
+            nat: crate::config::NatMode::None,
+            nat_to: None,
+            ipv6_enabled: false,
+        }
+    }
+
+    #[test]
+    fn conntrack_mark_state_is_persisted_with_private_permissions() {
+        let directory = std::env::temp_dir().join(format!(
+            "vpn-relay-marks-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir(&directory).unwrap();
+        let path = directory.join("namespace.marks");
+        let history = vec![sample_conntrack_decision()];
+
+        persist_conntrack_mark_history(&path, &history).unwrap();
+
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        assert_eq!(load_conntrack_mark_history(&path).unwrap(), history);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn conntrack_mark_state_rejects_symlinks_and_non_private_files() {
+        let directory = std::env::temp_dir().join(format!(
+            "vpn-relay-marks-safety-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir(&directory).unwrap();
+        let target = directory.join("target");
+        let path = directory.join("namespace.marks");
+
+        fs::write(&target, b"{}").unwrap();
+        std::os::unix::fs::symlink(&target, &path).unwrap();
+        assert!(matches!(
+            load_conntrack_mark_history(&path),
+            Err(RuntimeError::ConntrackMarkState(_))
+        ));
+        fs::remove_file(&path).unwrap();
+
+        fs::write(&path, b"{}").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(matches!(
+            load_conntrack_mark_history(&path),
+            Err(RuntimeError::ConntrackMarkState(_))
+        ));
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]

@@ -20,6 +20,8 @@ CLIENT_PID=""
 SERVER_IPERF_PID=""
 CLIENT_IPERF_PID=""
 TCP_PIDS=()
+SERVER_NS_INODE=""
+CLIENT_NS_INODE=""
 
 cleanup() {
     for pid in "${TCP_PIDS[@]}" "$CLIENT_IPERF_PID" "$SERVER_IPERF_PID" "$CLIENT_PID" "$SERVER_PID"; do
@@ -30,6 +32,12 @@ cleanup() {
     done
     ip netns del "$CLIENT_NS" 2>/dev/null || true
     ip netns del "$SERVER_NS" 2>/dev/null || true
+    if [[ -n "$CLIENT_NS_INODE" ]]; then
+        rm -f "/run/vpn-relay-netns-$CLIENT_NS_INODE.marks"
+    fi
+    if [[ -n "$SERVER_NS_INODE" ]]; then
+        rm -f "/run/vpn-relay-netns-$SERVER_NS_INODE.marks"
+    fi
     rm -rf "$TMP"
 }
 trap cleanup EXIT
@@ -80,7 +88,9 @@ CLIENT_PRIVATE="$(wg genkey)"
 CLIENT_PUBLIC="$(printf '%s' "$CLIENT_PRIVATE" | wg pubkey)"
 
 ip netns add "$SERVER_NS"
+SERVER_NS_INODE="$(ip netns exec "$SERVER_NS" stat -Lc '%i' /proc/self/ns/net)"
 ip netns add "$CLIENT_NS"
+CLIENT_NS_INODE="$(ip netns exec "$CLIENT_NS" stat -Lc '%i' /proc/self/ns/net)"
 ip link add "$SERVER_VETH" type veth peer name "$CLIENT_VETH"
 ip link set "$SERVER_VETH" netns "$SERVER_NS"
 ip link set "$CLIENT_VETH" netns "$CLIENT_NS"

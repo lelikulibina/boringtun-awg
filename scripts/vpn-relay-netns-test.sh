@@ -6,6 +6,7 @@ BIN="${VPN_RELAY_BIN:-$ROOT/target/debug/vpn-relay}"
 NS="vpn-relay-it-$$"
 TMP="$(mktemp -d)"
 DAEMON_PID=""
+NETNS_INODE=""
 
 cleanup() {
     if [[ -n "$DAEMON_PID" ]] && kill -0 "$DAEMON_PID" 2>/dev/null; then
@@ -13,6 +14,9 @@ cleanup() {
         wait "$DAEMON_PID" 2>/dev/null || true
     fi
     ip netns del "$NS" 2>/dev/null || true
+    if [[ -n "$NETNS_INODE" ]]; then
+        rm -f "/run/vpn-relay-netns-$NETNS_INODE.marks"
+    fi
     rm -rf "$TMP"
 }
 trap cleanup EXIT
@@ -141,6 +145,7 @@ TOML
 "$BIN" --config "$TMP/config.toml" --check >/dev/null
 
 ip netns add "$NS"
+NETNS_INODE="$(ip netns exec "$NS" stat -Lc '%i' /proc/self/ns/net)"
 ip -n "$NS" link set lo up
 # The daemon must enable forwarding for its lifetime and restore the original
 # namespace values when it exits.

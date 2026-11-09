@@ -24,6 +24,7 @@ ROUTER_PID=""
 PRIMARY_PID=""
 SECONDARY_PID=""
 IPERF_PIDS=()
+NETNS_INODES=()
 
 cleanup() {
     for pid in "${IPERF_PIDS[@]}" "$CLIENT_PID" "$SECOND_CLIENT_PID" "$ROUTER_PID" "$PRIMARY_PID" "$SECONDARY_PID"; do
@@ -37,6 +38,9 @@ cleanup() {
     ip netns del "$ROUTER_NS" 2>/dev/null || true
     ip netns del "$PRIMARY_NS" 2>/dev/null || true
     ip netns del "$SECONDARY_NS" 2>/dev/null || true
+    for inode in "\${NETNS_INODES[@]}"; do
+        rm -f "/run/vpn-relay-netns-$inode.marks"
+    done
     rm -rf "$TMP"
 }
 trap cleanup EXIT
@@ -91,6 +95,7 @@ SECONDARY_PUBLIC="$(printf '%s' "$SECONDARY_PRIVATE" | wg pubkey)"
 
 for ns in "$CLIENT_NS" "$SECOND_CLIENT_NS" "$ROUTER_NS" "$PRIMARY_NS" "$SECONDARY_NS"; do
     ip netns add "$ns"
+    NETNS_INODES+=("$(ip netns exec "$ns" stat -Lc '%i' /proc/self/ns/net)")
     ip -n "$ns" link set lo up
     ip netns exec "$ns" sysctl -qw net.ipv4.conf.all.rp_filter=0
     ip netns exec "$ns" sysctl -qw net.ipv4.conf.default.rp_filter=0
