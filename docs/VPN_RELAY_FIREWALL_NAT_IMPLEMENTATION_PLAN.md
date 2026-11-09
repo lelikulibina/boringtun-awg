@@ -570,3 +570,21 @@ Noise sessions для peer, чьи параметры не менялись; н�
    пересмотреть при изменении upstream API.
 
 | 2026-11-09 | Добавлена проверка совместимости candidate config для будущего reload | Метод `Config::validate_reload_compatibility` и regression tests; CI ещё не запускался | Реализовано, ожидает CI |
+
+
+Дополнение к этапу 10 (проектное ограничение первой версии reload):
+- Для безопасного атомарного переключения первой версией разрешено менять
+  routing decisions, source/destination selectors, NAT и firewall только при
+  неизменных `routing.mark_base`, наборе egress-интерфейсов и socket marks.
+  Это гарантирует, что соответствующие ip rules/routes остаются прежними;
+  меняется только nftables classifier/table одной kernel transaction.
+- Изменение набора egress или mark base пока требует restart. Поддержка
+  миграции iproute2 ресурсов будет отдельным этапом после реализации и
+  failure-injection тестирования route transaction.
+- Runtime reload реализуется в порядке: candidate validation → preflight DNS и
+  всех изменённых peer sets → последовательный commit peer sets → атомарная
+  nftables transaction → обновление authoritative Config/plan. При ошибке
+  commit или nftables выполняется обратная замена уже изменённых peer sets
+  с сохранёнными прежними endpoint resolutions. Ошибка rollback переводит
+  daemon в fatal shutdown, а не оставляет его обслуживать неопределённое
+  состояние.

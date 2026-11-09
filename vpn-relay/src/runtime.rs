@@ -1,6 +1,6 @@
 //! Linux runtime: dispatch tunnel backends and install shared routing.
-use crate::backend::{BackendError, BackendRegistry, TunnelHandle, TunnelSnapshot};
-use crate::config::{Config, InterfaceConfig, PeerConfig};
+use crate::backend::{BackendError, BackendRegistry, PreparedInterface, TunnelHandle, TunnelSnapshot};
+use crate::config::{Config, PeerConfig};
 use crate::linux::{self, LinuxError};
 use crate::routing::RoutingPlan;
 use std::fs::{self, File, OpenOptions};
@@ -36,16 +36,20 @@ pub enum RuntimeError {
     Signal(String),
     #[error("control socket error: {0}")]
     Control(String),
+    #[error("peer rollback failed; daemon must stop: {0}")]
+    FatalRollback(String),
 }
 
 pub struct Runtime {
     devices: Vec<Box<dyn TunnelHandle>>,
-    interfaces: std::collections::BTreeMap<String, InterfaceConfig>,
+    config: Config,
+    prepared_interfaces: std::collections::BTreeMap<String, PreparedInterface>,
     backends: BackendRegistry,
     routing: RoutingPlan,
     stats_interval: Duration,
     forwarding_state: Option<ForwardingState>,
     control_socket: ControlSocket,
+    fatal_error: Option<String>,
     _instance_lock: InstanceLock,
 }
 
@@ -237,15 +241,18 @@ impl Runtime {
             None
         };
 
+        let stats_interval = Duration::from_secs(config.daemon.stats_interval_secs);
         tracing::info!(interfaces = devices.len(), "vpn-relay runtime started");
         Ok(Self {
             devices,
-            interfaces: config.interfaces,
+            config,
+            prepared_interfaces,
             backends,
             routing,
-            stats_interval: Duration::from_secs(config.daemon.stats_interval_secs),
+            stats_interval,
             forwarding_state,
             control_socket,
+            fatal_error: None,
             _instance_lock: instance_lock,
         })
     }
@@ -262,23 +269,108 @@ impl Runtime {
         interface_name: &str,
         peers: Vec<PeerConfig>,
     ) -> Result<(), RuntimeError> {
-        let current = self.interfaces.get(interface_name).ok_or_else(|| {
+        let mut candidate = self.config.clone();
+        let interface = candidate.interfaces.get_mut(interface_name).ok_or_else(|| {
             RuntimeError::Configuration(format!("unknown interface '{interface_name}'"))
         })?;
-        let mut next = current.clone();
-        next.peers = peers;
-        let prepared = self.backends.prepare_interface(interface_name, &next)?;
-        let index = self
-            .interfaces
-            .keys()
-            .position(|name| name == interface_name)
-            .ok_or_else(|| {
-                RuntimeError::Configuration(format!("unknown interface '{interface_name}'"))
+        interface.peers = peers;
+        self.reload_config(candidate)
+    }
+
+    /// Apply mutable peer, routing-decision and firewall configuration.
+    ///
+    /// The compatibility check guarantees that policy-routing tables, marks,
+    /// tunnel devices and forwarding ownership remain stable. Peer sets are
+    /// committed first; the nftables table is then replaced in one kernel
+    /// transaction. Any later failure restores already committed peer sets.
+    pub fn reload_config(&mut self, candidate: Config) -> Result<(), RuntimeError> {
+        candidate
+            .validate()
+            .map_err(|error| RuntimeError::Configuration(error.to_string()))?;
+        self.config
+            .validate_reload_compatibility(&candidate)
+            .map_err(|error| RuntimeError::Configuration(error.to_string()))?;
+
+        let next_routing = RoutingPlan::from_config(&candidate);
+        if self.routing.egresses != next_routing.egresses
+            || self.routing.socket_marks != next_routing.socket_marks
+        {
+            return Err(RuntimeError::Configuration(
+                "candidate changes live policy-routing resources; restart vpn-relay".to_owned(),
+            ));
+        }
+
+        // Resolve and validate every changed peer set before the first live
+        // device is touched. Keep the exact old endpoint resolutions for
+        // unchanged peers so a later rollback never depends on fresh DNS.
+        let mut prepared = self.prepared_interfaces.clone();
+        let mut changed_interfaces = Vec::new();
+        for (index, (name, next_interface)) in candidate.interfaces.iter().enumerate() {
+            let current_interface = &self.config.interfaces[name];
+            if current_interface.peers == next_interface.peers {
+                continue;
+            }
+            let next_prepared = self.backends.prepare_interface(name, next_interface)?;
+            prepared.insert(name.clone(), next_prepared);
+            changed_interfaces.push((index, name.clone()));
+        }
+
+        let mut committed = Vec::new();
+        for (index, name) in changed_interfaces {
+            let next_interface = candidate.interfaces.get(&name).ok_or_else(|| {
+                RuntimeError::Configuration(format!(
+                    "candidate is missing interface '{name}' during peer commit"
+                ))
             })?;
-        self.devices[index].replace_peers(&next, &prepared)?;
-        self.interfaces.insert(interface_name.to_owned(), next);
-        tracing::info!(interface = interface_name, "runtime peer set replaced");
+            let next_prepared = prepared.get(&name).ok_or_else(|| {
+                RuntimeError::Configuration(format!(
+                    "candidate is missing prepared backend configuration for '{name}'"
+                ))
+            })?;
+            if let Err(error) = self.devices[index].replace_peers(next_interface, next_prepared) {
+                self.rollback_peer_replacements(&committed)?;
+                return Err(error.into());
+            }
+            committed.push(index);
+        }
+
+        if self.routing != next_routing {
+            if let Err(error) = linux::apply_nft(&next_routing) {
+                self.rollback_peer_replacements(&committed)?;
+                return Err(error.into());
+            }
+        }
+
+        self.config = candidate;
+        self.prepared_interfaces = prepared;
+        self.routing = next_routing;
+        self.stats_interval = Duration::from_secs(self.config.daemon.stats_interval_secs);
+        tracing::info!("runtime configuration reloaded");
         Ok(())
+    }
+
+    fn rollback_peer_replacements(&mut self, committed: &[usize]) -> Result<(), RuntimeError> {
+        let mut failures = Vec::new();
+        for index in committed.iter().rev().copied() {
+            let Some((name, interface)) = self.config.interfaces.iter().nth(index) else {
+                failures.push(format!("missing previous interface at device index {index}"));
+                continue;
+            };
+            let Some(prepared) = self.prepared_interfaces.get(name) else {
+                failures.push(format!("missing previous prepared configuration for '{name}'"));
+                continue;
+            };
+            if let Err(error) = self.devices[index].replace_peers(interface, prepared) {
+                failures.push(format!("{name}: {error}"));
+            }
+        }
+        if failures.is_empty() {
+            return Ok(());
+        }
+
+        let details = failures.join("; ");
+        self.fatal_error = Some(details.clone());
+        Err(RuntimeError::FatalRollback(details))
     }
 
     fn accept_control_connections(&mut self) {
@@ -386,6 +478,9 @@ impl Runtime {
         install_signal_handlers()?;
         while !SHUTDOWN_REQUESTED.load(Ordering::Relaxed) {
             self.accept_control_connections();
+            if let Some(error) = &self.fatal_error {
+                return Err(RuntimeError::FatalRollback(error.clone()));
+            }
             let mut elapsed = 0;
             while elapsed < self.stats_interval.as_secs()
                 && !SHUTDOWN_REQUESTED.load(Ordering::Relaxed)
@@ -393,6 +488,9 @@ impl Runtime {
                 std::thread::sleep(Duration::from_secs(1));
                 elapsed += 1;
                 self.accept_control_connections();
+                if let Some(error) = &self.fatal_error {
+                    return Err(RuntimeError::FatalRollback(error.clone()));
+                }
             }
             if SHUTDOWN_REQUESTED.load(Ordering::Relaxed) {
                 break;

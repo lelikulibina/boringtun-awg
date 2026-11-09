@@ -119,7 +119,7 @@ pub struct InterfaceConfig {
     pub awg: Option<AmneziaWgConfig>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct PeerConfig {
     pub public_key: String,
