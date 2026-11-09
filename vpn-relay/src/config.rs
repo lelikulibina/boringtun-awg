@@ -505,20 +505,23 @@ impl Config {
                             rule.ingress, rule.egress
                         ));
                     }
-                    let family_matches =
-                        source_prefixes.as_ref().is_some_and(|prefixes| {
-                            prefixes
-                                .iter()
-                                .any(|(prefix, _)| prefix.is_ipv4() == address.is_ipv4())
-                        }) || destination_prefixes.as_ref().is_some_and(|prefixes| {
-                            prefixes
-                                .iter()
-                                .any(|(prefix, _)| prefix.is_ipv4() == address.is_ipv4())
-                        });
-                    if (source_prefixes.is_some() || destination_prefixes.is_some())
-                        && !family_matches
-                    {
-                        return invalid("routing.rules.nat_to address family must match at least one source/destination selector family");
+                    let family_matches = match (&source_prefixes, &destination_prefixes) {
+                        (Some(sources), Some(destinations)) => sources.iter().any(|(source, _)| {
+                            source.is_ipv4() == address.is_ipv4()
+                                && destinations.iter().any(|(destination, _)| {
+                                    destination.is_ipv4() == address.is_ipv4()
+                                })
+                        }),
+                        (Some(sources), None) => sources
+                            .iter()
+                            .any(|(source, _)| source.is_ipv4() == address.is_ipv4()),
+                        (None, Some(destinations)) => destinations
+                            .iter()
+                            .any(|(destination, _)| destination.is_ipv4() == address.is_ipv4()),
+                        (None, None) => true,
+                    };
+                    if !family_matches {
+                        return invalid("routing.rules.nat_to address family must match the routing rule's selected source/destination family");
                     }
                 }
                 NatMode::None | NatMode::Masquerade if rule.nat_to.is_some() => {
@@ -871,6 +874,17 @@ egress = "awg-uplink"
             1,
         );
         assert!(Config::parse_toml(&disabled_ipv6).is_err());
+    }
+
+    #[test]
+    fn static_snat_family_must_match_the_intersection_of_both_selectors() {
+        let input = valid_config().replacen(
+            "destination = \"0.0.0.0/0\"",
+            "source = [\"10.10.0.0/24\", \"2001:db8::/32\"]\ndestination = \"0.0.0.0/0\"\nnat = \"snat\"\nnat_to = \"2001:db8::10\"",
+            1,
+        );
+        let error = Config::parse_toml(&input).unwrap_err();
+        assert!(error.to_string().contains("selected source/destination family"));
     }
 
     #[test]
