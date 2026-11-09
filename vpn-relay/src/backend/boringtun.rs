@@ -5,7 +5,7 @@ use super::{
     TunnelSnapshot,
 };
 use crate::config::{decode_key, EndpointHost, InterfaceConfig, PeerEndpoint, TunnelType};
-use boringtun::device::{AllowedIP, DeviceConfig, DeviceHandle};
+use boringtun::device::{AllowedIP, DeviceConfig, DeviceHandle, PeerConfig};
 use boringtun::noise::amnezia::{AmneziaConfig, AmneziaWgConfig};
 use boringtun::noise::handshake::ObfuscationRanges;
 use boringtun::x25519;
@@ -78,43 +78,46 @@ impl TunnelBackend for BoringTunBackend {
             .set_fwmark(socket_fwmark)
             .map_err(|error| BackendError::new(error.to_string()))?;
 
-        for (peer, endpoint) in interface.peers.iter().zip(&prepared.peer_endpoints) {
-            let public_key = x25519::PublicKey::from(
-                decode_key(&peer.public_key, "peer.public_key")
-                    .map_err(|error| BackendError::new(error.to_string()))?,
-            );
-            let preshared_key = peer
-                .preshared_key
-                .as_ref()
-                .map(|value| {
-                    decode_key(value, "peer.preshared_key")
-                        .map_err(|error| BackendError::new(error.to_string()))
-                })
-                .transpose()?;
-            let allowed_ips: Result<Vec<AllowedIP>, _> = peer
-                .allowed_ips
-                .iter()
-                .map(|prefix| {
-                    AllowedIP::from_str(prefix).map_err(|error| {
-                        BackendError::new(format!("invalid AllowedIP {prefix}: {error}"))
+        let peers = interface
+            .peers
+            .iter()
+            .zip(&prepared.peer_endpoints)
+            .map(|(peer, endpoint)| {
+                let public_key = decode_key(&peer.public_key, "peer.public_key")
+                    .map_err(|error| BackendError::new(error.to_string()))?;
+                let preshared_key = peer
+                    .preshared_key
+                    .as_ref()
+                    .map(|value| {
+                        decode_key(value, "peer.preshared_key")
+                            .map_err(|error| BackendError::new(error.to_string()))
                     })
-                })
-                .collect();
-            let keepalive = peer
-                .persistent_keepalive_secs
-                .map(|seconds| (u32::from(seconds), u32::from(seconds)));
-            device
-                .update_peer(
+                    .transpose()?;
+                let allowed_ips = peer
+                    .allowed_ips
+                    .iter()
+                    .map(|prefix| {
+                        AllowedIP::from_str(prefix).map_err(|error| {
+                            BackendError::new(format!("invalid AllowedIP {prefix}: {error}"))
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let persistent_keepalive = peer
+                    .persistent_keepalive_secs
+                    .map(|seconds| (u32::from(seconds), u32::from(seconds)));
+
+                Ok(PeerConfig {
                     public_key,
-                    false,
-                    true,
-                    *endpoint,
-                    &allowed_ips?,
-                    keepalive,
+                    endpoint: *endpoint,
+                    allowed_ips,
+                    persistent_keepalive,
                     preshared_key,
-                )
-                .map_err(|error| BackendError::new(error.to_string()))?;
-        }
+                })
+            })
+            .collect::<Result<Vec<_>, BackendError>>()?;
+        device
+            .replace_peers(&peers)
+            .map_err(|error| BackendError::new(error.to_string()))?;
 
         Ok(Box::new(BoringTunHandle { device }))
     }
