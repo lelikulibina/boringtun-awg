@@ -36,7 +36,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     args.next()
                         .ok_or("--replace-peers requires an interface name")?,
                 )
-            },
+            }
             "--yes" | "-y" => yes = true,
             "--import" => {
                 let source = args.next().ok_or("--import requires a source .conf path")?;
@@ -86,15 +86,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     let config = Config::load(&config_path)?;
     if let Some(interface_name) = replace_peers_interface {
-        let interface = config
-            .interfaces
-            .get(&interface_name)
-            .ok_or_else(|| {
-                format!(
-                    "interface '{interface_name}' is missing from {}",
-                    config_path.display()
-                )
-            })?;
+        let interface = config.interfaces.get(&interface_name).ok_or_else(|| {
+            format!(
+                "interface '{interface_name}' is missing from {}",
+                config_path.display()
+            )
+        })?;
         Runtime::request_peer_replacement(interface_name.clone(), interface.peers.clone())?;
         println!("Peer set for interface '{interface_name}' replaced successfully.");
         return Ok(());
