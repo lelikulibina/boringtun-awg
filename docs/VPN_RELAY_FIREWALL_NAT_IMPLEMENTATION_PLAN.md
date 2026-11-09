@@ -216,11 +216,15 @@
   allow rules принимают original direction и устанавливают host-flow tag
   `0x80000000`; reply разрешается только при совпадении этого tag. Это не
   позволяет established flow, начатому через unmanaged egress, обходить
-  managed INPUT deny. Unit assertions обновлены; packet-level negative test
-  для forged reply ещё требуется.
-- [ ] Не блокировать loopback и unmanaged ingress.
-- [ ] Добавить IPv4/IPv6 и ICMPv6 тесты.
-- [ ] Проверить взаимодействие с другими nftables base chains.
+  managed INPUT deny. Forged-reply packet test подтверждает блокировку ответа
+  на host-flow, начатый через unmanaged underlay (CI 42668190390).
+- [ ] Не блокировать loopback; отдельная packet-level проверка loopback ещё нужна.
+- [x] Не блокировать unmanaged ingress; physical UDP probe доходит до host socket.
+- [x] Добавлены packet-level IPv4/IPv6 ICMP, TCP и ICMPv6 allow/deny проверки
+  (WG и AWG, CI 42668190390).
+- [~] Проверено coexistence с чужими nftables base chains и сохранность их
+  INPUT/FORWARD/OUTPUT chains после shutdown (CI 42665725191); отдельный тест
+  влияния их packet verdict на трафик vpn-relay ещё требуется.
 
 Критерий приёмки: неразрешённый пакет с managed TUN к локальному адресу
 блокируется независимо от наличия conntrack entry; другие ingress не меняются.
