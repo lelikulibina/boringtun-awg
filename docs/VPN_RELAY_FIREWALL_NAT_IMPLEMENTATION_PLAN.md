@@ -518,3 +518,55 @@ Noise sessions для peer, чьи параметры не менялись; н�
 
 
 | 2026-11-09 | Добавлен локальный control socket для peer replacement | Daemon принимает ограниченный JSON-запрос через Unix socket в текущем network namespace; сокет имеет права 0600, запрос ограничен 1 MiB и обслуживается последовательно в основном runtime loop. CLI `--replace-peers INTERFACE` читает peers из config file и отправляет их работающему daemon; runtime меняет authoritative peer config только после успешного backend commit. Полная reload/transaction конфигурации, routes и firewall пока не реализована | Ожидает CI |
+
+
+## 15. Этап 10 — безопасная граница runtime reload
+
+- [x] Зафиксировать неизменяемые параметры интерфейса: набор и имена интерфейсов,
+  тип туннеля, адреса, MTU, IPv6 gating, listen port, private key, явный и
+  разрешённый socket fwmark, параметры AmneziaWG.
+- [x] Добавить `Config::validate_reload_compatibility`: разрешать изменение
+  peer sets, routing decisions и INPUT/OUTPUT firewall rules; отклонять
+  изменение параметров, требующих пересоздания tunnel device или смены
+  lifecycle ресурсов daemon.
+- [x] Добавить тесты на допустимые изменения peer/routing и отказ при изменении
+  private key, AWG parameters, socket fwmark и набора интерфейсов.
+- [ ] Добавить runtime API, который принимает полный candidate config, выполняет
+  validation/preflight всех peer endpoints и только затем запускает transaction.
+- [ ] Разделить подготовку и commit peer sets для нескольких tunnel devices;
+  обеспечить rollback уже committed devices при последующем отказе.
+- [ ] Реализовать безопасный переход nftables и policy routing с явными
+  операциями prepare/apply/restore, не используя destructive cleanup нового
+  плана против ещё активного старого плана.
+- [ ] Обеспечить fail-closed поведение при смене routing marks и route tables;
+  отдельно проверить пересечение старых и новых marks/priorities.
+- [ ] Обновлять authoritative config/runtime plan только после полного commit;
+  rollback failure переводить daemon в fatal state.
+- [ ] Добавить failure-injection и packet-level tests для успешного reload,
+  ошибки nft transaction, ошибки route install, rollback firewall/routes,
+  multi-interface peer rollback и непрерывного трафика.
+- [ ] Добавить control socket request и CLI для полного reload конфигурации;
+  существующий `--replace-peers` оставить совместимым либо явно deprecated.
+- [ ] Подтвердить все изменения полным CI, включая network-namespace и packet tests.
+
+Архитектурные ограничения, выявленные при исследовании:
+1. `linux::apply_nft` заменяет всю принадлежащую vpn-relay таблицу одной
+   nftables transaction. Это атомарно для nftables, но не атомарно совместно
+   с iproute2.
+2. `linux::apply_policy_routing` последовательно удаляет/создаёт ip rules и
+   routes. При ошибке вызывает `remove_policy_routing(new_plan)`; если новый
+   и старый планы используют одинаковые marks/table IDs, такой rollback может
+   удалить ресурсы старой активной конфигурации. Для reload эта функция
+   непригодна без выделенного transaction/restore API.
+3. `TunnelHandle::replace_peers` выполняет commit одного device, но trait не
+   предоставляет отдельные prepare/commit/restore методы. Preflight DNS и
+   формирование peer configs сейчас происходят внутри backend, поэтому
+   multi-interface transaction потребует расширения backend contract.
+4. `Runtime` хранит только текущие interfaces и routing plan; полный исходный
+   `Config` не сохраняется. Authoritative config snapshot потребуется добавить.
+5. Immutable AWG config сравнивается в пределах одного процесса по Debug
+   representation, так как используемый тип AmneziaWgConfig не предоставляет
+   PartialEq в текущем контракте зависимости. Это ограничение следует
+   пересмотреть при изменении upstream API.
+
+| 2026-11-09 | Добавлена проверка совместимости candidate config для будущего reload | Метод `Config::validate_reload_compatibility` и regression tests; CI ещё не запускался | Реализовано, ожидает CI |

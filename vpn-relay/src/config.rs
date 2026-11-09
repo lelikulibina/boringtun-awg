@@ -254,6 +254,60 @@ impl Config {
         Self::parse_toml(&input)
     }
 
+    /// Ensure a candidate configuration can be applied without recreating
+    /// tunnel devices or changing resources whose lifecycle is owned by start().
+    ///
+    /// Peer sets, routing decisions and firewall rules are intentionally
+    /// mutable. Interface identity and tunnel construction parameters are not.
+    pub fn validate_reload_compatibility(&self, next: &Self) -> Result<(), ConfigError> {
+        if self.interfaces.keys().ne(next.interfaces.keys()) {
+            return invalid(
+                "reload cannot add or remove interfaces; tunnel lifecycle changes require a restart",
+            );
+        }
+
+        for (name, current) in &self.interfaces {
+            let candidate = &next.interfaces[name];
+            let awg_current = current.awg.as_ref().map(|value| format!("{value:?}"));
+            let awg_next = candidate.awg.as_ref().map(|value| format!("{value:?}"));
+            if current.tunnel_type != candidate.tunnel_type
+                || current.address != candidate.address
+                || current.mtu != candidate.mtu
+                || current.ipv6_enabled != candidate.ipv6_enabled
+                || current.listen_port != candidate.listen_port
+                || current.private_key != candidate.private_key
+                || current.socket_fwmark != candidate.socket_fwmark
+                || awg_current != awg_next
+            {
+                return invalid(format!(
+                    "reload cannot change immutable tunnel parameters for interface '{name}'; restart vpn-relay to apply them",
+                ));
+            }
+        }
+
+        if self.resolved_socket_fwmarks()? != next.resolved_socket_fwmarks()? {
+            return invalid(
+                "reload cannot change resolved socket fwmarks; restart vpn-relay to apply them",
+            );
+        }
+
+        if self.daemon.nft_table != next.daemon.nft_table {
+            return invalid("reload cannot change daemon.nft_table while the daemon is running");
+        }
+        if self.daemon.manage_ip_forwarding != next.daemon.manage_ip_forwarding {
+            return invalid(
+                "reload cannot change daemon.manage_ip_forwarding while the daemon is running",
+            );
+        }
+        if self.daemon.log_level != next.daemon.log_level {
+            return invalid(
+                "reload cannot change daemon.log_level; restart vpn-relay to apply it",
+            );
+        }
+
+        Ok(())
+    }
+
     /// Resolve one packet mark for each distinct egress referenced by routing rules.
     /// The order matches the lexicographically sorted egress list in RoutingPlan.
     pub fn resolved_routing_fwmarks(&self) -> Result<Vec<u32>, ConfigError> {
@@ -843,6 +897,58 @@ destination = "::/0"
 egress = "awg-uplink"
 "#
         )
+    }
+
+    #[test]
+    fn reload_compatibility_allows_peer_routing_and_firewall_changes() {
+        let current = Config::parse_toml(&valid_config()).unwrap();
+        let candidate_text = valid_config()
+            .replace("10.10.0.2/32", "10.10.0.3/32")
+            .replace("destination = \"0.0.0.0/0\"", "destination = \"10.0.0.0/8\"");
+        let candidate = Config::parse_toml(&candidate_text).unwrap();
+        current.validate_reload_compatibility(&candidate).unwrap();
+    }
+
+    #[test]
+    fn reload_compatibility_rejects_tunnel_identity_and_lifecycle_changes() {
+        let current = Config::parse_toml(&valid_config()).unwrap();
+
+        let changed_key = valid_config().replace(
+            "private_key = \"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\"",
+            "private_key = \"AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=\"",
+        );
+        let changed_key = Config::parse_toml(&changed_key).unwrap();
+        assert!(current
+            .validate_reload_compatibility(&changed_key)
+            .unwrap_err()
+            .to_string()
+            .contains("immutable tunnel parameters"));
+
+        let changed_awg = Config::parse_toml(&valid_config().replace("jc = 5", "jc = 6")).unwrap();
+        assert!(current
+            .validate_reload_compatibility(&changed_awg)
+            .unwrap_err()
+            .to_string()
+            .contains("immutable tunnel parameters"));
+
+        let changed_socket_mark =
+            Config::parse_toml(&valid_config().replace("socket_fwmark = 4098", "socket_fwmark = 4099"))
+                .unwrap();
+        assert!(current
+            .validate_reload_compatibility(&changed_socket_mark)
+            .unwrap_err()
+            .to_string()
+            .contains("socket fwmarks"));
+
+        let added_interface = Config::parse_toml(&format!(
+            "{}\n[interfaces.extra]\ntype = \"wg\"\naddress = [\"10.30.0.1/24\"]\nprivate_key = \"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\"\n",
+            valid_config()
+        )).unwrap();
+        assert!(current
+            .validate_reload_compatibility(&added_interface)
+            .unwrap_err()
+            .to_string()
+            .contains("add or remove interfaces"));
     }
 
     #[test]
