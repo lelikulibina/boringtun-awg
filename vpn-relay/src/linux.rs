@@ -172,6 +172,33 @@ fn rule_has_owned_identity(line: &str, mark: u32, table: &str) -> bool {
     selector.trim() == format!("from all fwmark 0x{mark:x} lookup {table} proto {ROUTING_PROTOCOL}")
 }
 
+fn parse_fwmark_value(value: &str) -> Option<u32> {
+    if let Some(hex) = value.strip_prefix("0x").or_else(|| value.strip_prefix("0X")) {
+        u32::from_str_radix(hex, 16).ok()
+    } else {
+        value.parse().ok()
+    }
+}
+
+/// Return true when an ip rule's fwmark selector matches the supplied mark,
+/// including selectors that use a partial mask or a wildcard mask.
+fn rule_matches_fwmark(line: &str, mark: u32) -> bool {
+    let fields: Vec<_> = line.split_whitespace().collect();
+    let Some(index) = fields.iter().position(|field| *field == "fwmark") else {
+        return false;
+    };
+    let Some(specification) = fields.get(index + 1) else {
+        return false;
+    };
+    let (value, mask) = specification
+        .split_once('/')
+        .unwrap_or((specification, "0xffffffff"));
+    let (Some(value), Some(mask)) = (parse_fwmark_value(value), parse_fwmark_value(mask)) else {
+        return false;
+    };
+    mark & mask == value & mask
+}
+
 fn route_has_owned_identity(line: &str, interface: &str) -> bool {
     let fields: Vec<_> = line.split_whitespace().collect();
     if fields.len() < 5
@@ -230,6 +257,29 @@ fn ensure_policy_slots_available(plan: &RoutingPlan) -> Result<(), LinuxError> {
             let Ok(priority) = priority.trim().parse::<u32>() else {
                 continue;
             };
+            for mark in &plan.socket_marks {
+                if rule_matches_fwmark(line, *mark) {
+                    let expected = priority == 9_000 && rule_has_owned_identity(line, *mark, "main");
+                    if !expected {
+                        return Err(LinuxError::Conflict {
+                            resource: format!("IPv{family} rule matching socket fwmark 0x{mark:x}"),
+                            details: line.trim().to_owned(),
+                        });
+                    }
+                }
+            }
+            for egress in &plan.egresses {
+                if rule_matches_fwmark(line, egress.mark) {
+                    let expected = priority == egress.ip_rule_priority
+                        && rule_has_owned_identity(line, egress.mark, &egress.table_id.to_string());
+                    if !expected {
+                        return Err(LinuxError::Conflict {
+                            resource: format!("IPv{family} rule matching routing fwmark 0x{:x}", egress.mark),
+                            details: line.trim().to_owned(),
+                        });
+                    }
+                }
+            }
             if priority == 9_000 {
                 let ours = plan
                     .socket_marks
@@ -242,9 +292,7 @@ fn ensure_policy_slots_available(plan: &RoutingPlan) -> Result<(), LinuxError> {
                     });
                 }
             }
-            if let Some(egress) = plan.egresses.iter().find(|egress| {
-                egress.ip_rule_priority == priority && (family != "-6" || egress.ipv6_enabled)
-            }) {
+            if let Some(egress) = plan.egresses.iter().find(|egress| egress.ip_rule_priority == priority) {
                 let expected =
                     rule_has_owned_identity(line, egress.mark, &egress.table_id.to_string());
                 if !expected {
@@ -552,6 +600,30 @@ mod tests {
             "10000: from all fwmark 0x80000000 lookup 10001 proto 242",
             0x8000_0000,
             "10000"
+        ));
+    }
+
+    #[test]
+    fn detects_ip_rules_that_shadow_or_overlap_reserved_fwmarks() {
+        assert!(rule_matches_fwmark(
+            "100: from all fwmark 0x80000000 lookup 10000",
+            0x8000_0000
+        ));
+        assert!(rule_matches_fwmark(
+            "100: from all fwmark 0x80000000/0xffff0000 lookup 10000",
+            0x8000_0001
+        ));
+        assert!(rule_matches_fwmark(
+            "100: from all fwmark 0x0/0x0 lookup main",
+            0x8000_0001
+        ));
+        assert!(!rule_matches_fwmark(
+            "100: from all fwmark 0x80000001 lookup 10000",
+            0x8000_0000
+        ));
+        assert!(!rule_matches_fwmark(
+            "100: from all lookup 10000",
+            0x8000_0000
         ));
     }
 
