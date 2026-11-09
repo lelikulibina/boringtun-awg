@@ -918,9 +918,15 @@ egress = "awg-primary"
             plan.decisions[1].routing_mark
         );
         let script = plan.nft_script();
-        assert!(script.contains("postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark 0x1 return"));
-        assert!(script.contains("postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark 0x2 masquerade"));
-        assert!(!script.contains("postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark 0x1 masquerade"));
+        assert!(script.contains(
+            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark 0x1 return"
+        ));
+        assert!(script.contains(
+            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark 0x2 masquerade"
+        ));
+        assert!(!script.contains(
+            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark 0x1 masquerade"
+        ));
     }
     #[test]
     fn source_only_and_destination_only_rules_generate_family_specific_matches() {
