@@ -680,7 +680,9 @@ egress = "awg-primary"
         });
 
         let script = RoutingPlan::from_config(&config).nft_script();
-        assert!(script.contains("input iifname \"wg-server\" ip saddr 10.0.0.2/32 meta l4proto icmp ct state"));
+        assert!(script.contains(
+            "input iifname \"wg-server\" ip saddr 10.0.0.2/32 meta l4proto icmp ct state"
+        ));
         assert!(script.contains("output oifname \"awg-primary\" ip6 daddr 2001:db8::/32 meta l4proto ipv6-icmp ct state"));
     }
 
