@@ -1171,8 +1171,7 @@ mod tests {
             .to_string()
             .contains("injected peer replacement failure"));
 
-        let failures =
-            rollback_peer_replacements(&mut devices, &committed, &previous, &prepared);
+        let failures = rollback_peer_replacements(&mut devices, &committed, &previous, &prepared);
         assert!(failures.is_empty(), "rollback failed: {failures:?}");
 
         let restored = devices[0].snapshot().unwrap();
