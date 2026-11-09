@@ -31,7 +31,6 @@ pub struct PeerConfig {
 }
 
 struct StagedPeer {
-    public_key: x25519::PublicKey,
     index: u32,
     peer: Arc<Mutex<Peer>>,
 }
@@ -100,7 +99,7 @@ impl Device {
         if configs.iter().any(|config| {
             !self.peers.contains_key(&x25519::PublicKey::from(config.public_key))
         }) {
-            let key_pair = require_key_pair(&self.key_pair)?;
+            let private_key = require_key_pair(&self.key_pair)?.0.clone();
             for config in configs {
                 let public_key = x25519::PublicKey::from(config.public_key);
                 if self.peers.contains_key(&public_key) {
@@ -109,7 +108,7 @@ impl Device {
 
                 let index = self.next_index();
                 let mut tunn = Tunn::new_with_obfuscation(
-                    key_pair.0.clone(),
+                    private_key.clone(),
                     public_key,
                     config.preshared_key,
                     None,
@@ -131,7 +130,6 @@ impl Device {
                 staged.insert(
                     public_key,
                     StagedPeer {
-                        public_key,
                         index,
                         peer: Arc::new(Mutex::new(peer)),
                     },
@@ -179,9 +177,10 @@ impl Device {
 
                 if peer.endpoint().addr != config.endpoint {
                     peer.shutdown_endpoint();
-                    peer.endpoint_mut().addr = config.endpoint;
                     if let Some(endpoint) = config.endpoint {
                         peer.set_endpoint(endpoint);
+                    } else {
+                        peer.endpoint_mut().addr = None;
                     }
                 }
                 if peer.preshared_key() != config.preshared_key.as_ref() {
