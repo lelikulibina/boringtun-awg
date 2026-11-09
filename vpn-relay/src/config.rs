@@ -884,8 +884,8 @@ egress = "awg-uplink"
                 "[interfaces.wg-server]\nipv6_enabled = true",
             )
             .replace(
-                "[interfaces.awg-primary]",
-                "[interfaces.awg-primary]\nipv6_enabled = true",
+                "[interfaces.awg-uplink]",
+                "[interfaces.awg-uplink]\nipv6_enabled = true",
             )
             .replacen(
                 "destination = \"0.0.0.0/0\"",

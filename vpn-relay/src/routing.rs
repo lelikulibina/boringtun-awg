@@ -674,7 +674,7 @@ egress = "awg-primary"
         assert!(!script.contains("prerouting iifname \"wg-server\" ct state new ip saddr"));
         assert!(!script.contains("prerouting iifname \"wg-server\" ct state new ip daddr"));
         assert!(script.contains(
-            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark 0x80000000 return"
+            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark 0x40000001 return"
         ));
     }
 
@@ -724,7 +724,7 @@ egress = "awg-primary"
         assert!(script.contains("iifname @managed_interfaces meta mark set 0"));
         assert!(script.contains("ct direction reply meta mark set 0"));
         assert!(
-            script.contains("ct direction original ct mark 0x40000001 meta mark set 0x80000000")
+            script.contains("ct direction original ct mark 0x40000001 meta mark set 0x80000001")
         );
     }
 
