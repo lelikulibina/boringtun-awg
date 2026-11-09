@@ -108,8 +108,8 @@ socket_fwmark = 5001
 public_key = "$CLIENT_PUBLIC"
 allowed_ips = ["10.77.0.2/32"]
 
-# Exercise INPUT and OUTPUT defaults: server allows only TCP/8080; the client
-# allows TCP/8080 and TCP/8081 so the negative probes isolate the server hooks.
+# Exercise INPUT and OUTPUT defaults: server allows TCP/8080 and iperf3 TCP/UDP 5201; the client
+# also allows TCP/8081 for isolated negative probes so the negative probes isolate the server hooks.
 [firewall.input]
 [[firewall.input.rules]]
 interface = "wg-peer-test"
@@ -120,7 +120,13 @@ protocol = "icmp"
 interface = "wg-peer-test"
 source = ["10.77.0.2/32"]
 protocol = "tcp"
-ports = [8080]
+ports = [8080, 5201]
+
+[[firewall.input.rules]]
+interface = "wg-peer-test"
+source = ["10.77.0.2/32"]
+protocol = "udp"
+ports = [5201]
 
 [firewall.output]
 [[firewall.output.rules]]
@@ -132,7 +138,12 @@ protocol = "icmp"
 interface = "wg-peer-test"
 destination = ["10.77.0.2/32"]
 protocol = "tcp"
-ports = [8080]
+ports = [8080, 5201]
+[[firewall.output.rules]]
+interface = "wg-peer-test"
+destination = ["10.77.0.2/32"]
+protocol = "udp"
+ports = [5201]
 TOML
 
 if [[ "$PROTO" == "awg" ]]; then
@@ -172,7 +183,13 @@ protocol = "icmp"
 interface = "wg-peer-test"
 source = ["10.77.0.1/32"]
 protocol = "tcp"
-ports = [8080, 8081]
+ports = [8080, 8081, 5201]
+
+[[firewall.input.rules]]
+interface = "wg-peer-test"
+source = ["10.77.0.1/32"]
+protocol = "udp"
+ports = [5201]
 
 [firewall.output]
 [[firewall.output.rules]]
@@ -184,7 +201,12 @@ protocol = "icmp"
 interface = "wg-peer-test"
 destination = ["10.77.0.1/32"]
 protocol = "tcp"
-ports = [8080, 8081]
+ports = [8080, 8081, 5201]
+[[firewall.output.rules]]
+interface = "wg-peer-test"
+destination = ["10.77.0.1/32"]
+protocol = "udp"
+ports = [5201]
 TOML
 
 if [[ "$PROTO" == "awg" ]]; then
