@@ -234,9 +234,9 @@ to = "203.0.113.10"
 
 - [x] Добавить INPUT base chain в таблицу vpn-relay с policy accept, поскольку
   глобальный INPUT namespace принадлежит системному firewall.
-- [ ] Сначала обработать invalid.
-- [ ] Применить явные разрешения только к managed ingress.
-- [ ] Запретить остальные пакеты с managed ingress до любого общего
+- [x] Сначала отбрасывать invalid на managed ingress.
+- [x] Применять явные разрешения только к managed ingress.
+- [x] Запрещать остальные пакеты с managed ingress до любого общего
   established/related accept, способного обойти политику.
 - [~] Разделены conntrack original/reply направления: явные INPUT/OUTPUT
   allow rules принимают original direction; established/related reply traffic
@@ -251,7 +251,8 @@ to = "203.0.113.10"
 
 ## 8. Этап 5 — OUTPUT managed
 
-- [ ] Создавать output base chain независимо от IPv6-disabled gating.
+- [x] Создавать output base chain независимо от IPv6-disabled gating.
+- [x] Сначала отбрасывать invalid на managed TUN egress.
 - [x] Фильтровать только пакеты с фактическим managed TUN egress.
 - [x] Определить безопасную модель default deny и явных разрешений.
 - [ ] Не блокировать socket-marked outer UDP, направленный через underlay.

@@ -254,6 +254,13 @@ impl RoutingPlan {
             ));
         }
 
+        // Invalid conntrack state must never reach an explicit allow rule.
+        // Keep the drop scoped to managed ingress so unrelated host traffic
+        // remains outside vpn-relay's firewall ownership.
+        output.push_str(&format!(
+            "add rule {} {} input iifname @managed_interfaces ct state invalid drop\\n",
+            self.nft_family, self.nft_table
+        ));
         // INPUT is scoped to managed ingress. Explicit allow rules admit
         // original-direction client traffic; only reply-direction packets for
         // host-initiated connections are accepted by conntrack state.
@@ -281,6 +288,12 @@ impl RoutingPlan {
             self.nft_family, self.nft_table
         ));
 
+        // Invalid conntrack state must not be admitted by a broad protocol
+        // or address allow rule on a managed TUN egress.
+        output.push_str(&format!(
+            "add rule {} {} output oifname @managed_interfaces ct state invalid drop\\n",
+            self.nft_family, self.nft_table
+        ));
         // OUTPUT is scoped to the actual managed TUN egress. Socket-marked
         // outer UDP routed through the underlay is therefore unaffected.
         for rule in &self.output_rules {
@@ -654,6 +667,8 @@ egress = "awg-primary"
 
         let script = RoutingPlan::from_config(&config).nft_script();
         assert!(script.contains("input iifname \"wg-server\" ip saddr 10.0.0.2/32 tcp dport { 22, 443 } ct state new,established,related ct direction original accept"));
+        assert!(script.contains("input iifname @managed_interfaces ct state invalid drop"));
+        assert!(script.contains("output oifname @managed_interfaces ct state invalid drop"));
         assert!(script.contains("input iifname @managed_interfaces ct state established,related ct direction reply accept"));
         assert!(script.contains("input iifname @managed_interfaces drop"));
         assert!(script.contains("output oifname \"awg-primary\" ip daddr 10.0.0.0/24 udp dport { 53 } ct state new,established,related ct direction original accept"));
