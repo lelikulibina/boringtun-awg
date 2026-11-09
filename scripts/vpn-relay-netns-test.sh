@@ -146,6 +146,13 @@ ip -n "$NS" link set main0 up
 ip -n "$NS" route replace default dev main0
 ip -n "$NS" -6 route replace default dev main0
 
+# A separate administrator-owned base chain at an earlier hook priority must
+# coexist with vpn-relay and survive its shutdown unchanged.
+ip netns exec "$NS" nft add table inet foreign_filter
+ip netns exec "$NS" nft 'add chain inet foreign_filter input { type filter hook input priority -10; policy accept; }'
+ip netns exec "$NS" nft 'add chain inet foreign_filter forward { type filter hook forward priority -10; policy accept; }'
+ip netns exec "$NS" nft 'add chain inet foreign_filter output { type filter hook output priority -10; policy accept; }'
+
 # A foreign table with the configured name must be preserved. Startup must
 # fail and roll back policy rules and TUN devices instead of deleting it.
 ip netns exec "$NS" nft add table inet vpn_relay_it
@@ -180,6 +187,9 @@ for iface in wg-server awg-primary awg-secondary; do
     fi
 done
 ip netns exec "$NS" nft delete table inet vpn_relay_it
+ip netns exec "$NS" nft list chain inet foreign_filter input >/dev/null || fail "foreign INPUT base chain was modified"
+ip netns exec "$NS" nft list chain inet foreign_filter forward >/dev/null || fail "foreign FORWARD base chain was modified"
+ip netns exec "$NS" nft list chain inet foreign_filter output >/dev/null || fail "foreign OUTPUT base chain was modified"
 
 # A foreign rule that happens to use the daemon's priority, mark and table
 # must not be adopted or removed merely because its selectors look identical.
@@ -314,6 +324,9 @@ DAEMON_PID=""
 if ip netns exec "$NS" nft list table inet vpn_relay_it >/dev/null 2>&1; then
     fail "daemon-owned nftables table survived shutdown"
 fi
+ip netns exec "$NS" nft list chain inet foreign_filter input >/dev/null || fail "foreign INPUT base chain was modified"
+ip netns exec "$NS" nft list chain inet foreign_filter forward >/dev/null || fail "foreign FORWARD base chain was modified"
+ip netns exec "$NS" nft list chain inet foreign_filter output >/dev/null || fail "foreign OUTPUT base chain was modified"
 if ip netns exec "$NS" ip -4 rule show | grep -Eq 'fwmark 0x8000000[01]'; then
     fail "inner packet policy rule survived shutdown"
 fi

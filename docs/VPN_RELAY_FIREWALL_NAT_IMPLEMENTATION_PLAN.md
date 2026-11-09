@@ -367,3 +367,6 @@ unmanaged output остаётся неизменным.
 
 
 | 2026-11-09 | Добавлены regression tests неизвестных полей firewall/NAT | Проверяется отказ от `allow_all` в firewall rule и неизвестного `nat_target` в routing rule; это предотвращает молчаливое игнорирование ошибочно названных security-параметров | Ожидает CI |
+
+
+| 2026-11-09 | Проверка coexistence с чужими nftables base chains | Network-namespace тест создаёт отдельную таблицу с INPUT/FORWARD/OUTPUT base chains на более раннем hook priority; проверяет их наличие после запуска и штатного shutdown vpn-relay | Ожидает CI |
