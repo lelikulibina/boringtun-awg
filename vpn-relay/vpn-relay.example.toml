@@ -6,6 +6,9 @@
 log_level = "info"
 stats_interval_secs = 10
 nft_table = "vpn_relay"
+# false: vpn-relay does not change kernel forwarding sysctls; enable IPv4/IPv6
+# forwarding externally before routing traffic through this host. Set true to
+# let vpn-relay enable forwarding at startup and restore prior values at shutdown.
 manage_ip_forwarding = false
 
 [interfaces.wg-server]

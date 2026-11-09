@@ -443,6 +443,17 @@ wait_interface "$ROUTER_NS" wg-ingress "$ROUTER_PID" "vpn_relay_mu_router_$SUFFI
 wait_interface "$ROUTER_NS" awg-primary "$ROUTER_PID" "vpn_relay_mu_router_$SUFFIX"
 wait_interface "$ROUTER_NS" awg-secondary "$ROUTER_PID" "vpn_relay_mu_router_$SUFFIX"
 
+# A foreign, earlier FORWARD chain accepts everything. vpn-relay must still
+# enforce its later managed-interface isolation verdict.
+ip netns exec "$ROUTER_NS" nft -f - <<NFT
+table inet foreign_filter_$SUFFIX {
+    chain forward {
+        type filter hook forward priority -10; policy accept;
+        counter accept
+    }
+}
+NFT
+
 # Start ingress clients only after the router has bound its UDP listener and
 # registered all peers. Starting them concurrently creates a startup race:
 # the first handshake can arrive before wg-ingress is ready and is then lost.
@@ -493,8 +504,31 @@ grep -Fq 'iifname "wg-ingress" ct state new ip saddr 10.77.0.2 ip daddr 203.0.11
 grep -Fq 'iifname "wg-ingress" ct state new ip6 saddr { fd77::2/127 } ip6 daddr 2001:db8:195::/48 meta mark set 0x80000001' <<<"$chain" && grep -Eq 'ct mark set .*0x40040000 return' <<<"$chain" || fail "secondary IPv6 source array classifier is missing"
 grep -Fq 'iifname "wg-ingress" ct state new ip6 saddr fd77::2 ip6 daddr 2001:db8:1::/48 meta mark set 0x80000000' <<<"$chain" && grep -Eq 'ct mark set .*0x40080000 return' <<<"$chain" || fail "IPv6 primary destination-limited classifier is missing"
 
+
+# INPUT must preserve the original peer source address; source NAT is only
+# valid for an authorized FORWARD decision.
+ip netns exec "$ROUTER_NS" timeout 5 tcpdump -nn -i wg-ingress -c 1 \
+    'icmp and src host 10.77.0.2 and dst host 10.77.0.1 and icmp[0] == 8' \
+    >"$TMP/nat-input-local.log" 2>&1 &
+capture_pid=$!
+sleep 0.25
 ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -c 3 -W 2 10.77.0.1 \
     || fail "client could not establish the ingress WG tunnel"
+wait "$capture_pid" || fail "could not capture local INPUT packet"
+grep -Fq '10.77.0.2 > 10.77.0.1' "$TMP/nat-input-local.log" || fail "INPUT packet source was unexpectedly translated"
+
+# OUTPUT to a peer must also retain the router's TUN address rather than
+# inheriting any FORWARD SNAT/masquerade decision.
+ip netns exec "$CLIENT_NS" timeout 5 tcpdump -nn -i wg-client -c 1 \
+    'icmp and src host 10.77.0.1 and dst host 10.77.0.2 and icmp[0] == 8' \
+    >"$TMP/nat-output-local.log" 2>&1 &
+capture_pid=$!
+sleep 0.25
+ip netns exec "$ROUTER_NS" ping -n -I 10.77.0.1 -c 1 -W 2 10.77.0.2 \
+    || fail "router local OUTPUT probe to ingress peer failed"
+wait "$capture_pid" || fail "could not capture local OUTPUT packet"
+grep -Fq '10.77.0.1 > 10.77.0.2' "$TMP/nat-output-local.log" || fail "OUTPUT packet source was unexpectedly translated"
+
 
 ip netns exec "$SECOND_CLIENT_NS" ping -n -I 10.77.0.3 -c 3 -W 2 10.77.0.1 \
     || fail "second client could not establish the ingress WG tunnel"
@@ -504,6 +538,9 @@ ip netns exec "$SECOND_CLIENT_NS" ping -n -I 10.77.0.3 -c 3 -W 2 10.77.0.1 \
 if ip netns exec "$SECOND_CLIENT_NS" ping -n -I 10.77.0.3 -c 2 -W 1 10.77.0.2 >/dev/null 2>&1; then
     fail "two peers on one WG server communicated without a routing rule"
 fi
+
+foreign_forward="$(ip netns exec "$ROUTER_NS" nft list chain inet "foreign_filter_$SUFFIX" forward)"
+grep -Eq 'counter packets [1-9][0-9]* bytes' <<<"$foreign_forward" || fail "foreign FORWARD accept chain did not observe peer-isolation traffic"
 
 # A valid ingress interface is not sufficient: the source selector must match.
 if ip netns exec "$SECOND_CLIENT_NS" ping -n -I 10.77.0.3 -c 2 -W 1 203.0.113.1 >/dev/null 2>&1; then
@@ -515,9 +552,27 @@ fi
 
 # A valid source is not sufficient either: destinations outside every rule
 # must not escape through the host's ordinary routing table.
+
+# Capture both managed uplinks while probing a destination with no routing
+# decision. The packet must be denied before FORWARD/NAT can emit it.
+ip netns exec "$PRIMARY_NS" timeout 4 tcpdump -nn -i up-primary -c 1 \
+    'icmp and dst host 198.51.101.1' >"$TMP/nat-denied-forward-primary.log" 2>&1 &
+primary_capture=$!
+ip netns exec "$SECONDARY_NS" timeout 4 tcpdump -nn -i up-secondary -c 1 \
+    'icmp and dst host 198.51.101.1' >"$TMP/nat-denied-forward-secondary.log" 2>&1 &
+secondary_capture=$!
+sleep 0.25
 if ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -c 2 -W 1 198.51.101.1 >/dev/null 2>&1; then
     fail "unmatched IPv4 destination escaped routing isolation"
 fi
+set +e
+wait "$primary_capture"
+primary_denied_status=$?
+wait "$secondary_capture"
+secondary_denied_status=$?
+set -e
+[[ "$primary_denied_status" -eq 124 ]] || fail "denied IPv4 FORWARD packet reached primary uplink (tcpdump status $primary_denied_status)"
+[[ "$secondary_denied_status" -eq 124 ]] || fail "denied IPv4 FORWARD packet reached secondary uplink (tcpdump status $secondary_denied_status)"
 if ip netns exec "$CLIENT_NS" ping -6 -n -I fd77::2 -c 2 -W 1 2001:db8:3::1 >/dev/null 2>&1; then
     fail "unmatched IPv6 destination escaped routing isolation"
 fi
