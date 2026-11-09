@@ -81,14 +81,14 @@
 - [~] В генератор добавлен stateful reply path: INPUT/OUTPUT разрешают
   established/related только в conntrack reply direction, а явные allow rules
   ограничены original direction. Ожидается packet-level проверка.
-- [ ] Loopback и трафик с unmanaged интерфейсов не меняются.
+- [x] Loopback и трафик с unmanaged интерфейсов не меняются; loopback TCP и physical-ingress packet probes прошли (CI 42674872629).
 
 ### OUTPUT
 
 - [ ] Локальный пакет, направленный через managed TUN, проходит заданную OUTPUT
   policy.
 - [ ] Запрещённый managed egress блокируется.
-- [ ] Локальный трафик через физический/unmanaged интерфейс не меняется.
+- [x] Локальный трафик через физический/unmanaged интерфейс не меняется; underlay и локальные INPUT/OUTPUT source addresses проверены packet-level тестами (CI 42674872629).
 - [ ] Socket fwmark для внешнего WG/AWG UDP продолжает использовать main table.
 
 ### FORWARD и conntrack
@@ -98,13 +98,12 @@
 - [ ] Ответный трафик разрешённого потока проходит только в обратную пару.
 - [x] Неверный/нулевой/чужой conntrack mark не открывает транзит; для host
   INPUT/OUTPUT reply дополнительно требуется отдельный `0x80000000` tag.
-- [ ] NAT не меняет поведение фильтрации и не применяется к запрещённым потокам.
+- [x] NAT не меняет поведение фильтрации и не применяется к запрещённым потокам; denied FORWARD не наблюдался ни на одном из двух uplink (CI 42674872629).
 
 ### Владение и lifecycle
 
-- [ ] Чужая nftables table с совпадающим именем не изменяется.
-- [ ] Ошибка применения nftables приводит к полному rollback ранее установленных
-  vpn-relay ресурсов.
+- [x] Чужая nftables table с совпадающим именем не изменяется; отдельные foreign INPUT/OUTPUT/FORWARD chains coexist без обхода vpn-relay deny (CI 42674872629).
+- [~] Ошибка применения nftables и последующих шагов приводит к rollback ранее установленных ресурсов; конфликт таблицы и отдельные failure-injection сценарии проверены, полный перебор точек отказа ещё не выполнен.
 - [x] Shutdown останавливает backend workers, удаляет policy routes, затем
   уничтожает managed TUN links, и только после этого удаляет nftables policy;
   исходное forwarding состояние восстанавливается в самом конце.
@@ -218,13 +217,11 @@
   позволяет established flow, начатому через unmanaged egress, обходить
   managed INPUT deny. Forged-reply packet test подтверждает блокировку ответа
   на host-flow, начатый через unmanaged underlay (CI 42668190390).
-- [ ] Не блокировать loopback; отдельная packet-level проверка loopback ещё нужна.
+- [x] Не блокировать loopback; TCP connect к 127.0.0.1 подтверждён packet-level тестом (CI 42674872629).
 - [x] Не блокировать unmanaged ingress; physical UDP probe доходит до host socket.
 - [x] Добавлены packet-level IPv4/IPv6 ICMP, TCP и ICMPv6 allow/deny проверки
   (WG и AWG, CI 42668190390).
-- [~] Проверено coexistence с чужими nftables base chains и сохранность их
-  INPUT/FORWARD/OUTPUT chains после shutdown (CI 42665725191); отдельный тест
-  влияния их packet verdict на трафик vpn-relay ещё требуется.
+- [x] Проверено coexistence с чужими nftables base chains: ранний foreign accept не отменяет последующий deny vpn-relay; INPUT/OUTPUT/FORWARD counters и сохранность chains после shutdown подтверждены (CI 42674872629).
 
 Критерий приёмки: неразрешённый пакет с managed TUN к локальному адресу
 блокируется независимо от наличия conntrack entry; другие ingress не меняются.
@@ -240,7 +237,7 @@
 - [x] Не влиять на физический/unmanaged egress; peer traffic tests проверяют
   underlay host flows и внешний UDP transport.
 - [x] Проверить local IPv4/IPv6, TCP/UDP/ICMP, explicit allow/deny и socket marks
-  на реальном WG/AWG трафике (CI 42668190390).
+  на реальном WG/AWG трафике (CI 42668190390 и 42674872629).
 
 Критерий приёмки: тесты доказывают, что managed egress контролируется, а
 unmanaged output остаётся неизменным.
@@ -331,8 +328,10 @@ unmanaged output остаётся неизменным.
   firewall INPUT/OUTPUT и комментарии по static SNAT.
 - [x] Unit, parser и packet-level integration tests включены в CI.
 - [x] Выполнить rustfmt, clippy, cargo test, feature checks и netns tests:
-  CI 42668190390 и 42669268349 завершились успешно.
-- [x] Зафиксировать CI run и фактические статусы jobs.
+  CI 42674872629 завершился success; integration, WG/AWG packet traffic,
+  multi-uplink, feature checks и `all-systems-go` успешны.
+- [x] Зафиксировать CI run и фактические статусы jobs: 42674872629 на HEAD
+  c06082b8a0e2b776b1d563edfaca3d03f14665ef, conclusion success.
 
 Критерий приёмки: документация соответствует коду; обязательные CI jobs зелёные;
 нет непроверенных заявлений о безопасности.
@@ -359,6 +358,8 @@ unmanaged output остаётся неизменным.
 | 2026-11-09 | Проверка вложенных AllowedIPs между peers | Commit 84ab63a; CI 42669268349: IPv4 /24 и IPv6 /64 для первого peer, более специфичные /32 и /128 для второго; spoof probes не достигли router TUN | Завершено |
 | 2026-11-09 | Успешная полная проверка firewall/NAT и peer traffic | CI 42668190390: all-systems-go success; rustfmt, clippy, tests, feature checks, AWG 3.1, netns, WG/AWG packet tests и multi-uplink прошли | Завершено |
 | 2026-11-09 | Добавлены failure-injection проверки частичного policy routing и IPv6 forwarding | Commit db3be5a; network-namespace job CI 42670711006 успешно проверил cleanup IPv4 routes/rules после отказа IPv6 route replace и restore IPv4 forwarding после отказа IPv6 sysctl | Подтверждено CI |
+
+| 2026-11-09 | Полная packet-level проверка firewall/NAT и coexistence | CI 42674872629 на HEAD c06082b8a0e2b776b1d563edfaca3d03f14665ef: `all-systems-go` success; netns startup/rollback, WG, AWG 3.1, loopback, foreign INPUT/OUTPUT/FORWARD chains, локальные source addresses и блокировка denied FORWARD на обоих uplink прошли | Подтверждено CI |
 
 ## 14. Правила ведения плана
 
