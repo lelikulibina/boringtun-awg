@@ -1264,6 +1264,21 @@ egress = "awg-uplink"
     }
 
     #[test]
+    fn rejects_more_routing_decisions_than_conntrack_mark_space_supports() {
+        let mut config = Config::parse_toml(&valid_config()).unwrap();
+        let template = config.routing.rules[0].clone();
+        config
+            .routing
+            .rules
+            .resize(MAX_ROUTING_DECISIONS + 1, template);
+
+        let error = config.validate().unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("at most 4095 entries because conntrack decision marks"));
+    }
+
+    #[test]
     fn rejects_unknown_fields_instead_of_ignoring_typos() {
         let input = valid_config().replace("mtu = 1380", "mtu = 1380\nmtuu = 1400");
         let error = Config::parse_toml(&input).unwrap_err();

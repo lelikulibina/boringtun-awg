@@ -318,8 +318,8 @@ impl RoutingPlan {
         ));
         for decision in &self.decisions {
             output.push_str(&format!(
-                "add rule {} {} prerouting iifname @managed_interfaces ct state established,related ct direction original ct mark & 0xffff0000 == 0x{:08x} meta mark set 0x{:x} return\n",
-                self.nft_family, self.nft_table, decision.conntrack_mark, decision.routing_mark
+                "add rule {} {} prerouting iifname @managed_interfaces ct state established,related ct direction original ct mark & 0x{:08x} == 0x{:08x} meta mark set 0x{:x} return\n",
+                self.nft_family, self.nft_table, CONNTRACK_MARK_MASK, decision.conntrack_mark, decision.routing_mark
             ));
         }
 
@@ -331,11 +331,12 @@ impl RoutingPlan {
                     append_cidr_selector(&mut selectors, family, "daddr", &destinations);
                 }
                 output.push_str(&format!(
-                    "add rule {} {} prerouting {} meta mark set 0x{:x} ct mark set (ct mark & 0x0000ffff) | 0x{:08x} return\n",
+                    "add rule {} {} prerouting {} meta mark set 0x{:x} ct mark set (ct mark & 0x{:08x}) | 0x{:08x} return\n",
                     self.nft_family,
                     self.nft_table,
                     selectors,
                     rule.routing_mark,
+                    CONNTRACK_MARK_PRESERVE_MASK,
                     rule.conntrack_mark
                 ));
             }
@@ -353,8 +354,8 @@ impl RoutingPlan {
         }
         for rule in &self.decisions {
             output.push_str(&format!(
-                "add rule {} {} forward iifname \"{}\" oifname \"{}\" ct state established,related ct mark & 0xffff0000 == 0x{:08x} accept\n",
-                self.nft_family, self.nft_table, rule.egress, rule.ingress, rule.conntrack_mark
+                "add rule {} {} forward iifname \"{}\" oifname \"{}\" ct state established,related ct mark & 0x{:08x} == 0x{:08x} accept\n",
+                self.nft_family, self.nft_table, rule.egress, rule.ingress, CONNTRACK_MARK_MASK, rule.conntrack_mark
             ));
         }
         output.push_str(&format!(
@@ -367,8 +368,8 @@ impl RoutingPlan {
         // repeating selector matching and risking a different overlapping rule.
         for rule in &self.decisions {
             let selector = format!(
-                "iifname \"{}\" oifname \"{}\" ct mark & 0xffff0000 == 0x{:08x}",
-                rule.ingress, rule.egress, rule.conntrack_mark
+                "iifname \"{}\" oifname \"{}\" ct mark & 0x{:08x} == 0x{:08x}",
+                rule.ingress, rule.egress, CONNTRACK_MARK_MASK, rule.conntrack_mark
             );
             match rule.nat {
                 NatMode::None => output.push_str(&format!(
@@ -955,7 +956,7 @@ egress = "awg-primary"
         );
         let script = plan.nft_script();
         assert!(script.contains(
-            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark 0x40000001 return"
+            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark & 0xffff0000 == 0x40010000 return"
         ));
         assert!(script.contains(
             "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark & 0xffff0000 == 0x40020000 masquerade"

@@ -53,9 +53,10 @@
   `routing.rs`, `config.rs`, `vpn-relay-netns-test.sh`,
   `vpn-relay-peer-traffic-test.sh`, `vpn-relay-multi-uplink-test.sh`.
 - [x] Зафиксировать текущие marks, conntrack, NAT и lifecycle: routing marks
-  сохраняются в ct mark; reply direction возвращается в main table; NAT сейчас
-  выбирается свойством routing rule; Runtime включает forwarding, устанавливает
-  policy routing, затем nftables.
+  сохраняются в meta mark, а отдельный conntrack decision id — в старших 16
+  битах ct mark с сохранением младших 16 бит; reply direction возвращается в
+  main table; NAT использует точный decision id; firewall устанавливается до
+  создания TUN, policy routing и включения forwarding.
 - [x] Проверить реализацию AllowedIPs в BoringTun: после decapsulation оба
   варианта `WriteToTunnelV4/V6` проверяют `Device::peer_owns(peer, addr)`
   до записи в TUN. Исходный адрес проверяется по единому trie
