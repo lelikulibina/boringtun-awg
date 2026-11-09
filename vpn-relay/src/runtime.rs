@@ -357,10 +357,7 @@ impl Runtime {
                 ))
             })?;
             if let Err(error) = self.devices[index].replace_peers(next_interface, next_prepared) {
-                self.rollback_reload(
-                    &committed,
-                    route_resources_changed.then_some(&next_routing),
-                )?;
+                self.rollback_reload(&committed, route_resources_changed.then_some(&next_routing))?;
                 return Err(error.into());
             }
             committed.push(index);

@@ -365,11 +365,9 @@ pub fn allocate_policy_routing_resources(
         return Ok(());
     }
 
-    let last_index = u32::try_from(plan.egresses.len() - 1).map_err(|_| {
-        LinuxError::Conflict {
-            resource: "policy-routing slots".to_owned(),
-            details: "egress count does not fit in an iproute2 slot index".to_owned(),
-        }
+    let last_index = u32::try_from(plan.egresses.len() - 1).map_err(|_| LinuxError::Conflict {
+        resource: "policy-routing slots".to_owned(),
+        details: "egress count does not fit in an iproute2 slot index".to_owned(),
     })?;
     let max_offset = 32_765u32
         .saturating_sub(FIRST_IP_RULE_PRIORITY)

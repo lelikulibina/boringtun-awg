@@ -308,9 +308,7 @@ impl Config {
             next.resolved_routing_fwmarks()?.into_iter().collect();
         let policy_resources_unchanged =
             current_egresses == next_egresses && current_marks == next_marks;
-        if !policy_resources_unchanged
-            && current_marks.intersection(&next_marks).next().is_some()
-        {
+        if !policy_resources_unchanged && current_marks.intersection(&next_marks).next().is_some() {
             return invalid(
                 "reload requires old and new routing mark ranges to be disjoint when policy-routing resources change",
             );
