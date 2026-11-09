@@ -78,56 +78,32 @@ impl TunnelBackend for BoringTunBackend {
             .set_fwmark(socket_fwmark)
             .map_err(|error| BackendError::new(error.to_string()))?;
 
-        let peers = interface
-            .peers
-            .iter()
-            .zip(&prepared.peer_endpoints)
-            .map(|(peer, endpoint)| {
-                let public_key = decode_key(&peer.public_key, "peer.public_key")
-                    .map_err(|error| BackendError::new(error.to_string()))?;
-                let preshared_key = peer
-                    .preshared_key
-                    .as_ref()
-                    .map(|value| {
-                        decode_key(value, "peer.preshared_key")
-                            .map_err(|error| BackendError::new(error.to_string()))
-                    })
-                    .transpose()?;
-                let allowed_ips = peer
-                    .allowed_ips
-                    .iter()
-                    .map(|prefix| {
-                        AllowedIP::from_str(prefix).map_err(|error| {
-                            BackendError::new(format!("invalid AllowedIP {prefix}: {error}"))
-                        })
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                let persistent_keepalive = peer
-                    .persistent_keepalive_secs
-                    .map(|seconds| (u32::from(seconds), u32::from(seconds)));
-
-                Ok(PeerConfig {
-                    public_key,
-                    endpoint: *endpoint,
-                    allowed_ips,
-                    persistent_keepalive,
-                    preshared_key,
-                })
-            })
-            .collect::<Result<Vec<_>, BackendError>>()?;
+        let peers = build_peer_configs(name, interface, prepared)?;
         device
             .replace_peers(&peers)
             .map_err(|error| BackendError::new(error.to_string()))?;
 
-        Ok(Box::new(BoringTunHandle { device }))
+        Ok(Box::new(BoringTunHandle { name: name.to_owned(), device }))
     }
 }
 
 struct BoringTunHandle {
+    name: String,
     device: DeviceHandle,
 }
 
 impl TunnelHandle for BoringTunHandle {
+    fn replace_peers(
+        &mut self,
+        interface: &InterfaceConfig,
+        prepared: &PreparedInterface,
+    ) -> Result<(), BackendError> {
+        let peers = build_peer_configs(&self.name, interface, prepared)?;
+        self.device
+            .replace_peers(&peers)
+            .map_err(|error| BackendError::new(error.to_string()))
+    }
+
     fn snapshot(&self) -> Result<TunnelSnapshot, BackendError> {
         let snapshot = self
             .device
@@ -155,6 +131,40 @@ impl TunnelHandle for BoringTunHandle {
     fn wait(&mut self) {
         self.device.wait();
     }
+}
+
+fn build_peer_configs(
+    name: &str,
+    interface: &InterfaceConfig,
+    prepared: &PreparedInterface,
+) -> Result<Vec<PeerConfig>, BackendError> {
+    if prepared.peer_endpoints.len() != interface.peers.len() {
+        return Err(BackendError::new(
+            "prepared peer endpoint count does not match interface peer count",
+        ));
+    }
+    interface.peers.iter().zip(&prepared.peer_endpoints).map(|(peer, endpoint)| {
+        let public_key = decode_key(&peer.public_key, "peer.public_key")
+            .map_err(|error| BackendError::new(error.to_string()))?;
+        let preshared_key = peer.preshared_key.as_ref()
+            .map(|value| decode_key(value, "peer.preshared_key")
+                .map_err(|error| BackendError::new(error.to_string())))
+            .transpose()?;
+        let allowed_ips = peer.allowed_ips.iter().map(|prefix| {
+            AllowedIP::from_str(prefix).map_err(|error| {
+                BackendError::new(format!("interfaces.{name}: invalid AllowedIP {prefix}: {error}"))
+            })
+        }).collect::<Result<Vec<_>, _>>()?;
+        let persistent_keepalive = peer.persistent_keepalive_secs
+            .map(|seconds| (u32::from(seconds), u32::from(seconds)));
+        Ok(PeerConfig {
+            public_key,
+            endpoint: *endpoint,
+            allowed_ips,
+            persistent_keepalive,
+            preshared_key,
+        })
+    }).collect()
 }
 
 fn build_awg_config(

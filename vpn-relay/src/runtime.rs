@@ -1,6 +1,6 @@
 //! Linux runtime: dispatch tunnel backends and install shared routing.
 use crate::backend::{BackendError, BackendRegistry, TunnelHandle, TunnelSnapshot};
-use crate::config::Config;
+use crate::config::{Config, InterfaceConfig, PeerConfig};
 use crate::linux::{self, LinuxError};
 use crate::routing::RoutingPlan;
 use std::fs::{File, OpenOptions};
@@ -36,6 +36,8 @@ pub enum RuntimeError {
 
 pub struct Runtime {
     devices: Vec<Box<dyn TunnelHandle>>,
+    interfaces: std::collections::BTreeMap<String, InterfaceConfig>,
+    backends: BackendRegistry,
     routing: RoutingPlan,
     stats_interval: Duration,
     forwarding_state: Option<ForwardingState>,
@@ -159,6 +161,8 @@ impl Runtime {
         tracing::info!(interfaces = devices.len(), "vpn-relay runtime started");
         Ok(Self {
             devices,
+            interfaces: config.interfaces,
+            backends,
             routing,
             stats_interval: Duration::from_secs(config.daemon.stats_interval_secs),
             forwarding_state,
@@ -168,6 +172,28 @@ impl Runtime {
 
     pub fn routing_plan(&self) -> &RoutingPlan {
         &self.routing
+    }
+
+    /// Replace only the peer set of an existing interface. Endpoint DNS,
+    /// keys and AllowedIPs are prepared before the live backend is changed;
+    /// routing, firewall, interface identity and socket marks remain fixed.
+    pub fn replace_peers(
+        &mut self,
+        interface_name: &str,
+        peers: Vec<PeerConfig>,
+    ) -> Result<(), RuntimeError> {
+        let current = self.interfaces.get(interface_name).ok_or_else(|| {
+            RuntimeError::Configuration(format!("unknown interface '{interface_name}'"))
+        })?;
+        let mut next = current.clone();
+        next.peers = peers;
+        let prepared = self.backends.prepare_interface(interface_name, &next)?;
+        let index = self.interfaces.keys().position(|name| name == interface_name)
+            .ok_or_else(|| RuntimeError::Configuration(format!("unknown interface '{interface_name}'")))?;
+        self.devices[index].replace_peers(&next, &prepared)?;
+        self.interfaces.insert(interface_name.to_owned(), next);
+        tracing::info!(interface = interface_name, "runtime peer set replaced");
+        Ok(())
     }
 
     /// Return consistent live counters without depending on a backend UAPI.

@@ -512,3 +512,6 @@ Noise sessions для peer, чьи параметры не менялись; н�
 
 | 2026-11-09 | Backend preflight сохраняет разрешённые peer endpoints | Коммиты 8c2f23e, fe2b83f, ea98f71, db44a2c; `PreparedInterface` переносит точные `SocketAddr` из preflight в создание BoringTun без повторного DNS resolve; unit test проверяет подготовленный literal endpoint | Завершено; CI run 42680908328, attempt 2: all-systems-go success. Attempt 1 падал на ICMPv6 INPUT deny, повторная integration job прошла; первопричина первого сбоя не установлена |
 | 2026-11-09 | Устранён panic при закрытии peer endpoint | `Peer::shutdown_endpoint` и `Peer::set_endpoint` больше не вызывают `unwrap()` на `Socket::shutdown`; ошибка graceful shutdown логируется, закрытие гарантируется drop socket. Расширен endpoint roaming regression test: замена endpoint с уже отключённым UDP socket не должна паниковать | Ожидает CI |
+
+
+| 2026-11-09 | Добавлен backend-neutral контракт замены peer set и runtime API `Runtime::replace_peers` | BoringTun preflight повторно разрешает endpoints до commit; полный peer set передаётся в `DeviceHandle::replace_peers`; authoritative interface config заменяется только после успешного backend commit. API намеренно не меняет routing/firewall и не позволяет менять остальные параметры интерфейса; полная транзакция конфигурации остаётся следующим этапом | Ожидает CI |

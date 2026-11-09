@@ -35,13 +35,19 @@ pub struct TunnelPeerSnapshot {
 
 /// Backend data resolved and validated before host networking changes.
 #[derive(Clone, Debug)]
-pub(crate) struct PreparedInterface {
+pub struct PreparedInterface {
     pub(crate) peer_endpoints: Vec<Option<SocketAddr>>,
 }
 
 /// A running tunnel instance managed by vpn-relay.
 pub trait TunnelHandle: Send {
     fn snapshot(&self) -> Result<TunnelSnapshot, BackendError>;
+    /// Atomically replace this tunnel's complete peer set after preflight.
+    fn replace_peers(
+        &mut self,
+        interface: &InterfaceConfig,
+        prepared: &PreparedInterface,
+    ) -> Result<(), BackendError>;
     fn shutdown(&self);
     fn wait(&mut self);
 }
@@ -87,6 +93,16 @@ impl BackendRegistry {
                 Ok((name.clone(), prepared))
             })
             .collect()
+    }
+
+    pub fn prepare_interface(
+        &self,
+        name: &str,
+        interface: &InterfaceConfig,
+    ) -> Result<PreparedInterface, BackendError> {
+        match interface.tunnel_type {
+            TunnelType::WireGuard | TunnelType::AmneziaWg => self.boringtun.prepare(name, interface),
+        }
     }
 
     pub fn validate_config(&self, config: &Config) -> Result<(), BackendError> {
