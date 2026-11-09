@@ -192,8 +192,10 @@
 - [x] FORWARD reply и NAT используют тот же уникальный conntrack decision id.
 - [x] NAT ограничен исходной ingress/egress парой, поэтому чужой conntrack mark
   сам по себе не может применить NAT на произвольном интерфейсе.
-- [~] Unit tests описывают пересекающиеся selectors с одним egress и разными
-  NAT actions; реальное поведение nftables и packet-level тест ещё ожидают CI.
+- [x] Unit tests описывают пересекающиеся selectors с одним egress и разными
+  NAT actions; multi-uplink packet test подтверждает на реальном трафике выбор
+  статического SNAT для точного source и masquerade для более широкого
+  overlapping rule при одинаковых destination и egress (CI 42665725191).
 - [x] Проверить отсутствие коллизий socket fwmark и routing marks: parser tests
   покрывают явные дубликаты, пересечение диапазонов и автоматическое выделение.
 - [x] Сохранить детерминированность генерации nftables/iproute2 plan; решения и
@@ -229,9 +231,12 @@
 - [x] Сначала отбрасывать invalid на managed TUN egress.
 - [x] Фильтровать только пакеты с фактическим managed TUN egress.
 - [x] Определить безопасную модель default deny и явных разрешений.
-- [ ] Не блокировать socket-marked outer UDP, направленный через underlay.
-- [ ] Не влиять на физический/unmanaged egress.
-- [ ] Проверить local IPv4/IPv6, TCP/UDP/ICMP и policy-routing marks.
+- [x] Не блокировать socket-marked outer UDP, направленный через underlay;
+  packet capture видит encrypted UDP на underlay и не видит его на TUN.
+- [x] Не влиять на физический/unmanaged egress; peer traffic tests проверяют
+  underlay host flows и внешний UDP transport.
+- [x] Проверить local IPv4/IPv6, TCP/UDP/ICMP, explicit allow/deny и socket marks
+  на реальном WG/AWG трафике (CI 42668190390).
 
 Критерий приёмки: тесты доказывают, что managed egress контролируется, а
 unmanaged output остаётся неизменным.
@@ -244,11 +249,15 @@ unmanaged output остаётся неизменным.
   primary TUN.
 - [x] Реализовать IPv4 статический `snat` через `nat = "snat"` и обязательный
   `nat_to` в routing rule.
-- [x] Проверить IPv6 masquerade: packet capture подтверждает замену source на
-  IPv6 адрес primary TUN. IPv6 static SNAT дополнительно требует отдельного
-  packet-level test; parser проверяет family и ipv6_enabled.
-- [ ] Связать NAT с единственным routing decision и conntrack state.
-- [ ] Проверить несколько правил, приоритеты, перекрывающиеся CIDR и разные egress.
+- [x] Проверить IPv6 masquerade и IPv6 static SNAT: packet capture подтверждает
+  замену source на адреса primary TUN и fd20::99 соответственно
+  (CI 42665725191).
+- [x] Связать NAT с единственным routing decision и conntrack state: classifier
+  назначает уникальный decision ID, а NAT использует тот же conntrack mark.
+- [x] Проверить несколько правил, приоритеты и перекрывающиеся selectors:
+  packet-level multi-uplink test подтверждает static SNAT для точного source и
+  masquerade для широкого перекрывающегося правила на том же egress
+  (CI 42665725191).
 - [ ] Проверить отсутствие NAT на INPUT/OUTPUT и запрещённом FORWARD.
 - [ ] Проверить поведение при изменении адреса egress для masquerade.
 
@@ -263,33 +272,45 @@ unmanaged output остаётся неизменным.
 - [x] Подтвердить, что peer identity известна до передачи пакета в TUN.
 - [x] Подтвердить проверку source address по AllowedIPs именно отправившего
   peer через единый `peers_by_ip` индекс.
-- [ ] Проверить пересекающиеся и вложенные AllowedIPs; текущая валидация
-  запрещает точные дубликаты, но это не доказывает отсутствие перекрытий.
+- [x] Проверить пересекающиеся и вложенные AllowedIPs: router peer .2 владеет
+  широкими IPv4 /24 и IPv6 /64, peer .3 — более специфичными /32 и /128;
+  packet-level spoof probes подтверждают, что первый peer не может отправить
+  source IP второго (CI 42669268349).
 - [x] Проверить peer-to-peer обмен между двумя клиентами одного интерфейса:
   multi-uplink netns test ожидает блокировку обмена между клиентами .2 и .3.
 - [x] Зафиксировать границу ответственности: nftables не видит peer identity
   после декапсуляции; source anti-spoofing обеспечивает BoringTun backend,
   а interface-level routing rules не являются peer-specific ACL.
-- [ ] Проверить пересекающиеся prefix ownership и AllowedIPs update races
-  отдельными packet-level тестами на работающем интерфейсе.
+- [!] Runtime AllowedIPs/peer hot reload не реализован: TunnelHandle сейчас
+  предоставляет snapshot/shutdown/wait, а peers настраиваются только при
+  BackendRegistry::create. Нельзя проверять update races до проектирования
+  API reconfiguration и атомарного согласования backend, routing и firewall.
+  Пересекающиеся prefix ownership для текущей статической конфигурации проверены
+  packet-level тестом (CI 42669268349).
 
 Критерий приёмки: гарантии подтверждены тестами на реальном BoringTun traffic;
 неподтверждённые свойства не заявляются.
 
 ## 11. Этап 8 — runtime, rollback, ownership
 
-- [ ] Сформировать полный immutable plan до изменения системного состояния.
-- [ ] Установить все необходимые ресурсы в безопасном порядке.
+- [x] Сформировать и валидировать Config, socket marks, RoutingPlan и backend
+  config до изменения системного состояния.
+- [x] Установить ресурсы в безопасном порядке: fail-closed nftables policy →
+  TUN interfaces → policy routes → IP forwarding.
 - [x] Установить nftables fail-closed policy до policy routes и включения IP
   forwarding; при ошибке последующих шагов откатывать уже установленные
   policy routes и nftables table.
-- [~] Проверить startup rollback при конфликте nft table, ip rule и route
-  отдельным network-namespace тестом; повторный CI после изменения порядка
-  установки ожидается.
+- [x] Проверить startup rollback при конфликте nft table, ip rule и route,
+  включая сохранность чужих ресурсов (CI 42665725191).
 - [ ] Сделать rollback симметричным каждому успешному шагу.
-- [ ] Не удалять чужие ip rules/routes/nftables objects.
-- [ ] Проверить частичные ошибки на каждом шаге установки.
-- [ ] Проверить shutdown, повторный запуск, lock и network namespace lifecycle.
+- [x] Не удалять чужие ip rules/routes/nftables objects; проверены foreign
+  nftables table/base chains, masked ip rules и IPv4/IPv6 routes.
+- [~] Проверить частичные ошибки на каждом шаге установки: уже проверен отказ
+  после частичного создания TUN; добавлены failure-injection сценарии отказа
+  после установки IPv4 policy route и при включении IPv6 forwarding, их CI ещё
+  ожидается (commit db3be5a).
+- [x] Проверить shutdown, повторный запуск, lock и network namespace lifecycle
+  (CI 42665725191).
 - [ ] Проверить поведение при удалении/переименовании интерфейса во время работы.
 
 Критерий приёмки: каждый сценарий отказа оставляет namespace в безопасном и
@@ -301,10 +322,12 @@ unmanaged output остаётся неизменным.
 - [x] Добавить архитектурную схему packet path и порядок hooks в `docs/VPN_RELAY_NFTABLES.md`.
 - [x] Документировать INPUT/OUTPUT/FORWARD/NAT, conntrack, marks и ownership.
 - [x] Документировать границы AllowedIPs и peer isolation; отдельно указано, что nftables не видит cryptographic peer identity после decapsulation.
-- [ ] Обновить `vpn-relay/vpn-relay.example.toml`.
-- [ ] Добавить unit, parser и packet-level integration tests в CI.
-- [ ] Выполнить rustfmt, clippy, cargo test, feature checks и все netns tests.
-- [ ] Зафиксировать CI run и фактические статусы jobs.
+- [x] Обновить vpn-relay/vpn-relay.example.toml: присутствуют routing/NAT,
+  firewall INPUT/OUTPUT и комментарии по static SNAT.
+- [x] Unit, parser и packet-level integration tests включены в CI.
+- [x] Выполнить rustfmt, clippy, cargo test, feature checks и netns tests:
+  CI 42668190390 и 42669268349 завершились успешно.
+- [x] Зафиксировать CI run и фактические статусы jobs.
 
 Критерий приёмки: документация соответствует коду; обязательные CI jobs зелёные;
 нет непроверенных заявлений о безопасности.
@@ -326,6 +349,11 @@ unmanaged output остаётся неизменным.
 | 2026-11-09 | Добавлена conntrack-aware обработка ответного трафика INPUT/OUTPUT | Явные allow rules ограничены original direction; established/related reply принимается только на managed interface; добавлены unit assertions | В работе |
 | 2026-11-09 | Разделены routing mark и conntrack decision id | Уникальный conntrack id назначается каждому routing decision; established route restore, обратный FORWARD и NAT используют этот id; NAT ограничен исходной парой интерфейсов | Ожидает полного CI и packet-level проверки |
 | 2026-11-09 | Изменён порядок startup/shutdown | nftables policy устанавливается до создания/поднятия TUN, policy routing и включения forwarding; shutdown держит firewall до удаления TUN links; обновлён netns readiness check | Ожидает network-namespace CI |
+
+| 2026-11-09 | Packet-level ICMPv6 INPUT/OUTPUT deny probes | CI 42668190390: WG и AWG peer traffic tests, включая ICMPv6 allow и deny по source/destination selectors, успешно прошли | Завершено |
+| 2026-11-09 | Проверка вложенных AllowedIPs между peers | Commit 84ab63a; CI 42669268349: IPv4 /24 и IPv6 /64 для первого peer, более специфичные /32 и /128 для второго; spoof probes не достигли router TUN | Завершено |
+| 2026-11-09 | Успешная полная проверка firewall/NAT и peer traffic | CI 42668190390: all-systems-go success; rustfmt, clippy, tests, feature checks, AWG 3.1, netns, WG/AWG packet tests и multi-uplink прошли | Завершено |
+| 2026-11-09 | Добавлены failure-injection проверки частичного policy routing и IPv6 forwarding | Commit db3be5a; проверяется cleanup IPv4 routes/rules после отказа IPv6 route replace и restore IPv4 forwarding после отказа IPv6 sysctl; ожидает CI | В работе |
 
 ## 14. Правила ведения плана
 
