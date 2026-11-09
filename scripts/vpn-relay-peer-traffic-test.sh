@@ -419,8 +419,12 @@ sock.settimeout(3)
 payload, _ = sock.recvfrom(128)
 if payload != b"unmanaged-input-probe":
     raise SystemExit(f"unexpected request payload: {payload!r}")
-sock.sendto(b"unmanaged-input-reply", ("192.0.2.21", 18081))
-print("host service attempted reply over managed TUN")
+try:
+    sock.sendto(b"unmanaged-input-reply", ("192.0.2.21", 18081))
+except PermissionError:
+    print("managed OUTPUT rejected reply to unmanaged INPUT flow")
+else:
+    print("host service attempted reply over managed TUN")
 PY
 server_reply_pid=$!
 TCP_PIDS+=("$server_reply_pid")
