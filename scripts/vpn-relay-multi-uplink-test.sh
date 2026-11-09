@@ -541,7 +541,7 @@ sleep 0.25
 ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -c 1 -W 2 198.51.100.3 \
     || fail "static SNAT IPv4 probe failed"
 wait "$capture_pid" || fail "could not capture static SNAT IPv4 packet"
-grep -Eq '10\\.20\\.0\\.1 > 198\\.51\\.100\\.3' "$TMP/nat-static-snat-capture.log" \
+grep -Eq '10\.20\.0\.1 > 198\.51\.100\.3' "$TMP/nat-static-snat-capture.log" \
     || fail "static SNAT did not use configured nat_to address 10.20.0.1"
 
 # Observe inner packets at the remote TUNs. This proves NAT semantics rather
