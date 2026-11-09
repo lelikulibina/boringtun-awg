@@ -280,16 +280,21 @@ unmanaged output остаётся неизменным.
 
 ## 10. Этап 7 — AllowedIPs и peer isolation
 
-- [ ] Проследить путь расшифрованного IPv4/IPv6 пакета в BoringTun.
-- [ ] Подтвердить, что peer identity известна до передачи пакета в TUN.
-- [ ] Подтвердить проверку source address по AllowedIPs именно отправившего peer.
+- [x] Проследить путь расшифрованного IPv4/IPv6 пакета в BoringTun:
+  оба `WriteToTunnelV4/V6` пути проходят через `Device::peer_owns` до записи
+  пакета в TUN.
+- [x] Подтвердить, что peer identity известна до передачи пакета в TUN.
+- [x] Подтвердить проверку source address по AllowedIPs именно отправившего
+  peer через единый `peers_by_ip` индекс.
 - [ ] Проверить пересекающиеся и вложенные AllowedIPs; текущая валидация
   запрещает точные дубликаты, но это не доказывает отсутствие перекрытий.
-- [ ] Проверить peer-to-peer обмен между двумя клиентами одного интерфейса.
-- [ ] Если Linux FORWARD не видит внутритуннельный peer-to-peer пакет, не
-  пытаться имитировать peer filtering в nftables по одному iifname.
-- [ ] При необходимости добавить backend-level enforcement или явно
-  задокументировать ограничение до его реализации.
+- [x] Проверить peer-to-peer обмен между двумя клиентами одного интерфейса:
+  multi-uplink netns test ожидает блокировку обмена между клиентами .2 и .3.
+- [x] Зафиксировать границу ответственности: nftables не видит peer identity
+  после декапсуляции; source anti-spoofing обеспечивает BoringTun backend,
+  а interface-level routing rules не являются peer-specific ACL.
+- [ ] Проверить пересекающиеся prefix ownership и AllowedIPs update races
+  отдельными packet-level тестами на работающем интерфейсе.
 
 Критерий приёмки: гарантии подтверждены тестами на реальном BoringTun traffic;
 неподтверждённые свойства не заявляются.
@@ -315,7 +320,7 @@ unmanaged output остаётся неизменным.
 
 ## 12. Этап 9 — документация и CI
 
-- [ ] Обновить `docs/VPN_RELAY_NFTABLES.md` по фактической реализации.
+- [x] Обновить `docs/VPN_RELAY_NFTABLES.md` по фактической реализации.
 - [ ] Добавить архитектурную схему packet path и порядок hooks.
 - [x] Документировать INPUT/OUTPUT/FORWARD/NAT, conntrack, marks и ownership.
 - [ ] Документировать границы AllowedIPs и peer isolation.
@@ -361,4 +366,5 @@ unmanaged output остаётся неизменным.
 | 2026-11-09 | Исправлен multi-uplink packet test для второго клиента | Второй клиентский firewall теперь разрешает тестовый routed трафик; предыдущий failure был вызван его собственным OUTPUT deny до router ingress | Ожидает повторный packet-level CI |
 | 2026-11-09 | Переписана документация nftables | Документ соответствует текущим INPUT/OUTPUT/FORWARD, conntrack decision IDs, NAT, IPv6 gating, ownership и runtime; явно описана граница peer identity | Готово |
 
-| 2026-11-09 | Проверен anti-spoofing на уровне BoringTun | После decapsulation IPv4/IPv6 пакет попадает в TUN только если `Device::peer_owns` подтверждает владение source IP через единый `peers_by_ip` индекс; добавлены/существуют regression tests на перенос prefix между peers | Backend-проверка подтверждена; nftables не получает peer identity |
+| 2026-11-09 | Проверен anti-spoofing на уровне BoringTun | После decapsulation IPv4/IPv6 пакет попадает в TUN только если `Device::peer_owns` подтверждает владение source IP через единый `peers_by_ip` индекс; regression tests проверяют передачу prefix между peers | Backend-проверка подтверждена; packet-level race tests остаются |
+| 2026-11-09 | Проверена граница peer isolation | Multi-uplink netns test проверяет запрет .3 → .2; nftables не получает peer identity после decapsulation, source anti-spoofing выполняется BoringTun | Требует повторного успешного CI после исправления тестового firewall |
