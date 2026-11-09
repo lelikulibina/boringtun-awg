@@ -165,7 +165,6 @@ impl Drop for ControlSocket {
     }
 }
 
-
 impl Runtime {
     /// Start all interfaces through their registered backend, then install
     /// shared routing only after every tunnel has been configured.
