@@ -10,6 +10,9 @@ use std::collections::BTreeMap;
 const FIRST_ROUTING_TABLE: u32 = 10_000;
 const FIRST_IP_RULE_PRIORITY: u32 = 10_000;
 const SOCKET_MAIN_RULE_PRIORITY: u32 = 9_000;
+// Keep conntrack decision ids in a dedicated mark range, separate from the
+// default egress routing marks and ordinary low-valued conntrack marks.
+const FIRST_CONNTRACK_MARK: u32 = 0x4000_0000;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EgressPlan {
@@ -28,7 +31,7 @@ pub struct RoutingDecision {
     pub destination: Option<Vec<String>>,
     pub egress: String,
     pub routing_mark: u32,
-    /// Mark persisted in conntrack and restored for the reply direction.
+    /// Unique decision id persisted in conntrack for reverse filtering and NAT.
     pub conntrack_mark: u32,
     pub nat: NatMode,
     pub nat_to: Option<std::net::IpAddr>,
@@ -133,8 +136,11 @@ impl RoutingPlan {
         // Persist the exact selected rule in conntrack. Decisions sharing an
         // egress still need distinct identifiers when their NAT differs.
         for (index, decision) in decisions.iter_mut().enumerate() {
-            decision.conntrack_mark = u32::try_from(index + 1)
-                .expect("routing decision count must fit in a non-zero conntrack mark");
+            let offset = u32::try_from(index + 1)
+                .expect("routing decision count must fit in a conntrack mark");
+            decision.conntrack_mark = FIRST_CONNTRACK_MARK
+                .checked_add(offset)
+                .expect("routing decision count exceeds the reserved conntrack mark range");
         }
 
         let to_firewall_rule = |rule: &FirewallRule| NftFirewallRule {
@@ -663,7 +669,7 @@ egress = "awg-primary"
         config.routing.rules.truncate(1);
         let script = RoutingPlan::from_config(&config).nft_script();
         assert!(script.contains(
-            "prerouting iifname \"wg-server\" ct state new meta mark set 0x80000000 ct mark set 0x1 return"
+            "prerouting iifname \"wg-server\" ct state new meta mark set 0x80000000 ct mark set 0x40000001 return"
         ));
         assert!(!script.contains("prerouting iifname \"wg-server\" ct state new ip saddr"));
         assert!(!script.contains("prerouting iifname \"wg-server\" ct state new ip daddr"));
@@ -717,7 +723,7 @@ egress = "awg-primary"
         assert!(script.contains("forward oifname @managed_interfaces drop"));
         assert!(script.contains("iifname @managed_interfaces meta mark set 0"));
         assert!(script.contains("ct direction reply meta mark set 0"));
-        assert!(script.contains("ct direction original ct mark 0x3 meta mark set 0x80000000"));
+        assert!(script.contains("ct direction original ct mark 0x40000001 meta mark set 0x80000000"));
     }
 
     #[test]
@@ -727,7 +733,7 @@ egress = "awg-primary"
         config.routing.rules[0].nat_to = Some("203.0.113.10".parse().unwrap());
         let script = RoutingPlan::from_config(&config).nft_script();
         assert!(script.contains(
-            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark 0x1 meta nfproto ipv4 snat ip to 203.0.113.10"
+            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark 0x40000001 meta nfproto ipv4 snat ip to 203.0.113.10"
         ));
         assert!(!script.contains("snat ip6"));
     }
@@ -739,7 +745,7 @@ egress = "awg-primary"
         config.routing.rules[0].nat = NatMode::Masquerade;
         let script = RoutingPlan::from_config(&config).nft_script();
         assert!(script.contains(
-            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark 0x1 masquerade"
+            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark 0x40000001 masquerade"
         ));
         assert!(!script.contains("masquerade return"));
     }
@@ -828,9 +834,9 @@ egress = "awg-primary"
             Some(&["0.0.0.0/0".to_owned()][..])
         );
         assert_eq!(plan.decisions[0].routing_mark, 0x8000_0001);
-        assert_eq!(plan.decisions[0].conntrack_mark, 1);
+        assert_eq!(plan.decisions[0].conntrack_mark, 0x4000_0001);
         assert_eq!(plan.decisions[2].routing_mark, 0x8000_0000);
-        assert_eq!(plan.decisions[2].conntrack_mark, 3);
+        assert_eq!(plan.decisions[2].conntrack_mark, 0x4000_0003);
         let script = plan.nft_script();
         assert!(script
             .contains("ip daddr 195.142.0.0/16 meta mark set 0x80000001 ct mark set 0x1 return"));
@@ -919,10 +925,10 @@ egress = "awg-primary"
         );
         let script = plan.nft_script();
         assert!(script.contains(
-            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark 0x1 return"
+            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark 0x40000001 return"
         ));
         assert!(script.contains(
-            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark 0x2 masquerade"
+            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark 0x40000002 masquerade"
         ));
         assert!(!script.contains(
             "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark 0x1 masquerade"
