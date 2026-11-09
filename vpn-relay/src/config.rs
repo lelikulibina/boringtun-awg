@@ -300,9 +300,7 @@ impl Config {
             );
         }
         if self.daemon.log_level != next.daemon.log_level {
-            return invalid(
-                "reload cannot change daemon.log_level; restart vpn-relay to apply it",
-            );
+            return invalid("reload cannot change daemon.log_level; restart vpn-relay to apply it");
         }
 
         Ok(())
@@ -904,7 +902,10 @@ egress = "awg-uplink"
         let current = Config::parse_toml(&valid_config()).unwrap();
         let candidate_text = valid_config()
             .replace("10.10.0.2/32", "10.10.0.3/32")
-            .replace("destination = \"0.0.0.0/0\"", "destination = \"10.0.0.0/8\"");
+            .replace(
+                "destination = \"0.0.0.0/0\"",
+                "destination = \"10.0.0.0/8\"",
+            );
         let candidate = Config::parse_toml(&candidate_text).unwrap();
         current.validate_reload_compatibility(&candidate).unwrap();
     }
@@ -931,9 +932,10 @@ egress = "awg-uplink"
             .to_string()
             .contains("immutable tunnel parameters"));
 
-        let changed_socket_mark =
-            Config::parse_toml(&valid_config().replace("socket_fwmark = 4098", "socket_fwmark = 4099"))
-                .unwrap();
+        let changed_socket_mark = Config::parse_toml(
+            &valid_config().replace("socket_fwmark = 4098", "socket_fwmark = 4099"),
+        )
+        .unwrap();
         assert!(current
             .validate_reload_compatibility(&changed_socket_mark)
             .unwrap_err()
