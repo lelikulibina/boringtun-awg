@@ -98,7 +98,12 @@ impl Peer {
     pub fn shutdown_endpoint(&self) {
         if let Some(conn) = self.endpoint.write().conn.take() {
             tracing::info!("Disconnecting from endpoint");
-            conn.shutdown(Shutdown::Both).unwrap();
+            // Dropping the socket closes it even if shutdown reports that the
+            // peer has already disconnected. Teardown must not panic while a
+            // peer batch is being committed.
+            if let Err(error) = conn.shutdown(Shutdown::Both) {
+                tracing::debug!(?error, "Failed to gracefully shut down peer endpoint");
+            }
         }
     }
 
@@ -109,7 +114,11 @@ impl Peer {
             self.tunnel.reset_udp_window();
             // We only need to update the endpoint if it differs from the current one
             if let Some(conn) = endpoint.conn.take() {
-                conn.shutdown(Shutdown::Both).unwrap();
+                // The socket is dropped regardless; a shutdown error is not
+                // allowed to turn a configuration update into a panic.
+                if let Err(error) = conn.shutdown(Shutdown::Both) {
+                    tracing::debug!(?error, "Failed to gracefully shut down replaced peer endpoint");
+                }
             }
 
             endpoint.addr = Some(addr);
