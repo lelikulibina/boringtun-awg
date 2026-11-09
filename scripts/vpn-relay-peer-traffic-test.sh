@@ -451,8 +451,10 @@ wait "$server_reply_pid"
 server_reply_status=$?
 set -e
 [[ -f "$TMP/unmanaged-input-server.received" ]] || fail "server did not receive unmanaged INPUT probe"
-grep -Eq 'managed OUTPUT rejected reply|PermissionError: \\[Errno 1\\] Operation not permitted' \
-    "$TMP/unmanaged-input-server.log" || fail "server did not report an OUTPUT firewall rejection (exit $server_reply_status)"
+if ! grep -Fq "managed OUTPUT rejected reply" "$TMP/unmanaged-input-server.log" \
+    && ! grep -Fq "PermissionError: [Errno 1] Operation not permitted" "$TMP/unmanaged-input-server.log"; then
+    fail "server did not report an OUTPUT firewall rejection (exit $server_reply_status)"
+fi
 set +e
 wait "$capture_pid"
 output_capture_status=$?
