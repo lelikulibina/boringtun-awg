@@ -173,7 +173,10 @@ fn rule_has_owned_identity(line: &str, mark: u32, table: &str) -> bool {
 }
 
 fn parse_fwmark_value(value: &str) -> Option<u32> {
-    if let Some(hex) = value.strip_prefix("0x").or_else(|| value.strip_prefix("0X")) {
+    if let Some(hex) = value
+        .strip_prefix("0x")
+        .or_else(|| value.strip_prefix("0X"))
+    {
         u32::from_str_radix(hex, 16).ok()
     } else {
         value.parse().ok()
@@ -259,7 +262,8 @@ fn ensure_policy_slots_available(plan: &RoutingPlan) -> Result<(), LinuxError> {
             };
             for mark in &plan.socket_marks {
                 if rule_matches_fwmark(line, *mark) {
-                    let expected = priority == 9_000 && rule_has_owned_identity(line, *mark, "main");
+                    let expected =
+                        priority == 9_000 && rule_has_owned_identity(line, *mark, "main");
                     if !expected {
                         return Err(LinuxError::Conflict {
                             resource: format!("IPv{family} rule matching socket fwmark 0x{mark:x}"),
@@ -274,7 +278,10 @@ fn ensure_policy_slots_available(plan: &RoutingPlan) -> Result<(), LinuxError> {
                         && rule_has_owned_identity(line, egress.mark, &egress.table_id.to_string());
                     if !expected {
                         return Err(LinuxError::Conflict {
-                            resource: format!("IPv{family} rule matching routing fwmark 0x{:x}", egress.mark),
+                            resource: format!(
+                                "IPv{family} rule matching routing fwmark 0x{:x}",
+                                egress.mark
+                            ),
                             details: line.trim().to_owned(),
                         });
                     }
@@ -292,7 +299,11 @@ fn ensure_policy_slots_available(plan: &RoutingPlan) -> Result<(), LinuxError> {
                     });
                 }
             }
-            if let Some(egress) = plan.egresses.iter().find(|egress| egress.ip_rule_priority == priority) {
+            if let Some(egress) = plan
+                .egresses
+                .iter()
+                .find(|egress| egress.ip_rule_priority == priority)
+            {
                 let expected =
                     rule_has_owned_identity(line, egress.mark, &egress.table_id.to_string());
                 if !expected {
