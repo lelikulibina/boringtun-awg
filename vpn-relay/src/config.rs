@@ -895,7 +895,7 @@ egress = "awg-uplink"
         let error = Config::parse_toml(&input).unwrap_err();
         assert!(error
             .to_string()
-            .contains("selected source/destination family"));
+            .contains("routing rule's selected source/destination family"));
     }
 
     #[test]

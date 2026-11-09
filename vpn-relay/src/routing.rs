@@ -112,7 +112,7 @@ impl RoutingPlan {
                 destination: rule.destination.clone(),
                 egress: rule.egress.clone(),
                 routing_mark: egress_marks[rule.egress.as_str()],
-                conntrack_mark: egress_marks[rule.egress.as_str()],
+                conntrack_mark: 0,
                 nat: rule.nat,
                 nat_to: rule.nat_to,
                 ipv6_enabled: config
@@ -130,6 +130,12 @@ impl RoutingPlan {
                 .cmp(&right.ingress)
                 .then(left.priority.cmp(&right.priority))
         });
+        // Persist the exact selected rule in conntrack. Decisions sharing an
+        // egress still need distinct identifiers when their NAT differs.
+        for (index, decision) in decisions.iter_mut().enumerate() {
+            decision.conntrack_mark = u32::try_from(index + 1)
+                .expect("routing decision count must fit in a non-zero conntrack mark");
+        }
 
         let to_firewall_rule = |rule: &FirewallRule| NftFirewallRule {
             interface: rule.interface.clone(),
@@ -304,10 +310,10 @@ impl RoutingPlan {
             self.nft_family, self.nft_table,
             self.nft_family, self.nft_table
         ));
-        for egress in &self.egresses {
+        for decision in &self.decisions {
             output.push_str(&format!(
-                "add rule {} {} prerouting iifname @managed_interfaces ct state established,related ct direction original ct mark 0x{:x} meta mark set ct mark return\n",
-                self.nft_family, self.nft_table, egress.mark
+                "add rule {} {} prerouting iifname @managed_interfaces ct state established,related ct direction original ct mark 0x{:x} meta mark set 0x{:x} return\\n",
+                self.nft_family, self.nft_table, decision.conntrack_mark, decision.routing_mark
             ));
         }
 
@@ -351,48 +357,27 @@ impl RoutingPlan {
             self.nft_family, self.nft_table, self.nft_family, self.nft_table
         ));
 
-        // Evaluate NAT rules in the same priority order as routing rules. A
-        // matching "none" rule returns from the NAT chain, preventing a later,
-        // more-specific rule from overriding the rule selected for this flow.
+        // NAT consumes the selected decision id from conntrack instead of
+        // repeating selector matching and risking a different overlapping rule.
         for rule in &self.decisions {
-            for (family, sources, destinations) in rule_family_variants(rule) {
-                let mut selectors = format!(
-                    "iifname \"{}\" oifname \"{}\" ct mark 0x{:x}",
-                    rule.ingress, rule.egress, rule.conntrack_mark
-                );
-                if let Some(family) = family {
-                    append_cidr_selector(&mut selectors, family, "saddr", &sources);
-                    append_cidr_selector(&mut selectors, family, "daddr", &destinations);
-                }
-                if rule.nat == NatMode::Snat {
+            let selector = format!("ct mark 0x{:x}", rule.conntrack_mark);
+            match rule.nat {
+                NatMode::None => output.push_str(&format!(
+                    "add rule {} {} postrouting {} return\\n",
+                    self.nft_family, self.nft_table, selector
+                )),
+                NatMode::Masquerade => output.push_str(&format!(
+                    "add rule {} {} postrouting {} masquerade\\n",
+                    self.nft_family, self.nft_table, selector
+                )),
+                NatMode::Snat => {
                     let address = rule.nat_to.expect("validated SNAT rule has nat_to");
-                    let required_family = if address.is_ipv4() { "ip" } else { "ip6" };
-                    if family.is_some_and(|selected| selected != required_family) {
-                        continue;
-                    }
-                    selectors.push_str(if address.is_ipv4() {
-                        " meta nfproto ipv4"
-                    } else {
-                        " meta nfproto ipv6"
-                    });
-                }
-                match rule.nat {
-                    NatMode::None => output.push_str(&format!(
-                        "add rule {} {} postrouting {} return\n",
-                        self.nft_family, self.nft_table, selectors
-                    )),
-                    NatMode::Masquerade => output.push_str(&format!(
-                        "add rule {} {} postrouting {} masquerade\n",
-                        self.nft_family, self.nft_table, selectors
-                    )),
-                    NatMode::Snat => {
-                        let address = rule.nat_to.expect("validated SNAT rule has nat_to");
-                        let family = if address.is_ipv4() { "ip" } else { "ip6" };
-                        output.push_str(&format!(
-                            "add rule {} {} postrouting {} snat {} to {}\n",
-                            self.nft_family, self.nft_table, selectors, family, address
-                        ));
-                    }
+                    let family = if address.is_ipv4() { "ip" } else { "ip6" };
+                    let nfproto = if address.is_ipv4() { "ipv4" } else { "ipv6" };
+                    output.push_str(&format!(
+                        "add rule {} {} postrouting {} meta nfproto {} snat {} to {}\\n",
+                        self.nft_family, self.nft_table, selector, nfproto, family, address
+                    ));
                 }
             }
         }
@@ -675,7 +660,7 @@ egress = "awg-primary"
         config.routing.rules.truncate(1);
         let script = RoutingPlan::from_config(&config).nft_script();
         assert!(script.contains(
-            "prerouting iifname \"wg-server\" ct state new meta mark set 0x80000000 ct mark set 0x80000000 return"
+            "prerouting iifname \"wg-server\" ct state new meta mark set 0x80000000 ct mark set 0x3 return"
         ));
         assert!(!script.contains("prerouting iifname \"wg-server\" ct state new ip saddr"));
         assert!(!script.contains("prerouting iifname \"wg-server\" ct state new ip daddr"));
@@ -729,7 +714,7 @@ egress = "awg-primary"
         assert!(script.contains("forward oifname @managed_interfaces drop"));
         assert!(script.contains("iifname @managed_interfaces meta mark set 0"));
         assert!(script.contains("ct direction reply meta mark set 0"));
-        assert!(script.contains("ct direction original ct mark 0x80000000 meta mark set ct mark"));
+        assert!(script.contains("ct direction original ct mark 0x3 meta mark set 0x80000000"));
     }
 
     #[test]
@@ -739,7 +724,7 @@ egress = "awg-primary"
         config.routing.rules[0].nat_to = Some("203.0.113.10".parse().unwrap());
         let script = RoutingPlan::from_config(&config).nft_script();
         assert!(script.contains(
-            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark 0x80000001 ip daddr 195.142.0.0/16 meta nfproto ipv4 snat ip to 203.0.113.10"
+            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark 0x1 meta nfproto ipv4 snat ip to 203.0.113.10"
         ));
         assert!(!script.contains("snat ip6"));
     }
@@ -751,7 +736,7 @@ egress = "awg-primary"
         config.routing.rules[0].nat = NatMode::Masquerade;
         let script = RoutingPlan::from_config(&config).nft_script();
         assert!(script.contains(
-            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark 0x80000001 ip saddr 10.0.0.0/24 ip daddr 195.142.0.0/16 masquerade"
+            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark 0x1 masquerade"
         ));
         assert!(!script.contains("masquerade return"));
     }
@@ -840,12 +825,12 @@ egress = "awg-primary"
             Some(&["0.0.0.0/0".to_owned()][..])
         );
         assert_eq!(plan.decisions[0].routing_mark, 0x8000_0001);
-        assert_eq!(plan.decisions[0].conntrack_mark, 0x8000_0001);
+        assert_eq!(plan.decisions[0].conntrack_mark, 1);
         assert_eq!(plan.decisions[2].routing_mark, 0x8000_0000);
-        assert_eq!(plan.decisions[2].conntrack_mark, 0x8000_0000);
+        assert_eq!(plan.decisions[2].conntrack_mark, 3);
         let script = plan.nft_script();
         assert!(script.contains(
-            "ip daddr 195.142.0.0/16 meta mark set 0x80000001 ct mark set 0x80000001 return"
+            "ip daddr 195.142.0.0/16 meta mark set 0x80000001 ct mark set 0x1 return"
         ));
         assert!(script.contains("iifname \"wg-server\""));
     }
