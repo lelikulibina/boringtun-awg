@@ -323,7 +323,15 @@ mod tests {
             "the learned high-water mark should permit a trailer above the default window"
         );
 
+        // Replacing an endpoint may race with a socket that has already
+        // disconnected. Shutdown is best-effort and must not panic the
+        // control plane while resetting the peer's endpoint.
+        let disconnected_socket =
+            socket2::Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP)).unwrap();
+        peer.endpoint.write().conn = Some(disconnected_socket);
         peer.set_endpoint(new_endpoint);
+
+        assert_eq!(peer.endpoint().addr, Some(new_endpoint));
 
         for _ in 0..64 {
             let mut buffer = vec![0u8; 4096];
