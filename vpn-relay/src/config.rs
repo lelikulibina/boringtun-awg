@@ -290,6 +290,29 @@ impl Config {
                 "reload cannot change resolved socket fwmarks; restart vpn-relay to apply them",
             );
         }
+        if self.routing.mark_base != next.routing.mark_base {
+            return invalid(
+                "reload cannot change routing.mark_base while policy routing is active",
+            );
+        }
+        let current_egresses: std::collections::BTreeSet<_> = self
+            .routing
+            .rules
+            .iter()
+            .map(|rule| rule.egress.as_str())
+            .collect();
+        let next_egresses: std::collections::BTreeSet<_> = next
+            .routing
+            .rules
+            .iter()
+            .map(|rule| rule.egress.as_str())
+            .collect();
+        if current_egresses != next_egresses {
+            return invalid(
+                "reload cannot change the set of routing egress interfaces; restart vpn-relay to rebuild policy routes",
+            );
+        }
+
 
         if self.daemon.nft_table != next.daemon.nft_table {
             return invalid("reload cannot change daemon.nft_table while the daemon is running");
@@ -911,6 +934,44 @@ egress = "awg-uplink"
         );
         let candidate = Config::parse_toml(&candidate_text).unwrap();
         current.validate_reload_compatibility(&candidate).unwrap();
+    }
+
+    #[test]
+    fn reload_compatibility_rejects_policy_route_resource_changes() {
+        let current = Config::parse_toml(&valid_config()).unwrap();
+
+        let changed_mark_base = Config::parse_toml(
+            &valid_config().replacen(
+                "[[routing.rules]]",
+                "[routing]\nmark_base = 0x90000000\n\n[[routing.rules]]",
+                1,
+            ),
+        )
+        .unwrap();
+        assert!(current
+            .validate_reload_compatibility(&changed_mark_base)
+            .unwrap_err()
+            .to_string()
+            .contains("routing.mark_base"));
+
+        let removed_egress = Config::parse_toml(
+            &valid_config().replace(
+                "egress = \"awg-uplink\"",
+                "egress = \"wg-server\"",
+            ),
+        );
+        assert!(removed_egress.is_err(), "self-routing must remain invalid");
+        let mut no_egress_text = valid_config();
+        let routing_rules_start = no_egress_text
+            .find("[[routing.rules]]")
+            .expect("routing rules fixture");
+        no_egress_text.truncate(routing_rules_start);
+        let no_egress = Config::parse_toml(&no_egress_text).unwrap();
+        assert!(current
+            .validate_reload_compatibility(&no_egress)
+            .unwrap_err()
+            .to_string()
+            .contains("set of routing egress"));
     }
 
     #[test]
