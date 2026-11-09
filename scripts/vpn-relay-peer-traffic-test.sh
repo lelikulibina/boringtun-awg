@@ -19,9 +19,10 @@ SERVER_PID=""
 CLIENT_PID=""
 SERVER_IPERF_PID=""
 CLIENT_IPERF_PID=""
+TCP_PIDS=()
 
 cleanup() {
-    for pid in "$CLIENT_IPERF_PID" "$SERVER_IPERF_PID" "$CLIENT_PID" "$SERVER_PID"; do
+    for pid in "${TCP_PIDS[@]}" "$CLIENT_IPERF_PID" "$SERVER_IPERF_PID" "$CLIENT_PID" "$SERVER_PID"; do
         if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
             kill -TERM "$pid" 2>/dev/null || true
             wait "$pid" 2>/dev/null || true
@@ -107,17 +108,31 @@ socket_fwmark = 5001
 public_key = "$CLIENT_PUBLIC"
 allowed_ips = ["10.77.0.2/32"]
 
-# INPUT/OUTPUT are deny-by-default for managed interfaces. This traffic test
-# intentionally opts in to the peer's tunnel address in both directions.
+# Exercise INPUT and OUTPUT defaults: server allows only TCP/8080; the client
+# allows TCP/8080 and TCP/8081 so the negative probes isolate the server hooks.
 [firewall.input]
 [[firewall.input.rules]]
 interface = "wg-peer-test"
 source = ["10.77.0.2/32"]
+protocol = "icmp"
+
+[[firewall.input.rules]]
+interface = "wg-peer-test"
+source = ["10.77.0.2/32"]
+protocol = "tcp"
+ports = [8080]
 
 [firewall.output]
 [[firewall.output.rules]]
 interface = "wg-peer-test"
 destination = ["10.77.0.2/32"]
+protocol = "icmp"
+
+[[firewall.output.rules]]
+interface = "wg-peer-test"
+destination = ["10.77.0.2/32"]
+protocol = "tcp"
+ports = [8080]
 TOML
 
 if [[ "$PROTO" == "awg" ]]; then
@@ -151,11 +166,25 @@ persistent_keepalive_secs = 1
 [[firewall.input.rules]]
 interface = "wg-peer-test"
 source = ["10.77.0.1/32"]
+protocol = "icmp"
+
+[[firewall.input.rules]]
+interface = "wg-peer-test"
+source = ["10.77.0.1/32"]
+protocol = "tcp"
+ports = [8080, 8081]
 
 [firewall.output]
 [[firewall.output.rules]]
 interface = "wg-peer-test"
 destination = ["10.77.0.1/32"]
+protocol = "icmp"
+
+[[firewall.output.rules]]
+interface = "wg-peer-test"
+destination = ["10.77.0.1/32"]
+protocol = "tcp"
+ports = [8080, 8081]
 TOML
 
 if [[ "$PROTO" == "awg" ]]; then
@@ -216,6 +245,55 @@ grep -q "dev wg-peer-test" <<<"$inner_route" || fail "remote tunnel address did 
 # packet delivery over the veth-backed UDP underlay.
 ip netns exec "$CLIENT_NS" ping -n -c 5 -W 2 10.77.0.1 || fail "client-to-server tunnel traffic failed"
 ip netns exec "$SERVER_NS" ping -n -c 5 -W 2 10.77.0.2 || fail "server-to-client tunnel traffic failed"
+
+# Start listeners on both peers. Port 8080 is explicitly allowed by
+# the server; port 8081 is used to prove server INPUT and OUTPUT deny-by-default.
+start_tcp_listener() {
+    local ns="$1" port="$2" log="$3"
+    ip netns exec "$ns" python3 -u -c '
+import socket, sys
+sock = socket.socket()
+sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+sock.bind(("0.0.0.0", int(sys.argv[1])))
+sock.listen()
+while True:
+    conn, _ = sock.accept()
+    with conn:
+        conn.sendall(b"ok")
+' "$port" >"$TMP/$log" 2>&1 &
+    TCP_PIDS+=("$!")
+}
+start_tcp_listener "$SERVER_NS" 8080 server-tcp-8080.log
+start_tcp_listener "$SERVER_NS" 8081 server-tcp-8081.log
+start_tcp_listener "$CLIENT_NS" 8080 client-tcp-8080.log
+start_tcp_listener "$CLIENT_NS" 8081 client-tcp-8081.log
+sleep 0.5
+
+expect_tcp() {
+    local ns="$1" address="$2" port="$3" expected="$4" label="$5"
+    python3 - "$address" "$port" "$expected" "$label" <<'PY'
+import socket, sys
+address, port, expected, label = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4]
+try:
+    with socket.create_connection((address, port), timeout=1.5) as conn:
+        conn.settimeout(1.5)
+        payload = conn.recv(2)
+        if expected == "deny":
+            raise SystemExit(f"{label}: connection unexpectedly succeeded")
+        if payload != b"ok":
+            raise SystemExit(f"{label}: unexpected response {payload!r}")
+except OSError as error:
+    if expected == "allow":
+        raise SystemExit(f"{label}: expected connection failed: {error}")
+    print(f"{label}: blocked as expected")
+else:
+    print(f"{label}: allowed as expected")
+PY
+}
+expect_tcp "$CLIENT_NS" 10.77.0.1 8080 allow "client to server allowed INPUT/OUTPUT"
+expect_tcp "$SERVER_NS" 10.77.0.2 8080 allow "server to client allowed INPUT/OUTPUT"
+expect_tcp "$CLIENT_NS" 10.77.0.1 8081 deny "server INPUT default deny"
+expect_tcp "$SERVER_NS" 10.77.0.2 8081 deny "server OUTPUT default deny"
 
 # Observe the real encrypted UDP transport: it must be visible on the physical
 # underlay veth and must never reappear as an outer packet on the TUN device.
