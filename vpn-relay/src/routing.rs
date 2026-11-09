@@ -312,7 +312,7 @@ impl RoutingPlan {
         ));
         for decision in &self.decisions {
             output.push_str(&format!(
-                "add rule {} {} prerouting iifname @managed_interfaces ct state established,related ct direction original ct mark 0x{:x} meta mark set 0x{:x} return\\n",
+                "add rule {} {} prerouting iifname @managed_interfaces ct state established,related ct direction original ct mark 0x{:x} meta mark set 0x{:x} return\n",
                 self.nft_family, self.nft_table, decision.conntrack_mark, decision.routing_mark
             ));
         }
@@ -913,9 +913,9 @@ egress = "awg-primary"
         assert_ne!(plan.decisions[0].conntrack_mark, plan.decisions[1].conntrack_mark);
         assert_eq!(plan.decisions[0].routing_mark, plan.decisions[1].routing_mark);
         let script = plan.nft_script();
-        assert!(script.contains("postrouting ct mark 0x1 return"));
-        assert!(script.contains("postrouting ct mark 0x2 masquerade"));
-        assert!(!script.contains("postrouting ct mark 0x1 masquerade"));
+        assert!(script.contains("postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark 0x1 return"));
+        assert!(script.contains("postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark 0x2 masquerade"));
+        assert!(!script.contains("postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark 0x1 masquerade"));
     }
     #[test]
     fn source_only_and_destination_only_rules_generate_family_specific_matches() {
