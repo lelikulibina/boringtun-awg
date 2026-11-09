@@ -21,13 +21,15 @@ pub struct EgressPlan {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct NftRule {
+pub struct RoutingDecision {
     pub priority: u32,
     pub ingress: String,
     pub source: Option<Vec<String>>,
     pub destination: Option<Vec<String>>,
     pub egress: String,
-    pub mark: u32,
+    pub routing_mark: u32,
+    /// Mark persisted in conntrack and restored for the reply direction.
+    pub conntrack_mark: u32,
     pub nat: NatMode,
     pub nat_to: Option<std::net::IpAddr>,
     /// IPv6 selectors are emitted only when both ends permit IPv6.
@@ -50,7 +52,7 @@ pub struct RoutingPlan {
     pub nft_table: String,
     pub managed_interfaces: Vec<String>,
     pub egresses: Vec<EgressPlan>,
-    pub nft_rules: Vec<NftRule>,
+    pub decisions: Vec<RoutingDecision>,
     /// Explicit INPUT exceptions; all other managed ingress is denied.
     pub input_rules: Vec<NftFirewallRule>,
     /// Explicit OUTPUT exceptions; all other managed egress is denied.
@@ -99,17 +101,18 @@ impl RoutingPlan {
             .map(|egress| (egress.interface.as_str(), egress.mark))
             .collect();
 
-        let mut nft_rules: Vec<_> = config
+        let mut decisions: Vec<_> = config
             .routing
             .rules
             .iter()
-            .map(|rule| NftRule {
+            .map(|rule| RoutingDecision {
                 priority: rule.priority,
                 ingress: rule.ingress.clone(),
                 source: rule.source.clone(),
                 destination: rule.destination.clone(),
                 egress: rule.egress.clone(),
-                mark: egress_marks[rule.egress.as_str()],
+                routing_mark: egress_marks[rule.egress.as_str()],
+                conntrack_mark: egress_marks[rule.egress.as_str()],
                 nat: rule.nat,
                 nat_to: rule.nat_to,
                 ipv6_enabled: config
@@ -122,7 +125,7 @@ impl RoutingPlan {
                         .is_some_and(|interface| interface.ipv6_enabled),
             })
             .collect();
-        nft_rules.sort_by(|left, right| {
+        decisions.sort_by(|left, right| {
             left.ingress
                 .cmp(&right.ingress)
                 .then(left.priority.cmp(&right.priority))
@@ -169,7 +172,7 @@ impl RoutingPlan {
             nft_table: config.daemon.nft_table.clone(),
             managed_interfaces,
             egresses,
-            nft_rules,
+            decisions,
             input_rules,
             output_rules,
             socket_marks,
@@ -308,7 +311,7 @@ impl RoutingPlan {
             ));
         }
 
-        for rule in &self.nft_rules {
+        for rule in &self.decisions {
             for (family, sources, destinations) in rule_family_variants(rule) {
                 let mut selectors = format!("iifname \"{}\" ct state new", rule.ingress);
                 if let Some(family) = family {
@@ -316,8 +319,8 @@ impl RoutingPlan {
                     append_cidr_selector(&mut selectors, family, "daddr", &destinations);
                 }
                 output.push_str(&format!(
-                    "add rule {} {} prerouting {} meta mark set 0x{:x} ct mark set meta mark return\n",
-                    self.nft_family, self.nft_table, selectors, rule.mark
+                    "add rule {} {} prerouting {} meta mark set 0x{:x} ct mark set 0x{:x} return\n",
+                    self.nft_family, self.nft_table, selectors, rule.routing_mark, rule.conntrack_mark
                 ));
             }
         }
@@ -326,16 +329,16 @@ impl RoutingPlan {
             "add rule {} {} forward iifname @managed_interfaces ct state invalid drop\n",
             self.nft_family, self.nft_table
         ));
-        for rule in &self.nft_rules {
+        for rule in &self.decisions {
             output.push_str(&format!(
                 "add rule {} {} forward iifname \"{}\" oifname \"{}\" ct state new,established,related meta mark 0x{:x} accept\n",
-                self.nft_family, self.nft_table, rule.ingress, rule.egress, rule.mark
+                self.nft_family, self.nft_table, rule.ingress, rule.egress, rule.routing_mark
             ));
         }
-        for rule in &self.nft_rules {
+        for rule in &self.decisions {
             output.push_str(&format!(
                 "add rule {} {} forward iifname \"{}\" oifname \"{}\" ct state established,related ct mark 0x{:x} accept\n",
-                self.nft_family, self.nft_table, rule.egress, rule.ingress, rule.mark
+                self.nft_family, self.nft_table, rule.egress, rule.ingress, rule.conntrack_mark
             ));
         }
         output.push_str(&format!(
@@ -347,11 +350,11 @@ impl RoutingPlan {
         // Evaluate NAT rules in the same priority order as routing rules. A
         // matching "none" rule returns from the NAT chain, preventing a later,
         // more-specific rule from overriding the rule selected for this flow.
-        for rule in &self.nft_rules {
+        for rule in &self.decisions {
             for (family, sources, destinations) in rule_family_variants(rule) {
                 let mut selectors = format!(
                     "iifname \"{}\" oifname \"{}\" ct mark 0x{:x}",
-                    rule.ingress, rule.egress, rule.mark
+                    rule.ingress, rule.egress, rule.conntrack_mark
                 );
                 if let Some(family) = family {
                     append_cidr_selector(&mut selectors, family, "saddr", &sources);
@@ -503,7 +506,7 @@ fn nft_family_match(prefix: &str) -> &'static str {
     }
 }
 
-fn rule_family_variants(rule: &NftRule) -> Vec<(Option<&'static str>, Vec<String>, Vec<String>)> {
+fn rule_family_variants(rule: &RoutingDecision) -> Vec<(Option<&'static str>, Vec<String>, Vec<String>)> {
     let families = |prefixes: &Option<Vec<String>>| -> Vec<&'static str> {
         prefixes
             .as_ref()
@@ -816,22 +819,24 @@ egress = "awg-primary"
     }
 
     #[test]
-    fn nft_rules_preserve_explicit_priority_and_mark_selection() {
+    fn routing_decisions_preserve_explicit_priority_and_mark_selection() {
         let plan = RoutingPlan::from_config(&sample_config());
         assert_eq!(
-            plan.nft_rules[0].destination.as_deref(),
+            plan.decisions[0].destination.as_deref(),
             Some(&["195.142.0.0/16".to_owned()][..])
         );
         assert_eq!(
-            plan.nft_rules[1].destination.as_deref(),
+            plan.decisions[1].destination.as_deref(),
             Some(&["79.100.22.0/24".to_owned()][..])
         );
         assert_eq!(
-            plan.nft_rules[2].destination.as_deref(),
+            plan.decisions[2].destination.as_deref(),
             Some(&["0.0.0.0/0".to_owned()][..])
         );
-        assert_eq!(plan.nft_rules[0].mark, 0x8000_0001);
-        assert_eq!(plan.nft_rules[2].mark, 0x8000_0000);
+        assert_eq!(plan.decisions[0].routing_mark, 0x8000_0001);
+        assert_eq!(plan.decisions[0].conntrack_mark, 0x8000_0001);
+        assert_eq!(plan.decisions[2].routing_mark, 0x8000_0000);
+        assert_eq!(plan.decisions[2].conntrack_mark, 0x8000_0000);
         let script = plan.nft_script();
         assert!(script.contains(
             "ip daddr 195.142.0.0/16 meta mark set 0x80000001 ct mark set meta mark return"
@@ -886,7 +891,7 @@ egress = "awg-primary"
         config.routing.rules[0].source = Some(vec!["2001:db8:10::/48".to_owned()]);
         config.routing.rules[0].destination = Some(vec!["2001:db8:20::/48".to_owned()]);
         let filtered_plan = RoutingPlan::from_config(&config);
-        assert!(rule_family_variants(&filtered_plan.nft_rules[0]).is_empty());
+        assert!(rule_family_variants(&filtered_plan.decisions[0]).is_empty());
 
         let commands = plan.ip_commands();
         assert!(commands.iter().any(|args| {

@@ -203,8 +203,11 @@ to = "203.0.113.10"
 
 ## 6. Этап 3 — единый Routing Decision
 
-- [ ] Выделить внутреннюю модель выбранного правила: ingress, egress, selectors,
-  routing mark, conntrack mark и NAT action.
+- [x] Выделить внутреннюю модель выбранного правила: `RoutingDecision`
+  содержит ingress, egress, source/destination selectors, отдельные поля
+  routing mark и conntrack mark, а также NAT action.
+- [~] Оба mark пока намеренно получают одно значение из единого egress mark
+  allocation; раздельные поля не позволяют случайно смешать их назначение.
 - [ ] Генерировать классификацию новых соединений из единого упорядоченного
   набора решений.
 - [ ] Сохранить выбранный egress в conntrack mark для всего потока.
@@ -321,7 +324,8 @@ unmanaged output остаётся неизменным.
 | 2026-11-09 | Peer traffic netns scenario переведён на явные INPUT/OUTPUT allow rules | Run 42629958261: WG и AWG peer traffic tests успешно прошли; общий integration job упал позже на multi-uplink тесте, где endpoint-конфигурации ещё не имели allow rules | В работе |
 | 2026-11-09 | Multi-uplink test адаптирован к INPUT/OUTPUT deny-by-default | Добавлены точечные разрешения на client, router и uplink endpoints; CI ещё выполняется | В работе |
 | 2026-11-09 | Ужесточена проверка address family для SNAT | Исправлен случай, когда family присутствовал только в одном selector, но отсутствовал в пересечении source/destination; добавлен regression parser test | В работе |
-| 2026-11-09 | Добавлены packet-level INPUT/OUTPUT probes | Peer traffic test теперь запускает TCP listeners на обоих концах, проверяет разрешённый порт 8080 и отдельно проверяет INPUT deny и OUTPUT deny на 8081; первый rustfmt run обнаружил только форматирование regression test, исправлено | В работе |
+| 2026-11-09 | Добавлены packet-level INPUT/OUTPUT probes | Peer traffic test запускает TCP listeners на обоих концах, проверяет разрешённый порт 8080 и отдельно INPUT deny/OUTPUT deny на 8081; iperf3 TCP/UDP 5201 также явно разрешён | В работе |
+| 2026-11-09 | Выделена модель `RoutingDecision` | Routing classifier, FORWARD и NAT используют один список решений; routing mark и conntrack mark представлены раздельными полями и назначаются из общего egress mark | В работе |
 | 2026-11-09 | Добавлена conntrack-aware обработка ответного трафика INPUT/OUTPUT | Явные allow rules ограничены original direction; established/related reply принимается только на managed interface; добавлены unit assertions | В работе |
 
 ## 14. Правила ведения плана
