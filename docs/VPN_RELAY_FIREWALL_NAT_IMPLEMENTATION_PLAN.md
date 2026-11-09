@@ -515,3 +515,6 @@ Noise sessions для peer, чьи параметры не менялись; н�
 
 
 | 2026-11-09 | Добавлен backend-neutral контракт замены peer set и runtime API `Runtime::replace_peers` | BoringTun preflight повторно разрешает endpoints до commit; полный peer set передаётся в `DeviceHandle::replace_peers`; authoritative interface config заменяется только после успешного backend commit. API намеренно не меняет routing/firewall и не позволяет менять остальные параметры интерфейса; полная транзакция конфигурации остаётся следующим этапом | Ожидает CI |
+
+
+| 2026-11-09 | Добавлен локальный control socket для peer replacement | Daemon принимает ограниченный JSON-запрос через Unix socket в текущем network namespace; сокет имеет права 0600, запрос ограничен 1 MiB и обслуживается последовательно в основном runtime loop. CLI `--replace-peers INTERFACE` читает peers из config file и отправляет их работающему daemon; runtime меняет authoritative peer config только после успешного backend commit. Полная reload/transaction конфигурации, routes и firewall пока не реализована | Ожидает CI |

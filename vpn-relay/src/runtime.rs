@@ -3,9 +3,11 @@ use crate::backend::{BackendError, BackendRegistry, TunnelHandle, TunnelSnapshot
 use crate::config::{Config, InterfaceConfig, PeerConfig};
 use crate::linux::{self, LinuxError};
 use crate::routing::RoutingPlan;
-use std::fs::{File, OpenOptions};
+use std::fs::{self, File, OpenOptions};
+use std::io::{Read, Write};
 use std::os::fd::AsRawFd;
-use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -32,6 +34,8 @@ pub enum RuntimeError {
     InstanceLock(String),
     #[error("failed to install signal handler: {0}")]
     Signal(String),
+    #[error("control socket error: {0}")]
+    Control(String),
 }
 
 pub struct Runtime {
@@ -41,6 +45,7 @@ pub struct Runtime {
     routing: RoutingPlan,
     stats_interval: Duration,
     forwarding_state: Option<ForwardingState>,
+    control_socket: ControlSocket,
     _instance_lock: InstanceLock,
 }
 
@@ -60,6 +65,11 @@ impl InstanceLock {
         let metadata = std::fs::metadata("/proc/self/ns/net")
             .map_err(|error| RuntimeError::InstanceLock(error.to_string()))?;
         Ok(Self::path_for_netns_inode(metadata.ino()))
+    }
+
+    fn current_control_path() -> Result<PathBuf, RuntimeError> {
+        let lock_path = Self::current_netns_path()?;
+        Ok(lock_path.with_extension("sock"))
     }
 
     fn acquire(path: &Path) -> Result<Self, RuntimeError> {
@@ -87,6 +97,75 @@ struct ForwardingState {
     ipv6: String,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
+struct PeerReplacementRequest {
+    interface: String,
+    peers: Vec<PeerConfig>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct ControlResponse {
+    ok: bool,
+    error: Option<String>,
+}
+
+struct ControlSocket {
+    listener: UnixListener,
+    path: PathBuf,
+}
+
+impl ControlSocket {
+    fn bind(path: PathBuf) -> Result<Self, RuntimeError> {
+        if path.exists() {
+            match UnixStream::connect(&path) {
+                Ok(_) => {
+                    return Err(RuntimeError::Control(format!(
+                        "control socket is already accepting connections: {}",
+                        path.display()
+                    )));
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::ConnectionRefused => {
+                    let metadata = fs::symlink_metadata(&path)
+                        .map_err(|error| RuntimeError::Control(error.to_string()))?;
+                    if !metadata.file_type().is_socket() {
+                        return Err(RuntimeError::Control(format!(
+                            "refusing to replace non-socket path {}",
+                            path.display()
+                        )));
+                    }
+                    fs::remove_file(&path)
+                        .map_err(|error| RuntimeError::Control(error.to_string()))?;
+                }
+                Err(error) => {
+                    return Err(RuntimeError::Control(format!(
+                        "cannot inspect existing control socket {}: {error}",
+                        path.display()
+                    )));
+                }
+            }
+        }
+        let listener = UnixListener::bind(&path)
+            .map_err(|error| RuntimeError::Control(error.to_string()))?;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600))
+            .map_err(|error| RuntimeError::Control(error.to_string()))?;
+        listener
+            .set_nonblocking(true)
+            .map_err(|error| RuntimeError::Control(error.to_string()))?;
+        Ok(Self { listener, path })
+    }
+}
+
+impl Drop for ControlSocket {
+    fn drop(&mut self) {
+        if let Err(error) = fs::remove_file(&self.path) {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                tracing::warn!(path = %self.path.display(), %error, "failed to remove control socket");
+            }
+        }
+    }
+}
+
+
 impl Runtime {
     /// Start all interfaces through their registered backend, then install
     /// shared routing only after every tunnel has been configured.
@@ -96,6 +175,7 @@ impl Runtime {
             .map_err(|error| RuntimeError::Configuration(error.to_string()))?;
         let lock_path = InstanceLock::current_netns_path()?;
         let instance_lock = InstanceLock::acquire(&lock_path)?;
+        let control_socket = ControlSocket::bind(InstanceLock::current_control_path()?)?;
         let socket_fwmarks = config
             .resolved_socket_fwmarks()
             .map_err(|error| RuntimeError::Configuration(error.to_string()))?;
@@ -166,6 +246,7 @@ impl Runtime {
             routing,
             stats_interval: Duration::from_secs(config.daemon.stats_interval_secs),
             forwarding_state,
+            control_socket,
             _instance_lock: instance_lock,
         })
     }
@@ -201,6 +282,89 @@ impl Runtime {
         Ok(())
     }
 
+    fn accept_control_connections(&mut self) {
+        loop {
+            match self.control_socket.listener.accept() {
+                Ok((stream, _)) => self.handle_control_connection(stream),
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
+                Err(error) => {
+                    tracing::warn!(%error, "failed to accept control connection");
+                    break;
+                }
+            }
+        }
+    }
+
+    fn handle_control_connection(&mut self, mut stream: UnixStream) {
+        let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+        let mut payload = Vec::new();
+        let read_result = (&mut stream)
+            .take(1024 * 1024 + 1)
+            .read_to_end(&mut payload);
+        let response = match read_result {
+            Ok(_) if payload.len() > 1024 * 1024 => ControlResponse {
+                ok: false,
+                error: Some("request exceeds 1 MiB limit".to_owned()),
+            },
+            Ok(_) => match serde_json::from_slice::<PeerReplacementRequest>(&payload) {
+                Ok(request) => match self.replace_peers(&request.interface, request.peers) {
+                    Ok(()) => ControlResponse { ok: true, error: None },
+                    Err(error) => ControlResponse {
+                        ok: false,
+                        error: Some(error.to_string()),
+                    },
+                },
+                Err(error) => ControlResponse {
+                    ok: false,
+                    error: Some(format!("invalid control request: {error}")),
+                },
+            },
+            Err(error) => ControlResponse {
+                ok: false,
+                error: Some(format!("failed to read control request: {error}")),
+            },
+        };
+        let write_result = serde_json::to_vec(&response)
+            .map_err(|error| error.to_string())
+            .and_then(|payload| stream.write_all(&payload).map_err(|error| error.to_string()));
+        if let Err(error) = write_result {
+            tracing::warn!(%error, "failed to send control response");
+        }
+    }
+
+    /// Send a peer replacement request to the daemon in this network namespace.
+    pub fn request_peer_replacement(
+        interface: String,
+        peers: Vec<PeerConfig>,
+    ) -> Result<(), RuntimeError> {
+        let path = InstanceLock::current_control_path()?;
+        let mut stream = UnixStream::connect(&path)
+            .map_err(|error| RuntimeError::Control(error.to_string()))?;
+        stream
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .map_err(|error| RuntimeError::Control(error.to_string()))?;
+        let request = PeerReplacementRequest { interface, peers };
+        serde_json::to_writer(&mut stream, &request)
+            .map_err(|error| RuntimeError::Control(error.to_string()))?;
+        stream
+            .shutdown(std::net::Shutdown::Write)
+            .map_err(|error| RuntimeError::Control(error.to_string()))?;
+        let mut response = Vec::new();
+        (&mut stream)
+            .take(64 * 1024)
+            .read_to_end(&mut response)
+            .map_err(|error| RuntimeError::Control(error.to_string()))?;
+        let response: ControlResponse = serde_json::from_slice(&response)
+            .map_err(|error| RuntimeError::Control(error.to_string()))?;
+        if response.ok {
+            Ok(())
+        } else {
+            Err(RuntimeError::Control(
+                response.error.unwrap_or_else(|| "daemon rejected request".to_owned()),
+            ))
+        }
+    }
+
     /// Return consistent live counters without depending on a backend UAPI.
     pub fn snapshots(&self) -> Result<Vec<TunnelSnapshot>, RuntimeError> {
         self.devices
@@ -210,9 +374,10 @@ impl Runtime {
     }
 
     /// Keep the daemon alive, publish peer counters, and stop cleanly on SIGINT/SIGTERM.
-    pub fn run(self) -> Result<(), RuntimeError> {
+    pub fn run(mut self) -> Result<(), RuntimeError> {
         install_signal_handlers()?;
         while !SHUTDOWN_REQUESTED.load(Ordering::Relaxed) {
+            self.accept_control_connections();
             let mut elapsed = 0;
             while elapsed < self.stats_interval.as_secs()
                 && !SHUTDOWN_REQUESTED.load(Ordering::Relaxed)
