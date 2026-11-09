@@ -4,7 +4,7 @@
 //! validated TOML configuration into deterministic nftables and policy-routing
 //! operations; the runtime layer can apply these operations transactionally.
 
-use crate::config::{Config, NatMode};
+use crate::config::{Config, FirewallProtocol, FirewallRule, NatMode};
 use std::collections::BTreeMap;
 
 const FIRST_ROUTING_TABLE: u32 = 10_000;
@@ -34,12 +34,26 @@ pub struct NftRule {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NftFirewallRule {
+    pub interface: String,
+    pub source: Option<Vec<String>>,
+    pub destination: Option<Vec<String>>,
+    pub protocol: Option<FirewallProtocol>,
+    pub ports: Option<Vec<u16>>,
+    pub ipv6_enabled: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RoutingPlan {
     pub nft_family: String,
     pub nft_table: String,
     pub managed_interfaces: Vec<String>,
     pub egresses: Vec<EgressPlan>,
     pub nft_rules: Vec<NftRule>,
+    /// Explicit INPUT exceptions; all other managed ingress is denied.
+    pub input_rules: Vec<NftFirewallRule>,
+    /// Explicit OUTPUT exceptions; all other managed egress is denied.
+    pub output_rules: Vec<NftFirewallRule>,
     /// Socket marks that force outer encrypted UDP through the main table.
     pub socket_marks: Vec<u32>,
     /// TUN interfaces on which inner IPv6 traffic is blocked.
@@ -112,6 +126,17 @@ impl RoutingPlan {
                 .then(left.priority.cmp(&right.priority))
         });
 
+        let to_firewall_rule = |rule: &FirewallRule| NftFirewallRule {
+            interface: rule.interface.clone(),
+            source: rule.source.clone(),
+            destination: rule.destination.clone(),
+            protocol: rule.protocol,
+            ports: rule.ports.clone(),
+            ipv6_enabled: config.interfaces[&rule.interface].ipv6_enabled,
+        };
+        let input_rules = config.firewall.input.rules.iter().map(to_firewall_rule).collect();
+        let output_rules = config.firewall.output.rules.iter().map(to_firewall_rule).collect();
+
         let mut socket_marks = config
             .resolved_socket_fwmarks()
             .expect("RoutingPlan::from_config requires a validated configuration");
@@ -131,6 +156,8 @@ impl RoutingPlan {
             managed_interfaces,
             egresses,
             nft_rules,
+            input_rules,
+            output_rules,
             socket_marks,
             ipv6_blocked_interfaces,
         }
@@ -160,10 +187,14 @@ impl RoutingPlan {
             "add table {} {} {{ comment \"managed by vpn-relay\"; }}\n\
              add set {} {} managed_interfaces {{ type ifname; elements = {{ {} }}; }}\n\
              add chain {} {} prerouting {{ type filter hook prerouting priority mangle; policy accept; }}\n\
+             add chain {} {} input {{ type filter hook input priority filter; policy accept; }}\n\
              add chain {} {} forward {{ type filter hook forward priority filter; policy accept; }}\n\
+             add chain {} {} output {{ type filter hook output priority filter; policy accept; }}\n\
              add chain {} {} postrouting {{ type nat hook postrouting priority srcnat; policy accept; }}\n",
             self.nft_family, self.nft_table,
             self.nft_family, self.nft_table, interfaces,
+            self.nft_family, self.nft_table,
+            self.nft_family, self.nft_table,
             self.nft_family, self.nft_table,
             self.nft_family, self.nft_table,
             self.nft_family, self.nft_table
@@ -189,14 +220,51 @@ impl RoutingPlan {
                 self.nft_family, self.nft_table
             ));
             output.push_str(&format!(
-                "add chain {} {} output {{ type filter hook output priority filter; policy accept; }}\n",
-                self.nft_family, self.nft_table
-            ));
-            output.push_str(&format!(
                 "add rule {} {} output oifname @ipv6_blocked_interfaces meta nfproto ipv6 drop\n",
                 self.nft_family, self.nft_table
             ));
         }
+
+        // INPUT is scoped to managed ingress. No generic established/related
+        // accept precedes the deny rule: that could bypass INPUT deny using a
+        // conntrack entry created by the host.
+        for rule in &self.input_rules {
+            for (family, sources, _) in firewall_rule_family_variants(rule, true) {
+                let mut selectors = format!("iifname \\"{}\\"", rule.interface);
+                if let Some(family) = family {
+                    append_cidr_selector(&mut selectors, family, "saddr", &sources);
+                }
+                append_firewall_protocol_selector(&mut selectors, rule);
+                output.push_str(&format!(
+                    "add rule {} {} input {} ct state new,established,related accept\\n",
+                    self.nft_family, self.nft_table, selectors
+                ));
+            }
+        }
+        output.push_str(&format!(
+            "add rule {} {} input iifname @managed_interfaces drop\\n",
+            self.nft_family, self.nft_table
+        ));
+
+        // OUTPUT is scoped to the actual managed TUN egress. Socket-marked
+        // outer UDP routed through the underlay is therefore unaffected.
+        for rule in &self.output_rules {
+            for (family, _, destinations) in firewall_rule_family_variants(rule, false) {
+                let mut selectors = format!("oifname \\"{}\\"", rule.interface);
+                if let Some(family) = family {
+                    append_cidr_selector(&mut selectors, family, "daddr", &destinations);
+                }
+                append_firewall_protocol_selector(&mut selectors, rule);
+                output.push_str(&format!(
+                    "add rule {} {} output {} ct state new,established,related accept\\n",
+                    self.nft_family, self.nft_table, selectors
+                ));
+            }
+        }
+        output.push_str(&format!(
+            "add rule {} {} output oifname @managed_interfaces drop\\n",
+            self.nft_family, self.nft_table
+        ));
 
         // The reply direction must use the main table to reach the ingress TUN.
         // Original-direction packets restore the egress mark saved on the first
@@ -326,6 +394,45 @@ impl RoutingPlan {
             }
         }
         commands
+    }
+}
+
+fn firewall_rule_family_variants(
+    rule: &NftFirewallRule,
+    input: bool,
+) -> Vec<(Option<&'static str>, Vec<String>, Vec<String>)> {
+    let prefixes = if input { rule.source.as_ref() } else { rule.destination.as_ref() };
+    let Some(prefixes) = prefixes else {
+        return vec![(None, Vec::new(), Vec::new())];
+    };
+    prefixes
+        .iter()
+        .map(|prefix| nft_family_match(prefix))
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .filter(|family| *family != "ip6" || rule.ipv6_enabled)
+        .map(|family| {
+            let selected = prefixes.iter()
+                .filter(|prefix| nft_family_match(prefix) == family)
+                .cloned().collect::<Vec<_>>();
+            if input { (Some(family), selected, Vec::new()) }
+            else { (Some(family), Vec::new(), selected) }
+        })
+        .collect()
+}
+
+fn append_firewall_protocol_selector(selectors: &mut String, rule: &NftFirewallRule) {
+    if let Some(protocol) = rule.protocol {
+        selectors.push_str(match protocol {
+            FirewallProtocol::Tcp => " tcp",
+            FirewallProtocol::Udp => " udp",
+            FirewallProtocol::Icmp => " icmp",
+            FirewallProtocol::Icmpv6 => " icmpv6",
+        });
+    }
+    if let Some(ports) = &rule.ports {
+        let ports = ports.iter().map(u16::to_string).collect::<Vec<_>>().join(", ");
+        selectors.push_str(&format!(" dport {{ {ports} }}"));
     }
 }
 
@@ -463,6 +570,32 @@ egress = "awg-primary"
     }
 
     #[test]
+    fn managed_input_and_output_default_to_deny_with_explicit_allow_exceptions() {
+        let mut config = sample_config();
+        config.firewall.input.rules.push(FirewallRule {
+            interface: "wg-server".to_owned(),
+            source: Some(vec!["10.0.0.2/32".to_owned()]),
+            destination: None,
+            protocol: Some(FirewallProtocol::Tcp),
+            ports: Some(vec![22, 443]),
+        });
+        config.firewall.output.rules.push(FirewallRule {
+            interface: "awg-primary".to_owned(),
+            source: None,
+            destination: Some(vec!["10.0.0.0/24".to_owned()]),
+            protocol: Some(FirewallProtocol::Udp),
+            ports: Some(vec![53]),
+        });
+
+        let script = RoutingPlan::from_config(&config).nft_script();
+        assert!(script.contains("input iifname \\"wg-server\\" ip saddr 10.0.0.2/32 tcp dport { 22, 443 } ct state new,established,related accept"));
+        assert!(script.contains("input iifname @managed_interfaces drop"));
+        assert!(script.contains("output oifname \\"awg-primary\\" ip daddr 10.0.0.0/24 udp dport { 53 } ct state new,established,related accept"));
+        assert!(script.contains("output oifname @managed_interfaces drop"));
+        assert!(script.contains("forward iifname @managed_interfaces drop"));
+    }
+
+    #[test]
     fn rule_without_source_or_destination_matches_entire_ingress_interface() {
         let mut config = sample_config();
         config.routing.rules[0].source = None;
@@ -522,7 +655,7 @@ egress = "awg-primary"
         assert!(script.contains("elements = { \"awg-primary\", \"awg-secondary\", \"wg-server\" }"));
         assert!(script.contains("forward iifname @managed_interfaces drop"));
         assert!(!script.contains("ipv6_blocked_interfaces"));
-        assert!(!script.contains("hook output"));
+        assert!(script.contains("add chain inet vpn_relay output { type filter hook output priority filter; policy accept; }"));
         assert!(script.contains("forward oifname @managed_interfaces drop"));
         assert!(script.contains("iifname @managed_interfaces meta mark set 0"));
         assert!(script.contains("ct direction reply meta mark set 0"));

@@ -111,6 +111,17 @@
 
 ### Реализованная часть первого прохода
 
+- [x] Генератор создаёт INPUT и OUTPUT base chains при любой конфигурации.
+- [x] INPUT разрешает только совпавшие явные allow rules, затем блокирует
+  весь оставшийся managed ingress.
+- [x] OUTPUT разрешает только совпавшие явные allow rules, затем блокирует
+  весь оставшийся managed egress.
+- [x] Нет общего established/related accept, обходящего INPUT deny.
+- [x] OUTPUT проверяет фактический oifname; outer UDP, ушедший через underlay,
+  не попадает под managed OUTPUT deny.
+- [ ] Проверить ruleset командой nft в network namespace.
+- [ ] Добавить packet-level netns tests для INPUT/OUTPUT.
+
 - [x] Добавлен `[firewall]` с независимыми `input.rules` и `output.rules`.
 - [x] Правило разрешения привязано к одному существующему managed interface.
 - [x] Поддержаны source CIDR для INPUT и destination CIDR для OUTPUT.
@@ -218,7 +229,7 @@ to = "203.0.113.10"
 
 - [ ] Создавать output base chain независимо от IPv6-disabled gating.
 - [x] Фильтровать только пакеты с фактическим managed TUN egress.
-- [ ] Определить безопасную модель default deny и явных разрешений.
+- [x] Определить безопасную модель default deny и явных разрешений.
 - [ ] Не блокировать socket-marked outer UDP, направленный через underlay.
 - [ ] Не влиять на физический/unmanaged egress.
 - [ ] Проверить local IPv4/IPv6, TCP/UDP/ICMP и policy-routing marks.
