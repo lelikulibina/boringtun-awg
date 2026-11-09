@@ -878,11 +878,20 @@ egress = "awg-uplink"
 
     #[test]
     fn static_snat_family_must_match_the_intersection_of_both_selectors() {
-        let input = valid_config().replacen(
-            "destination = \"0.0.0.0/0\"",
-            "source = [\"10.10.0.0/24\", \"2001:db8::/32\"]\ndestination = \"0.0.0.0/0\"\nnat = \"snat\"\nnat_to = \"2001:db8::10\"",
-            1,
-        );
+        let input = valid_config()
+            .replace(
+                "[interfaces.wg-server]",
+                "[interfaces.wg-server]\nipv6_enabled = true",
+            )
+            .replace(
+                "[interfaces.awg-primary]",
+                "[interfaces.awg-primary]\nipv6_enabled = true",
+            )
+            .replacen(
+                "destination = \"0.0.0.0/0\"",
+                "source = [\"10.10.0.0/24\", \"2001:db8::/32\"]\ndestination = \"0.0.0.0/0\"\nnat = \"snat\"\nnat_to = \"2001:db8::10\"",
+                1,
+            );
         let error = Config::parse_toml(&input).unwrap_err();
         assert!(error
             .to_string()

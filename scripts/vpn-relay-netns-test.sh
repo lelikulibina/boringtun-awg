@@ -232,13 +232,13 @@ for family in -4 -6; do
     grep -Fq 'default dev awg-primary proto 242' <<<"$routes" || fail "primary route lacks vpn-relay ownership tag for $family"
 done
 rules="$(ip -n "$NS" -4 rule show)"
-grep -Fq 'fwmark 0x80000001 lookup 10001 proto 242' <<<"$rules" || fail "secondary IPv4 rule lacks vpn-relay ownership tag"
+grep -Fq 'fwmark 0x80000001 lookup 10001 proto 242' <<<"$rules" || fail "secondary IPv4 rule lacks vpn-relay ownership tag; rules: $rules"
 routes="$(ip -n "$NS" -4 route show table 10001)"
 grep -Fq 'default dev awg-secondary proto 242' <<<"$routes" || fail "secondary IPv4 route lacks vpn-relay ownership tag"
 if ip -n "$NS" -6 rule show | grep -Fq 'fwmark 0x80000001 lookup 10001'; then
     fail "IPv6 policy rule was installed for IPv6-disabled egress"
 fi
-if ip -n "$NS" -6 route show table 10001 | grep -q .; then
+if ip -n "$NS" -6 route show table 10001 2>/dev/null | grep -q .; then
     fail "IPv6 route was installed for IPv6-disabled egress"
 fi
 
