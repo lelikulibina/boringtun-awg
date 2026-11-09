@@ -310,9 +310,10 @@ unmanaged output остаётся неизменным.
 - [x] Не удалять чужие ip rules/routes/nftables objects; проверены foreign
   nftables table/base chains, masked ip rules и IPv4/IPv6 routes.
 - [~] Проверить частичные ошибки на каждом шаге установки: уже проверен отказ
-  после частичного создания TUN; добавлены failure-injection сценарии отказа
-  после установки IPv4 policy route и при включении IPv6 forwarding, их CI ещё
-  ожидается (commit db3be5a).
+  после частичного создания TUN; failure-injection сценарии отказа после
+  установки IPv4 policy route и при включении IPv6 forwarding подтверждены
+  network-namespace job CI 42670711006. Полный перебор всех возможных точек
+  отказа пока не выполнен.
 - [x] Проверить shutdown, повторный запуск, lock и network namespace lifecycle
   (CI 42665725191).
 - [ ] Проверить поведение при удалении/переименовании интерфейса во время работы.
@@ -357,7 +358,7 @@ unmanaged output остаётся неизменным.
 | 2026-11-09 | Packet-level ICMPv6 INPUT/OUTPUT deny probes | CI 42668190390: WG и AWG peer traffic tests, включая ICMPv6 allow и deny по source/destination selectors, успешно прошли | Завершено |
 | 2026-11-09 | Проверка вложенных AllowedIPs между peers | Commit 84ab63a; CI 42669268349: IPv4 /24 и IPv6 /64 для первого peer, более специфичные /32 и /128 для второго; spoof probes не достигли router TUN | Завершено |
 | 2026-11-09 | Успешная полная проверка firewall/NAT и peer traffic | CI 42668190390: all-systems-go success; rustfmt, clippy, tests, feature checks, AWG 3.1, netns, WG/AWG packet tests и multi-uplink прошли | Завершено |
-| 2026-11-09 | Добавлены failure-injection проверки частичного policy routing и IPv6 forwarding | Commit db3be5a; проверяется cleanup IPv4 routes/rules после отказа IPv6 route replace и restore IPv4 forwarding после отказа IPv6 sysctl; ожидает CI | В работе |
+| 2026-11-09 | Добавлены failure-injection проверки частичного policy routing и IPv6 forwarding | Commit db3be5a; network-namespace job CI 42670711006 успешно проверил cleanup IPv4 routes/rules после отказа IPv6 route replace и restore IPv4 forwarding после отказа IPv6 sysctl | Подтверждено CI |
 
 ## 14. Правила ведения плана
 
@@ -402,3 +403,5 @@ unmanaged output остаётся неизменным.
 
 
 | 2026-11-09 | Проверка coexistence с чужими nftables base chains | Network-namespace тест создаёт отдельную таблицу с INPUT/FORWARD/OUTPUT base chains на более раннем hook priority; проверяет их наличие после запуска и штатного shutdown vpn-relay | Ожидает CI |
+
+| 2026-11-09 | Добавлены packet-level loopback и foreign INPUT/OUTPUT base-chain probes | Проверяется доступность локального TCP listener через 127.0.0.1 и то, что foreign accept chains с priority -10 не отменяют последующий deny vpn-relay; ожидает CI | В работе |

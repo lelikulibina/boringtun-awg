@@ -324,6 +324,21 @@ for _ in $(seq 1 40); do
 done
 [[ "$routing_ready" -eq 1 ]] || fail "daemon routing setup did not become ready (socket: $socket_route; inner: $inner_route)"
 
+# A foreign base chain at an earlier priority must not override vpn-relay's
+# later managed-interface verdict. Its accept verdict is deliberately broad.
+ip netns exec "$SERVER_NS" nft -f - <<NFT
+table inet foreign_filter_$SUFFIX {
+    chain input {
+        type filter hook input priority -10; policy accept;
+        counter accept
+    }
+    chain output {
+        type filter hook output priority -10; policy accept;
+        counter accept
+    }
+}
+NFT
+
 # Outer encrypted UDP sockets must use the main underlay route, while
 # packets addressed to the remote tunnel peer must use the TUN interface.
 # This catches accidental socket-mark overlap and tunnel-loop regressions.
@@ -379,6 +394,17 @@ start_tcp_listener6 "$CLIENT_NS" 8082 client-tcp6-8082.log
 start_tcp_listener6 "$CLIENT_NS" 8083 client-tcp6-8083.log
 sleep 0.5
 
+# Local loopback traffic must remain outside managed-TUN INPUT/OUTPUT policy.
+ip netns exec "$SERVER_NS" python3 - <<'PY'
+import socket
+with socket.create_connection(("127.0.0.1", 8081), timeout=2) as conn:
+    conn.settimeout(2)
+    response = conn.recv(2)
+    if response != b"ok":
+        raise SystemExit(f"loopback returned unexpected payload: {response!r}")
+print("loopback INPUT/OUTPUT bypass: allowed")
+PY
+
 expect_tcp() {
     local ns="$1" address="$2" port="$3" expected="$4" label="$5"
     local source
@@ -406,6 +432,11 @@ expect_tcp "$CLIENT_NS" 10.77.0.1 8080 allow "client to server allowed INPUT/OUT
 expect_tcp "$SERVER_NS" 10.77.0.2 8080 allow "server to client allowed INPUT/OUTPUT"
 expect_tcp "$CLIENT_NS" 10.77.0.1 8081 deny "server INPUT default deny"
 expect_tcp "$SERVER_NS" 10.77.0.2 8081 deny "server OUTPUT default deny"
+
+# Both foreign chains accepted the packets first; vpn-relay must still apply
+# its later deny verdict. Require packet counters to prove hook traversal.
+foreign_counters="$(ip netns exec "$SERVER_NS" nft list table inet "foreign_filter_$SUFFIX")"
+grep -Eq 'counter packets [1-9][0-9]* bytes' <<<"$foreign_counters" || fail "foreign INPUT/OUTPUT accept chains did not observe packet traffic"
 expect_tcp6() {
     local ns="$1" address="$2" port="$3" expected="$4" label="$5"
     local source
