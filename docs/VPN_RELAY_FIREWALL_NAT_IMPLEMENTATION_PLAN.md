@@ -533,37 +533,42 @@ Noise sessions для peer, чьи параметры не менялись; н�
   private key, AWG parameters, socket fwmark и набора интерфейсов.
 - [x] Добавить runtime API, который принимает полный candidate config, выполняет
   validation/preflight всех peer endpoints и только затем запускает transaction.
-- [ ] Разделить подготовку и commit peer sets для нескольких tunnel devices;
-  обеспечить rollback уже committed devices при последующем отказе.
-- [ ] Реализовать безопасный переход nftables и policy routing с явными
-  операциями prepare/apply/restore, не используя destructive cleanup нового
-  плана против ещё активного старого плана.
-- [ ] Обеспечить fail-closed поведение при смене routing marks и route tables;
-  отдельно проверить пересечение старых и новых marks/priorities.
-- [ ] Обновлять authoritative config/runtime plan только после полного commit;
-  rollback failure переводить daemon в fatal state.
+- [x] Разделить подготовку и commit peer sets для нескольких tunnel devices;
+  обеспечить rollback уже committed devices при последующем отказе. Runtime заранее
+  preflight-ит все изменённые interfaces и выполняет rollback в обратном порядке.
+- [x] Реализовать безопасный переход nftables и policy routing с отдельными
+  операциями staging новых egress routes, атомарного nftables switch и cleanup
+  старых routes только после switch. Старый план не удаляется при rollback нового.
+- [x] Обеспечить fail-closed поведение при смене routing marks и route tables:
+  mark ranges обязаны быть непересекающимися; allocator проверяет занятые route
+  tables, priorities и чужие ip rules, ссылающиеся на candidate table IDs.
+- [x] Обновлять authoritative config/runtime plan только после успешного
+  peer+nft commit; ошибки rollback и cleanup переводят daemon в fatal state.
 - [ ] Добавить failure-injection и packet-level tests для успешного reload,
   ошибки nft transaction, ошибки route install, rollback firewall/routes,
   multi-interface peer rollback и непрерывного трафика.
 - [x] Добавить control socket request и CLI для полного reload конфигурации;
   существующий `--replace-peers` оставить совместимым либо явно deprecated.
-- [ ] Подтвердить все изменения полным CI, включая network-namespace и packet tests.
+- [x] Подтвердить текущий этап полным CI, включая network-namespace и packet
+  tests (run 42705792288, all-systems-go success). Дополнительные failure-injection
+  сценарии остаются отдельной задачей.
 
 Архитектурные ограничения, выявленные при исследовании:
 1. `linux::apply_nft` заменяет всю принадлежащую vpn-relay таблицу одной
    nftables transaction. Это атомарно для nftables, но не атомарно совместно
    с iproute2.
-2. `linux::apply_policy_routing` последовательно удаляет/создаёт ip rules и
-   routes. При ошибке вызывает `remove_policy_routing(new_plan)`; если новый
-   и старый планы используют одинаковые marks/table IDs, такой rollback может
-   удалить ресурсы старой активной конфигурации. Для reload эта функция
-   непригодна без выделенного transaction/restore API.
-3. `TunnelHandle::replace_peers` выполняет commit одного device, но trait не
-   предоставляет отдельные prepare/commit/restore методы. Preflight DNS и
-   формирование peer configs сейчас происходят внутри backend, поэтому
-   multi-interface transaction потребует расширения backend contract.
-4. `Runtime` хранит только текущие interfaces и routing plan; полный исходный
-   `Config` не сохраняется. Authoritative config snapshot потребуется добавить.
+2. `linux::apply_policy_routing` по-прежнему используется для первоначального
+   запуска. Runtime reload не вызывает её: для перехода используются отдельные
+   `apply_egress_policy_routing`/`remove_egress_policy_routing` операции с
+   disjoint route tables и priorities. Сетевой тест подтвердил rollback после
+   nftables failure и сохранение чужих ресурсов.
+3. Peer configs и DNS preflight выполняются до commit через backend registry;
+   `TunnelHandle::replace_peers` атомарен в пределах одного device. Runtime
+   выполняет последовательный multi-device commit и rollback, но глобально
+   атомарного commit между несколькими device handles нет.
+4. `Runtime` сохраняет полный authoritative `Config`, prepared peer snapshots
+   и текущий routing plan. Динамически выделенные route table IDs/priorities
+   сохраняются при peer-only и firewall-only reload.
 5. Immutable AWG config сравнивается в пределах одного процесса по Debug
    representation, так как используемый тип AmneziaWgConfig не предоставляет
    PartialEq в текущем контракте зависимости. Это ограничение следует
@@ -572,23 +577,30 @@ Noise sessions для peer, чьи параметры не менялись; н�
 | 2026-11-09 | Добавлена проверка совместимости candidate config для будущего reload | Метод `Config::validate_reload_compatibility` и regression tests; CI ещё не запускался | Реализовано, ожидает CI |
 
 
-Дополнение к этапу 10 (проектное ограничение первой версии reload):
-- Для безопасного атомарного переключения первой версией разрешено менять
-  routing decisions, source/destination selectors, NAT и firewall только при
-  неизменных `routing.mark_base`, наборе egress-интерфейсов и socket marks.
-  Это гарантирует, что соответствующие ip rules/routes остаются прежними;
-  меняется только nftables classifier/table одной kernel transaction.
-- Изменение набора egress или mark base пока требует restart. Поддержка
-  миграции iproute2 ресурсов будет отдельным этапом после реализации и
-  failure-injection тестирования route transaction.
-- Runtime reload реализуется в порядке: candidate validation → preflight DNS и
-  всех изменённых peer sets → последовательный commit peer sets → атомарная
-  nftables transaction → обновление authoritative Config/plan. При ошибке
-  commit или nftables выполняется обратная замена уже изменённых peer sets
-  с сохранёнными прежними endpoint resolutions. Ошибка rollback переводит
-  daemon в fatal shutdown, а не оставляет его обслуживать неопределённое
-  состояние.
-
+Текущее поведение runtime reload:
+- Разрешено менять peers, routing decisions/selectors/NAT, INPUT/OUTPUT firewall,
+  `routing.mark_base` и набор egress-интерфейсов. Старый и новый routing mark
+  ranges должны быть непересекающимися.
+- При смене egress/marks allocator подбирает свободные route table IDs и
+  ip-rule priorities. До nftables switch устанавливаются новые egress routes;
+  nftables classifier переключается одной kernel transaction; старые routes
+  удаляются только после успешного switch.
+- Allocator сохраняет чужие route tables и ip rules, в том числе rules,
+  ссылающиеся на table ID с иным priority/fwmark. При неизменных egress/marks
+  действующие динамические table IDs/priorities переносятся в новый plan, чтобы
+  последующие peer-only/firewall-only reload не пытались мигрировать routes.
+- Порядок: candidate validation → peer/DNS preflight → staging новых routes →
+  последовательный peer commit → nftables transaction → authoritative Config
+  snapshot update → cleanup старых routes. Ошибки peer/nft приводят к rollback
+  peers и staged routes; неуспешный rollback переводит daemon в fatal shutdown.
+- Ещё не завершены failure-injection тест ошибки route install, тест rollback
+  нескольких peer devices и проверка непрерывного трафика во время reload.
+- **Открытый security issue:** `RoutingPlan::from_config` назначает
+  `conntrack_mark` decision IDs по текущему порядку правил. Добавление,
+  удаление или перестановка решений может повторно использовать ID, пока
+  conntrack entries со старой конфигурацией ещё существуют. До завершения
+  stable conntrack decision identity нельзя считать reload полностью безопасным
+  для долгоживущих соединений.
 
 | 2026-11-09 | Реализован runtime reload и интерфейс управления | Runtime сохраняет authoritative Config и предыдущие endpoint resolutions; выполняет preflight всех изменённых peer sets, sequential commit с rollback, atomic nftables replacement и fatal shutdown при rollback failure. Добавлены control socket операции `reload_config`/`replace_peers`, CLI `--reload`, README и network-namespace failure-injection test. CI 42698384452 подтвердил базовый runtime commit: tests, clippy, rustfmt, feature checks, AWG 3.1, netns packet tests и all-systems-go прошли; CLI и новые reload netns сценарии ожидают CI | Реализовано, ожидает расширенного CI |
 
@@ -598,3 +610,6 @@ Noise sessions для peer, чьи параметры не менялись; н�
 Дополнительная защита динамического выделения policy-routing ресурсов:
 - При выборе route table проверяются не только существующие маршруты, но и любые чужие ip rules, ссылающиеся на этот table ID, даже если у них другой priority и fwmark.
 - Netns regression test резервирует первый динамический table ID 11000 чужим маршрутом и правилом на priority 12000; reload обязан выбрать следующий свободный слот и сохранить чужие ресурсы без изменений.
+
+
+| 2026-11-10 | Подтверждена миграция policy-routing и сохранение dynamic slots | Run 42705792288: rustfmt, clippy, check_features, tests, AWG 3.1, isolated namespace reload/failure injection, bidirectional WG/AWG traffic и packet-level multi-uplink — success; all-systems-go success. Windows job skipped | Подтверждено CI |
