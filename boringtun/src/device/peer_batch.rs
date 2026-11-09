@@ -251,7 +251,7 @@ mod tests {
         .expect("create test tunnel device");
 
         device.set_private_key(x25519::StaticSecret::from([1u8; 32]));
-        let public_key = x25519::PublicKey::from(x25519::StaticSecret::from([2u8; 32]));
+        let public_key = x25519::PublicKey::from(&x25519::StaticSecret::from([2u8; 32]));
         let psk = [3u8; 32];
         let endpoint = "127.0.0.1:51820".parse().unwrap();
         let first_prefix = AllowedIP {
