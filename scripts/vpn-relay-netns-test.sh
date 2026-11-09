@@ -19,7 +19,7 @@ trap cleanup EXIT
 
 fail() {
     echo "vpn-relay namespace test: $*" >&2
-    for log in "$TMP/daemon.log" "$TMP/conflict.log" "$TMP/policy-conflict.log" "$TMP/route-conflict.log" "$TMP/policy-shadow-conflict.log" "$TMP/partial-setup-conflict.log" "$TMP/partial-policy-route.log" "$TMP/partial-forwarding.log"; do
+    for log in "$TMP/daemon.log" "$TMP/conflict.log" "$TMP/policy-conflict.log" "$TMP/route-conflict.log" "$TMP/policy-shadow-conflict.log" "$TMP/partial-setup-conflict.log" "$TMP/partial-policy-route.log" "$TMP/partial-forwarding.log" "$TMP/reload-failure.log" "$TMP/reload-immutable.log"; do
         if [[ -f "$log" ]]; then
             cat "$log" >&2
         fi
@@ -320,7 +320,19 @@ for table in 10000 10001; do
     done
 done
 
-ip netns exec "$NS" "$BIN" --config "$TMP/config.toml" >"$TMP/daemon.log" 2>&1 &
+REAL_NFT="$(command -v nft)"
+mkdir -p "$TMP/fail-nft-bin"
+cat >"$TMP/fail-nft-bin/nft" <<EOF
+#!/bin/sh
+if [ -f "$TMP/fail-nft" ] && [ "$1" = "-f" ]; then
+    echo "injected nftables transaction failure" >&2
+    exit 42
+fi
+exec "$REAL_NFT" "$@"
+EOF
+chmod +x "$TMP/fail-nft-bin/nft"
+
+ip netns exec "$NS" env PATH="$TMP/fail-nft-bin:$PATH" "$BIN" --config "$TMP/config.toml" >"$TMP/daemon.log" 2>&1 &
 DAEMON_PID=$!
 
 for _ in $(seq 1 30); do
@@ -413,6 +425,70 @@ grep -Fq 'ct direction reply meta mark set 0' <<<"$chain" || fail "reply packet 
 
 grep -Eq 'iifname "wg-server" ct state new ip daddr 195.142.0.0/16 meta mark set 0x80000001 ct mark set .*0x40010000 return' <<<"$chain" || fail "secondary exception rule missing"
 grep -Eq 'iifname "wg-server" ct state new ip daddr 0.0.0.0/0 meta mark set 0x80000000 ct mark set .*0x40030000 return' <<<"$chain" || fail "primary default rule missing"
+
+# Exercise full runtime reload through the Unix control socket. The candidate
+# changes a routing selector, adds an INPUT exception and installs a peer. First
+# force nftables to fail after the peer commit; the daemon must roll the peer set
+# back and remain healthy with the old nftables table still active.
+cp "$TMP/config.toml" "$TMP/config-before-reload.toml"
+sed -i 's/195.142.0.0\/16/198.51.100.0\/24/' "$TMP/config.toml"
+cat >>"$TMP/config.toml" <<'TOML'
+
+[[interfaces.wg-server.peers]]
+public_key = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE="
+allowed_ips = ["10.10.0.2/32"]
+
+[firewall.input]
+[[firewall.input.rules]]
+interface = "wg-server"
+source = "10.10.0.2/32"
+protocol = "udp"
+ports = [53]
+TOML
+
+touch "$TMP/fail-nft"
+if ip netns exec "$NS" "$BIN" --config "$TMP/config.toml" --reload >"$TMP/reload-failure.log" 2>&1; then
+    fail "runtime reload unexpectedly succeeded with injected nftables failure"
+fi
+rm -f "$TMP/fail-nft"
+kill -0 "$DAEMON_PID" 2>/dev/null || fail "daemon exited after successful peer rollback"
+chain_after_failed_reload="$(ip netns exec "$NS" nft list chain inet vpn_relay_it prerouting)"
+grep -Fq 'ip daddr 195.142.0.0/16' <<<"$chain_after_failed_reload" || fail "failed reload changed the active routing classifier"
+if grep -Fq 'ip daddr 198.51.100.0/24' <<<"$chain_after_failed_reload"; then
+    fail "failed reload partially installed the new routing classifier"
+fi
+
+# Retry without failure injection. The new routing selector, firewall exception
+# and peer set must become active together from the daemon's point of view.
+ip netns exec "$NS" "$BIN" --config "$TMP/config.toml" --reload >"$TMP/reload-success.log" 2>&1 || fail "runtime reload failed after removing nftables failure injection"
+chain_after_reload="$(ip netns exec "$NS" nft list chain inet vpn_relay_it prerouting)"
+grep -Fq 'ip daddr 198.51.100.0/24' <<<"$chain_after_reload" || fail "successful reload did not install the new routing selector"
+if grep -Fq 'ip daddr 195.142.0.0/16' <<<"$chain_after_reload"; then
+    fail "successful reload retained the old routing selector"
+fi
+input_after_reload="$(ip netns exec "$NS" nft list chain inet vpn_relay_it input)"
+grep -Fq 'ip saddr 10.10.0.2 udp dport 53' <<<"$input_after_reload" || fail "successful reload did not install the new INPUT exception"
+for family in -4 -6; do
+    ip -n "$NS" "$family" rule show | grep -Fq 'fwmark 0x80000000 lookup 10000 proto 242' || fail "reload changed the stable policy-routing rule for $family"
+done
+
+# The legacy peer-only operation must remain available and must not replace the
+# current firewall/routing plan with unrelated changes from the file.
+sed -i 's/10.10.0.2\/32/10.10.0.3\/32/g' "$TMP/config.toml"
+ip netns exec "$NS" "$BIN" --config "$TMP/config.toml" --replace-peers wg-server >"$TMP/replace-peers.log" 2>&1 || fail "legacy peer-only replacement failed after runtime reload"
+kill -0 "$DAEMON_PID" 2>/dev/null || fail "daemon exited after peer-only replacement"
+
+# An immutable tunnel parameter change must be rejected without disturbing the
+# currently active runtime configuration.
+cp "$TMP/config.toml" "$TMP/config-before-immutable-reload.toml"
+sed -i 's/mtu = 1380/mtu = 1400/g' "$TMP/config.toml"
+if ip netns exec "$NS" "$BIN" --config "$TMP/config.toml" --reload >"$TMP/reload-immutable.log" 2>&1; then
+    fail "runtime reload accepted an immutable tunnel MTU change"
+fi
+mv "$TMP/config-before-immutable-reload.toml" "$TMP/config.toml"
+kill -0 "$DAEMON_PID" 2>/dev/null || fail "daemon exited after rejecting an immutable reload"
+input_after_rejected_reload="$(ip netns exec "$NS" nft list chain inet vpn_relay_it input)"
+grep -Fq 'ip saddr 10.10.0.2 udp dport 53' <<<"$input_after_rejected_reload" || fail "rejected immutable reload changed the active firewall policy"
 
 kill -TERM "$DAEMON_PID"
 wait "$DAEMON_PID" || fail "daemon returned an error during graceful shutdown"

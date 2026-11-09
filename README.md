@@ -87,6 +87,32 @@ Replace all example keys and endpoint hostnames before starting the daemon. Then
 sudo target/debug/vpn-relay --config /etc/vpn-relay/config.toml
 ```
 
+To apply a modified configuration without restarting the daemon, first edit the
+same TOML file and then run:
+
+```sh
+sudo target/debug/vpn-relay --config /etc/vpn-relay/config.toml --reload
+```
+
+The reload operation validates the complete candidate configuration and
+preflights changed peer endpoints before touching live state. Peer sets are
+committed with rollback on failure, and routing/firewall/NAT rules are switched
+through one nftables transaction. Peer commits across multiple tunnel devices
+are sequential rather than globally simultaneous; if a later step fails, prior
+peer sets are restored. A failed rollback causes the daemon to stop.
+
+The first reload implementation deliberately keeps policy-routing resources
+stable. It can change peer sets, routing decisions/selectors/NAT and INPUT/OUTPUT
+firewall rules, but it rejects changes to the interface set or tunnel identity
+(type, addresses, MTU, IPv6 setting, listen port, private key, socket mark and
+AWG parameters), `routing.mark_base`, the set of routing egress interfaces,
+`daemon.nft_table`, `daemon.manage_ip_forwarding` and `daemon.log_level`.
+Those changes require a restart. The statistics interval may be changed.
+
+The existing `--replace-peers INTERFACE` command remains available for updating
+one interface's peer set from the configuration file without applying other
+file changes.
+
 The daemon requires Linux TUN support, `iproute2`, and `nftables`. It installs policy routes and an nftables table named in `[daemon].nft_table`; the table is tagged as daemon-owned and conflicting unowned tables or policy-routing slots are rejected. SIGINT/SIGTERM triggers worker shutdown and cleanup.
 
 A privileged network-namespace smoke/integration test is available at `scripts/vpn-relay-netns-test.sh`. It exercises WG/AWG device creation, IPv4/IPv6 fwmark routing, nftables rule installation, collision rollback, and graceful cleanup. The daemon is experimental; run it in an isolated test environment before production use.

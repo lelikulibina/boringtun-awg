@@ -103,10 +103,16 @@ struct ForwardingState {
     ipv6: String,
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
-struct PeerReplacementRequest {
-    interface: String,
-    peers: Vec<PeerConfig>,
+#[derive(serde::Serialize, serde::Deserialize, Debug, Eq, PartialEq)]
+#[serde(tag = "operation", rename_all = "snake_case")]
+enum ControlRequest {
+    ReplacePeers {
+        interface: String,
+        peers: Vec<PeerConfig>,
+    },
+    ReloadConfig {
+        toml: String,
+    },
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -406,17 +412,29 @@ impl Runtime {
                 ok: false,
                 error: Some("request exceeds 1 MiB limit".to_owned()),
             },
-            Ok(_) => match serde_json::from_slice::<PeerReplacementRequest>(&payload) {
-                Ok(request) => match self.replace_peers(&request.interface, request.peers) {
-                    Ok(()) => ControlResponse {
-                        ok: true,
-                        error: None,
-                    },
-                    Err(error) => ControlResponse {
-                        ok: false,
-                        error: Some(error.to_string()),
-                    },
-                },
+            Ok(_) => match serde_json::from_slice::<ControlRequest>(&payload) {
+                Ok(request) => {
+                    let result = match request {
+                        ControlRequest::ReplacePeers { interface, peers } => {
+                            self.replace_peers(&interface, peers)
+                        }
+                        ControlRequest::ReloadConfig { toml } => Config::parse_toml(&toml)
+                            .map_err(|error| {
+                                RuntimeError::Configuration(error.to_string())
+                            })
+                            .and_then(|candidate| self.reload_config(candidate)),
+                    };
+                    match result {
+                        Ok(()) => ControlResponse {
+                            ok: true,
+                            error: None,
+                        },
+                        Err(error) => ControlResponse {
+                            ok: false,
+                            error: Some(error.to_string()),
+                        },
+                    }
+                }
                 Err(error) => ControlResponse {
                     ok: false,
                     error: Some(format!("invalid control request: {error}")),
@@ -444,13 +462,22 @@ impl Runtime {
         interface: String,
         peers: Vec<PeerConfig>,
     ) -> Result<(), RuntimeError> {
+        Self::send_control_request(ControlRequest::ReplacePeers { interface, peers })
+    }
+
+    /// Send a complete TOML configuration to the running daemon for validation
+    /// and transactional application.
+    pub fn request_config_reload(toml: String) -> Result<(), RuntimeError> {
+        Self::send_control_request(ControlRequest::ReloadConfig { toml })
+    }
+
+    fn send_control_request(request: ControlRequest) -> Result<(), RuntimeError> {
         let path = InstanceLock::current_control_path()?;
         let mut stream =
             UnixStream::connect(&path).map_err(|error| RuntimeError::Control(error.to_string()))?;
         stream
-            .set_read_timeout(Some(Duration::from_secs(10)))
+            .set_read_timeout(Some(Duration::from_secs(300)))
             .map_err(|error| RuntimeError::Control(error.to_string()))?;
-        let request = PeerReplacementRequest { interface, peers };
         serde_json::to_writer(&mut stream, &request)
             .map_err(|error| RuntimeError::Control(error.to_string()))?;
         stream
@@ -644,6 +671,31 @@ mod tests {
         drop(first);
         assert!(InstanceLock::acquire(&path).is_ok());
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn control_request_protocol_supports_peer_replacement_and_full_reload() {
+        let peer_request = ControlRequest::ReplacePeers {
+            interface: "wg0".to_owned(),
+            peers: Vec::new(),
+        };
+        let peer_json = serde_json::to_vec(&peer_request).unwrap();
+        assert!(String::from_utf8_lossy(&peer_json).contains("\"operation\":\"replace_peers\""));
+        assert_eq!(
+            serde_json::from_slice::<ControlRequest>(&peer_json).unwrap(),
+            peer_request
+        );
+
+        let reload_request = ControlRequest::ReloadConfig {
+            toml: "[interfaces.wg0]".to_owned(),
+        };
+        let reload_json = serde_json::to_vec(&reload_request).unwrap();
+        assert!(String::from_utf8_lossy(&reload_json).contains("\"operation\":\"reload_config\""));
+        assert_eq!(
+            serde_json::from_slice::<ControlRequest>(&reload_json).unwrap(),
+            reload_request
+        );
+        assert!(serde_json::from_slice::<ControlRequest>(br#"{"operation":"unknown"}"#).is_err());
     }
 
     #[test]

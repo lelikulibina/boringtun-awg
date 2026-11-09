@@ -531,7 +531,7 @@ Noise sessions для peer, чьи параметры не менялись; н�
   lifecycle ресурсов daemon.
 - [x] Добавить тесты на допустимые изменения peer/routing и отказ при изменении
   private key, AWG parameters, socket fwmark и набора интерфейсов.
-- [ ] Добавить runtime API, который принимает полный candidate config, выполняет
+- [x] Добавить runtime API, который принимает полный candidate config, выполняет
   validation/preflight всех peer endpoints и только затем запускает transaction.
 - [ ] Разделить подготовку и commit peer sets для нескольких tunnel devices;
   обеспечить rollback уже committed devices при последующем отказе.
@@ -545,7 +545,7 @@ Noise sessions для peer, чьи параметры не менялись; н�
 - [ ] Добавить failure-injection и packet-level tests для успешного reload,
   ошибки nft transaction, ошибки route install, rollback firewall/routes,
   multi-interface peer rollback и непрерывного трафика.
-- [ ] Добавить control socket request и CLI для полного reload конфигурации;
+- [x] Добавить control socket request и CLI для полного reload конфигурации;
   существующий `--replace-peers` оставить совместимым либо явно deprecated.
 - [ ] Подтвердить все изменения полным CI, включая network-namespace и packet tests.
 
@@ -588,3 +588,6 @@ Noise sessions для peer, чьи параметры не менялись; н�
   с сохранёнными прежними endpoint resolutions. Ошибка rollback переводит
   daemon в fatal shutdown, а не оставляет его обслуживать неопределённое
   состояние.
+
+
+| 2026-11-09 | Реализован runtime reload и интерфейс управления | Runtime сохраняет authoritative Config и предыдущие endpoint resolutions; выполняет preflight всех изменённых peer sets, sequential commit с rollback, atomic nftables replacement и fatal shutdown при rollback failure. Добавлены control socket операции `reload_config`/`replace_peers`, CLI `--reload`, README и network-namespace failure-injection test. CI 42698384452 подтвердил базовый runtime commit: tests, clippy, rustfmt, feature checks, AWG 3.1, netns packet tests и all-systems-go прошли; CLI и новые reload netns сценарии ожидают CI | Реализовано, ожидает расширенного CI |

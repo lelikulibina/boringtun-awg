@@ -23,6 +23,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut config_path = PathBuf::from("/etc/vpn-relay/config.toml");
     let mut check_only = false;
     let mut replace_peers_interface: Option<String> = None;
+    let mut reload_config_requested = false;
     let mut import_args: Option<(PathBuf, String)> = None;
     let mut yes = false;
     while let Some(arg) = args.next() {
@@ -37,6 +38,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                         .ok_or("--replace-peers requires an interface name")?,
                 )
             }
+            "--reload" => reload_config_requested = true,
             "--yes" | "-y" => yes = true,
             "--import" => {
                 let source = args.next().ok_or("--import requires a source .conf path")?;
@@ -44,11 +46,17 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 import_args = Some((source.into(), name));
             }
             "-h" | "--help" => {
-                println!("Usage:\n  vpn-relay [--config PATH] [--check]\n  vpn-relay [--config PATH] --replace-peers INTERFACE\n  vpn-relay [--config PATH] --import WG.conf INTERFACE [--yes]\n\nOptions:\n  -c, --config PATH  Configuration file (default: /etc/vpn-relay/config.toml)\n      --check        Validate configuration and exit\n      --replace-peers INTERFACE  Replace this interface peer set in a running daemon\n      --import       Import WireGuard/AmneziaWG configuration\n  -y, --yes          Replace an existing interface without prompting");
+                println!("Usage:\n  vpn-relay [--config PATH] [--check]\n  vpn-relay [--config PATH] --replace-peers INTERFACE\n  vpn-relay [--config PATH] --reload\n  vpn-relay [--config PATH] --import WG.conf INTERFACE [--yes]\n\nOptions:\n  -c, --config PATH  Configuration file (default: /etc/vpn-relay/config.toml)\n      --check        Validate configuration and exit\n      --replace-peers INTERFACE  Replace this interface peer set in a running daemon\n      --reload       Apply the complete config file to a running daemon\n      --import       Import WireGuard/AmneziaWG configuration\n  -y, --yes          Replace an existing interface without prompting");
                 return Ok(());
             }
             other => return Err(format!("unknown argument: {other}").into()),
         }
+    }
+
+    if reload_config_requested
+        && (check_only || replace_peers_interface.is_some() || import_args.is_some())
+    {
+        return Err("--reload cannot be combined with --check, --replace-peers or --import".into());
     }
 
     if let Some((source, name)) = import_args {
@@ -85,6 +93,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let config = Config::load(&config_path)?;
+    if reload_config_requested {
+        let toml = std::fs::read_to_string(&config_path)?;
+        Runtime::request_config_reload(toml)?;
+        println!("Runtime configuration reloaded successfully.");
+        return Ok(());
+    }
     if let Some(interface_name) = replace_peers_interface {
         let interface = config.interfaces.get(&interface_name).ok_or_else(|| {
             format!(
