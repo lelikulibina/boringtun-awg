@@ -47,7 +47,7 @@ pub trait TunnelHandle: Send {
 }
 
 /// Creates running tunnel instances for a specific tunnel family.
-pub trait TunnelBackend: Send + Sync {
+pub(crate) trait TunnelBackend: Send + Sync {
     fn prepare(&self, name: &str, interface: &InterfaceConfig) -> Result<PreparedInterface, BackendError>;
 
     fn create(
@@ -83,7 +83,7 @@ impl BackendRegistry {
         self.prepare_config(config).map(|_| ())
     }
 
-    pub fn create(
+    pub(crate) fn create(
         &self,
         tunnel_type: TunnelType,
         name: &str,

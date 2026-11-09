@@ -117,7 +117,11 @@ impl Runtime {
                     interface_name,
                     interface,
                     socket_fwmark,
-                    prepared_interfaces.get(interface_name).expect("every interface was preflighted"),
+                    prepared_interfaces.get(interface_name).ok_or_else(|| {
+                        BackendError::new(format!(
+                            "interface '{interface_name}' is missing its prepared backend configuration"
+                        ))
+                    })?,
                 )?;
                 devices.push(handle);
                 linux::configure_interface(interface_name, interface.mtu, &interface.address)?;
