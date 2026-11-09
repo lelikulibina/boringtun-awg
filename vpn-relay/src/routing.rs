@@ -10,11 +10,12 @@ use std::collections::BTreeMap;
 const FIRST_ROUTING_TABLE: u32 = 10_000;
 const FIRST_IP_RULE_PRIORITY: u32 = 10_000;
 const SOCKET_MAIN_RULE_PRIORITY: u32 = 9_000;
-// vpn-relay owns the high 16 bits of ct mark for decision identity and
-// preserves the low 16 bits for host policy/QoS marks.
+// vpn-relay owns the high 16 bits of ct mark for routing decision identity
+// and managed host-flow authorization; the low 16 bits remain host policy/QoS.
 const CONNTRACK_MARK_MASK: u32 = 0xffff_0000;
 const CONNTRACK_MARK_PRESERVE_MASK: u32 = !CONNTRACK_MARK_MASK;
 const FIRST_CONNTRACK_MARK: u32 = 0x4000_0000;
+const LOCAL_FLOW_CONNTRACK_MARK: u32 = 0x8000_0000;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EgressPlan {
@@ -262,8 +263,9 @@ impl RoutingPlan {
             self.nft_family, self.nft_table
         ));
         // INPUT is scoped to managed ingress. Explicit allow rules admit
-        // original-direction client traffic; only reply-direction packets for
-        // host-initiated connections are accepted by conntrack state.
+        // original-direction client traffic and tag the conntrack entry. The
+        // tag prevents unrelated host-initiated flows from being accepted as
+        // replies merely because conntrack reports an established state.
         for rule in &self.input_rules {
             for (family, sources, _) in firewall_rule_family_variants(rule, true) {
                 let mut selectors = format!("iifname \"{}\"", rule.interface);
@@ -666,13 +668,13 @@ egress = "awg-primary"
         });
 
         let script = RoutingPlan::from_config(&config).nft_script();
-        assert!(script.contains("input iifname \"wg-server\" ip saddr 10.0.0.2/32 tcp dport { 22, 443 } ct state new,established,related ct direction original accept"));
+        assert!(script.contains("input iifname \"wg-server\" ip saddr 10.0.0.2/32 tcp dport { 22, 443 } ct state new,established,related ct direction original ct mark set (ct mark & 0x0000ffff) | 0x80000000 accept"));
         assert!(script.contains("input iifname @managed_interfaces ct state invalid drop"));
         assert!(script.contains("output oifname @managed_interfaces ct state invalid drop"));
-        assert!(script.contains("input iifname @managed_interfaces ct state established,related ct direction reply accept"));
+        assert!(script.contains("input iifname @managed_interfaces ct state established,related ct direction reply ct mark & 0xffff0000 == 0x80000000 accept"));
         assert!(script.contains("input iifname @managed_interfaces drop"));
-        assert!(script.contains("output oifname \"awg-primary\" ip daddr 10.0.0.0/24 udp dport { 53 } ct state new,established,related ct direction original accept"));
-        assert!(script.contains("output oifname @managed_interfaces ct state established,related ct direction reply accept"));
+        assert!(script.contains("output oifname \"awg-primary\" ip daddr 10.0.0.0/24 udp dport { 53 } ct state new,established,related ct direction original ct mark set (ct mark & 0x0000ffff) | 0x80000000 accept"));
+        assert!(script.contains("output oifname @managed_interfaces ct state established,related ct direction reply ct mark & 0xffff0000 == 0x80000000 accept"));
         assert!(script.contains("output oifname @managed_interfaces drop"));
         assert!(script.contains("forward iifname @managed_interfaces drop"));
     }
