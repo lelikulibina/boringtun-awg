@@ -300,6 +300,26 @@ egress = "awg-primary"
 nat = "snat"
 nat_to = "10.20.0.99"
 
+# This broader rule overlaps the exact-source SNAT rule above. The exact
+# source must retain its higher-priority static SNAT decision; the second
+# client must select masquerade for the same destination and egress.
+[[routing.rules]]
+priority = 21
+ingress = "wg-ingress"
+source = "10.77.0.0/24"
+destination = "198.51.100.0/24"
+egress = "awg-primary"
+nat = "masquerade"
+
+[[routing.rules]]
+priority = 25
+ingress = "wg-ingress"
+source = "fd77::2/128"
+destination = "2001:db8:2::1/128"
+egress = "awg-primary"
+nat = "snat"
+nat_to = "fd20::99"
+
 [[routing.rules]]
 priority = 100
 ingress = "wg-ingress"
@@ -344,16 +364,16 @@ disable_cookies = false
 
 [[interfaces.up-primary.peers]]
 public_key = "$ROUTER_PRIMARY_PUBLIC"
-allowed_ips = ["10.20.0.1/32", "10.20.0.99/32", "fd20::1/128", "fd77::2/128"]
+allowed_ips = ["10.20.0.1/32", "10.20.0.99/32", "10.77.0.3/32", "fd20::1/128", "fd20::99/128", "fd77::2/128", "fd77::3/128"]
 [firewall.input]
 [[firewall.input.rules]]
 interface = "up-primary"
-source = ["10.77.0.0/24", "fd77::/64", "10.20.0.1/32", "10.20.0.99/32", "fd20::1/128"]
+source = ["10.77.0.0/24", "fd77::/64", "10.20.0.1/32", "10.20.0.99/32", "fd20::1/128", "fd20::99/128"]
 
 [firewall.output]
 [[firewall.output.rules]]
 interface = "up-primary"
-destination = ["10.77.0.0/24", "fd77::/64", "10.20.0.1/32", "10.20.0.99/32", "fd20::1/128"]
+destination = ["10.77.0.0/24", "fd77::/64", "10.20.0.1/32", "10.20.0.99/32", "fd20::1/128", "fd20::99/128"]
 
 TOML
 
@@ -436,6 +456,7 @@ wait_interface "$SECOND_CLIENT_NS" wg-client-2 "$SECOND_CLIENT_PID" "vpn_relay_m
 
 # Install the return routes only after the daemon has created the remote TUNs.
 ip -n "$PRIMARY_NS" route replace 10.77.0.2/32 dev up-primary
+ip -n "$PRIMARY_NS" route replace 10.77.0.3/32 dev up-primary
 ip -n "$PRIMARY_NS" -6 route replace fd77::2/128 dev up-primary
 ip -n "$SECONDARY_NS" route replace 10.77.0.2/32 dev up-secondary
 ip -n "$SECONDARY_NS" route replace 10.77.0.3/32 dev up-secondary
@@ -453,6 +474,7 @@ ip -n "$CLIENT_NS" -6 route replace 2001:db8:195:1::1/128 dev wg-client
 ip -n "$CLIENT_NS" -6 route replace 2001:db8:2::1/128 dev wg-client
 ip -n "$SECOND_CLIENT_NS" route replace 203.0.113.1/32 dev wg-client-2
 ip -n "$SECOND_CLIENT_NS" route replace 195.142.1.1/32 dev wg-client-2
+ip -n "$SECOND_CLIENT_NS" route replace 198.51.100.3/32 dev wg-client-2
 ip -n "$SECOND_CLIENT_NS" -6 route replace 2001:db8:1::1/128 dev wg-client-2
 ip -n "$SECOND_CLIENT_NS" -6 route replace 2001:db8:195:1::1/128 dev wg-client-2
 
@@ -543,6 +565,32 @@ ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -c 1 -W 2 198.51.100.3 \
 wait "$capture_pid" || fail "could not capture static SNAT IPv4 packet"
 grep -Fq '10.20.0.99 > 198.51.100.3' "$TMP/nat-static-snat-capture.log" \
     || fail "static SNAT did not use configured nat_to address 10.20.0.99"
+
+# A broader overlapping decision on the same egress must not override the
+# exact-source decision above. Client .3 selects masquerade; client .2 keeps
+# the static SNAT address 10.20.0.99.
+ip netns exec "$PRIMARY_NS" timeout 5 tcpdump -nn -i up-primary -c 1 \
+    'icmp and src host 10.20.0.1 and dst host 198.51.100.3' \
+    >"$TMP/nat-overlap-masquerade-capture.log" 2>&1 &
+capture_pid=$!
+sleep 0.25
+ip netns exec "$SECOND_CLIENT_NS" ping -n -I 10.77.0.3 -c 1 -W 2 198.51.100.3 \
+    || fail "overlapping routing decision masquerade probe failed"
+wait "$capture_pid" || fail "could not capture overlapping routing decision packet"
+grep -Fq '10.20.0.1 > 198.51.100.3' "$TMP/nat-overlap-masquerade-capture.log" \
+    || fail "broader overlapping rule did not select masquerade"
+
+# Static IPv6 SNAT uses a separate address from the primary TUN endpoint.
+ip netns exec "$PRIMARY_NS" timeout 5 tcpdump -nn -i up-primary -c 1 \
+    'icmp6 and src host fd20::99 and dst host 2001:db8:2::1' \
+    >"$TMP/nat-static-snat-v6-capture.log" 2>&1 &
+capture_pid=$!
+sleep 0.25
+ip netns exec "$CLIENT_NS" ping -6 -n -I fd77::2 -c 1 -W 2 2001:db8:2::1 \
+    || fail "static SNAT IPv6 probe failed"
+wait "$capture_pid" || fail "could not capture static SNAT IPv6 packet"
+grep -Fq 'fd20::99 > 2001:db8:2::1' "$TMP/nat-static-snat-v6-capture.log" \
+    || fail "static SNAT did not use configured IPv6 nat_to address fd20::99"
 
 # Observe inner packets at the remote TUNs. This proves NAT semantics rather
 # than merely checking that a masquerade statement exists in nftables.
