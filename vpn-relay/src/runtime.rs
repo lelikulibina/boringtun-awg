@@ -240,7 +240,11 @@ impl Drop for Runtime {
 fn install_signal_handlers() -> Result<(), RuntimeError> {
     SHUTDOWN_REQUESTED.store(false, Ordering::Relaxed);
     unsafe {
-        if libc::signal(libc::SIGINT, request_shutdown as *const () as libc::sighandler_t) == libc::SIG_ERR {
+        if libc::signal(
+            libc::SIGINT,
+            request_shutdown as *const () as libc::sighandler_t,
+        ) == libc::SIG_ERR
+        {
             return Err(RuntimeError::Signal("SIGINT".into()));
         }
         if libc::signal(libc::SIGTERM, request_shutdown as libc::sighandler_t) == libc::SIG_ERR {
