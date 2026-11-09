@@ -1445,7 +1445,7 @@ egress = "awg-uplink"
     fn rejects_unknown_firewall_and_nat_rule_fields() {
         let unknown_nat = valid_config().replace(
             "destination = \"0.0.0.0/0\"",
-            "destination = \"0.0.0.0/0\"\\nnat = \"snat\"\\nnat_to = \"203.0.113.9\"\\nnat_target = \"203.0.113.10\"",
+            "destination = \"0.0.0.0/0\"\nnat = \"snat\"\nnat_to = \"203.0.113.9\"\nnat_target = \"203.0.113.10\"",
         );
         assert!(Config::parse_toml(&unknown_nat)
             .unwrap_err()
@@ -1454,7 +1454,7 @@ egress = "awg-uplink"
 
         let unknown_firewall = valid_config().replace(
             "[routing]",
-            "[firewall.input]\\n[[firewall.input.rules]]\\ninterface = \"wg-server\"\\nprotocol = \"tcp\"\\nports = [22]\\nallow_all = true\\n\\n[routing]",
+            "[firewall.input]\n[[firewall.input.rules]]\ninterface = \"wg-server\"\nprotocol = \"tcp\"\nports = [22]\nallow_all = true\n\n[routing]",
         );
         assert!(Config::parse_toml(&unknown_firewall)
             .unwrap_err()
