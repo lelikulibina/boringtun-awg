@@ -139,7 +139,11 @@ fn load_conntrack_mark_history(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(error) => return Err(RuntimeError::ConntrackMarkState(error.to_string())),
     };
-    drop(metadata);
+    if metadata.len() > 4 * 1024 * 1024 {
+        return Err(RuntimeError::ConntrackMarkState(
+            "state file exceeds 4 MiB".to_owned(),
+        ));
+    }
     validate_private_state_file(path)?;
 
     let bytes =
@@ -194,6 +198,8 @@ fn persist_conntrack_mark_history(
         .create_new(true)
         .mode(0o600)
         .open(&temporary_path)
+        .map_err(|error| RuntimeError::ConntrackMarkState(error.to_string()))?;
+    file.set_permissions(fs::Permissions::from_mode(0o600))
         .map_err(|error| RuntimeError::ConntrackMarkState(error.to_string()))?;
     let state = ConntrackMarkStateFile {
         version: 1,
