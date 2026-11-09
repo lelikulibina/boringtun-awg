@@ -1452,9 +1452,10 @@ egress = "awg-uplink"
             .to_string()
             .contains("unknown field"));
 
-        let unknown_firewall = valid_config().replace(
+        let unknown_firewall = valid_config().replacen(
             "[[routing.rules]]",
             "[firewall.input]\n[[firewall.input.rules]]\ninterface = \"wg-server\"\nprotocol = \"tcp\"\nports = [22]\nallow_all = true\n\n[[routing.rules]]",
+            1,
         );
         assert!(Config::parse_toml(&unknown_firewall)
             .unwrap_err()
