@@ -160,6 +160,15 @@ public_key = "$ROUTER_INGRESS_PUBLIC"
 endpoint = "192.0.2.1:51871"
 allowed_ips = ["0.0.0.0/0", "::/0"]
 persistent_keepalive_secs = 1
+[firewall.input]
+[[firewall.input.rules]]
+interface = "wg-client"
+source = ["10.77.0.1/32", "fd77::1/128"]
+
+[firewall.output]
+[[firewall.output.rules]]
+interface = "wg-client"
+destination = ["10.77.0.1/32", "fd77::1/128"]
 TOML
 
 cat >"$TMP/second-client.toml" <<TOML
@@ -181,6 +190,15 @@ public_key = "$ROUTER_INGRESS_PUBLIC"
 endpoint = "192.0.3.1:51871"
 allowed_ips = ["0.0.0.0/0", "::/0"]
 persistent_keepalive_secs = 1
+[firewall.input]
+[[firewall.input.rules]]
+interface = "wg-client-2"
+source = ["10.77.0.1/32", "fd77::1/128"]
+
+[firewall.output]
+[[firewall.output.rules]]
+interface = "wg-client-2"
+destination = ["10.77.0.1/32", "fd77::1/128"]
 TOML
 
 cat >"$TMP/router.toml" <<TOML
@@ -245,6 +263,16 @@ public_key = "$SECONDARY_PUBLIC"
 endpoint = "198.18.2.2:51875"
 allowed_ips = ["0.0.0.0/0", "::/0"]
 persistent_keepalive_secs = 1
+
+[firewall.input]
+[[firewall.input.rules]]
+interface = "wg-ingress"
+source = ["10.77.0.2/32", "10.77.0.3/32", "fd77::2/128", "fd77::3/128"]
+
+[firewall.output]
+[[firewall.output.rules]]
+interface = "wg-ingress"
+destination = ["10.77.0.2/32", "10.77.0.3/32", "fd77::2/128", "fd77::3/128"]
 
 [[routing.rules]]
 priority = 5
@@ -313,6 +341,15 @@ disable_cookies = false
 [[interfaces.up-primary.peers]]
 public_key = "$ROUTER_PRIMARY_PUBLIC"
 allowed_ips = ["10.20.0.1/32", "fd20::1/128", "fd77::2/128"]
+[firewall.input]
+[[firewall.input.rules]]
+interface = "up-primary"
+source = ["10.77.0.0/24", "fd77::/64", "10.20.0.1/32", "fd20::1/128"]
+
+[firewall.output]
+[[firewall.output.rules]]
+interface = "up-primary"
+destination = ["10.77.0.0/24", "fd77::/64", "10.20.0.1/32", "fd20::1/128"]
 TOML
 
 cat >"$TMP/secondary.toml" <<TOML
@@ -340,6 +377,17 @@ h4 = "301-400"
 [[interfaces.up-secondary.peers]]
 public_key = "$ROUTER_SECONDARY_PUBLIC"
 allowed_ips = ["10.77.0.2/32", "10.77.0.3/32", "fd77::2/128", "fd77::3/128"]
+TOML
+
+[firewall.input]
+[[firewall.input.rules]]
+interface = "up-secondary"
+source = ["10.77.0.0/24", "fd77::/64", "10.30.0.1/32", "fd30::1/128"]
+
+[firewall.output]
+[[firewall.output.rules]]
+interface = "up-secondary"
+destination = ["10.77.0.0/24", "fd77::/64", "10.30.0.1/32", "fd30::1/128"]
 TOML
 
 for config in client second-client router primary secondary; do
