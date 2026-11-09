@@ -10,6 +10,8 @@ mod integration_tests;
 pub mod peer;
 mod probe_budget;
 mod probe_reply;
+mod peer_batch;
+pub use peer_batch::PeerConfig;
 mod reply_policy;
 
 #[cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos"))]
