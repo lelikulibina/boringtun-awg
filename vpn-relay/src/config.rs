@@ -884,7 +884,9 @@ egress = "awg-uplink"
             1,
         );
         let error = Config::parse_toml(&input).unwrap_err();
-        assert!(error.to_string().contains("selected source/destination family"));
+        assert!(error
+            .to_string()
+            .contains("selected source/destination family"));
     }
 
     #[test]
