@@ -803,6 +803,34 @@ egress = "awg-uplink"
     }
 
     #[test]
+    fn firewall_allow_rules_parse_and_validate() {
+        let input = format!(
+            "{}\n[firewall.input]\n[[firewall.input.rules]]\ninterface = \"wg-server\"\nsource = [\"10.10.0.2/32\"]\nprotocol = \"tcp\"\nports = [22, 443]\n[firewall.output]\n[[firewall.output.rules]]\ninterface = \"awg-uplink\"\ndestination = \"0.0.0.0/0\"\nprotocol = \"udp\"\nports = [53]\n",
+            valid_config()
+        );
+        let config = Config::parse_toml(&input).unwrap();
+        assert_eq!(config.firewall.input.rules.len(), 1);
+        assert_eq!(config.firewall.output.rules.len(), 1);
+        assert_eq!(config.firewall.input.rules[0].protocol, Some(FirewallProtocol::Tcp));
+        assert_eq!(config.firewall.output.rules[0].ports.as_deref(), Some(&[53][..]));
+    }
+
+    #[test]
+    fn firewall_rules_reject_unknown_interfaces_and_wrong_direction_selectors() {
+        let unknown = format!(
+            "{}\n[[firewall.input.rules]]\ninterface = \"missing\"\n",
+            valid_config()
+        );
+        assert!(Config::parse_toml(&unknown).is_err());
+
+        let wrong_direction = format!(
+            "{}\n[[firewall.input.rules]]\ninterface = \"wg-server\"\ndestination = \"10.0.0.0/24\"\n",
+            valid_config()
+        );
+        assert!(Config::parse_toml(&wrong_direction).is_err());
+    }
+
+    #[test]
     fn routing_rule_nat_defaults_to_none_and_supports_source_selector() {
         let input = valid_config().replace(
             "destination = \"0.0.0.0/0\"",

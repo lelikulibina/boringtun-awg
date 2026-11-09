@@ -232,19 +232,19 @@ impl RoutingPlan {
         // conntrack entry created by the host.
         for rule in &self.input_rules {
             for (family, sources, _) in firewall_rule_family_variants(rule, true) {
-                let mut selectors = format!("iifname \\"{}\\"", rule.interface);
+                let mut selectors = format!("iifname \"{}\"", rule.interface);
                 if let Some(family) = family {
                     append_cidr_selector(&mut selectors, family, "saddr", &sources);
                 }
                 append_firewall_protocol_selector(&mut selectors, rule);
                 output.push_str(&format!(
-                    "add rule {} {} input {} ct state new,established,related accept\\n",
+                    "add rule {} {} input {} ct state new,established,related accept\n",
                     self.nft_family, self.nft_table, selectors
                 ));
             }
         }
         output.push_str(&format!(
-            "add rule {} {} input iifname @managed_interfaces drop\\n",
+            "add rule {} {} input iifname @managed_interfaces drop\n",
             self.nft_family, self.nft_table
         ));
 
@@ -252,19 +252,19 @@ impl RoutingPlan {
         // outer UDP routed through the underlay is therefore unaffected.
         for rule in &self.output_rules {
             for (family, _, destinations) in firewall_rule_family_variants(rule, false) {
-                let mut selectors = format!("oifname \\"{}\\"", rule.interface);
+                let mut selectors = format!("oifname \"{}\"", rule.interface);
                 if let Some(family) = family {
                     append_cidr_selector(&mut selectors, family, "daddr", &destinations);
                 }
                 append_firewall_protocol_selector(&mut selectors, rule);
                 output.push_str(&format!(
-                    "add rule {} {} output {} ct state new,established,related accept\\n",
+                    "add rule {} {} output {} ct state new,established,related accept\n",
                     self.nft_family, self.nft_table, selectors
                 ));
             }
         }
         output.push_str(&format!(
-            "add rule {} {} output oifname @managed_interfaces drop\\n",
+            "add rule {} {} output oifname @managed_interfaces drop\n",
             self.nft_family, self.nft_table
         ));
 
@@ -610,9 +610,9 @@ egress = "awg-primary"
         });
 
         let script = RoutingPlan::from_config(&config).nft_script();
-        assert!(script.contains("input iifname \\"wg-server\\" ip saddr 10.0.0.2/32 tcp dport { 22, 443 } ct state new,established,related accept"));
+        assert!(script.contains("input iifname \"wg-server\" ip saddr 10.0.0.2/32 tcp dport { 22, 443 } ct state new,established,related accept"));
         assert!(script.contains("input iifname @managed_interfaces drop"));
-        assert!(script.contains("output oifname \\"awg-primary\\" ip daddr 10.0.0.0/24 udp dport { 53 } ct state new,established,related accept"));
+        assert!(script.contains("output oifname \"awg-primary\" ip daddr 10.0.0.0/24 udp dport { 53 } ct state new,established,related accept"));
         assert!(script.contains("output oifname @managed_interfaces drop"));
         assert!(script.contains("forward iifname @managed_interfaces drop"));
     }
@@ -691,7 +691,7 @@ egress = "awg-primary"
         config.routing.rules[0].nat_to = Some("203.0.113.10".parse().unwrap());
         let script = RoutingPlan::from_config(&config).nft_script();
         assert!(script.contains(
-            "postrouting iifname \\"wg-server\\" oifname \\"awg-secondary\\" ct mark 0x80000001 ip daddr 195.142.0.0/16 meta nfproto ipv4 snat ip to 203.0.113.10"
+            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark 0x80000001 ip daddr 195.142.0.0/16 meta nfproto ipv4 snat ip to 203.0.113.10"
         ));
         assert!(!script.contains("snat ip6"));
     }

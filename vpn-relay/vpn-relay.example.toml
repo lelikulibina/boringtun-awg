@@ -112,3 +112,23 @@ source = "10.10.0.0/24"
 destination = "0.0.0.0/0"
 egress = "awg-primary"
 nat = "masquerade"
+
+
+# INPUT и OUTPUT по умолчанию запрещают трафик через managed TUN.
+# Разрешения задаются только явно. Раскомментируйте при необходимости:
+#
+# [[firewall.input.rules]]
+# interface = "wg-server"
+# source = ["10.10.0.2/32"]
+# protocol = "tcp"
+# ports = [22]
+#
+# [[firewall.output.rules]]
+# interface = "awg-primary"
+# destination = ["10.10.0.0/24"]
+# protocol = "udp"
+# ports = [53]
+#
+# Для статического SNAT вместо masquerade в соответствующем routing rule:
+# nat = "snat"
+# nat_to = "203.0.113.10"
