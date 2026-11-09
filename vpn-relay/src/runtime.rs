@@ -6,7 +6,7 @@ use crate::routing::RoutingPlan;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::os::fd::AsRawFd;
-use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -144,8 +144,8 @@ impl ControlSocket {
                 }
             }
         }
-        let listener = UnixListener::bind(&path)
-            .map_err(|error| RuntimeError::Control(error.to_string()))?;
+        let listener =
+            UnixListener::bind(&path).map_err(|error| RuntimeError::Control(error.to_string()))?;
         fs::set_permissions(&path, fs::Permissions::from_mode(0o600))
             .map_err(|error| RuntimeError::Control(error.to_string()))?;
         listener
@@ -308,7 +308,10 @@ impl Runtime {
             },
             Ok(_) => match serde_json::from_slice::<PeerReplacementRequest>(&payload) {
                 Ok(request) => match self.replace_peers(&request.interface, request.peers) {
-                    Ok(()) => ControlResponse { ok: true, error: None },
+                    Ok(()) => ControlResponse {
+                        ok: true,
+                        error: None,
+                    },
                     Err(error) => ControlResponse {
                         ok: false,
                         error: Some(error.to_string()),
@@ -326,7 +329,11 @@ impl Runtime {
         };
         let write_result = serde_json::to_vec(&response)
             .map_err(|error| error.to_string())
-            .and_then(|payload| stream.write_all(&payload).map_err(|error| error.to_string()));
+            .and_then(|payload| {
+                stream
+                    .write_all(&payload)
+                    .map_err(|error| error.to_string())
+            });
         if let Err(error) = write_result {
             tracing::warn!(%error, "failed to send control response");
         }
@@ -338,8 +345,8 @@ impl Runtime {
         peers: Vec<PeerConfig>,
     ) -> Result<(), RuntimeError> {
         let path = InstanceLock::current_control_path()?;
-        let mut stream = UnixStream::connect(&path)
-            .map_err(|error| RuntimeError::Control(error.to_string()))?;
+        let mut stream =
+            UnixStream::connect(&path).map_err(|error| RuntimeError::Control(error.to_string()))?;
         stream
             .set_read_timeout(Some(Duration::from_secs(10)))
             .map_err(|error| RuntimeError::Control(error.to_string()))?;
@@ -360,7 +367,9 @@ impl Runtime {
             Ok(())
         } else {
             Err(RuntimeError::Control(
-                response.error.unwrap_or_else(|| "daemon rejected request".to_owned()),
+                response
+                    .error
+                    .unwrap_or_else(|| "daemon rejected request".to_owned()),
             ))
         }
     }

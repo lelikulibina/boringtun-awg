@@ -14,7 +14,9 @@ pub mod routing;
 #[cfg(target_os = "linux")]
 pub mod runtime;
 
-pub use config::{Config, ConfigError, EndpointHost, NatMode, PeerConfig, PeerEndpoint, TunnelType};
+pub use config::{
+    Config, ConfigError, EndpointHost, NatMode, PeerConfig, PeerEndpoint, TunnelType,
+};
 pub use routing::{EgressPlan, RoutingDecision, RoutingPlan};
 #[cfg(target_os = "linux")]
 pub use runtime::{Runtime, RuntimeError};
