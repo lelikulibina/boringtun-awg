@@ -19,7 +19,7 @@ trap cleanup EXIT
 
 fail() {
     echo "vpn-relay namespace test: $*" >&2
-    for log in "$TMP/daemon.log" "$TMP/conflict.log" "$TMP/policy-conflict.log" "$TMP/route-conflict.log"; do
+    for log in "$TMP/daemon.log" "$TMP/conflict.log" "$TMP/policy-conflict.log" "$TMP/route-conflict.log" "$TMP/policy-shadow-conflict.log"; do
         if [[ -f "$log" ]]; then
             cat "$log" >&2
         fi
@@ -51,6 +51,9 @@ expect_startup_failure() {
     [[ $status -ne 0 ]] || fail "daemon accepted $description"
     [[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "0" ]] || fail "IPv4 forwarding was not restored after rejecting $description"
     [[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "0" ]] || fail "IPv6 forwarding was not restored after rejecting $description"
+    if ip netns exec "$NS" nft list table inet vpn_relay_it >/dev/null 2>&1; then
+        fail "vpn-relay nftables table leaked after rejecting $description"
+    fi
     for iface in wg-server awg-primary awg-secondary; do
         if ip netns exec "$NS" ip link show dev "$iface" >/dev/null 2>&1; then
             fail "TUN interface $iface leaked after rejecting $description"
@@ -187,6 +190,16 @@ ip -n "$NS" -4 rule show | grep -Fq 'fwmark 0x1001 lookup main' || fail "foreign
 ip -n "$NS" -6 rule show | grep -Fq 'fwmark 0x1001 lookup main' || fail "foreign IPv6 policy rule was removed"
 ip -n "$NS" -4 rule del priority 9000 fwmark 0x1001 lookup main
 ip -n "$NS" -6 rule del priority 9000 fwmark 0x1001 lookup main
+
+# A broader fwmark rule at a higher precedence must not shadow the daemon's
+# socket mark even when it does not occupy the reserved priority 9000 slot.
+ip -n "$NS" -4 rule add priority 8000 fwmark 0x1000/0xffff0000 lookup main
+ip -n "$NS" -6 rule add priority 8000 fwmark 0x1000/0xffff0000 lookup main
+expect_startup_failure policy-shadow-conflict.log "policy rule that shadows a reserved socket fwmark"
+ip -n "$NS" -4 rule show | grep -Fq 'fwmark 0x1000/0xffff0000 lookup main' || fail "foreign masked IPv4 fwmark rule was removed"
+ip -n "$NS" -6 rule show | grep -Fq 'fwmark 0x1000/0xffff0000 lookup main' || fail "foreign masked IPv6 fwmark rule was removed"
+ip -n "$NS" -4 rule del priority 8000 fwmark 0x1000/0xffff0000 lookup main
+ip -n "$NS" -6 rule del priority 8000 fwmark 0x1000/0xffff0000 lookup main
 
 # A pre-existing route in a reserved table must also be preserved.
 ip -n "$NS" -4 route replace default dev main0 table 10000 proto static
