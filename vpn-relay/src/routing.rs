@@ -360,14 +360,17 @@ impl RoutingPlan {
         // NAT consumes the selected decision id from conntrack instead of
         // repeating selector matching and risking a different overlapping rule.
         for rule in &self.decisions {
-            let selector = format!("ct mark 0x{:x}", rule.conntrack_mark);
+            let selector = format!(
+                "iifname \"{}\" oifname \"{}\" ct mark 0x{:x}",
+                rule.ingress, rule.egress, rule.conntrack_mark
+            );
             match rule.nat {
                 NatMode::None => output.push_str(&format!(
-                    "add rule {} {} postrouting {} return\\n",
+                    "add rule {} {} postrouting {} return\n",
                     self.nft_family, self.nft_table, selector
                 )),
                 NatMode::Masquerade => output.push_str(&format!(
-                    "add rule {} {} postrouting {} masquerade\\n",
+                    "add rule {} {} postrouting {} masquerade\n",
                     self.nft_family, self.nft_table, selector
                 )),
                 NatMode::Snat => {
@@ -375,7 +378,7 @@ impl RoutingPlan {
                     let family = if address.is_ipv4() { "ip" } else { "ip6" };
                     let nfproto = if address.is_ipv4() { "ipv4" } else { "ipv6" };
                     output.push_str(&format!(
-                        "add rule {} {} postrouting {} meta nfproto {} snat {} to {}\\n",
+                        "add rule {} {} postrouting {} meta nfproto {} snat {} to {}\n",
                         self.nft_family, self.nft_table, selector, nfproto, family, address
                     ));
                 }
@@ -896,7 +899,6 @@ egress = "awg-primary"
         }));
     }
 
-    #[test]
     #[test]
     fn overlapping_rules_sharing_egress_keep_distinct_conntrack_decisions() {
         let mut config = sample_config();
