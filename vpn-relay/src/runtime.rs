@@ -991,7 +991,7 @@ mod tests {
             destination: Some(vec!["0.0.0.0/0".to_owned()]),
             egress: "awg-uplink".to_owned(),
             routing_mark: 0x8000_0001,
-            conntrack_mark: 0x4001_0000,
+            conntrack_mark: 0x5001_0000,
             nat: crate::config::NatMode::None,
             nat_to: None,
             ipv6_enabled: false,

@@ -429,8 +429,8 @@ output_chain="$(ip netns exec "$NS" nft list chain inet vpn_relay_it output)"
 grep -Fq 'oifname @ipv6_blocked_interfaces meta nfproto ipv6 drop' <<<"$output_chain" || fail "locally generated IPv6 egress drop is missing"
 grep -Fq 'ct direction reply meta mark set 0' <<<"$chain" || fail "reply packet mark reset is missing"
 
-grep -Eq 'iifname "wg-server" ct state new ip daddr 195.142.0.0/16 meta mark set 0x80000001 ct mark set .*0x40010000 return' <<<"$chain" || fail "secondary exception rule missing"
-grep -Eq 'iifname "wg-server" ct state new ip daddr 0.0.0.0/0 meta mark set 0x80000000 ct mark set .*0x40030000 return' <<<"$chain" || fail "primary default rule missing"
+grep -Eq 'iifname "wg-server" ct state new ip daddr 195.142.0.0/16 meta mark set 0x80000001 ct mark set .*0x50010000 return' <<<"$chain" || fail "secondary exception rule missing"
+grep -Eq 'iifname "wg-server" ct state new ip daddr 0.0.0.0/0 meta mark set 0x80000000 ct mark set .*0x50030000 return' <<<"$chain" || fail "primary default rule missing"
 
 # Exercise full runtime reload through the Unix control socket. The candidate
 # changes a routing selector, adds an INPUT exception and installs a peer. First

@@ -14,7 +14,9 @@ const SOCKET_MAIN_RULE_PRIORITY: u32 = 9_000;
 // and managed host-flow authorization; the low 16 bits remain host policy/QoS.
 const CONNTRACK_MARK_MASK: u32 = 0xffff_0000;
 const CONNTRACK_MARK_PRESERVE_MASK: u32 = !CONNTRACK_MARK_MASK;
-const FIRST_CONNTRACK_MARK: u32 = 0x4000_0000;
+// A new namespace prevents pre-state-file conntrack entries from being reinterpreted after upgrade.
+const FIRST_CONNTRACK_MARK: u32 = 0x5000_0000;
+const LEGACY_CONNTRACK_MARK: u32 = 0x4000_0000;
 const LOCAL_FLOW_CONNTRACK_MARK: u32 = 0x8000_0000;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -81,9 +83,9 @@ impl RoutingPlan {
     ) -> Result<(), String> {
         Self::validate_conntrack_mark_history(history)?;
 
-        let mut used_ids: std::collections::BTreeSet<u32> = history
+        let mut used_marks: std::collections::BTreeSet<u32> = history
             .iter()
-            .map(|decision| (decision.conntrack_mark & 0x0fff_0000) >> 16)
+            .map(|decision| decision.conntrack_mark)
             .collect();
 
         for decision in &mut self.decisions {
@@ -100,14 +102,15 @@ impl RoutingPlan {
                 continue;
             }
 
-            let id = (1..=0x0fff)
-                .find(|id| !used_ids.contains(id))
+            let (id, mark) = (1..=0x0fff)
+                .map(|id| (id, FIRST_CONNTRACK_MARK | (id << 16)))
+                .find(|(_, mark)| !used_marks.contains(mark))
                 .ok_or_else(|| {
-                    "all 4095 vpn-relay conntrack decision IDs are reserved;                      existing conntrack entries must expire before new routing decisions can be added"
+                    "all 4095 vpn-relay conntrack decision IDs are reserved; existing conntrack entries must expire before new routing decisions can be added"
                         .to_owned()
                 })?;
-            used_ids.insert(id);
-            decision.conntrack_mark = FIRST_CONNTRACK_MARK | (id << 16);
+            used_marks.insert(mark);
+            decision.conntrack_mark = mark;
             history.push(decision.clone());
         }
 
@@ -119,17 +122,18 @@ impl RoutingPlan {
     pub(crate) fn validate_conntrack_mark_history(
         history: &[RoutingDecision],
     ) -> Result<(), String> {
-        let mut used_ids = std::collections::BTreeSet::new();
+        let mut used_marks = std::collections::BTreeSet::new();
         let mut keys = Vec::with_capacity(history.len());
 
         for decision in history {
             let mark = decision.conntrack_mark;
             let id = (mark & 0x0fff_0000) >> 16;
-            if mark & 0xf000_0000 != FIRST_CONNTRACK_MARK
+            let namespace = mark & 0xf000_0000;
+            if (namespace != FIRST_CONNTRACK_MARK && namespace != LEGACY_CONNTRACK_MARK)
                 || mark & 0x0000_ffff != 0
                 || id == 0
                 || id > 0x0fff
-                || !used_ids.insert(id)
+                || !used_marks.insert(mark)
             {
                 return Err(format!(
                     "invalid or duplicate persisted conntrack decision mark 0x{mark:08x}"
@@ -805,12 +809,12 @@ egress = "awg-primary"
         config.routing.rules.truncate(1);
         let script = RoutingPlan::from_config(&config).nft_script();
         assert!(script.contains(
-            "prerouting iifname \"wg-server\" ct state new meta mark set 0x80000000 ct mark set (ct mark & 0x0000ffff) | 0x40010000 return"
+            "prerouting iifname \"wg-server\" ct state new meta mark set 0x80000000 ct mark set (ct mark & 0x0000ffff) | 0x50010000 return"
         ));
         assert!(!script.contains("prerouting iifname \"wg-server\" ct state new ip saddr"));
         assert!(!script.contains("prerouting iifname \"wg-server\" ct state new ip daddr"));
         assert!(script.contains(
-            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark & 0xffff0000 == 0x40010000 return"
+            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark & 0xffff0000 == 0x50010000 return"
         ));
     }
 
@@ -860,7 +864,7 @@ egress = "awg-primary"
         assert!(script.contains("iifname @managed_interfaces meta mark set 0"));
         assert!(script.contains("ct direction reply meta mark set 0"));
         assert!(script.contains(
-            "ct direction original ct mark & 0xffff0000 == 0x40010000 meta mark set 0x80000001"
+            "ct direction original ct mark & 0xffff0000 == 0x50010000 meta mark set 0x80000001"
         ));
     }
 
@@ -871,7 +875,7 @@ egress = "awg-primary"
         config.routing.rules[0].nat_to = Some("203.0.113.10".parse().unwrap());
         let script = RoutingPlan::from_config(&config).nft_script();
         assert!(script.contains(
-            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark & 0xffff0000 == 0x40010000 meta nfproto ipv4 snat ip to 203.0.113.10"
+            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark & 0xffff0000 == 0x50010000 meta nfproto ipv4 snat ip to 203.0.113.10"
         ));
         assert!(!script.contains("snat ip6"));
     }
@@ -883,7 +887,7 @@ egress = "awg-primary"
         config.routing.rules[0].nat = NatMode::Masquerade;
         let script = RoutingPlan::from_config(&config).nft_script();
         assert!(script.contains(
-            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark & 0xffff0000 == 0x40010000 masquerade"
+            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark & 0xffff0000 == 0x50010000 masquerade"
         ));
         assert!(!script.contains("masquerade return"));
     }
@@ -972,12 +976,12 @@ egress = "awg-primary"
             Some(&["0.0.0.0/0".to_owned()][..])
         );
         assert_eq!(plan.decisions[0].routing_mark, 0x8000_0001);
-        assert_eq!(plan.decisions[0].conntrack_mark, 0x4001_0000);
+        assert_eq!(plan.decisions[0].conntrack_mark, 0x5001_0000);
         assert_eq!(plan.decisions[2].routing_mark, 0x8000_0000);
-        assert_eq!(plan.decisions[2].conntrack_mark, 0x4003_0000);
+        assert_eq!(plan.decisions[2].conntrack_mark, 0x5003_0000);
         let script = plan.nft_script();
         assert!(script.contains(
-            "ip daddr 195.142.0.0/16 meta mark set 0x80000001 ct mark set (ct mark & 0x0000ffff) | 0x40010000 return"
+            "ip daddr 195.142.0.0/16 meta mark set 0x80000001 ct mark set (ct mark & 0x0000ffff) | 0x50010000 return"
         ));
         assert!(script.contains("iifname \"wg-server\""));
     }
@@ -1064,13 +1068,13 @@ egress = "awg-primary"
         );
         let script = plan.nft_script();
         assert!(script.contains(
-            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark & 0xffff0000 == 0x40010000 return"
+            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark & 0xffff0000 == 0x50010000 return"
         ));
         assert!(script.contains(
-            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark & 0xffff0000 == 0x40020000 masquerade"
+            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark & 0xffff0000 == 0x50020000 masquerade"
         ));
         assert!(!script.contains(
-            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark & 0xffff0000 == 0x40010000 masquerade"
+            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark & 0xffff0000 == 0x50010000 masquerade"
         ));
     }
     #[test]
@@ -1117,7 +1121,7 @@ egress = "awg-primary"
             .unwrap()
             .conntrack_mark;
         assert!(!original_marks.iter().any(|(_, mark)| *mark == changed_mark));
-        assert_eq!(changed_mark, 0x4004_0000);
+        assert_eq!(changed_mark, 0x5004_0000);
 
         // Restoring an exact historical decision is safe: old conntrack
         // entries still describe the same ingress/selectors/egress/NAT action.
@@ -1128,6 +1132,39 @@ egress = "awg-primary"
         for (decision, (_, mark)) in restored_plan.decisions.iter().zip(original_marks) {
             assert_eq!(decision.conntrack_mark, mark);
         }
+    }
+
+    #[test]
+    fn legacy_conntrack_marks_remain_valid_but_new_decisions_use_new_namespace() {
+        let config = sample_config();
+        let mut legacy_history = RoutingPlan::from_config(&config).decisions;
+        for (index, decision) in legacy_history.iter_mut().enumerate() {
+            decision.conntrack_mark = 0x4000_0000 | (((index as u32) + 1) << 16);
+        }
+        RoutingPlan::validate_conntrack_mark_history(&legacy_history).unwrap();
+
+        let mut unchanged = RoutingPlan::from_config(&config);
+        unchanged
+            .assign_stable_conntrack_marks(&mut legacy_history)
+            .unwrap();
+        for (decision, previous) in unchanged.decisions.iter().zip(&legacy_history) {
+            assert_eq!(decision.conntrack_mark, previous.conntrack_mark);
+        }
+
+        let mut changed_config = sample_config();
+        changed_config.routing.rules[0].priority = 150;
+        changed_config.validate().unwrap();
+        let mut changed = RoutingPlan::from_config(&changed_config);
+        changed
+            .assign_stable_conntrack_marks(&mut legacy_history)
+            .unwrap();
+        let new_decision_mark = changed
+            .decisions
+            .iter()
+            .find(|decision| decision.priority == 150)
+            .unwrap()
+            .conntrack_mark;
+        assert_eq!(new_decision_mark, 0x5001_0000);
     }
 
     #[test]
