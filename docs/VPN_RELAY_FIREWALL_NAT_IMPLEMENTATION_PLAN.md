@@ -406,4 +406,4 @@ unmanaged output остаётся неизменным.
 
 | 2026-11-09 | Добавлены packet-level loopback и foreign INPUT/OUTPUT base-chain probes | Проверяется доступность локального TCP listener через 127.0.0.1 и то, что foreign accept chains с priority -10 не отменяют последующий deny vpn-relay; ожидает CI | В работе |
 
-| 2026-11-09 | Расширены packet-level проверки coexistence и NAT scope | Добавлены foreign FORWARD accept-chain probe, проверка локальных INPUT/OUTPUT source addresses без NAT и захват запрещённого FORWARD на обоих uplink; ожидает CI | В работе |
+| 2026-11-09 | Расширены packet-level проверки coexistence и NAT scope | Добавлены foreign FORWARD accept-chain probe, проверка локальных INPUT/OUTPUT source addresses без NAT и захват запрещённого FORWARD на обоих uplink; ожидает полного CI | В работе |

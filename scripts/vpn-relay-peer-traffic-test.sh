@@ -445,10 +445,6 @@ foreign_output_after="$(foreign_counter output)"
 [[ "$foreign_input_after" -gt "$foreign_input_before" ]] || fail "foreign INPUT accept chain did not observe the denied packet"
 [[ "$foreign_output_after" -gt "$foreign_output_before" ]] || fail "foreign OUTPUT accept chain did not observe the denied packet"
 
-# Both foreign chains accepted the packets first; vpn-relay must still apply
-# its later deny verdict. Require packet counters to prove hook traversal.
-foreign_counters="$(ip netns exec "$SERVER_NS" nft list table inet "foreign_filter_$SUFFIX")"
-grep -Eq 'counter packets [1-9][0-9]* bytes' <<<"$foreign_counters" || fail "foreign INPUT/OUTPUT accept chains did not observe packet traffic"
 expect_tcp6() {
     local ns="$1" address="$2" port="$3" expected="$4" label="$5"
     local source
