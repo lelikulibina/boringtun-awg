@@ -581,7 +581,7 @@ impl Runtime {
                 elapsed += 1;
                 self.accept_control_connections();
                 if let Some(error) = &self.fatal_error {
-                    return Err(RuntimeError::FatalRollback(error.clone()));
+                    return Err(RuntimeError::FatalTransition(error.clone()));
                 }
             }
             if SHUTDOWN_REQUESTED.load(Ordering::Relaxed) {

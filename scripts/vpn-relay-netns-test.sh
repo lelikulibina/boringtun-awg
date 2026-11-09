@@ -433,6 +433,10 @@ grep -Eq 'iifname "wg-server" ct state new ip daddr 0.0.0.0/0 meta mark set 0x80
 # back and remain healthy with the old nftables table still active.
 cp "$TMP/config.toml" "$TMP/config-before-reload.toml"
 sed -i 's/195.142.0.0\/16/198.51.100.0\/24/' "$TMP/config.toml"
+# Move the default route from awg-primary to awg-secondary and allocate a
+# disjoint fwmark range. This exercises parallel old/new policy resources.
+sed -i '0,/^\[\[routing.rules\]\]/{s/^\[\[routing.rules\]\]/[routing]\nmark_base = 0x90000000\n\n[[routing.rules]]/}' "$TMP/config.toml"
+sed -i 's/egress = "awg-primary"/egress = "awg-secondary"/g' "$TMP/config.toml"
 cat >>"$TMP/config.toml" <<'TOML'
 
 [[interfaces.wg-server.peers]]
@@ -458,6 +462,12 @@ grep -Fq 'ip daddr 195.142.0.0/16' <<<"$chain_after_failed_reload" || fail "fail
 if grep -Fq 'ip daddr 198.51.100.0/24' <<<"$chain_after_failed_reload"; then
     fail "failed reload partially installed the new routing classifier"
 fi
+if ip -n "$NS" -4 rule show | grep -Fq 'fwmark 0x90000000 lookup 11000 proto 242'; then
+    fail "failed reload left behind a staged policy-routing rule"
+fi
+if ip -n "$NS" -4 route show table 11000 | grep -q .; then
+    fail "failed reload left behind a staged policy-routing route"
+fi
 
 # Retry without failure injection. The new routing selector, firewall exception
 # and peer set must become active together from the daemon's point of view.
@@ -467,10 +477,24 @@ grep -Fq 'ip daddr 198.51.100.0/24' <<<"$chain_after_reload" || fail "successful
 if grep -Fq 'ip daddr 195.142.0.0/16' <<<"$chain_after_reload"; then
     fail "successful reload retained the old routing selector"
 fi
+ip -n "$NS" -4 rule show | grep -Fq 'fwmark 0x90000000 lookup 11000 proto 242' || fail "successful reload did not install the new routing rule"
+ip -n "$NS" -4 route show table 11000 | grep -Fq 'default dev awg-secondary proto 242' || fail "successful reload did not install the new egress route"
+for old_mark in 0x80000000 0x80000001; do
+    if ip -n "$NS" -4 rule show | grep -Fq "fwmark $old_mark"; then
+        fail "successful reload retained an old routing mark rule ($old_mark)"
+    fi
+done
+for old_table in 10000 10001; do
+    if ip -n "$NS" -4 route show table "$old_table" | grep -q .; then
+        fail "successful reload retained an old egress route table ($old_table)"
+    fi
+done
 input_after_reload="$(ip netns exec "$NS" nft list chain inet vpn_relay_it input)"
 grep -Fq 'ip saddr 10.10.0.2 udp dport 53' <<<"$input_after_reload" || fail "successful reload did not install the new INPUT exception"
 for family in -4 -6; do
-    ip -n "$NS" "$family" rule show | grep -Fq 'fwmark 0x80000000 lookup 10000 proto 242' || fail "reload changed the stable policy-routing rule for $family"
+    for socket_mark in 0x1001 0x1002 0x1003; do
+        ip -n "$NS" "$family" rule show | grep -Fq "fwmark $socket_mark lookup main proto 242" || fail "reload changed socket policy-routing rule $socket_mark for $family"
+    done
 done
 
 # The legacy peer-only operation must remain available and must not replace the

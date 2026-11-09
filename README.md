@@ -101,13 +101,18 @@ through one nftables transaction. Peer commits across multiple tunnel devices
 are sequential rather than globally simultaneous; if a later step fails, prior
 peer sets are restored. A failed rollback causes the daemon to stop.
 
-The first reload implementation deliberately keeps policy-routing resources
-stable. It can change peer sets, routing decisions/selectors/NAT and INPUT/OUTPUT
-firewall rules, but it rejects changes to the interface set or tunnel identity
-(type, addresses, MTU, IPv6 setting, listen port, private key, socket mark and
-AWG parameters), `routing.mark_base`, the set of routing egress interfaces,
-`daemon.nft_table`, `daemon.manage_ip_forwarding` and `daemon.log_level`.
-Those changes require a restart. The statistics interval may be changed.
+Runtime reload can change peer sets, routing decisions/selectors/NAT,
+INPUT/OUTPUT firewall rules, `routing.mark_base`, and the set of routing egress
+interfaces. When routing marks or egress resources change, the daemon allocates
+a disjoint mark range and unused route-table/rule-priority slots, installs the
+new policy routes before the nftables transaction, then removes old routes only
+after nftables switches to the new marks. Old and new mark ranges must not
+overlap. A failed nftables transaction leaves the old classifier active and
+removes staged routes; cleanup or peer rollback failure puts the daemon into
+fatal shutdown. Tunnel identity/lifecycle parameters (interface set/type,
+addresses, MTU, IPv6 setting, listen port, private key, socket mark and AWG
+parameters), `daemon.nft_table`, `daemon.manage_ip_forwarding` and
+`daemon.log_level` still require a restart. The statistics interval may change.
 
 The existing `--replace-peers INTERFACE` command remains available for updating
 one interface's peer set from the configuration file without applying other
