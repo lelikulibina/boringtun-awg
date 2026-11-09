@@ -358,6 +358,17 @@ ip netns exec "$SERVER_NS" sysctl -q -w net.ipv4.conf.default.rp_filter=0
 ip netns exec "$SERVER_NS" sysctl -q -w "net.ipv4.conf.${SERVER_VETH}.rp_filter=0"
 ip netns exec "$SERVER_NS" sysctl -q -w net.ipv4.conf.wg-peer-test.rp_filter=0
 
+# Isolate the client-side conntrack entry for the physical request in
+# another zone. This models a reply arriving over a different path: the
+# forged packet is NEW to the client's OUTPUT hook (so the explicit test
+# allow can transmit it), while it remains REPLY to the server's original
+# host flow. The server must reject it because that flow has no local-flow tag.
+ip netns exec "$CLIENT_NS" nft -f - <<NFT
+add table inet vpn_relay_test_zone_$SUFFIX
+add chain inet vpn_relay_test_zone_$SUFFIX prerouting { type filter hook prerouting priority raw; policy accept; }
+add rule inet vpn_relay_test_zone_$SUFFIX prerouting iifname "$CLIENT_VETH" ip saddr 192.0.2.10 udp sport 18080 ct zone set 1
+NFT
+
 # A host-originated UDP flow uses the physical underlay and therefore must not
 # acquire vpn-relay's managed-flow conntrack tag. A peer then forges its reply
 # through the TUN using the exact reverse tuple. The packet must reach the TUN
