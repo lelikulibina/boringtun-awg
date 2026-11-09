@@ -313,7 +313,33 @@ impl Runtime {
                 "candidate changes live socket fwmarks; restart vpn-relay".to_owned(),
             ));
         }
-        let route_resources_changed = self.routing.egresses != next_routing.egresses;
+
+        // RoutingPlan::from_config starts with the default table/priority
+        // numbers. Preserve the dynamically allocated live slots when the
+        // actual egress identity and fwmark are unchanged; otherwise every
+        // peer-only or firewall-only reload would look like a route migration.
+        let same_egress_resources = self.routing.egresses.len() == next_routing.egresses.len()
+            && next_routing.egresses.iter().all(|next| {
+                self.routing.egresses.iter().any(|current| {
+                    current.interface == next.interface
+                        && current.mark == next.mark
+                        && current.ipv6_enabled == next.ipv6_enabled
+                })
+            });
+        if same_egress_resources {
+            for next in &mut next_routing.egresses {
+                if let Some(current) = self
+                    .routing
+                    .egresses
+                    .iter()
+                    .find(|current| current.interface == next.interface)
+                {
+                    next.table_id = current.table_id;
+                    next.ip_rule_priority = current.ip_rule_priority;
+                }
+            }
+        }
+        let route_resources_changed = !same_egress_resources;
         if route_resources_changed {
             let mut occupied = self.retired_routing.clone();
             occupied.push(self.routing.clone());
