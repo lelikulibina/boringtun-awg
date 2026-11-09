@@ -462,6 +462,9 @@ Noise sessions для peer, чьи параметры не менялись; н�
 
 | 2026-11-09 | Полная packet-level проверка firewall/NAT и coexistence | CI 42674872629 на HEAD c06082b8a0e2b776b1d563edfaca3d03f14665ef: `all-systems-go` success; netns startup/rollback, WG, AWG 3.1, loopback, foreign INPUT/OUTPUT/FORWARD chains, локальные source addresses и блокировка denied FORWARD на обоих uplink прошли | Подтверждено CI |
 
+| 2026-11-09 | Добавлен BoringTun peer-set replacement API | Коммиты  b6fd7a3–a651bfa; `PeerConfig` задаёт полное состояние peer, новые Tunn/Peer создаются до commit, существующие объекты сохраняются, peer maps и AllowedIPs заменяются под одной `with_device_mut`; backend create переведён на batch API. CI 42687071061 на 3106c7e: all-systems-go success (rustfmt, clippy, tests, feature checks, WG/AWG packet integration, multi-uplink и AWG 3.1 interoperability) | API и начальная интеграция подтверждены CI; runtime hot reload, state-preservation и rollback tests ещё не реализованы |
+| 2026-11-09 | Вынесена предварительная валидация peer batch | Commit a651bfa: проверка duplicate public keys, duplicate exact AllowedIPs и canonical prefix выполняется до выделения peer resources; добавлены unit tests, включая разрешённые nested prefixes. CI ожидается | Ожидает CI |
+
 ## 14. Правила ведения плана
 
 1. Перед началом каждого этапа проверять актуальный head рабочей ветки.
