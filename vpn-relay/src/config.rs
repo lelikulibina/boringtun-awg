@@ -505,11 +505,19 @@ impl Config {
                             rule.ingress, rule.egress
                         ));
                     }
-                    let family_matches = source_prefixes.as_ref().is_some_and(|prefixes|
-                        prefixes.iter().any(|(prefix, _)| prefix.is_ipv4() == address.is_ipv4()))
-                        || destination_prefixes.as_ref().is_some_and(|prefixes|
-                        prefixes.iter().any(|(prefix, _)| prefix.is_ipv4() == address.is_ipv4()));
-                    if (source_prefixes.is_some() || destination_prefixes.is_some()) && !family_matches {
+                    let family_matches =
+                        source_prefixes.as_ref().is_some_and(|prefixes| {
+                            prefixes
+                                .iter()
+                                .any(|(prefix, _)| prefix.is_ipv4() == address.is_ipv4())
+                        }) || destination_prefixes.as_ref().is_some_and(|prefixes| {
+                            prefixes
+                                .iter()
+                                .any(|(prefix, _)| prefix.is_ipv4() == address.is_ipv4())
+                        });
+                    if (source_prefixes.is_some() || destination_prefixes.is_some())
+                        && !family_matches
+                    {
                         return invalid("routing.rules.nat_to address family must match at least one source/destination selector family");
                     }
                 }
@@ -811,8 +819,14 @@ egress = "awg-uplink"
         let config = Config::parse_toml(&input).unwrap();
         assert_eq!(config.firewall.input.rules.len(), 1);
         assert_eq!(config.firewall.output.rules.len(), 1);
-        assert_eq!(config.firewall.input.rules[0].protocol, Some(FirewallProtocol::Tcp));
-        assert_eq!(config.firewall.output.rules[0].ports.as_deref(), Some(&[53][..]));
+        assert_eq!(
+            config.firewall.input.rules[0].protocol,
+            Some(FirewallProtocol::Tcp)
+        );
+        assert_eq!(
+            config.firewall.output.rules[0].ports.as_deref(),
+            Some(&[53][..])
+        );
     }
 
     #[test]
@@ -846,7 +860,10 @@ egress = "awg-uplink"
         );
         let parsed = Config::parse_toml(&valid_snat).unwrap();
         assert_eq!(parsed.routing.rules[0].nat, NatMode::Snat);
-        assert_eq!(parsed.routing.rules[0].nat_to, Some("203.0.113.9".parse().unwrap()));
+        assert_eq!(
+            parsed.routing.rules[0].nat_to,
+            Some("203.0.113.9".parse().unwrap())
+        );
 
         let disabled_ipv6 = valid_config().replacen(
             "egress = \"awg-uplink\"",

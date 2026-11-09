@@ -136,8 +136,20 @@ impl RoutingPlan {
             ports: rule.ports.clone(),
             ipv6_enabled: config.interfaces[&rule.interface].ipv6_enabled,
         };
-        let input_rules = config.firewall.input.rules.iter().map(to_firewall_rule).collect();
-        let output_rules = config.firewall.output.rules.iter().map(to_firewall_rule).collect();
+        let input_rules = config
+            .firewall
+            .input
+            .rules
+            .iter()
+            .map(to_firewall_rule)
+            .collect();
+        let output_rules = config
+            .firewall
+            .output
+            .rules
+            .iter()
+            .map(to_firewall_rule)
+            .collect();
 
         let mut socket_marks = config
             .resolved_socket_fwmarks()
@@ -423,7 +435,11 @@ fn firewall_rule_family_variants(
     rule: &NftFirewallRule,
     input: bool,
 ) -> Vec<(Option<&'static str>, Vec<String>, Vec<String>)> {
-    let prefixes = if input { rule.source.as_ref() } else { rule.destination.as_ref() };
+    let prefixes = if input {
+        rule.source.as_ref()
+    } else {
+        rule.destination.as_ref()
+    };
     let Some(prefixes) = prefixes else {
         return vec![(None, Vec::new(), Vec::new())];
     };
@@ -434,11 +450,16 @@ fn firewall_rule_family_variants(
         .into_iter()
         .filter(|family| *family != "ip6" || rule.ipv6_enabled)
         .map(|family| {
-            let selected = prefixes.iter()
+            let selected = prefixes
+                .iter()
                 .filter(|prefix| nft_family_match(prefix) == family)
-                .cloned().collect::<Vec<_>>();
-            if input { (Some(family), selected, Vec::new()) }
-            else { (Some(family), Vec::new(), selected) }
+                .cloned()
+                .collect::<Vec<_>>();
+            if input {
+                (Some(family), selected, Vec::new())
+            } else {
+                (Some(family), Vec::new(), selected)
+            }
         })
         .collect()
 }
@@ -453,7 +474,11 @@ fn append_firewall_protocol_selector(selectors: &mut String, rule: &NftFirewallR
         });
     }
     if let Some(ports) = &rule.ports {
-        let ports = ports.iter().map(u16::to_string).collect::<Vec<_>>().join(", ");
+        let ports = ports
+            .iter()
+            .map(u16::to_string)
+            .collect::<Vec<_>>()
+            .join(", ");
         selectors.push_str(&format!(" dport {{ {ports} }}"));
     }
 }
