@@ -105,14 +105,15 @@ nft_table = "vpn_relay_peer_srv_$SUFFIX"
 
 [interfaces.wg-peer-test]
 type = "$PROTO"
-address = ["10.77.0.1/24"]
+ipv6_enabled = true
+address = ["10.77.0.1/24", "fd77::1/64"]
 listen_port = 51871
 private_key = "$SERVER_PRIVATE"
 socket_fwmark = 5001
 
 [[interfaces.wg-peer-test.peers]]
 public_key = "$CLIENT_PUBLIC"
-allowed_ips = ["10.77.0.2/32", "192.0.2.20/32", "192.0.2.21/32"]
+allowed_ips = ["10.77.0.2/32", "fd77::2/128", "192.0.2.20/32", "192.0.2.21/32"]
 
 # Exercise INPUT and OUTPUT defaults: server allows TCP/8080 and iperf3 TCP/UDP 5201; the client
 # also allows TCP/8081 for isolated negative probes so the negative probes isolate the server hooks.
@@ -127,6 +128,17 @@ interface = "wg-peer-test"
 source = ["10.77.0.2/32"]
 protocol = "tcp"
 ports = [8080, 5201]
+
+[[firewall.input.rules]]
+interface = "wg-peer-test"
+source = ["fd77::2/128"]
+protocol = "icmpv6"
+
+[[firewall.input.rules]]
+interface = "wg-peer-test"
+source = ["fd77::2/128"]
+protocol = "tcp"
+ports = [8082]
 
 [[firewall.input.rules]]
 interface = "wg-peer-test"
@@ -145,6 +157,17 @@ interface = "wg-peer-test"
 destination = ["10.77.0.2/32"]
 protocol = "tcp"
 ports = [8080, 5201]
+
+[[firewall.output.rules]]
+interface = "wg-peer-test"
+destination = ["fd77::2/128"]
+protocol = "icmpv6"
+
+[[firewall.output.rules]]
+interface = "wg-peer-test"
+destination = ["fd77::2/128"]
+protocol = "tcp"
+ports = [8082]
 [[firewall.output.rules]]
 interface = "wg-peer-test"
 destination = ["10.77.0.2/32"]
@@ -168,7 +191,8 @@ nft_table = "vpn_relay_peer_cli_$SUFFIX"
 
 [interfaces.wg-peer-test]
 type = "$PROTO"
-address = ["10.77.0.2/24"]
+ipv6_enabled = true
+address = ["10.77.0.2/24", "fd77::2/64"]
 listen_port = 51872
 private_key = "$CLIENT_PRIVATE"
 socket_fwmark = 5002
@@ -176,7 +200,7 @@ socket_fwmark = 5002
 [[interfaces.wg-peer-test.peers]]
 public_key = "$SERVER_PUBLIC"
 endpoint = "192.0.2.1:51871"
-allowed_ips = ["10.77.0.1/32", "192.0.2.10/32", "192.0.2.11/32"]
+allowed_ips = ["10.77.0.1/32", "fd77::1/128", "192.0.2.10/32", "192.0.2.11/32"]
 persistent_keepalive_secs = 1
 
 [firewall.input]
@@ -190,6 +214,17 @@ interface = "wg-peer-test"
 source = ["10.77.0.1/32"]
 protocol = "tcp"
 ports = [8080, 8081, 5201]
+
+[[firewall.input.rules]]
+interface = "wg-peer-test"
+source = ["fd77::1/128"]
+protocol = "icmpv6"
+
+[[firewall.input.rules]]
+interface = "wg-peer-test"
+source = ["fd77::1/128"]
+protocol = "tcp"
+ports = [8082, 8083]
 
 [[firewall.input.rules]]
 interface = "wg-peer-test"
@@ -208,6 +243,17 @@ interface = "wg-peer-test"
 destination = ["10.77.0.1/32"]
 protocol = "tcp"
 ports = [8080, 8081, 5201]
+
+[[firewall.output.rules]]
+interface = "wg-peer-test"
+destination = ["fd77::1/128"]
+protocol = "icmpv6"
+
+[[firewall.output.rules]]
+interface = "wg-peer-test"
+destination = ["fd77::1/128"]
+protocol = "tcp"
+ports = [8082, 8083]
 [[firewall.output.rules]]
 interface = "wg-peer-test"
 destination = ["10.77.0.1/32"]
@@ -288,6 +334,8 @@ grep -q "dev wg-peer-test" <<<"$inner_route" || fail "remote tunnel address did 
 # packet delivery over the veth-backed UDP underlay.
 ip netns exec "$CLIENT_NS" ping -n -c 5 -W 2 10.77.0.1 || fail "client-to-server tunnel traffic failed"
 ip netns exec "$SERVER_NS" ping -n -c 5 -W 2 10.77.0.2 || fail "server-to-client tunnel traffic failed"
+ip netns exec "$CLIENT_NS" ping -6 -n -c 3 -W 2 fd77::1 || fail "IPv6 client-to-server tunnel traffic failed"
+ip netns exec "$SERVER_NS" ping -6 -n -c 3 -W 2 fd77::2 || fail "IPv6 server-to-client tunnel traffic failed"
 
 # Start listeners on both peers. Port 8080 is explicitly allowed by
 # the server; port 8081 is used to prove server INPUT and OUTPUT deny-by-default.
@@ -310,6 +358,25 @@ start_tcp_listener "$SERVER_NS" 8080 server-tcp-8080.log
 start_tcp_listener "$SERVER_NS" 8081 server-tcp-8081.log
 start_tcp_listener "$CLIENT_NS" 8080 client-tcp-8080.log
 start_tcp_listener "$CLIENT_NS" 8081 client-tcp-8081.log
+start_tcp_listener6() {
+    local ns="$1" port="$2" log="$3"
+    ip netns exec "$ns" python3 -u -c '
+import socket, sys
+sock = socket.socket(socket.AF_INET6)
+sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+sock.bind(("::", int(sys.argv[1])))
+sock.listen()
+while True:
+    conn, _ = sock.accept()
+    with conn:
+        conn.sendall(b"ok")
+' "$port" >"$TMP/$log" 2>&1 &
+    TCP_PIDS+=("$!")
+}
+start_tcp_listener6 "$SERVER_NS" 8082 server-tcp6-8082.log
+start_tcp_listener6 "$SERVER_NS" 8083 server-tcp6-8083.log
+start_tcp_listener6 "$CLIENT_NS" 8082 client-tcp6-8082.log
+start_tcp_listener6 "$CLIENT_NS" 8083 client-tcp6-8083.log
 sleep 0.5
 
 expect_tcp() {
@@ -339,6 +406,33 @@ expect_tcp "$CLIENT_NS" 10.77.0.1 8080 allow "client to server allowed INPUT/OUT
 expect_tcp "$SERVER_NS" 10.77.0.2 8080 allow "server to client allowed INPUT/OUTPUT"
 expect_tcp "$CLIENT_NS" 10.77.0.1 8081 deny "server INPUT default deny"
 expect_tcp "$SERVER_NS" 10.77.0.2 8081 deny "server OUTPUT default deny"
+expect_tcp6() {
+    local ns="$1" address="$2" port="$3" expected="$4" label="$5"
+    local source
+    if [[ "$ns" == "$CLIENT_NS" ]]; then source="fd77::2"; else source="fd77::1"; fi
+    ip netns exec "$ns" python3 - "$address" "$port" "$expected" "$label" "$source" <<'PY'
+import socket, sys
+address, port, expected, label, source = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5]
+try:
+    with socket.create_connection((address, port), timeout=1.5, source_address=(source, 0)) as conn:
+        conn.settimeout(1.5)
+        payload = conn.recv(2)
+        if expected == "deny":
+            raise SystemExit(f"{label}: connection unexpectedly succeeded")
+        if payload != b"ok":
+            raise SystemExit(f"{label}: unexpected response {payload!r}")
+except OSError as error:
+    if expected == "allow":
+        raise SystemExit(f"{label}: expected connection failed: {error}")
+    print(f"{label}: blocked as expected")
+else:
+    print(f"{label}: allowed as expected")
+PY
+}
+expect_tcp6 "$CLIENT_NS" fd77::1 8082 allow "IPv6 client to server allowed INPUT/OUTPUT"
+expect_tcp6 "$SERVER_NS" fd77::2 8082 allow "IPv6 server to client allowed INPUT/OUTPUT"
+expect_tcp6 "$CLIENT_NS" fd77::1 8083 deny "IPv6 server INPUT default deny"
+expect_tcp6 "$SERVER_NS" fd77::2 8083 deny "IPv6 server OUTPUT default deny"
 
 # The physical request is deliberately untracked in the client namespace:
 # this keeps the forged reverse packet a NEW local flow on the client, so its
