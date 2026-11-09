@@ -315,6 +315,54 @@ unmanaged output остаётся неизменным.
   (CI 42665725191).
 - [ ] Проверить поведение при удалении/переименовании интерфейса во время работы.
 
+### Архитектурное уточнение runtime reconfiguration (исследование 2026-11-09)
+
+Проверены фактические интерфейсы `vpn-relay/src/backend/mod.rs`,
+`backend/boringtun.rs`, `runtime.rs`, `routing.rs` и typed API
+`boringtun/src/device/mod.rs`.
+
+Подтверждённые ограничения текущего кода:
+
+- `DeviceHandle::update_peer` уже умеет добавлять, изменять и удалять peer,
+  заменять AllowedIPs, менять endpoint, keepalive и preshared key. Изменение
+  выполняется под write lock одного Device.
+- `DeviceHandle::snapshot` возвращает endpoint, AllowedIPs и keepalive, но не
+  preshared key. Поэтому snapshot работающего backend недостаточен для
+  достоверного восстановления предыдущей peer-конфигурации.
+- vpn-relay `TunnelHandle` экспортирует только counters snapshot, shutdown и
+  wait; backend peer-update API наружу не выведен.
+- `Runtime` не хранит исходный `Config` после startup. Следовательно,
+  отсутствует authoritative committed config, необходимый для diff и rollback.
+- Изменение routing rules, firewall selectors, NAT, интерфейсов или fwmarks
+  затрагивает несколько kernel ресурсов и не может быть безопасно реализовано
+  как последовательность независимых вызовов `update_peer`.
+
+Принято разделить будущую переконфигурацию на два уровня:
+
+1. **Peer-only reconfiguration** — изменение набора peer и их endpoint,
+   AllowedIPs, PSK и keepalive при неизменной конфигурации интерфейсов и
+   неизменном `RoutingPlan`. Runtime хранит последнюю успешно применённую
+   конфигурацию как источник rollback; backend заранее валидирует/разбирает
+   все операции и предоставляет batch API с единой точкой сериализации.
+   При ошибке применяется предыдущий committed peer set; если rollback не
+   удался, runtime должен перейти в fail-closed состояние и явно сообщить
+   фатальную ошибку, а не продолжить работу со смешанным набором peer.
+
+2. **Network/policy reconfiguration** — изменения интерфейсов, адресов, MTU,
+   listen/socket marks, routing, firewall, NAT и forwarding. Для этого нужен
+   отдельный staged transaction: построить и проверить новый Config/Plan;
+   установить совместимую fail-closed policy; подготовить новые/изменённые
+   ресурсы; переключить routing и backend в определённом порядке; удалить
+   устаревшие ресурсы только после успешного commit; при ошибке восстановить
+   предыдущий snapshot ресурсов. До реализации такого transaction эти поля
+   считаются restart-required, а не hot-reloadable.
+
+Нельзя считать замену списка peer атомарной только потому, что каждый
+`update_peer` защищён внутренним lock: серия вызовов может быть видна datapath
+между операциями. Нужны batch semantics и тесты одновременного трафика во время
+обновления, удаления и rollback. Также требуется отдельно проверить поведение
+при endpoint DNS resolution failure до начала commit.
+
 Критерий приёмки: каждый сценарий отказа оставляет namespace в безопасном и
 предсказуемом состоянии; чужие ресурсы не меняются.
 
