@@ -19,7 +19,7 @@ trap cleanup EXIT
 
 fail() {
     echo "vpn-relay namespace test: $*" >&2
-    for log in "$TMP/daemon.log" "$TMP/conflict.log" "$TMP/policy-conflict.log" "$TMP/route-conflict.log" "$TMP/policy-shadow-conflict.log"; do
+    for log in "$TMP/daemon.log" "$TMP/conflict.log" "$TMP/policy-conflict.log" "$TMP/route-conflict.log" "$TMP/policy-shadow-conflict.log" "$TMP/partial-setup-conflict.log"; do
         if [[ -f "$log" ]]; then
             cat "$log" >&2
         fi
@@ -219,6 +219,44 @@ ip -n "$NS" -4 route show table 10000 | grep -Fq 'default dev main0 proto static
 ip -n "$NS" -6 route show table 10000 | grep -Fq 'default dev main0 proto static' || fail "foreign IPv6 route in table 10000 was overwritten"
 ip -n "$NS" -4 route del default dev main0 table 10000 proto static
 ip -n "$NS" -6 route del default dev main0 table 10000 proto static
+
+# Force a failure after two interfaces have already been created and configured.
+# Interface names are processed in sorted order (awg-primary, awg-secondary,
+# wg-server), so the pre-existing dummy link makes the final TUN creation fail.
+ip -n "$NS" link add wg-server type dummy
+ip -n "$NS" link set wg-server up
+ip netns exec "$NS" "$BIN" --config "$TMP/config.toml" >"$TMP/partial-setup-conflict.log" 2>&1 &
+DAEMON_PID=$!
+for _ in $(seq 1 30); do
+    state="$(ps -o stat= -p "$DAEMON_PID" 2>/dev/null | tr -d ' ' || true)"
+    if [[ -z "$state" || "$state" == Z* ]]; then
+        break
+    fi
+    sleep 1
+done
+state="$(ps -o stat= -p "$DAEMON_PID" 2>/dev/null | tr -d ' ' || true)"
+if [[ -n "$state" && "$state" != Z* ]]; then
+    fail "daemon did not reject a TUN name conflict after partial interface setup"
+fi
+set +e
+wait "$DAEMON_PID"
+partial_status=$?
+set -e
+DAEMON_PID=""
+[[ $partial_status -ne 0 ]] || fail "daemon accepted a TUN name conflict after partial setup"
+ip netns exec "$NS" ip link show dev wg-server >/dev/null 2>&1 || fail "rollback deleted the administrator-owned conflicting link"
+for iface in awg-primary awg-secondary; do
+    if ip netns exec "$NS" ip link show dev "$iface" >/dev/null 2>&1; then
+        fail "partially-created TUN interface $iface leaked after startup rollback"
+    fi
+done
+ip netns exec "$NS" nft list table inet vpn_relay_it >/dev/null 2>&1 && fail "nftables policy leaked after partial setup rollback"
+if ip -n "$NS" -4 rule show | grep -Eq 'fwmark 0x(80000000|80000001|1001|1002)'; then
+    fail "policy routing leaked after partial setup rollback"
+fi
+[[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "0" ]] || fail "partial setup failure changed IPv4 forwarding"
+[[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "0" ]] || fail "partial setup failure changed IPv6 forwarding"
+ip -n "$NS" link del wg-server
 
 ip netns exec "$NS" "$BIN" --config "$TMP/config.toml" >"$TMP/daemon.log" 2>&1 &
 DAEMON_PID=$!
