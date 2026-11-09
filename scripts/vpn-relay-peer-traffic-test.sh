@@ -461,49 +461,6 @@ output_capture_status=$?
 set -e
 [[ "$output_capture_status" -eq 124 ]] || fail "reply to unmanaged INPUT flow reached the client TUN (tcpdump status $output_capture_status)"
 
-# The OUTPUT mirror: a client packet reaches a host service over the physical
-# underlay. The service's reply is routed through the managed TUN, but the
-# original packet never passed managed INPUT and therefore has no host-flow
-# tag. The reply must be dropped before it reaches the client TUN.
-ip netns exec "$CLIENT_NS" timeout 3 tcpdump -nn -i wg-peer-test -c 1 \
-    'udp and src host 192.0.2.11 and dst host 192.0.2.21 and dst port 18081' \
-    >"$TMP/unmanaged-input-reply-tun.log" 2>&1 &
-capture_pid=$!
-TCP_PIDS+=("$capture_pid")
-ip netns exec "$SERVER_NS" python3 -u - <<'PY' >"$TMP/unmanaged-input-server.log" 2>&1 &
-import socket
-sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-sock.bind(("192.0.2.11", 18080))
-sock.settimeout(3)
-payload, _ = sock.recvfrom(128)
-if payload != b"unmanaged-input-probe":
-    raise SystemExit(f"unexpected request payload: {payload!r}")
-sock.sendto(b"unmanaged-input-reply", ("192.0.2.21", 18081))
-print("host service attempted reply over managed TUN")
-PY
-server_reply_pid=$!
-TCP_PIDS+=("$server_reply_pid")
-sleep 0.25
-ip netns exec "$CLIENT_NS" python3 - <<'PY'
-import socket
-sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-sock.bind(("192.0.2.21", 18081))
-sock.settimeout(2)
-sock.sendto(b"unmanaged-input-probe", ("192.0.2.11", 18080))
-try:
-    payload, _ = sock.recvfrom(128)
-except socket.timeout:
-    print("reply to unmanaged INPUT flow blocked on managed OUTPUT")
-else:
-    raise SystemExit(f"untagged reply bypassed managed OUTPUT deny: {payload!r}")
-PY
-wait "$server_reply_pid" || fail "server did not receive unmanaged INPUT probe"
-set +e
-wait "$capture_pid"
-output_capture_status=$?
-set -e
-[[ "$output_capture_status" -eq 124 ]] || fail "reply to unmanaged INPUT flow reached the client TUN (tcpdump status $output_capture_status)"
-
 # Observe the real encrypted UDP transport: it must be visible on the physical
 # underlay veth and must never reappear as an outer packet on the TUN device.
 ip netns exec "$CLIENT_NS" timeout 5 tcpdump -nn -i "$CLIENT_VETH" -c 1 \
