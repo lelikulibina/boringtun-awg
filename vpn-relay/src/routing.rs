@@ -912,7 +912,8 @@ egress = "awg-primary"
     }
 
     #[test]
-    fn earlier_nat_none_rule_prevents_later_overlapping_masquerade() {
+    #[test]
+    fn overlapping_rules_sharing_egress_keep_distinct_conntrack_decisions() {
         let mut config = sample_config();
         config.routing.rules[0].source = None;
         config.routing.rules[0].destination = Some(vec!["0.0.0.0/0".to_owned()]);
@@ -921,19 +922,14 @@ egress = "awg-primary"
         config.routing.rules[1].destination = Some(vec!["195.142.0.0/16".to_owned()]);
         config.routing.rules[1].nat = NatMode::Masquerade;
 
-        let script = RoutingPlan::from_config(&config).nft_script();
-        let no_nat = script.find(
-            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark 0x80000001 ip daddr 0.0.0.0/0 return",
-        ).expect("first matching nat=none rule must return");
-        let later_nat = script.find(
-            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark 0x80000001 ip daddr 195.142.0.0/16 masquerade",
-        ).expect("later overlapping masquerade rule must be present");
-        assert!(
-            no_nat < later_nat,
-            "NAT rules must preserve routing priority"
-        );
+        let plan = RoutingPlan::from_config(&config);
+        assert_ne!(plan.decisions[0].conntrack_mark, plan.decisions[1].conntrack_mark);
+        assert_eq!(plan.decisions[0].routing_mark, plan.decisions[1].routing_mark);
+        let script = plan.nft_script();
+        assert!(script.contains("postrouting ct mark 0x1 return"));
+        assert!(script.contains("postrouting ct mark 0x2 masquerade"));
+        assert!(!script.contains("postrouting ct mark 0x1 masquerade"));
     }
-
     #[test]
     fn source_only_and_destination_only_rules_generate_family_specific_matches() {
         let mut config = sample_config();
