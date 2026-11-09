@@ -113,7 +113,7 @@ socket_fwmark = 5001
 
 [[interfaces.wg-peer-test.peers]]
 public_key = "$CLIENT_PUBLIC"
-allowed_ips = ["10.77.0.2/32", "fd77::2/128", "192.0.2.20/32", "192.0.2.21/32"]
+allowed_ips = ["10.77.0.2/32", "fd77::2/128", "fd77::3/128", "192.0.2.20/32", "192.0.2.21/32"]
 
 # Exercise INPUT and OUTPUT defaults: server allows TCP/8080 and iperf3 TCP/UDP 5201; the client
 # also allows TCP/8081 for isolated negative probes so the negative probes isolate the server hooks.
@@ -192,7 +192,7 @@ nft_table = "vpn_relay_peer_cli_$SUFFIX"
 [interfaces.wg-peer-test]
 type = "$PROTO"
 ipv6_enabled = true
-address = ["10.77.0.2/24", "fd77::2/64"]
+address = ["10.77.0.2/24", "fd77::2/64", "fd77::3/128"]
 listen_port = 51872
 private_key = "$CLIENT_PRIVATE"
 socket_fwmark = 5002
@@ -433,6 +433,38 @@ expect_tcp6 "$CLIENT_NS" fd77::1 8082 allow "IPv6 client to server allowed INPUT
 expect_tcp6 "$SERVER_NS" fd77::2 8082 allow "IPv6 server to client allowed INPUT/OUTPUT"
 expect_tcp6 "$CLIENT_NS" fd77::1 8083 deny "IPv6 server INPUT default deny"
 expect_tcp6 "$SERVER_NS" fd77::2 8083 deny "IPv6 server OUTPUT default deny"
+
+# ICMPv6 uses the same explicit allow-list semantics as TCP. A second,
+# authenticated client address is deliberately absent from the server INPUT
+# source selector: the echo request must reach the TUN but receive no reply.
+ip netns exec "$SERVER_NS" timeout 5 tcpdump -nn -i wg-peer-test -c 1 \
+    'icmp6 and src host fd77::3 and dst host fd77::1 and icmp6[0] == 128' \
+    >"$TMP/icmpv6-input-deny.log" 2>&1 &
+capture_pid=$!
+TCP_PIDS+=("$capture_pid")
+sleep 0.25
+if ip netns exec "$CLIENT_NS" ping -6 -n -I fd77::3 -c 1 -W 2 fd77::1; then
+    fail "server INPUT accepted ICMPv6 from a source outside its explicit allow rule"
+fi
+wait "$capture_pid" || fail "ICMPv6 INPUT deny probe did not reach the server TUN"
+
+# The server OUTPUT allow rule names only fd77::2. Sending to the other
+# authenticated client address must be denied before a packet reaches its TUN.
+ip netns exec "$CLIENT_NS" timeout 3 tcpdump -nn -i wg-peer-test -c 1 \
+    'icmp6 and src host fd77::1 and dst host fd77::3 and icmp6[0] == 128' \
+    >"$TMP/icmpv6-output-deny.log" 2>&1 &
+capture_pid=$!
+TCP_PIDS+=("$capture_pid")
+sleep 0.25
+if ip netns exec "$SERVER_NS" ping -6 -n -I fd77::1 -c 1 -W 1 fd77::3; then
+    fail "server OUTPUT accepted ICMPv6 to a destination outside its explicit allow rule"
+fi
+set +e
+wait "$capture_pid"
+icmpv6_output_capture_status=$?
+set -e
+[[ "$icmpv6_output_capture_status" -eq 124 ]] || fail "denied ICMPv6 OUTPUT packet reached the client TUN (tcpdump status $icmpv6_output_capture_status)"
+
 
 # The physical request is deliberately untracked in the client namespace:
 # this keeps the forged reverse packet a NEW local flow on the client, so its
