@@ -77,7 +77,9 @@
 - [ ] Явно разрешённый source/interface/protocol/port доступ работает.
 - [ ] Ответы на соединения, инициированные хостом, не дают клиенту обходить
   INPUT deny.
-- [ ] Разрешённые клиентские соединения корректно пропускают обратные пакеты.
+- [~] В генератор добавлен stateful reply path: INPUT/OUTPUT разрешают
+  established/related только в conntrack reply direction, а явные allow rules
+  ограничены original direction. Ожидается packet-level проверка.
 - [ ] Loopback и трафик с unmanaged интерфейсов не меняются.
 
 ### OUTPUT
@@ -221,7 +223,10 @@ to = "203.0.113.10"
 - [ ] Применить явные разрешения только к managed ingress.
 - [ ] Запретить остальные пакеты с managed ingress до любого общего
   established/related accept, способного обойти политику.
-- [ ] Уточнить семантику related/ICMP errors и conntrack direction.
+- [~] Разделены conntrack original/reply направления: явные INPUT/OUTPUT
+  allow rules принимают original direction; established/related reply traffic
+  разрешается отдельно и только на managed interfaces. Нужна проверка nft и
+  реальным трафиком.
 - [ ] Не блокировать loopback и unmanaged ingress.
 - [ ] Добавить IPv4/IPv6 и ICMPv6 тесты.
 - [ ] Проверить взаимодействие с другими nftables base chains.
@@ -311,6 +316,7 @@ unmanaged output остаётся неизменным.
 | 2026-11-09 | Уточнена модель NAT: действие остаётся в routing rule | Отдельная NAT-секция не нужна, так как egress уже выбирается routing rule | Завершено |
 | 2026-11-09 | Добавлены INPUT/OUTPUT chains, explicit allow rules и managed default deny | Unit/parser tests; CI run 42625442963: unit tests, clippy, rustfmt, feature checks и AWG interoperability успешны; peer traffic integration упал из-за отсутствующих explicit allow rules | В работе |
 | 2026-11-09 | Peer traffic netns scenario переведён на явные INPUT/OUTPUT allow rules | Сервер и клиент разрешают только адрес противоположного tunnel peer; ожидается повторная интеграционная проверка | В работе |
+| 2026-11-09 | Добавлена conntrack-aware обработка ответного трафика INPUT/OUTPUT | Явные allow rules ограничены original direction; established/related reply принимается только на managed interface; добавлены unit assertions | В работе |
 
 ## 14. Правила ведения плана
 

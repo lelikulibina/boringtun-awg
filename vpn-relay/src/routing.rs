@@ -250,11 +250,17 @@ impl RoutingPlan {
                 }
                 append_firewall_protocol_selector(&mut selectors, rule);
                 output.push_str(&format!(
-                    "add rule {} {} input {} ct state new,established,related accept\n",
+                    "add rule {} {} input {} ct state new,established,related ct direction original accept\n",
                     self.nft_family, self.nft_table, selectors
                 ));
             }
         }
+        // Only reply-direction traffic for host-initiated connections may
+        // enter through managed interfaces without an explicit INPUT rule.
+        output.push_str(&format!(
+            "add rule {} {} input iifname @managed_interfaces ct state established,related ct direction reply accept\n",
+            self.nft_family, self.nft_table
+        ));
         output.push_str(&format!(
             "add rule {} {} input iifname @managed_interfaces drop\n",
             self.nft_family, self.nft_table
@@ -270,11 +276,17 @@ impl RoutingPlan {
                 }
                 append_firewall_protocol_selector(&mut selectors, rule);
                 output.push_str(&format!(
-                    "add rule {} {} output {} ct state new,established,related accept\n",
+                    "add rule {} {} output {} ct state new,established,related ct direction original accept\n",
                     self.nft_family, self.nft_table, selectors
                 ));
             }
         }
+        // Permit reply packets for client-initiated flows only after INPUT
+        // admitted their original-direction packets.
+        output.push_str(&format!(
+            "add rule {} {} output oifname @managed_interfaces ct state established,related ct direction reply accept\n",
+            self.nft_family, self.nft_table
+        ));
         output.push_str(&format!(
             "add rule {} {} output oifname @managed_interfaces drop\n",
             self.nft_family, self.nft_table
@@ -636,8 +648,10 @@ egress = "awg-primary"
 
         let script = RoutingPlan::from_config(&config).nft_script();
         assert!(script.contains("input iifname \"wg-server\" ip saddr 10.0.0.2/32 tcp dport { 22, 443 } ct state new,established,related accept"));
+        assert!(script.contains("input iifname @managed_interfaces ct state established,related ct direction reply accept"));
         assert!(script.contains("input iifname @managed_interfaces drop"));
         assert!(script.contains("output oifname \"awg-primary\" ip daddr 10.0.0.0/24 udp dport { 53 } ct state new,established,related accept"));
+        assert!(script.contains("output oifname @managed_interfaces ct state established,related ct direction reply accept"));
         assert!(script.contains("output oifname @managed_interfaces drop"));
         assert!(script.contains("forward iifname @managed_interfaces drop"));
     }
