@@ -360,3 +360,5 @@ unmanaged output остаётся неизменным.
 | 2026-11-09 | Добавлен ранний drop invalid для managed INPUT/OUTPUT | Правила ограничены managed ingress/egress; добавлены unit assertions; исправлено экранирование newline в nft script | Ожидает CI |
 | 2026-11-09 | Исправлен multi-uplink packet test для второго клиента | Второй клиентский firewall теперь разрешает тестовый routed трафик; предыдущий failure был вызван его собственным OUTPUT deny до router ingress | Ожидает повторный packet-level CI |
 | 2026-11-09 | Переписана документация nftables | Документ соответствует текущим INPUT/OUTPUT/FORWARD, conntrack decision IDs, NAT, IPv6 gating, ownership и runtime; явно описана граница peer identity | Готово |
+
+| 2026-11-09 | Проверен anti-spoofing на уровне BoringTun | После decapsulation IPv4/IPv6 пакет попадает в TUN только если `Device::peer_owns` подтверждает владение source IP через единый `peers_by_ip` индекс; добавлены/существуют regression tests на перенос prefix между peers | Backend-проверка подтверждена; nftables не получает peer identity |
