@@ -723,7 +723,9 @@ egress = "awg-primary"
         assert!(script.contains("forward oifname @managed_interfaces drop"));
         assert!(script.contains("iifname @managed_interfaces meta mark set 0"));
         assert!(script.contains("ct direction reply meta mark set 0"));
-        assert!(script.contains("ct direction original ct mark 0x40000001 meta mark set 0x80000000"));
+        assert!(
+            script.contains("ct direction original ct mark 0x40000001 meta mark set 0x80000000")
+        );
     }
 
     #[test]
@@ -838,8 +840,9 @@ egress = "awg-primary"
         assert_eq!(plan.decisions[2].routing_mark, 0x8000_0000);
         assert_eq!(plan.decisions[2].conntrack_mark, 0x4000_0003);
         let script = plan.nft_script();
-        assert!(script
-            .contains("ip daddr 195.142.0.0/16 meta mark set 0x80000001 ct mark set 0x40000001 return"));
+        assert!(script.contains(
+            "ip daddr 195.142.0.0/16 meta mark set 0x80000001 ct mark set 0x40000001 return"
+        ));
         assert!(script.contains("iifname \"wg-server\""));
     }
 
