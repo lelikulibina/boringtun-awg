@@ -271,11 +271,13 @@ sleep 0.5
 
 expect_tcp() {
     local ns="$1" address="$2" port="$3" expected="$4" label="$5"
-    python3 - "$address" "$port" "$expected" "$label" <<'PY'
+    local source
+    if [[ "$ns" == "$CLIENT_NS" ]]; then source="10.77.0.2"; else source="10.77.0.1"; fi
+    ip netns exec "$ns" python3 - "$address" "$port" "$expected" "$label" "$source" <<'PY'
 import socket, sys
-address, port, expected, label = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4]
+address, port, expected, label, source = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5]
 try:
-    with socket.create_connection((address, port), timeout=1.5) as conn:
+    with socket.create_connection((address, port), timeout=1.5, source_address=(source, 0)) as conn:
         conn.settimeout(1.5)
         payload = conn.recv(2)
         if expected == "deny":
