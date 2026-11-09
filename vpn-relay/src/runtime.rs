@@ -1,5 +1,7 @@
 //! Linux runtime: dispatch tunnel backends and install shared routing.
-use crate::backend::{BackendError, BackendRegistry, PreparedInterface, TunnelHandle, TunnelSnapshot};
+use crate::backend::{
+    BackendError, BackendRegistry, PreparedInterface, TunnelHandle, TunnelSnapshot,
+};
 use crate::config::{Config, PeerConfig};
 use crate::linux::{self, LinuxError};
 use crate::routing::RoutingPlan;
@@ -270,9 +272,12 @@ impl Runtime {
         peers: Vec<PeerConfig>,
     ) -> Result<(), RuntimeError> {
         let mut candidate = self.config.clone();
-        let interface = candidate.interfaces.get_mut(interface_name).ok_or_else(|| {
-            RuntimeError::Configuration(format!("unknown interface '{interface_name}'"))
-        })?;
+        let interface = candidate
+            .interfaces
+            .get_mut(interface_name)
+            .ok_or_else(|| {
+                RuntimeError::Configuration(format!("unknown interface '{interface_name}'"))
+            })?;
         interface.peers = peers;
         self.reload_config(candidate)
     }
@@ -353,11 +358,15 @@ impl Runtime {
         let mut failures = Vec::new();
         for index in committed.iter().rev().copied() {
             let Some((name, interface)) = self.config.interfaces.iter().nth(index) else {
-                failures.push(format!("missing previous interface at device index {index}"));
+                failures.push(format!(
+                    "missing previous interface at device index {index}"
+                ));
                 continue;
             };
             let Some(prepared) = self.prepared_interfaces.get(name) else {
-                failures.push(format!("missing previous prepared configuration for '{name}'"));
+                failures.push(format!(
+                    "missing previous prepared configuration for '{name}'"
+                ));
                 continue;
             };
             if let Err(error) = self.devices[index].replace_peers(interface, prepared) {

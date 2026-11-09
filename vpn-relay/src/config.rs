@@ -313,7 +313,6 @@ impl Config {
             );
         }
 
-
         if self.daemon.nft_table != next.daemon.nft_table {
             return invalid("reload cannot change daemon.nft_table while the daemon is running");
         }
