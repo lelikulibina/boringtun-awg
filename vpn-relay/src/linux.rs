@@ -111,15 +111,27 @@ fn inspect_nft_table(plan: &RoutingPlan) -> Result<bool, LinuxError> {
 
 /// Replace only a table whose table-level metadata proves ownership.
 pub fn apply_nft(plan: &RoutingPlan) -> Result<(), LinuxError> {
+    apply_nft_with(plan, &mut inspect_nft_table, &mut run_nft_script)
+}
+
+fn apply_nft_with<I, R>(
+    plan: &RoutingPlan,
+    inspect_table: &mut I,
+    run_script: &mut R,
+) -> Result<(), LinuxError>
+where
+    I: FnMut(&RoutingPlan) -> Result<bool, LinuxError>,
+    R: FnMut(&str) -> Result<(), LinuxError>,
+{
     let mut script = String::new();
-    if inspect_nft_table(plan)? {
+    if inspect_table(plan)? {
         script.push_str(&format!(
             "delete table {} {}\n",
             plan.nft_family, plan.nft_table
         ));
     }
     script.push_str(&plan.nft_script());
-    run_nft_script(&script)
+    run_script(&script)
 }
 
 /// Submit one complete nftables batch. nft applies a batch transactionally:
@@ -175,10 +187,22 @@ where
 }
 
 pub fn remove_nft(plan: &RoutingPlan) -> Result<(), LinuxError> {
-    if !inspect_nft_table(plan)? {
+    remove_nft_with(plan, &mut inspect_nft_table, &mut run)
+}
+
+fn remove_nft_with<I, R>(
+    plan: &RoutingPlan,
+    inspect_table: &mut I,
+    run_command: &mut R,
+) -> Result<(), LinuxError>
+where
+    I: FnMut(&RoutingPlan) -> Result<bool, LinuxError>,
+    R: FnMut(&str, &[String]) -> Result<(), LinuxError>,
+{
+    if !inspect_table(plan)? {
         return Ok(());
     }
-    run(
+    run_command(
         "nft",
         &[
             "delete".into(),
@@ -1004,6 +1028,103 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(calls, 4, "cleanup must inspect every owned resource");
+    }
+
+    #[test]
+    fn nft_apply_does_not_mutate_when_inspection_fails() {
+        let plan = cleanup_test_plan();
+        let mut apply_calls = 0;
+        let result = apply_nft_with(
+            &plan,
+            &mut |_plan| Err(LinuxError::Conflict {
+                resource: "nft table inet vpn_relay".into(),
+                details: "unowned table".into(),
+            }),
+            &mut |_script| {
+                apply_calls += 1;
+                Ok(())
+            },
+        );
+
+        assert!(matches!(result, Err(LinuxError::Conflict { .. })));
+        assert_eq!(apply_calls, 0, "must not mutate an unowned table");
+    }
+
+    #[test]
+    fn nft_apply_creates_missing_table_without_delete_command() {
+        let plan = cleanup_test_plan();
+        let mut submitted = None;
+        apply_nft_with(
+            &plan,
+            &mut |_plan| Ok(false),
+            &mut |script| {
+                submitted = Some(script.to_owned());
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        let script = submitted.expect("nft batch must be submitted");
+        assert!(!script.starts_with("delete table"));
+        assert!(script.contains("table inet vpn_relay"));
+    }
+
+    #[test]
+    fn nft_apply_preserves_owned_table_on_transaction_failure() {
+        let plan = cleanup_test_plan();
+        let mut submitted = None;
+        let result = apply_nft_with(
+            &plan,
+            &mut |_plan| Ok(true),
+            &mut |script| {
+                submitted = Some(script.to_owned());
+                Err(LinuxError::Command {
+                    program: "nft -f -".into(),
+                    status: "exit status 1".into(),
+                    stderr: "injected transaction failure".into(),
+                })
+            },
+        );
+
+        assert!(submitted
+            .as_deref()
+            .is_some_and(|script| script.starts_with("delete table inet vpn_relay\\n")));
+        assert!(matches!(result, Err(LinuxError::Command { ref stderr, .. })
+            if stderr.contains("injected transaction failure")));
+    }
+
+    #[test]
+    fn nft_remove_skips_missing_table_and_propagates_delete_failure() {
+        let plan = cleanup_test_plan();
+        let mut delete_calls = 0;
+        remove_nft_with(
+            &plan,
+            &mut |_plan| Ok(false),
+            &mut |_program, _args| {
+                delete_calls += 1;
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(delete_calls, 0);
+
+        let result = remove_nft_with(
+            &plan,
+            &mut |_plan| Ok(true),
+            &mut |program, args| {
+                delete_calls += 1;
+                assert_eq!(program, "nft");
+                assert_eq!(args, ["delete", "table", "inet", "vpn_relay"]);
+                Err(LinuxError::Command {
+                    program: "nft delete table".into(),
+                    status: "exit status 1".into(),
+                    stderr: "injected delete failure".into(),
+                })
+            },
+        );
+        assert_eq!(delete_calls, 1);
+        assert!(matches!(result, Err(LinuxError::Command { ref stderr, .. })
+            if stderr.contains("injected delete failure")));
     }
 
     #[test]
