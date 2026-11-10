@@ -268,8 +268,6 @@ impl Config {
 
         for (name, current) in &self.interfaces {
             let candidate = &next.interfaces[name];
-            let awg_current = current.awg.as_ref().map(|value| format!("{value:?}"));
-            let awg_next = candidate.awg.as_ref().map(|value| format!("{value:?}"));
             if current.tunnel_type != candidate.tunnel_type
                 || current.address != candidate.address
                 || current.mtu != candidate.mtu
@@ -277,7 +275,7 @@ impl Config {
                 || current.listen_port != candidate.listen_port
                 || current.private_key != candidate.private_key
                 || current.socket_fwmark != candidate.socket_fwmark
-                || awg_current != awg_next
+                || current.awg != candidate.awg
             {
                 return invalid(format!(
                     "reload cannot change immutable tunnel parameters for interface '{name}'; restart vpn-relay to apply them",

@@ -571,10 +571,9 @@ Noise sessions для peer, чьи параметры не менялись; н�
 4. `Runtime` сохраняет полный authoritative `Config`, prepared peer snapshots
    и текущий routing plan. Динамически выделенные route table IDs/priorities
    сохраняются при peer-only и firewall-only reload.
-5. Immutable AWG config сравнивается в пределах одного процесса по Debug
-   representation, так как используемый тип AmneziaWgConfig не предоставляет
-   PartialEq в текущем контракте зависимости. Это ограничение следует
-   пересмотреть при изменении upstream API.
+5. Immutable AWG config сравнивается напрямую через PartialEq/Eq
+   AmneziaWgConfig. Тип в текущем BoringTun уже реализует структурное равенство;
+   форматирование Debug для проверки совместимости не используется.
 
 | 2026-11-09 | Добавлена проверка совместимости candidate config для будущего reload | Метод `Config::validate_reload_compatibility` и regression tests; CI ещё не запускался | Реализовано, ожидает CI |
 
@@ -648,3 +647,6 @@ Noise sessions для peer, чьи параметры не менялись; н�
 
 
 | 2026-11-10 | Проверена неизменяемость tunnel type и состава интерфейсов при reload | Добавлены валидные candidate configs для преобразования AWG-интерфейса в WireGuard и удаления интерфейса; оба варианта должны быть отклонены compatibility guard до runtime mutation | Реализовано, ожидает CI |
+
+
+| 2026-11-10 | Устранено сравнение AWG-параметров через Debug | Compatibility guard теперь использует структурное сравнение AmneziaWgConfig через реализованные PartialEq/Eq; устаревшее ограничение в плане разработки исправлено | Реализовано, ожидает CI |
