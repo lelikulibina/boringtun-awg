@@ -1112,10 +1112,12 @@ mod tests {
         assert!(matches!(result, Err(LinuxError::Cleanup(message))
             if message.matches("injected cleanup failure").count() == 8));
         for interface in ["awg0", "wg1"] {
+            let expected_mark = if interface == "awg0" { "0x80000001" } else { "0x80000002" };
             assert!(calls.iter().any(|args| args.get(1).is_some_and(|v| v == "rule")
-                && args.get(5).is_some_and(|v| v == "0x80000001" || v == "0x80000002")
-                && args.get(2).is_some_and(|v| v == "del")));
+                && args.get(2).is_some_and(|v| v == "del")
+                && args.iter().any(|v| v == expected_mark)));
             assert!(calls.iter().any(|args| args.get(1).is_some_and(|v| v == "route")
+                && args.get(2).is_some_and(|v| v == "del")
                 && args.iter().any(|v| v == interface)));
         }
     }
@@ -1131,6 +1133,7 @@ mod tests {
             if !install_failed
                 && args.get(1).is_some_and(|v| v == "rule")
                 && args.get(2).is_some_and(|v| v == "add")
+                && args.get(4).is_some_and(|v| v == "10001")
                 && args.first().is_some_and(|v| v == "-4")
             {
                 install_failed = true;
@@ -1157,7 +1160,7 @@ mod tests {
                 && rollback.contains("injected egress rollback failure")));
         let egress_cleanup_calls = calls.iter().filter(|args| {
             args.get(2).is_some_and(|v| v == "del")
-                && args.get(4).is_some_and(|v| v == "10001")
+                && args.iter().any(|v| v == "10001")
         }).count();
         assert_eq!(egress_cleanup_calls, 4, "egress rollback must run exactly once");
         let socket_cleanup_calls = calls.iter().filter(|args| {
