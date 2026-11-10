@@ -713,3 +713,5 @@ Noise sessions для peer, чьи параметры не менялись; н�
 | 2026-11-10 | Проверен rollback при ошибке configure_interface после создания TUN | Новый failure-injection сценарий блокирует IPv4 address replace для первого AWG TUN уже после создания backend и поднятия link. Проверяется, что startup удаляет частично настроенный TUN, nftables policy и не меняет исходные forwarding sysctl. Ожидает CI | Реализовано, ожидает CI |
 
 | 2026-11-10 | Проверена подмена control socket path непосредственно во время bind | Дополнительный unit test подменяет только что созданный Unix socket обычным файлом из configure callback. Bind должен отклонить изменившуюся identity и сохранить внешний файл; это закрывает проверку не только в Drop, но и в окне post-bind конфигурации. Ожидает CI | Реализовано, ожидает CI |
+
+| 2026-11-10 | Ограничено время ожидания packet-level TCP/UDP probes | Все iperf3 client runs в multi-uplink integration test теперь выполняются с timeout 15s. При потере маршрута или зависшем TCP connect CI завершится с диагностикой вместо ожидания системного TCP timeout для каждого направления. | Реализовано, ожидает CI |

@@ -722,8 +722,8 @@ run_tcp() {
         local output="$TMP/$label-$direction.json"
         local args=(-c "$target" -p "$port" -n 1M --json)
         [[ "$direction" == reverse ]] && args+=(-R)
-        ip netns exec "$CLIENT_NS" iperf3 "${args[@]}" >"$output" \
-            || fail "$label $direction TCP stream failed"
+        timeout 15s ip netns exec "$CLIENT_NS" iperf3 "${args[@]}" >"$output" \
+            || fail "$label $direction TCP stream failed or timed out"
         python3 - "$output" "$label $direction" <<'PY'
 import json
 import sys
@@ -749,8 +749,8 @@ run_udp() {
         local output="$TMP/$label-$direction-udp.json"
         local args=(-c "$target" -p "$port" -u -b 1M -t 2 -l 1200 --json)
         [[ "$direction" == reverse ]] && args+=(-R)
-        ip netns exec "$CLIENT_NS" iperf3 "${args[@]}" >"$output" \
-            || fail "$label $direction UDP stream failed"
+        timeout 15s ip netns exec "$CLIENT_NS" iperf3 "${args[@]}" >"$output" \
+            || fail "$label $direction UDP stream failed or timed out"
         python3 - "$output" "$label $direction" <<'PY'
 import json
 import sys
