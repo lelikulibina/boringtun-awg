@@ -2051,7 +2051,7 @@ mod tests {
             interfaces: vec![InterfaceForwardingState {
                 name: "eth0".to_owned(),
                 ifindex: 7,
-            daemon_owned: false,
+                daemon_owned: false,
                 ipv4: "0".to_owned(),
                 ipv6: "0".to_owned(),
                 ipv4_changed: true,
