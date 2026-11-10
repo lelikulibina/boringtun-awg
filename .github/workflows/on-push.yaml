@@ -198,6 +198,8 @@ jobs:
         run: cargo build -p vpn-relay --bin vpn-relay
       - name: Exercise daemon routing in isolated network namespace
         run: sudo bash scripts/vpn-relay-netns-test.sh
+      - name: Verify per-interface forwarding ownership and recovery
+        run: sudo bash scripts/vpn-relay-per-interface-forwarding-test.sh
       - name: Verify bidirectional WireGuard peer traffic
         run: sudo bash scripts/vpn-relay-peer-traffic-test.sh wg
       - name: Verify bidirectional AmneziaWG 3.1 peer traffic
