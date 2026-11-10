@@ -1067,8 +1067,11 @@ egress = "awg-uplink"
         let current = Config::parse_toml(&valid_config()).unwrap();
 
         let mut changed_address = current.clone();
-        changed_address.interfaces.get_mut("wg-server").unwrap().address =
-            vec!["10.10.0.9/24".to_owned()];
+        changed_address
+            .interfaces
+            .get_mut("wg-server")
+            .unwrap()
+            .address = vec!["10.10.0.9/24".to_owned()];
         changed_address.validate().unwrap();
         assert!(current
             .validate_reload_compatibility(&changed_address)

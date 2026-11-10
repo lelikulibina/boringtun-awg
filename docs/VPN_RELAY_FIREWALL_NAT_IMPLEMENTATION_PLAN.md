@@ -638,10 +638,10 @@ Noise sessions для peer, чьи параметры не менялись; н�
 | 2026-11-10 | Усилены проверки multi-device peer rollback | Успешный rollback теперь проверяет восстановление обоих device snapshots; неуспешный rollback проверяет фактическое смешанное состояние (candidate peer на первом device, old peer на втором), которое требует fatal shutdown и запрещает публикацию candidate config. CI run 42727974982: tests, clippy, rustfmt, check_features, integration-tests, AWG 3.1 и all-systems-go — success; Windows job skipped | Подтверждено CI |
 
 
-| 2026-11-10 | Прекращение обработки control socket после fatal transition | Runtime больше не дренирует очередь control socket после того, как reload привёл к fatal state: текущий запрос получает ошибку, затем accept loop прекращается, а run() немедленно переходит к Drop/shutdown. Netns test дополнительно проверяет, что после fatal exit повторная команда reload не может подключиться к control socket | Реализовано, ожидает CI |
+| 2026-11-10 | Прекращение обработки control socket после fatal transition | Runtime больше не дренирует очередь control socket после того, как reload привёл к fatal state: текущий запрос получает ошибку, затем accept loop прекращается, а run() немедленно переходит к Drop/shutdown. Netns test дополнительно проверяет, что после fatal exit повторная команда reload не может подключиться к control socket | Подтверждено CI, run 42730792684 |
 
 
-| 2026-11-10 | Проверены daemon-level ограничения reload | Добавлен regression test: изменение nft table, владения IP forwarding и log level отклоняется как lifecycle-incompatible; изменение stats interval разрешено и проходит полную валидацию | Реализовано, ожидает CI |
+| 2026-11-10 | Проверены daemon-level ограничения reload | Добавлен regression test: изменение nft table, владения IP forwarding и log level отклоняется как lifecycle-incompatible; изменение stats interval разрешено и проходит полную валидацию | Подтверждено CI, run 42730792684 |
 
 
 | 2026-11-10 | Расширены regression tests immutable interface reload parameters | Отдельно проверяются изменения tunnel address, MTU, IPv6 gating и UDP listen port; candidate config проходит validate(), а reload compatibility обязан отклонить каждый lifecycle-incompatible diff | Реализовано, ожидает CI |
