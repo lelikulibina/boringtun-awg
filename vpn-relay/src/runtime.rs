@@ -1804,6 +1804,83 @@ mod tests {
     }
 
     #[test]
+    fn interface_forwarding_enable_rolls_back_partial_writes() {
+        let state = ForwardingState {
+            ipv4: "1".to_owned(),
+            ipv6: "1".to_owned(),
+            ipv4_changed: false,
+            ipv6_changed: false,
+            interfaces: vec![InterfaceForwardingState {
+                name: "eth0".to_owned(),
+                ifindex: 7,
+                ipv4: "0".to_owned(),
+                ipv6: "0".to_owned(),
+                ipv4_changed: true,
+                ipv6_changed: true,
+            }],
+        };
+        let values = std::cell::RefCell::new(std::collections::BTreeMap::from([
+            ("net.ipv4.conf.eth0.forwarding".to_owned(), "0".to_owned()),
+            ("net.ipv6.conf.eth0.forwarding".to_owned(), "0".to_owned()),
+        ]));
+        let result = enable_interface_forwarding_entries_with(
+            &state,
+            |key| {
+                Ok(values
+                    .borrow()
+                    .get(key)
+                    .cloned()
+                    .expect("test sysctl key exists"))
+            },
+            |key, value| {
+                if key.starts_with("net.ipv6.") {
+                    return Err(RuntimeError::Forwarding("injected write failure".to_owned()));
+                }
+                values.borrow_mut().insert(key.to_owned(), value.to_owned());
+                Ok(())
+            },
+            |name, index| {
+                assert_eq!(name, "eth0");
+                assert_eq!(index, 7);
+                Ok(())
+            },
+        );
+        assert!(matches!(result, Err(RuntimeError::Forwarding(_))));
+        assert_eq!(values.borrow()["net.ipv4.conf.eth0.forwarding"], "0");
+        assert_eq!(values.borrow()["net.ipv6.conf.eth0.forwarding"], "0");
+    }
+
+    #[test]
+    fn interface_forwarding_enable_fails_closed_if_identity_is_lost() {
+        let state = ForwardingState {
+            ipv4: "1".to_owned(),
+            ipv6: "1".to_owned(),
+            ipv4_changed: false,
+            ipv6_changed: false,
+            interfaces: vec![InterfaceForwardingState {
+                name: "eth0".to_owned(),
+                ifindex: 7,
+                ipv4: "0".to_owned(),
+                ipv6: "0".to_owned(),
+                ipv4_changed: true,
+                ipv6_changed: false,
+            }],
+        };
+        let mut writes = 0;
+        let result = enable_interface_forwarding_entries_with(
+            &state,
+            |_| Ok("0".to_owned()),
+            |_, _| {
+                writes += 1;
+                Ok(())
+            },
+            |_, _| Err(RuntimeError::Forwarding("identity changed".to_owned())),
+        );
+        assert!(matches!(result, Err(RuntimeError::FatalTransition(_))));
+        assert_eq!(writes, 0);
+    }
+
+    #[test]
     fn interface_forwarding_restore_checks_identity_and_daemon_value() {
         let entry = InterfaceForwardingState {
             name: "eth0".to_owned(),
