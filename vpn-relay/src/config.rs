@@ -1950,10 +1950,7 @@ egress = "awg-uplink"
 
     #[test]
     fn rejects_empty_routing_destination_list() {
-        let input = valid_config().replace(
-            "destination = \"0.0.0.0/0\"",
-            "destination = []",
-        );
+        let input = valid_config().replace("destination = \"0.0.0.0/0\"", "destination = []");
         assert!(Config::parse_toml(&input)
             .unwrap_err()
             .to_string()
