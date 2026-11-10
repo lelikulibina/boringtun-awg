@@ -383,13 +383,34 @@ impl ControlSocket {
                 }
             }
         }
+        Self::bind_with(path, |path, listener| {
+            fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+            listener.set_nonblocking(true)
+        })
+    }
+
+    fn bind_with(
+        path: PathBuf,
+        configure: impl FnOnce(&Path, &UnixListener) -> std::io::Result<()>,
+    ) -> Result<Self, RuntimeError> {
         let listener =
             UnixListener::bind(&path).map_err(|error| RuntimeError::Control(error.to_string()))?;
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o600))
-            .map_err(|error| RuntimeError::Control(error.to_string()))?;
-        listener
-            .set_nonblocking(true)
-            .map_err(|error| RuntimeError::Control(error.to_string()))?;
+        if let Err(error) = configure(&path, &listener) {
+            // The socket path is created before permissions and listener mode
+            // are configured. Never leave an unconfigured endpoint behind on
+            // startup failure; dropping the listener alone does not unlink it.
+            drop(listener);
+            if let Err(cleanup) = fs::remove_file(&path) {
+                if cleanup.kind() != std::io::ErrorKind::NotFound {
+                    tracing::warn!(
+                        path = %path.display(),
+                        %cleanup,
+                        "failed to remove incompletely configured control socket"
+                    );
+                }
+            }
+            return Err(RuntimeError::Control(error.to_string()));
+        }
         Ok(Self { listener, path })
     }
 }
@@ -1280,6 +1301,23 @@ mod tests {
         assert_eq!(mode, 0o600);
         assert!(UnixStream::connect(&path).is_ok());
         drop(socket);
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn control_socket_bind_failure_removes_incompletely_configured_path() {
+        let path = std::env::temp_dir().join(format!(
+            "vpn-relay-control-bind-failure-{}.sock",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        let result = ControlSocket::bind_with(path.clone(), |_, _| {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "injected socket configuration failure",
+            ))
+        });
+        assert!(matches!(result, Err(RuntimeError::Control(message)) if message.contains("injected socket configuration failure")));
         assert!(!path.exists());
     }
 
