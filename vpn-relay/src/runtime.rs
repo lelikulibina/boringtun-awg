@@ -2005,6 +2005,39 @@ mod tests {
     }
 
     #[test]
+    fn ephemeral_tun_recovery_skips_a_missing_original_link() {
+        let entry = InterfaceForwardingState {
+            name: "wg0".to_owned(),
+            ifindex: 17,
+            daemon_owned: true,
+            ipv4: "0".to_owned(),
+            ipv6: "0".to_owned(),
+            ipv4_changed: true,
+            ipv6_changed: true,
+        };
+        let mut reads = 0;
+        let mut writes = 0;
+        restore_interface_forwarding_entry_with(
+            &entry,
+            "ipv4",
+            "0",
+            true,
+            |_| {
+                reads += 1;
+                Ok("1".to_owned())
+            },
+            |_, _| {
+                writes += 1;
+                Ok(())
+            },
+            |_, _| Err(RuntimeError::Forwarding("TUN no longer exists".to_owned())),
+        )
+        .unwrap();
+        assert_eq!(reads, 0);
+        assert_eq!(writes, 0);
+    }
+
+    #[test]
     fn interface_forwarding_restore_checks_identity_and_daemon_value() {
         let entry = InterfaceForwardingState {
             name: "eth0".to_owned(),
