@@ -485,6 +485,56 @@ grep -q "already running" "$TMP/duplicate.log" || fail "duplicate instance was r
 kill -0 "$DAEMON_PID" 2>/dev/null || fail "original daemon exited after duplicate startup attempt"
 [[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "1" ]] || fail "duplicate startup changed IPv4 forwarding"
 
+# Simulate an uncatchable process crash. Kernel-owned firewall, policy routes
+# and namespace sysctls survive SIGKILL, while closing the TUN descriptors
+# removes the daemon-created links. A subsequent start must safely adopt and
+# replace only the resources carrying vpn-relay ownership metadata.
+kill -KILL "$DAEMON_PID"
+set +e
+wait "$DAEMON_PID"
+crash_status=$?
+set -e
+DAEMON_PID=""
+[[ $crash_status -ne 0 ]] || fail "SIGKILL crash simulation unexpectedly exited successfully"
+ip netns exec "$NS" nft list table inet vpn_relay_it >/dev/null 2>&1 || fail "crash unexpectedly removed the kernel-resident fail-closed firewall"
+[[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "1" ]] || fail "crash unexpectedly changed IPv4 forwarding"
+for iface in wg-server awg-primary awg-secondary; do
+    if ip netns exec "$NS" ip link show dev "$iface" >/dev/null 2>&1; then
+        fail "TUN interface $iface survived process crash"
+    fi
+done
+
+ip netns exec "$NS" "$BIN" --config "$TMP/config.toml" >"$TMP/crash-restart.log" 2>&1 &
+DAEMON_PID=$!
+for _ in $(seq 1 30); do
+    ready=1
+    ip netns exec "$NS" nft list table inet vpn_relay_it >/dev/null 2>&1 || ready=0
+    ip -n "$NS" -4 rule show | grep -Fq 'fwmark 0x80000000 lookup 10000 proto 242' || ready=0
+    ip -n "$NS" -4 route show table 10000 | grep -Fq 'default dev awg-primary proto 242' || ready=0
+    ip netns exec "$NS" ip link show dev wg-server >/dev/null 2>&1 || ready=0
+    [[ $ready -eq 1 ]] && break
+    if ! kill -0 "$DAEMON_PID" 2>/dev/null; then
+        fail "daemon failed to recover from stale owned resources after SIGKILL"
+    fi
+    sleep 1
+done
+[[ $ready -eq 1 ]] || fail "daemon did not recover stale owned resources after SIGKILL"
+kill -TERM "$DAEMON_PID"
+wait "$DAEMON_PID" || fail "recovered daemon failed graceful shutdown"
+DAEMON_PID=""
+if ip netns exec "$NS" nft list table inet vpn_relay_it >/dev/null 2>&1; then
+    fail "recovered daemon did not remove its owned firewall on graceful shutdown"
+fi
+if ip -n "$NS" -4 rule show | grep -q 'proto 242'; then
+    fail "recovered daemon left stale owned policy rules after graceful shutdown"
+fi
+# SIGKILL cannot run Drop: the namespace-wide forwarding sysctl has no
+# durable owner-state record yet. Reset the isolated test namespace explicitly;
+# the plan tracks this as a crash-recovery limitation, not as successful restore.
+[[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "1" ]] || fail "crash recovery did not preserve the known IPv4 forwarding orphan"
+ip netns exec "$NS" sysctl -qw net.ipv4.ip_forward=0
+ip netns exec "$NS" sysctl -qw net.ipv6.conf.all.forwarding=0
+
 [[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "1" ]] || fail "IPv4 forwarding was not enabled"
 [[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "1" ]] || fail "IPv6 forwarding was not enabled"
 
