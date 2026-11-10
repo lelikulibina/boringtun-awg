@@ -1196,7 +1196,8 @@ mod tests {
 
     #[test]
     fn policy_apply_aggregates_socket_rollback_failures_after_egress_rollback() {
-        let plan = cleanup_test_plan();
+        let mut plan = cleanup_test_plan();
+        plan.socket_marks = vec![0x1000_0001, 0x1000_0002];
         let mut calls = Vec::new();
         let mut install_failure_index = None;
         let result = apply_policy_routing_with(&plan, &mut |_program, args| {
@@ -1205,7 +1206,7 @@ mod tests {
                 && args.get(1).is_some_and(|part| part == "rule")
                 && args.get(2).is_some_and(|part| part == "add")
                 && args.first().is_some_and(|family| family == "-4")
-                && args.get(4).is_some_and(|priority| priority == "10000")
+                && args.get(4).is_some_and(|priority| priority == "10001")
             {
                 install_failure_index = Some(calls.len() - 1);
                 return Err(LinuxError::Command {
@@ -1239,7 +1240,7 @@ mod tests {
             .filter(|args| {
                 args.get(2).is_some_and(|operation| operation == "del")
                     && (args.get(1).is_some_and(|kind| kind == "route")
-                        || args.get(4).is_some_and(|priority| priority == "10000"))
+                        || args.get(4).is_some_and(|priority| priority == "10001"))
             })
             .count();
         let socket_cleanup = rollback_calls
