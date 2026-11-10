@@ -1755,7 +1755,7 @@ egress = "awg-uplink"
     fn rejects_duplicate_routing_cidr_selectors() {
         let duplicate_source = valid_config().replace(
             "destination = \"0.0.0.0/0\"",
-            "source = [\"10.10.0.0/24\", \"10.10.0.0/24\"]\\ndestination = \"0.0.0.0/0\"",
+            "source = [\"10.10.0.0/24\", \"10.10.0.0/24\"]\ndestination = \"0.0.0.0/0\"",
         );
         assert!(Config::parse_toml(&duplicate_source)
             .unwrap_err()
@@ -1775,7 +1775,7 @@ egress = "awg-uplink"
     #[test]
     fn rejects_duplicate_firewall_cidr_selectors() {
         let input = format!(
-            "{}\\n[firewall.input]\\n[[firewall.input.rules]]\\ninterface = \"wg-server\"\\nsource = [\"10.10.0.0/24\", \"10.10.0.0/24\"]\\n",
+            "{}\n[firewall.input]\n[[firewall.input.rules]]\ninterface = \"wg-server\"\nsource = [\"10.10.0.0/24\", \"10.10.0.0/24\"]\n",
             valid_config()
         );
         assert!(Config::parse_toml(&input)
