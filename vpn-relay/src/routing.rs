@@ -941,7 +941,11 @@ egress = "awg-primary"
     #[test]
     fn ipv6_blocklist_uses_the_same_numeric_interface_identity() {
         let mut config = sample_config();
-        config.interfaces.get_mut("awg-secondary").unwrap().ipv6_enabled = false;
+        config
+            .interfaces
+            .get_mut("awg-secondary")
+            .unwrap()
+            .ipv6_enabled = false;
         let mut plan = RoutingPlan::from_config(&config);
         plan.bind_interface_indices(BTreeMap::from([
             ("wg-server".to_owned(), 17),
@@ -951,9 +955,7 @@ egress = "awg-primary"
         .unwrap();
 
         let script = plan.nft_script();
-        assert!(script.contains(
-            "ipv6_blocked_interfaces { type iface_index; elements = { 19 }"
-        ));
+        assert!(script.contains("ipv6_blocked_interfaces { type iface_index; elements = { 19 }"));
         assert!(script.contains("prerouting iif @ipv6_blocked_interfaces meta nfproto ipv6 drop"));
         assert!(script.contains("forward oif @ipv6_blocked_interfaces meta nfproto ipv6 drop"));
     }
