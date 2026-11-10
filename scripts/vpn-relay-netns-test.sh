@@ -8,6 +8,12 @@ TMP="$(mktemp -d)"
 DAEMON_PID=""
 NETNS_INODE=""
 
+clear_forwarding_state_file() {
+    if [[ -n "$NETNS_INODE" ]]; then
+        rm -f "/run/vpn-relay-netns-$NETNS_INODE.forwarding"
+    fi
+}
+
 cleanup() {
     if [[ -n "$DAEMON_PID" ]] && kill -0 "$DAEMON_PID" 2>/dev/null; then
         kill -TERM "$DAEMON_PID" 2>/dev/null || true
@@ -16,6 +22,7 @@ cleanup() {
     ip netns del "$NS" 2>/dev/null || true
     if [[ -n "$NETNS_INODE" ]]; then
         rm -f "/run/vpn-relay-netns-$NETNS_INODE.marks"
+        clear_forwarding_state_file
     fi
     rm -rf "$TMP"
 }
@@ -409,6 +416,9 @@ for family in -4 -6; do
 done
 ip netns exec "$NS" sysctl -qw net.ipv6.conf.all.forwarding=0
 ip netns exec "$NS" nft delete table inet vpn_relay_it
+# The injected rollback failure deliberately retains its durable journal.
+# After manually restoring both sysctls, clear it before the next scenario.
+clear_forwarding_state_file
 
 REAL_NFT="$(command -v nft)"
 REAL_IP="$(command -v ip)"
@@ -857,6 +867,7 @@ grep -Fq "shutdown cleanup incomplete; retaining fail-closed nftables policy" "$
 # Repair the deliberately retained state with the real sysctl executable.
 ip netns exec "$NS" "$REAL_SYSCTL_SHUTDOWN" -w net.ipv4.ip_forward=0 >/dev/null
 ip netns exec "$NS" nft delete table inet vpn_relay_it
+clear_forwarding_state_file
 
 # Exercise the other forwarding family independently: an IPv6 restore failure
 # must preserve the policy without preventing IPv4 from being restored.
@@ -896,6 +907,7 @@ grep -Fq "injected shutdown IPv6 forwarding restore failure" "$TMP/shutdown-ipv6
 grep -Fq "shutdown cleanup incomplete; retaining fail-closed nftables policy" "$TMP/shutdown-ipv6-forwarding-restore-failure.log" || fail "daemon did not retain fail-closed policy after IPv6 forwarding restore failure"
 ip netns exec "$NS" "$REAL_SYSCTL_SHUTDOWN" -w net.ipv6.conf.all.forwarding=0 >/dev/null
 ip netns exec "$NS" nft delete table inet vpn_relay_it
+clear_forwarding_state_file
 
 # Forwarding may already be enabled by the host before vpn-relay starts.
 # The daemon must preserve that original state rather than unconditionally
