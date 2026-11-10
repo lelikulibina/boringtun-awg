@@ -587,13 +587,15 @@ impl Runtime {
         // Close the lookup-to-activation race as far as userspace can:
         // every descriptor must still identify its original link after the
         // numeric nftables policy has been installed.
-        for (index, device) in devices.iter().enumerate() {
-            if let Err(error) = device.verify_identity() {
-                drop(devices);
-                return Err(RuntimeError::FatalTransition(format!(
-                    "tunnel identity changed while activating numeric firewall (device {index}): {error}; retaining fail-closed nftables policy"
-                )));
-            }
+        let identity_error = devices
+            .iter()
+            .enumerate()
+            .find_map(|(index, device)| device.verify_identity().err().map(|error| (index, error)));
+        if let Some((index, error)) = identity_error {
+            drop(devices);
+            return Err(RuntimeError::FatalTransition(format!(
+                "tunnel identity changed while activating numeric firewall (device {index}): {error}; retaining fail-closed nftables policy"
+            )));
         }
 
         if let Err(error) = linux::apply_policy_routing(&routing) {
