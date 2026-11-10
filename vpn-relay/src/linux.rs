@@ -708,6 +708,22 @@ pub fn remove_policy_routing(plan: &RoutingPlan) -> Result<(), LinuxError> {
     }
 }
 
+pub fn interface_index(name: &str) -> Result<u32, LinuxError> {
+    let name_c = std::ffi::CString::new(name).map_err(|_| LinuxError::Conflict {
+        resource: format!("network interface '{name}'"),
+        details: "interface name contains an interior NUL byte".into(),
+    })?;
+    let index = unsafe { libc::if_nametoindex(name_c.as_ptr()) };
+    if index == 0 {
+        return Err(LinuxError::Command {
+            program: "if_nametoindex".into(),
+            status: "failed".into(),
+            stderr: std::io::Error::last_os_error().to_string(),
+        });
+    }
+    Ok(index)
+}
+
 pub fn configure_interface(name: &str, mtu: u16, addresses: &[String]) -> Result<(), LinuxError> {
     run(
         "ip",

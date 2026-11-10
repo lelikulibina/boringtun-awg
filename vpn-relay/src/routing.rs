@@ -70,6 +70,8 @@ pub struct RoutingPlan {
     pub socket_marks: Vec<u32>,
     /// TUN interfaces on which inner IPv6 traffic is blocked.
     pub ipv6_blocked_interfaces: Vec<String>,
+    /// Kernel interface indices captured from the original TUN descriptors.
+    pub interface_indices: Option<BTreeMap<String, u32>>,
 }
 
 impl RoutingPlan {
@@ -271,7 +273,23 @@ impl RoutingPlan {
             output_rules,
             socket_marks,
             ipv6_blocked_interfaces,
+            interface_indices: None,
         }
+    }
+
+    /// Bind firewall selectors to the kernel identities of the original interfaces.
+    pub fn bind_interface_indices(&mut self, indices: BTreeMap<String, u32>) -> Result<(), String> {
+        if indices.len() != self.managed_interfaces.len()
+            || self.managed_interfaces.iter().any(|name| indices.get(name).is_none_or(|index| *index == 0))
+        {
+            return Err("interface index map does not cover all managed interfaces".into());
+        }
+        let unique: std::collections::BTreeSet<_> = indices.values().copied().collect();
+        if unique.len() != indices.len() {
+            return Err("two managed interfaces resolved to the same kernel index".into());
+        }
+        self.interface_indices = Some(indices);
+        Ok(())
     }
 
     pub fn ip_families(egress: &EgressPlan) -> &'static [&'static str] {
@@ -502,6 +520,21 @@ impl RoutingPlan {
             }
         }
 
+        if let Some(indices) = &self.interface_indices {
+            // Translate every name-based selector and set element only after
+            // the runtime has resolved indices from verified TUN descriptors.
+            for (name, index) in indices {
+                output = output.replace(&format!("\"{name}\""), &index.to_string());
+            }
+            output = output
+                .replace("type ifname;", "type ifindex;")
+                .replace("iifname @managed_interfaces", "iif @managed_interfaces")
+                .replace("oifname @managed_interfaces", "oif @managed_interfaces")
+                .replace("iifname @ipv6_blocked_interfaces", "iif @ipv6_blocked_interfaces")
+                .replace("oifname @ipv6_blocked_interfaces", "oif @ipv6_blocked_interfaces")
+                .replace("iifname", "iif")
+                .replace("oifname", "oif");
+        }
         output
     }
 

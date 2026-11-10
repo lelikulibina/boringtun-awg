@@ -542,6 +542,27 @@ impl Runtime {
             return Err(error);
         }
 
+        // Replace bootstrap name selectors with indices resolved only after
+        // checking each original TUN descriptor. This switch is atomic in nft.
+        let mut interface_indices = std::collections::BTreeMap::new();
+        for (index, (name, _)) in config.interfaces.iter().enumerate() {
+            devices[index].verify_identity()?;
+            interface_indices.insert(name.clone(), linux::interface_index(name)?);
+            devices[index].verify_identity()?;
+        }
+        routing
+            .bind_interface_indices(interface_indices)
+            .map_err(RuntimeError::Configuration)?;
+        if let Err(error) = linux::apply_nft(&routing) {
+            drop(devices);
+            if let Err(cleanup) = linux::remove_nft(&routing) {
+                return Err(RuntimeError::FatalTransition(format!(
+                    "numeric firewall install failed ({error}); cleanup failed ({cleanup})"
+                )));
+            }
+            return Err(error.into());
+        }
+
         if let Err(error) = linux::apply_policy_routing(&routing) {
             drop(devices);
             if matches!(&error, LinuxError::Rollback { .. } | LinuxError::Cleanup(_)) {
@@ -657,6 +678,11 @@ impl Runtime {
         next_routing
             .assign_stable_conntrack_marks(&mut next_conntrack_mark_history)
             .map_err(RuntimeError::ConntrackMarkState)?;
+        if let Some(indices) = self.routing.interface_indices.clone() {
+            next_routing
+                .bind_interface_indices(indices)
+                .map_err(RuntimeError::Configuration)?;
+        }
         if self.routing.socket_marks != next_routing.socket_marks {
             return Err(RuntimeError::Configuration(
                 "candidate changes live socket fwmarks; restart vpn-relay".to_owned(),
