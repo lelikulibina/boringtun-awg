@@ -948,11 +948,16 @@ mod tests {
                 Ok(())
             });
 
-            assert!(failure_injected, "failure point {failure_position} was not reached");
+            assert!(
+                failure_injected,
+                "failure point {failure_position} was not reached"
+            );
             assert!(matches!(result, Err(LinuxError::Command { ref stderr, .. })
                 if stderr.contains(&format!("step {failure_position}"))));
             assert!(
-                !calls.iter().any(|args| args.get(2).is_some_and(|part| part == "add")),
+                !calls
+                    .iter()
+                    .any(|args| args.get(2).is_some_and(|part| part == "add")),
                 "socket rules must not be installed after stale-rule cleanup fails"
             );
 
@@ -1026,7 +1031,10 @@ mod tests {
                 Ok(())
             });
 
-            assert!(failure_injected, "failure point {failure_position} was not reached");
+            assert!(
+                failure_injected,
+                "failure point {failure_position} was not reached"
+            );
             assert!(matches!(result, Err(LinuxError::Command { ref stderr, .. })
                 if stderr.contains(&format!("step {failure_position}"))));
             assert!(
