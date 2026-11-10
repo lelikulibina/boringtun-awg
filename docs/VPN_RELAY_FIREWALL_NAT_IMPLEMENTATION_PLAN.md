@@ -268,7 +268,10 @@ unmanaged output остаётся неизменным.
   packet-level multi-uplink test подтверждает static SNAT для точного source и
   masquerade для широкого перекрывающегося правила на том же egress
   (CI 42665725191).
-- [ ] Проверить отсутствие NAT на INPUT/OUTPUT и запрещённом FORWARD.
+- [x] Проверить отсутствие NAT на INPUT/OUTPUT и запрещённом FORWARD:
+  packet captures подтверждают неизменность source для локальных INPUT/OUTPUT,
+  а tcpdump на обоих uplink не видит пакеты без routing decision
+  (integration-tests CI 42815100743).
 - [ ] Проверить поведение при изменении адреса egress для masquerade.
 
 Критерий приёмки: пакет получает ровно одну ожидаемую NAT policy; запрещённый
