@@ -729,7 +729,9 @@ where
 
     match install_result {
         Ok(()) => Ok(()),
-        Err(operation) => match remove_policy_routing_with(plan, run_command) {
+        // Egress installation owns its rollback. Only unwind socket rules
+        // here, avoiding duplicate route/rule deletions by the outer layer.
+        Err(operation) => match remove_socket_mark_rules_with(plan, run_command) {
             Ok(()) => Err(operation),
             Err(rollback) => Err(LinuxError::Rollback {
                 operation: operation.to_string(),
@@ -739,11 +741,10 @@ where
     }
 }
 
-pub fn remove_policy_routing(plan: &RoutingPlan) -> Result<(), LinuxError> {
-    remove_policy_routing_with(plan, &mut run)
-}
-
-fn remove_policy_routing_with<F>(plan: &RoutingPlan, run_command: &mut F) -> Result<(), LinuxError>
+fn remove_socket_mark_rules_with<F>(
+    plan: &RoutingPlan,
+    run_command: &mut F,
+) -> Result<(), LinuxError>
 where
     F: FnMut(&str, &[String]) -> Result<(), LinuxError>,
 {
@@ -767,6 +768,25 @@ where
                 failures.push(error.to_string());
             }
         }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(LinuxError::Cleanup(failures.join("; ")))
+    }
+}
+
+pub fn remove_policy_routing(plan: &RoutingPlan) -> Result<(), LinuxError> {
+    remove_policy_routing_with(plan, &mut run)
+}
+
+fn remove_policy_routing_with<F>(plan: &RoutingPlan, run_command: &mut F) -> Result<(), LinuxError>
+where
+    F: FnMut(&str, &[String]) -> Result<(), LinuxError>,
+{
+    let mut failures = Vec::new();
+    if let Err(error) = remove_socket_mark_rules_with(plan, run_command) {
+        failures.push(error.to_string());
     }
     if let Err(error) = remove_egress_policy_routing_with(plan, run_command) {
         failures.push(error.to_string());
