@@ -23,7 +23,7 @@ trap cleanup EXIT
 
 fail() {
     echo "vpn-relay namespace test: $*" >&2
-    for log in "$TMP/daemon.log" "$TMP/conflict.log" "$TMP/policy-conflict.log" "$TMP/route-conflict.log" "$TMP/policy-shadow-conflict.log" "$TMP/partial-setup-conflict.log" "$TMP/partial-policy-route.log" "$TMP/partial-forwarding.log" "$TMP/partial-ipv4-forwarding.log" "$TMP/partial-ipv4-forwarding-restore-failure.log" "$TMP/reload-failure.log" "$TMP/reload-route-failure.log" "$TMP/reload-immutable.log" "$TMP/shutdown-cleanup-failure.log" "$TMP/shutdown-forwarding-restore-failure.log" "$TMP/shutdown-ipv6-forwarding-restore-failure.log" "$TMP/preexisting-forwarding.log"; do
+    for log in "$TMP/daemon.log" "$TMP/conflict.log" "$TMP/policy-conflict.log" "$TMP/route-conflict.log" "$TMP/policy-shadow-conflict.log" "$TMP/partial-setup-conflict.log" "$TMP/partial-policy-route.log" "$TMP/partial-forwarding.log" "$TMP/partial-ipv4-forwarding.log" "$TMP/partial-ipv4-forwarding-restore-failure.log" "$TMP/reload-failure.log" "$TMP/reload-route-failure.log" "$TMP/reload-immutable.log" "$TMP/shutdown-cleanup-failure.log" "$TMP/shutdown-forwarding-restore-failure.log" "$TMP/shutdown-ipv6-forwarding-restore-failure.log" "$TMP/preexisting-forwarding.log" "$TMP/forwarding-management-disabled.log"; do
         if [[ -f "$log" ]]; then
             cat "$log" >&2
         fi
@@ -842,5 +842,38 @@ for iface in wg-server awg-primary awg-secondary; do
 done
 ip netns exec "$NS" sysctl -qw net.ipv4.ip_forward=0
 ip netns exec "$NS" sysctl -qw net.ipv6.conf.all.forwarding=0
+
+# When forwarding management is disabled, vpn-relay must leave both sysctls
+# untouched across startup and shutdown, even if their initial values differ.
+cp "$TMP/config.toml" "$TMP/config-no-forwarding-management.toml"
+sed -i 's/manage_ip_forwarding = true/manage_ip_forwarding = false/' "$TMP/config-no-forwarding-management.toml"
+ip netns exec "$NS" sysctl -qw net.ipv4.ip_forward=1
+ip netns exec "$NS" sysctl -qw net.ipv6.conf.all.forwarding=0
+ip netns exec "$NS" "$BIN" --config "$TMP/config-no-forwarding-management.toml" >"$TMP/forwarding-management-disabled.log" 2>&1 &
+DAEMON_PID=$!
+for _ in $(seq 1 30); do
+    ready=1
+    ip netns exec "$NS" nft list table inet vpn_relay_it >/dev/null 2>&1 || ready=0
+    for iface in wg-server awg-primary awg-secondary; do
+        ip netns exec "$NS" ip link show dev "$iface" >/dev/null 2>&1 || ready=0
+    done
+    [[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "1" ]] || ready=0
+    [[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "0" ]] || ready=0
+    [[ $ready -eq 1 ]] && break
+    if ! kill -0 "$DAEMON_PID" 2>/dev/null; then
+        fail "daemon exited before forwarding-management-disabled test became ready"
+    fi
+    sleep 1
+done
+[[ $ready -eq 1 ]] || fail "daemon did not become ready with forwarding management disabled"
+kill -TERM "$DAEMON_PID"
+wait "$DAEMON_PID" || fail "daemon failed while forwarding management was disabled"
+DAEMON_PID=""
+[[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "1" ]] || fail "daemon changed IPv4 forwarding while management was disabled"
+[[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "0" ]] || fail "daemon changed IPv6 forwarding while management was disabled"
+if ip netns exec "$NS" nft list table inet vpn_relay_it >/dev/null 2>&1; then
+    fail "daemon-owned nftables table survived shutdown with forwarding management disabled"
+fi
+ip netns exec "$NS" sysctl -qw net.ipv4.ip_forward=0
 
 echo "vpn-relay namespace integration test passed"
