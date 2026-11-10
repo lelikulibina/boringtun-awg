@@ -1834,7 +1834,9 @@ mod tests {
             },
             |key, value| {
                 if key.starts_with("net.ipv6.") {
-                    return Err(RuntimeError::Forwarding("injected write failure".to_owned()));
+                    return Err(RuntimeError::Forwarding(
+                        "injected write failure".to_owned(),
+                    ));
                 }
                 values.borrow_mut().insert(key.to_owned(), value.to_owned());
                 Ok(())
