@@ -556,8 +556,11 @@ pub fn apply_egress_policy_routing(plan: &RoutingPlan) -> Result<(), LinuxError>
     }
 }
 
-fn run_ip_cleanup(args: &[String]) -> Result<(), LinuxError> {
-    match run("ip", args) {
+fn run_ip_cleanup_with<F>(args: &[String], run_command: &mut F) -> Result<(), LinuxError>
+where
+    F: FnMut(&str, &[String]) -> Result<(), LinuxError>,
+{
+    match run_command("ip", args) {
         Ok(()) => Ok(()),
         Err(LinuxError::Command { stderr, .. })
             if stderr.contains("No such file or directory")
@@ -570,9 +573,19 @@ fn run_ip_cleanup(args: &[String]) -> Result<(), LinuxError> {
     }
 }
 
+fn run_ip_cleanup(args: &[String]) -> Result<(), LinuxError> {
+    run_ip_cleanup_with(args, &mut run)
+}
+
 /// Remove only egress rules/routes tagged with vpn-relay's protocol marker.
 /// Missing resources are already clean; any other failure is reported.
-pub fn remove_egress_policy_routing(plan: &RoutingPlan) -> Result<(), LinuxError> {
+fn remove_egress_policy_routing_with<F>(
+    plan: &RoutingPlan,
+    run_command: &mut F,
+) -> Result<(), LinuxError>
+where
+    F: FnMut(&str, &[String]) -> Result<(), LinuxError>,
+{
     let mut failures = Vec::new();
     for egress in &plan.egresses {
         for family in ["-4", "-6"] {
@@ -589,7 +602,7 @@ pub fn remove_egress_policy_routing(plan: &RoutingPlan) -> Result<(), LinuxError
                 "protocol".into(),
                 ROUTING_PROTOCOL.into(),
             ];
-            if let Err(error) = run_ip_cleanup(&rule) {
+            if let Err(error) = run_ip_cleanup_with(&rule, run_command) {
                 failures.push(error.to_string());
             }
 
@@ -605,7 +618,7 @@ pub fn remove_egress_policy_routing(plan: &RoutingPlan) -> Result<(), LinuxError
                 "proto".into(),
                 ROUTING_PROTOCOL.into(),
             ];
-            if let Err(error) = run_ip_cleanup(&route) {
+            if let Err(error) = run_ip_cleanup_with(&route, run_command) {
                 failures.push(error.to_string());
             }
         }
@@ -616,6 +629,10 @@ pub fn remove_egress_policy_routing(plan: &RoutingPlan) -> Result<(), LinuxError
     } else {
         Err(LinuxError::Cleanup(failures.join("; ")))
     }
+}
+
+pub fn remove_egress_policy_routing(plan: &RoutingPlan) -> Result<(), LinuxError> {
+    remove_egress_policy_routing_with(plan, &mut run)
 }
 
 pub fn apply_policy_routing(plan: &RoutingPlan) -> Result<(), LinuxError> {
@@ -763,6 +780,66 @@ pub fn configure_interface(name: &str, mtu: u16, addresses: &[String]) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn cleanup_test_plan() -> RoutingPlan {
+        RoutingPlan {
+            nft_family: "inet".into(),
+            nft_table: "vpn_relay".into(),
+            managed_interfaces: vec!["wg0".into(), "awg0".into()],
+            egresses: vec![crate::routing::EgressPlan {
+                interface: "awg0".into(),
+                mark: 0x8000_0001,
+                table_id: 10001,
+                ip_rule_priority: 10001,
+                ipv6_enabled: true,
+            }],
+            decisions: Vec::new(),
+            input_rules: Vec::new(),
+            output_rules: Vec::new(),
+            socket_marks: Vec::new(),
+            ipv6_blocked_interfaces: Vec::new(),
+            interface_indices: None,
+        }
+    }
+
+    #[test]
+    fn egress_cleanup_attempts_every_resource_after_command_failures() {
+        let plan = cleanup_test_plan();
+        let mut calls = Vec::new();
+        let result = remove_egress_policy_routing_with(&plan, &mut |_program, args| {
+            calls.push(args.to_vec());
+            Err(LinuxError::Command {
+                program: format!("ip {}", args.join(" ")),
+                status: "exit status 2".into(),
+                stderr: "RTNETLINK answers: Operation not permitted".into(),
+            })
+        });
+
+        assert_eq!(calls.len(), 4, "both families and resource types must be attempted");
+        assert!(matches!(result, Err(LinuxError::Cleanup(message))
+            if message.matches("Operation not permitted").count() == 4));
+        assert!(calls.iter().any(|args| args.first().is_some_and(|family| family == "-4")));
+        assert!(calls.iter().any(|args| args.first().is_some_and(|family| family == "-6")));
+        assert!(calls.iter().any(|args| args.get(1).is_some_and(|kind| kind == "rule")));
+        assert!(calls.iter().any(|args| args.get(1).is_some_and(|kind| kind == "route")));
+    }
+
+    #[test]
+    fn egress_cleanup_treats_missing_resources_as_already_removed() {
+        let plan = cleanup_test_plan();
+        let mut calls = 0;
+        let result = remove_egress_policy_routing_with(&plan, &mut |_program, _args| {
+            calls += 1;
+            Err(LinuxError::Command {
+                program: "ip".into(),
+                status: "exit status 2".into(),
+                stderr: "RTNETLINK answers: No such process".into(),
+            })
+        });
+
+        assert!(result.is_ok());
+        assert_eq!(calls, 4, "cleanup must inspect every owned resource");
+    }
 
     #[test]
     fn nft_ownership_requires_table_level_comment_and_exact_identity() {
