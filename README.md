@@ -122,6 +122,8 @@ The daemon requires Linux TUN support, `iproute2`, and `nftables`. It installs p
 
 A privileged network-namespace smoke/integration test is available at `scripts/vpn-relay-netns-test.sh`. It exercises WG/AWG device creation, IPv4/IPv6 fwmark routing, nftables rule installation, collision rollback, and graceful cleanup. The daemon is experimental; run it in an isolated test environment before production use.
 
+**Forwarding warning:** keep `daemon.manage_ip_forwarding = false` on a shared host unless you explicitly accept global host/router sysctl changes. Enabling it writes the namespace-wide IPv4 and IPv6 forwarding sysctls; Linux applies host/router-mode changes across interfaces (including IPv6 Router Advertisement behaviour). Prefer a dedicated network namespace, or enable forwarding externally and leave this option disabled.
+
 ## Supported platforms
 
 Target triple                 |Binary|Library|

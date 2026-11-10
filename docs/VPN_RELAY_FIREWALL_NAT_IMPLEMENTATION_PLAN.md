@@ -108,6 +108,7 @@
   уничтожает managed TUN links, и только после этого удаляет nftables policy;
   исходное forwarding состояние восстанавливается в самом конце.
 - [ ] Повторный запуск и аварийное завершение не оставляют опасного состояния.
+- [!] `manage_ip_forwarding=true` меняет namespace-wide IPv4/IPv6 forwarding и затрагивает host/router settings интерфейсов; не включать на общем host namespace без отдельного решения. Для общего хоста использовать `false` и внешнее управление. Требуется отдельное проектирование per-interface forwarding (включая совместимость IPv6 kernels с `force_forwarding`) и packet-level проверка.
 
 Критерий приёмки: тесты проверяют передачу реальных пакетов в network namespaces,
 а не только строки сгенерированного nftables script.
@@ -704,3 +705,5 @@ Noise sessions для peer, чьи параметры не менялись; н�
 | 2026-11-10 | Проверена настройка manage_ip_forwarding=false | Namespace test использует разные исходные значения IPv4=1 и IPv6=0, запускает и штатно останавливает daemon с отключённым управлением forwarding. Оба значения должны остаться неизменными, при этом принадлежащие daemon TUN и nftables policy корректно удаляются. Ожидает CI | Реализовано, ожидает CI |
 
 | 2026-11-10 | Усилено владение control socket path при cleanup | ControlSocket теперь запоминает device/inode созданного Unix socket и при Drop удаляет путь только если он всё ещё указывает на тот же socket. Если путь подменён другим файлом или сокетом, чужой объект сохраняется; добавлен regression test с заменой socket path на обычный файл до Drop. Ожидает CI | Реализовано, ожидает CI |
+
+| 2026-11-10 | Документировано глобальное воздействие manage_ip_forwarding | README, NFT lifecycle docs и пример конфигурации теперь предупреждают, что включение меняет namespace-wide IPv4/IPv6 forwarding и host/router поведение интерфейсов; рекомендуют dedicated network namespace или внешнее управление с `manage_ip_forwarding=false`. Per-interface forwarding вынесен в отдельную архитектурную задачу, чтобы не скрывать ограничение за обещанием восстановления только двух sysctl. | Документировано; архитектурная задача открыта |

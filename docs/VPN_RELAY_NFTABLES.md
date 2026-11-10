@@ -229,9 +229,17 @@ Startup: instance lock для network namespace → nftables policy → созд
 порядке.
 
 Shutdown: остановка и join backend workers → удаление policy routes → удаление
-TUN links через backend lifecycle → удаление nftables policy → восстановление
-исходного состояния IPv4/IPv6 forwarding. Lock удерживается до уничтожения
-Runtime.
+TUN links через backend lifecycle → восстановление исходного состояния IPv4/IPv6
+forwarding → удаление nftables policy. При ошибке cleanup firewall остаётся
+установленным. Lock удерживается до уничтожения Runtime.
+
+**Ограничение `manage_ip_forwarding`:** значение `true` меняет глобальные
+`net.ipv4.ip_forward` и `net.ipv6.conf.all.forwarding`, а не только managed TUN.
+Переходы host/router затрагивают interface forwarding и поведение IPv6 RA;
+поэтому эту опцию нельзя безоговорочно включать на общем хосте. Для общего
+хоста оставляйте `false` и настраивайте forwarding отдельно; предпочтительный
+вариант автоматического управления — отдельный network namespace. Сужение
+forwarding до managed interfaces остаётся отдельной архитектурной задачей.
 
 ## Проверки и ограничения
 
