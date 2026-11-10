@@ -1202,7 +1202,7 @@ mod tests {
             egress_cleanup_calls, 4,
             "egress rollback must run exactly once"
         );
-        let socket_cleanup_calls = calls
+        let socket_cleanup_calls = calls[failure_index.expect("install failure injected")..]
             .iter()
             .filter(|args| {
                 args.get(2).is_some_and(|v| v == "del") && args.get(4).is_some_and(|v| v == "9000")
