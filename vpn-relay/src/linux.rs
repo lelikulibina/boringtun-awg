@@ -1089,6 +1089,85 @@ mod tests {
     }
 
     #[test]
+    fn egress_cleanup_aggregates_failures_across_multiple_interfaces() {
+        let mut plan = cleanup_test_plan();
+        plan.egresses.push(crate::routing::EgressPlan {
+            interface: "wg1".into(),
+            mark: 0x8000_0002,
+            table_id: 10002,
+            ip_rule_priority: 10002,
+            ipv6_enabled: true,
+        });
+        let mut calls = Vec::new();
+        let result = remove_egress_policy_routing_with(&plan, &mut |_program, args| {
+            calls.push(args.to_vec());
+            Err(LinuxError::Command {
+                program: format!("ip {}", args.join(" ")),
+                status: "exit status 2".into(),
+                stderr: format!("injected cleanup failure for {}", args.join(" ")),
+            })
+        });
+
+        assert_eq!(calls.len(), 8, "all resources on both interfaces must be attempted");
+        assert!(matches!(result, Err(LinuxError::Cleanup(message))
+            if message.matches("injected cleanup failure").count() == 8));
+        for interface in ["awg0", "wg1"] {
+            assert!(calls.iter().any(|args| args.get(1).is_some_and(|v| v == "rule")
+                && args.get(5).is_some_and(|v| v == "0x80000001" || v == "0x80000002")
+                && args.get(2).is_some_and(|v| v == "del")));
+            assert!(calls.iter().any(|args| args.get(1).is_some_and(|v| v == "route")
+                && args.iter().any(|v| v == interface)));
+        }
+    }
+
+    #[test]
+    fn nested_policy_rollback_does_not_repeat_egress_cleanup() {
+        let mut plan = cleanup_test_plan();
+        plan.socket_marks = vec![0x1000_0001];
+        let mut calls = Vec::new();
+        let mut install_failed = false;
+        let result = apply_policy_routing_with(&plan, &mut |_program, args| {
+            calls.push(args.to_vec());
+            if !install_failed
+                && args.get(1).is_some_and(|v| v == "rule")
+                && args.get(2).is_some_and(|v| v == "add")
+                && args.first().is_some_and(|v| v == "-4")
+            {
+                install_failed = true;
+                return Err(LinuxError::Command {
+                    program: format!("ip {}", args.join(" ")),
+                    status: "exit status 2".into(),
+                    stderr: "injected egress install failure".into(),
+                });
+            }
+            if args.get(2).is_some_and(|v| v == "del")
+                && args.get(1).is_some_and(|v| v == "route")
+            {
+                return Err(LinuxError::Command {
+                    program: format!("ip {}", args.join(" ")),
+                    status: "exit status 2".into(),
+                    stderr: "injected egress rollback failure".into(),
+                });
+            }
+            Ok(())
+        });
+
+        assert!(matches!(result, Err(LinuxError::Rollback { operation, rollback })
+            if operation.contains("injected egress install failure")
+                && rollback.contains("injected egress rollback failure")));
+        let egress_cleanup_calls = calls.iter().filter(|args| {
+            args.get(2).is_some_and(|v| v == "del")
+                && args.get(4).is_some_and(|v| v == "10001")
+        }).count();
+        assert_eq!(egress_cleanup_calls, 4, "egress rollback must run exactly once");
+        let socket_cleanup_calls = calls.iter().filter(|args| {
+            args.get(2).is_some_and(|v| v == "del")
+                && args.get(4).is_some_and(|v| v == "9000")
+        }).count();
+        assert_eq!(socket_cleanup_calls, 2, "outer rollback must still clean both socket families");
+    }
+
+    #[test]
     fn nft_apply_does_not_mutate_when_inspection_fails() {
         let plan = cleanup_test_plan();
         let mut apply_calls = 0;
