@@ -484,22 +484,20 @@ pub fn apply_egress_policy_routing(plan: &RoutingPlan) -> Result<(), LinuxError>
             let priority = egress.ip_rule_priority.to_string();
             let mark = format!("0x{:x}", egress.mark);
             let table = egress.table_id.to_string();
-            let _ = run(
-                "ip",
-                &[
-                    family.into(),
-                    "rule".into(),
-                    "del".into(),
-                    "priority".into(),
-                    priority.clone(),
-                    "fwmark".into(),
-                    mark.clone(),
-                    "lookup".into(),
-                    table.clone(),
-                    "protocol".into(),
-                    ROUTING_PROTOCOL.into(),
-                ],
-            );
+            let stale_rule = [
+                family.into(),
+                "rule".into(),
+                "del".into(),
+                "priority".into(),
+                priority.clone(),
+                "fwmark".into(),
+                mark.clone(),
+                "lookup".into(),
+                table.clone(),
+                "protocol".into(),
+                ROUTING_PROTOCOL.into(),
+            ];
+            run_ip_cleanup(&stale_rule)?;
             if let Err(error) = run(
                 "ip",
                 &[
@@ -626,7 +624,15 @@ pub fn apply_policy_routing(plan: &RoutingPlan) -> Result<(), LinuxError> {
                 "protocol".into(),
                 ROUTING_PROTOCOL.into(),
             ];
-            let _ = run("ip", &args);
+            if let Err(error) = run_ip_cleanup(&args) {
+                return match remove_policy_routing(plan) {
+                    Ok(()) => Err(error),
+                    Err(rollback) => Err(LinuxError::Rollback {
+                        operation: error.to_string(),
+                        rollback: rollback.to_string(),
+                    }),
+                };
+            }
             let args = vec![
                 family.into(),
                 "rule".into(),
