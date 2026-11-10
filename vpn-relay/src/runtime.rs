@@ -420,7 +420,8 @@ impl ControlSocket {
                 return Err(RuntimeError::Control(error.to_string()));
             }
         };
-        if !metadata.file_type().is_socket() || metadata.dev() != device || metadata.ino() != inode {
+        if !metadata.file_type().is_socket() || metadata.dev() != device || metadata.ino() != inode
+        {
             return Err(RuntimeError::Control(format!(
                 "control socket path changed while being configured: {}",
                 path.display()
