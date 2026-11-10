@@ -847,12 +847,7 @@ pub fn interface_name(index: u32) -> Result<String, LinuxError> {
 /// Verify both directions of the name/index mapping. A matching name alone is
 /// insufficient because Linux may recycle an ifindex after a link disappears.
 pub fn verify_interface_identity(name: &str, expected_index: u32) -> Result<(), LinuxError> {
-    verify_interface_identity_with(
-        name,
-        expected_index,
-        interface_index,
-        interface_name,
-    )
+    verify_interface_identity_with(name, expected_index, interface_index, interface_name)
 }
 
 fn verify_interface_identity_with(
@@ -1757,29 +1752,15 @@ mod tests {
 
     #[test]
     fn interface_identity_rejects_reused_names_and_indices() {
-        let name_reused = verify_interface_identity_with(
-            "eth0",
-            7,
-            |_| Ok(9),
-            |_| Ok("eth0".to_owned()),
-        );
+        let name_reused =
+            verify_interface_identity_with("eth0", 7, |_| Ok(9), |_| Ok("eth0".to_owned()));
         assert!(matches!(name_reused, Err(LinuxError::Conflict { .. })));
 
-        let index_reused = verify_interface_identity_with(
-            "eth0",
-            7,
-            |_| Ok(7),
-            |_| Ok("eth1".to_owned()),
-        );
+        let index_reused =
+            verify_interface_identity_with("eth0", 7, |_| Ok(7), |_| Ok("eth1".to_owned()));
         assert!(matches!(index_reused, Err(LinuxError::Conflict { .. })));
 
-        verify_interface_identity_with(
-            "eth0",
-            7,
-            |_| Ok(7),
-            |_| Ok("eth0".to_owned()),
-        )
-        .unwrap();
+        verify_interface_identity_with("eth0", 7, |_| Ok(7), |_| Ok("eth0".to_owned())).unwrap();
     }
 
     #[test]
