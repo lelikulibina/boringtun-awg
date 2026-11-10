@@ -522,25 +522,6 @@ for _ in $(seq 1 30); do
     sleep 1
 done
 [[ $ready -eq 1 ]] || fail "daemon did not recover stale owned resources after SIGKILL"
-kill -TERM "$DAEMON_PID"
-wait "$DAEMON_PID" || fail "recovered daemon failed graceful shutdown"
-DAEMON_PID=""
-if ip netns exec "$NS" nft list table inet vpn_relay_it >/dev/null 2>&1; then
-    fail "recovered daemon did not remove its owned firewall on graceful shutdown"
-fi
-if ip -n "$NS" -4 rule show | grep -q 'proto 242'; then
-    fail "recovered daemon left stale owned policy rules after graceful shutdown"
-fi
-# SIGKILL cannot run Drop: the namespace-wide forwarding sysctl has no
-# durable owner-state record yet. Reset the isolated test namespace explicitly;
-# the plan tracks this as a crash-recovery limitation, not as successful restore.
-[[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "1" ]] || fail "crash recovery did not preserve the known IPv4 forwarding orphan"
-ip netns exec "$NS" sysctl -qw net.ipv4.ip_forward=0
-ip netns exec "$NS" sysctl -qw net.ipv6.conf.all.forwarding=0
-
-[[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "0" ]] || fail "IPv4 forwarding test namespace was not reset after crash-recovery coverage"
-[[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "0" ]] || fail "IPv6 forwarding test namespace was not reset after crash-recovery coverage"
-
 for family in -4 -6; do
     rules="$(ip -n "$NS" "$family" rule show)"
     grep -Fq 'fwmark 0x1001 lookup main proto 242' <<<"$rules" || fail "socket rule lacks vpn-relay ownership tag for $family"
@@ -558,6 +539,24 @@ fi
 if ip -n "$NS" -6 route show table 10001 2>/dev/null | grep -q .; then
     fail "IPv6 route was installed for IPv6-disabled egress"
 fi
+kill -TERM "$DAEMON_PID"
+wait "$DAEMON_PID" || fail "recovered daemon failed graceful shutdown"
+DAEMON_PID=""
+if ip netns exec "$NS" nft list table inet vpn_relay_it >/dev/null 2>&1; then
+    fail "recovered daemon did not remove its owned firewall on graceful shutdown"
+fi
+if ip -n "$NS" -4 rule show | grep -q 'proto 242'; then
+    fail "recovered daemon left stale owned policy rules after graceful shutdown"
+fi
+# SIGKILL cannot run Drop: the namespace-wide forwarding sysctl has no
+# durable owner-state record yet. Reset the isolated test namespace explicitly;
+# the plan tracks this as a crash-recovery limitation, not as successful restore.
+[[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "0" ]] || fail "graceful shutdown did not restore IPv4 forwarding after crash recovery"
+[[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "0" ]] || fail "graceful shutdown did not restore IPv6 forwarding after crash recovery"
+
+[[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "0" ]] || fail "IPv4 forwarding test namespace was not reset after crash-recovery coverage"
+[[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "0" ]] || fail "IPv6 forwarding test namespace was not reset after crash-recovery coverage"
+
 
 for spec in \
     "0x80000000 awg-primary" \
