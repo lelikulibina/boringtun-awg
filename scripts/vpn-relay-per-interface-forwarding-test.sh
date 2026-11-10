@@ -117,12 +117,12 @@ start_daemon || fail "daemon did not enable selected per-interface forwarding"
 # detected; the daemon stops and retains its fail-closed firewall.
 ip netns exec "$NS" sysctl -qw net.ipv4.conf.untrusted0.forwarding=1
 for _ in $(seq 1 10); do
-    if ! kill -0 "$PID" 2>/dev/null; then
-        break
-    fi
+    state="$(ps -o stat= -p "$PID" 2>/dev/null | tr -d ' ' || true)"
+    [[ -z "$state" || "$state" == Z* ]] && break
     sleep 1
 done
-if kill -0 "$PID" 2>/dev/null; then
+state="$(ps -o stat= -p "$PID" 2>/dev/null | tr -d ' ' || true)"
+if [[ -n "$state" && "$state" != Z* ]]; then
     fail "daemon did not detect runtime forwarding isolation drift"
 fi
 set +e
