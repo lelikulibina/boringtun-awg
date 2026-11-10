@@ -642,3 +642,6 @@ Noise sessions для peer, чьи параметры не менялись; н�
 
 
 | 2026-11-10 | Проверены daemon-level ограничения reload | Добавлен regression test: изменение nft table, владения IP forwarding и log level отклоняется как lifecycle-incompatible; изменение stats interval разрешено и проходит полную валидацию | Реализовано, ожидает CI |
+
+
+| 2026-11-10 | Расширены regression tests immutable interface reload parameters | Отдельно проверяются изменения tunnel address, MTU, IPv6 gating и UDP listen port; candidate config проходит validate(), а reload compatibility обязан отклонить каждый lifecycle-incompatible diff | Реализовано, ожидает CI |

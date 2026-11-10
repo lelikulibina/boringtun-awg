@@ -1063,6 +1063,56 @@ egress = "awg-uplink"
     }
 
     #[test]
+    fn reload_compatibility_rejects_interface_address_mtu_ipv6_and_listen_port_changes() {
+        let current = Config::parse_toml(&valid_config()).unwrap();
+
+        let mut changed_address = current.clone();
+        changed_address.interfaces.get_mut("wg-server").unwrap().address =
+            vec!["10.10.0.9/24".to_owned()];
+        changed_address.validate().unwrap();
+        assert!(current
+            .validate_reload_compatibility(&changed_address)
+            .unwrap_err()
+            .to_string()
+            .contains("immutable tunnel parameters"));
+
+        let mut changed_mtu = current.clone();
+        changed_mtu.interfaces.get_mut("wg-server").unwrap().mtu = 1400;
+        changed_mtu.validate().unwrap();
+        assert!(current
+            .validate_reload_compatibility(&changed_mtu)
+            .unwrap_err()
+            .to_string()
+            .contains("immutable tunnel parameters"));
+
+        let mut changed_ipv6 = current.clone();
+        changed_ipv6
+            .interfaces
+            .get_mut("wg-server")
+            .unwrap()
+            .ipv6_enabled = true;
+        changed_ipv6.validate().unwrap();
+        assert!(current
+            .validate_reload_compatibility(&changed_ipv6)
+            .unwrap_err()
+            .to_string()
+            .contains("immutable tunnel parameters"));
+
+        let mut changed_listen_port = current.clone();
+        changed_listen_port
+            .interfaces
+            .get_mut("wg-server")
+            .unwrap()
+            .listen_port = Some(51822);
+        changed_listen_port.validate().unwrap();
+        assert!(current
+            .validate_reload_compatibility(&changed_listen_port)
+            .unwrap_err()
+            .to_string()
+            .contains("immutable tunnel parameters"));
+    }
+
+    #[test]
     fn firewall_allow_rules_parse_and_validate() {
         let input = format!(
             "{}\n[firewall.input]\n[[firewall.input.rules]]\ninterface = \"wg-server\"\nsource = [\"10.10.0.2/32\"]\nprotocol = \"tcp\"\nports = [22, 443]\n[firewall.output]\n[[firewall.output.rules]]\ninterface = \"awg-uplink\"\ndestination = \"0.0.0.0/0\"\nprotocol = \"udp\"\nports = [53]\n",
