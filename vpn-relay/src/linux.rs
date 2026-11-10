@@ -1058,6 +1058,42 @@ mod tests {
     }
 
     #[test]
+    fn egress_apply_aggregates_every_rollback_cleanup_failure() {
+        let plan = cleanup_test_plan();
+        let mut calls = Vec::new();
+        let mut failure_index = None;
+        let result = apply_egress_policy_routing_with(&plan, &mut |_program, args| {
+            calls.push(args.to_vec());
+            if failure_index.is_none()
+                && args.get(1).is_some_and(|part| part == "rule")
+                && args.get(2).is_some_and(|part| part == "add")
+            {
+                failure_index = Some(calls.len() - 1);
+                return Err(LinuxError::Command {
+                    program: format!("ip {}", args.join(" ")),
+                    status: "exit status 2".into(),
+                    stderr: "injected primary install failure".into(),
+                });
+            }
+            if failure_index.is_some() {
+                return Err(LinuxError::Command {
+                    program: format!("ip {}", args.join(" ")),
+                    status: "exit status 2".into(),
+                    stderr: format!("injected rollback cleanup failure: {}", args.join(" ")),
+                });
+            }
+            Ok(())
+        });
+
+        let cleanup = &calls[failure_index.expect("install failure injected") + 1..];
+        assert_eq!(cleanup.len(), 4, "every family/resource cleanup must run");
+        assert!(cleanup.iter().all(|args| args.get(2).is_some_and(|op| op == "del")));
+        assert!(matches!(result, Err(LinuxError::Rollback { operation, rollback })
+            if operation.contains("injected primary install failure")
+                && rollback.matches("injected rollback cleanup failure").count() == 4));
+    }
+
+    #[test]
     fn egress_cleanup_attempts_every_resource_after_command_failures() {
         let plan = cleanup_test_plan();
         let mut calls = Vec::new();

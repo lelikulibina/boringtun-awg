@@ -3,7 +3,7 @@
 > Рабочая ветка: `feature/vpn-relay-firewall-nat`
 > Базовая ветка: `feature/boringtun-router-daemon`
 > Базовый commit: `ad3f35d2790e7e47c8d050fb7b3c206c69ac2aa4`
-> Последнее обновление: 2026-11-10 (negative config parser coverage; полный CI 42851385258)
+> Последнее обновление: 2026-11-10 (rollback cleanup failure aggregation; CI pending)
 >
 > Этот документ является рабочим журналом реализации. Статусы меняются только
 > после фактического изменения кода и выполнения соответствующих проверок.
@@ -815,4 +815,4 @@ successful shutdown removes the firewall.
 
 | 2026-11-10 | Закрыты дополнительные отрицательные parser cases | Добавлены regression tests на пустые INPUT/OUTPUT CIDR selectors, неизвестный firewall interface, пустой/нулевой port list, ports с ICMP и пустой routing destination. `Config::validate` отклоняет каждую конфигурацию до создания системных ресурсов. | Полный CI `42851385258`: tests, clippy, rustfmt, feature checks, namespace lifecycle, WG/AWG peer traffic, packet-level multi-uplink и AWG 3.1 — success; Windows skipped. HEAD `db71837251551026beb0a8fa6b58a11867bb521a` |
 
-| 2026-11-10 | Расширена матрица rollback и исправлен двойной cleanup policy routing | Проверены все четыре границы установки IPv4/IPv6 route/rule; добавлена проверка агрегирования восьми cleanup failures на двух интерфейсах. Внешний rollback policy routing теперь очищает только socket fwmark rules: egress rollback остаётся ответственностью вложенного apply_egress_policy_routing_with, что исключает повторные удаления и не маскирует исходную ошибку. Добавлена failure-injection проверка вложенного rollback с ошибкой очистки и подтверждением, что все socket rules всё равно удаляются. Ожидает полного CI. | Реализовано, ожидает CI |
+| 2026-11-10 | Расширена матрица rollback и исправлен двойной cleanup policy routing | Проверены все четыре границы установки IPv4/IPv6 route/rule; агрегирование восьми cleanup failures на двух интерфейсах; вложенный rollback без повторного удаления egress; и сохранение socket cleanup при ошибке egress rollback. Дополнительно добавлен тест, который инъецирует отказ каждого из четырёх cleanup-вызовов после ошибки установки и проверяет агрегацию всех ошибок при сохранении исходной причины. | Реализовано, ожидает CI |
