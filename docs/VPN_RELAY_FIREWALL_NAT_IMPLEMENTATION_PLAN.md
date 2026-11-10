@@ -769,3 +769,15 @@ bootstrap: для имён всех управляемых интерфейсо�
 устройств, проверки исходных FD и получения ifindex bootstrap атомарно
 заменяется рабочей policy. Таким образом, случайная подмена имени в период
 создания интерфейсов не получает временного разрешения на forwarding.
+
+
+### Same-name replacement guard and fatal shutdown
+
+Indexed selectors alone do not deny a replacement interface: a new link with
+the old name but a different ifindex would simply fall outside the managed
+sets. The indexed policy therefore prepends per-interface name+index mismatch
+guards to prerouting, input, forward (both directions) and output. A link with
+a configured TUN name but a different index is explicitly dropped before any
+allow rule. On fatal runtime transitions the daemon also retains nftables
+policy after stopping workers and cleaning owned routes; only a normal,
+successful shutdown removes the firewall.

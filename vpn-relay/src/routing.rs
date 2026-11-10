@@ -553,6 +553,27 @@ impl RoutingPlan {
                 )
                 .replace("iifname", "iif")
                 .replace("oifname", "oif");
+
+            // A same-name replacement has a different ifindex and must be
+            // explicitly dropped, not merely omitted from the numeric sets.
+            // These guards run before every configured allow/drop decision.
+            let mut guards = String::new();
+            for (name, index) in indices {
+                guards.push_str(&format!(
+                    "add rule {} {} prerouting iifname \"{}\" iif != {} drop\n\
+                     add rule {} {} input iifname \"{}\" iif != {} drop\n\
+                     add rule {} {} forward iifname \"{}\" iif != {} drop\n\
+                     add rule {} {} forward oifname \"{}\" oif != {} drop\n\
+                     add rule {} {} output oifname \"{}\" oif != {} drop\n",
+                    self.nft_family, self.nft_table, name, index,
+                    self.nft_family, self.nft_table, name, index,
+                    self.nft_family, self.nft_table, name, index,
+                    self.nft_family, self.nft_table, name, index,
+                    self.nft_family, self.nft_table, name, index,
+                ));
+            }
+            let first_rule = output.find("add rule ").unwrap_or(output.len());
+            output.insert_str(first_rule, &guards);
         }
         output
     }
@@ -933,8 +954,11 @@ egress = "awg-primary"
         assert!(script.contains("prerouting iif 17 ct state new"));
         assert!(script.contains("forward iif 17 oif 18"));
         assert!(script.contains("postrouting iif 17 oif 18"));
-        assert!(!script.contains("iifname"));
-        assert!(!script.contains("oifname"));
+        assert!(script.contains("prerouting iifname \"wg-server\" iif != 17 drop"));
+        assert!(script.contains("input iifname \"wg-server\" iif != 17 drop"));
+        assert!(script.contains("forward iifname \"wg-server\" iif != 17 drop"));
+        assert!(script.contains("forward oifname \"awg-primary\" oif != 18 drop"));
+        assert!(script.contains("output oifname \"awg-secondary\" oif != 19 drop"));
         assert!(!script.contains("type ifname"));
     }
 

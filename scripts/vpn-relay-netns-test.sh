@@ -509,19 +509,23 @@ done
 
 chain="$(ip netns exec "$NS" nft list chain inet vpn_relay_it prerouting)"
 forward_chain="$(ip netns exec "$NS" nft list chain inet vpn_relay_it forward)"
-grep -Fq 'iifname @managed_interfaces drop' <<<"$forward_chain" || fail "managed ingress isolation drop is missing"
-grep -Fq 'oifname @managed_interfaces drop' <<<"$forward_chain" || fail "managed egress isolation drop is missing"
+wg_ifindex="$(ip -n "$NS" -o link show dev wg-server | cut -d: -f1)"
+primary_ifindex="$(ip -n "$NS" -o link show dev awg-primary | cut -d: -f1)"
+secondary_ifindex="$(ip -n "$NS" -o link show dev awg-secondary | cut -d: -f1)"
+grep -Fq 'iif @managed_interfaces drop' <<<"$forward_chain" || fail "managed ingress isolation drop is missing"
+grep -Fq 'oif @managed_interfaces drop' <<<"$forward_chain" || fail "managed egress isolation drop is missing"
 blocked_set="$(ip netns exec "$NS" nft list set inet vpn_relay_it ipv6_blocked_interfaces)"
-grep -Fq '"awg-secondary"' <<<"$blocked_set" || fail "IPv6-disabled egress is absent from the blocked-interface set"
-grep -Fq '"wg-server"' <<<"$blocked_set" || fail "IPv6-disabled ingress is absent from the blocked-interface set"
-grep -Fq 'iifname @ipv6_blocked_interfaces meta nfproto ipv6 drop' <<<"$chain" || fail "IPv6 ingress drop is missing"
-grep -Fq 'oifname @ipv6_blocked_interfaces meta nfproto ipv6 drop' <<<"$forward_chain" || fail "IPv6 egress drop is missing"
+grep -Fq 'type iface_index' <<<"$blocked_set" || fail "IPv6 blocked set is not indexed by kernel interface identity"
+grep -Eq "elements = \\{ $secondary_ifindex, $wg_ifindex \\}" <<<"$blocked_set" || fail "IPv6-disabled interfaces are absent from the indexed blocked set"
+grep -Fq 'iif @ipv6_blocked_interfaces meta nfproto ipv6 drop' <<<"$chain" || fail "IPv6 ingress drop is missing"
+grep -Fq 'oif @ipv6_blocked_interfaces meta nfproto ipv6 drop' <<<"$forward_chain" || fail "IPv6 egress drop is missing"
 output_chain="$(ip netns exec "$NS" nft list chain inet vpn_relay_it output)"
-grep -Fq 'oifname @ipv6_blocked_interfaces meta nfproto ipv6 drop' <<<"$output_chain" || fail "locally generated IPv6 egress drop is missing"
+grep -Fq 'oif @ipv6_blocked_interfaces meta nfproto ipv6 drop' <<<"$output_chain" || fail "locally generated IPv6 egress drop is missing"
 grep -Fq 'ct direction reply meta mark set 0' <<<"$chain" || fail "reply packet mark reset is missing"
 
-grep -Eq 'iifname "wg-server" ct state new ip daddr 195.142.0.0/16 meta mark set 0x80000001 ct mark set .*0x50010000 return' <<<"$chain" || fail "secondary exception rule missing"
-grep -Eq 'iifname "wg-server" ct state new ip daddr 0.0.0.0/0 meta mark set 0x80000000 ct mark set .*0x50030000 return' <<<"$chain" || fail "primary default rule missing"
+grep -Fq "iifname \\"wg-server\\" iif != $wg_ifindex drop" <<<"$chain" || fail "same-name replacement ingress guard is missing"
+grep -Fq "iif $wg_ifindex ct state new ip daddr 195.142.0.0/16 meta mark set 0x80000001" <<<"$chain" || fail "secondary exception rule missing"
+grep -Fq "iif $wg_ifindex ct state new ip daddr 0.0.0.0/0 meta mark set 0x80000000" <<<"$chain" || fail "primary default rule missing"
 
 # Exercise full runtime reload through the Unix control socket. The candidate
 # changes a routing selector, adds an INPUT exception and installs a peer. First
