@@ -57,6 +57,8 @@ pub struct Runtime {
     forwarding_state: Option<ForwardingState>,
     control_socket: ControlSocket,
     fatal_error: Option<String>,
+    /// Preserve the name-mismatch guards if the original TUN descriptor is lost.
+    retain_firewall: bool,
     _instance_lock: InstanceLock,
 }
 
@@ -665,6 +667,7 @@ impl Runtime {
             forwarding_state,
             control_socket,
             fatal_error: None,
+            retain_firewall: false,
             _instance_lock: instance_lock,
         })
     }
@@ -872,6 +875,7 @@ impl Runtime {
                     "tunnel device at runtime index {index} lost its original interface identity: {error}"
                 );
                 self.fatal_error = Some(details.clone());
+                self.retain_firewall = true;
                 return Err(RuntimeError::FatalTransition(details));
             }
         }
@@ -1108,10 +1112,10 @@ impl Drop for Runtime {
                 failures = %cleanup_failures.join("; "),
                 "shutdown cleanup incomplete; retaining fail-closed nftables policy"
             );
-        } else if let Some(error) = &self.fatal_error {
+        } else if self.retain_firewall {
             tracing::error!(
-                fatal_error = %error,
-                "fatal runtime transition; retaining fail-closed nftables policy"
+                fatal_error = ?self.fatal_error,
+                "original TUN identity was lost; retaining fail-closed nftables policy"
             );
         } else if let Err(error) = linux::remove_nft(&self.routing) {
             tracing::error!(%error, "failed to remove vpn-relay nftables policy");
