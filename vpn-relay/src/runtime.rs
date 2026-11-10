@@ -1443,6 +1443,83 @@ fn remove_forwarding_state_file(path: &Path) -> Result<(), RuntimeError> {
     }
 }
 
+fn interface_forwarding_sysctl_key(name: &str, family: &str) -> Result<String, RuntimeError> {
+    if name.is_empty()
+        || name.len() > 15
+        || !name.is_ascii()
+        || !name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+        || name == "."
+        || name == ".."
+    {
+        return Err(RuntimeError::Forwarding(
+            "refusing to construct a sysctl path from an invalid interface name".to_owned(),
+        ));
+    }
+    let suffix = match family {
+        "ipv4" => "net.ipv4.conf",
+        "ipv6" => "net.ipv6.conf",
+        _ => {
+            return Err(RuntimeError::Forwarding(
+                "unsupported interface forwarding address family".to_owned(),
+            ))
+        }
+    };
+    Ok(format!("{suffix}.{name}.forwarding"))
+}
+
+/// Restore one link-scoped sysctl only while the saved name/ifindex identity
+/// still matches and the value is still the daemon's enable value. This avoids
+/// writing an old value into a replacement link or overwriting an operator's
+/// change made while vpn-relay was running.
+fn restore_interface_forwarding_entry_with(
+    entry: &InterfaceForwardingState,
+    family: &str,
+    original: &str,
+    changed: bool,
+    mut read: impl FnMut(&str) -> Result<String, RuntimeError>,
+    mut write: impl FnMut(&str, &str) -> Result<(), RuntimeError>,
+    mut verify: impl FnMut(&str, u32) -> Result<(), RuntimeError>,
+) -> Result<(), RuntimeError> {
+    if !changed {
+        return Ok(());
+    }
+    let key = interface_forwarding_sysctl_key(&entry.name, family)?;
+    verify(&entry.name, entry.ifindex)?;
+    let current = read(&key)?;
+    if current == original {
+        return Ok(());
+    }
+    if current != "1" {
+        // A third value is an external modification; preserve it rather than
+        // assuming that the daemon still owns the sysctl.
+        return Ok(());
+    }
+    verify(&entry.name, entry.ifindex)?;
+    write(&key, original)
+}
+
+fn restore_interface_forwarding_entry(
+    entry: &InterfaceForwardingState,
+    family: &str,
+    original: &str,
+    changed: bool,
+) -> Result<(), RuntimeError> {
+    restore_interface_forwarding_entry_with(
+        entry,
+        family,
+        original,
+        changed,
+        read_sysctl,
+        write_sysctl,
+        |name, index| {
+            linux::verify_interface_identity(name, index)
+                .map_err(|error| RuntimeError::Forwarding(error.to_string()))
+        },
+    )
+}
+
 fn restore_forwarding_state_with(
     state: &ForwardingState,
     mut read: impl FnMut(&str) -> Result<String, RuntimeError>,
@@ -1474,6 +1551,18 @@ fn restore_forwarding_state_with(
                 }
             }
             Err(error) => failures.push(format!("{family} read: {error}")),
+        }
+    }
+    for entry in &state.interfaces {
+        for (family, original, changed) in [
+            ("ipv4", entry.ipv4.as_str(), entry.ipv4_changed),
+            ("ipv6", entry.ipv6.as_str(), entry.ipv6_changed),
+        ] {
+            if let Err(error) =
+                restore_interface_forwarding_entry(entry, family, original, changed)
+            {
+                failures.push(format!("{} {family}: {error}", entry.name));
+            }
         }
     }
     if failures.is_empty() {
@@ -1564,6 +1653,115 @@ fn restore_forwarding(state: &ForwardingState) -> Result<(), RuntimeError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn interface_forwarding_sysctl_keys_are_family_scoped_and_validated() {
+        assert_eq!(
+            interface_forwarding_sysctl_key("eth0", "ipv4").unwrap(),
+            "net.ipv4.conf.eth0.forwarding"
+        );
+        assert_eq!(
+            interface_forwarding_sysctl_key("awg0", "ipv6").unwrap(),
+            "net.ipv6.conf.awg0.forwarding"
+        );
+        assert!(interface_forwarding_sysctl_key("../eth0", "ipv4").is_err());
+        assert!(interface_forwarding_sysctl_key("eth0", "other").is_err());
+    }
+
+    #[test]
+    fn interface_forwarding_restore_checks_identity_and_daemon_value() {
+        let entry = InterfaceForwardingState {
+            name: "eth0".to_owned(),
+            ifindex: 7,
+            ipv4: "0".to_owned(),
+            ipv6: "0".to_owned(),
+            ipv4_changed: true,
+            ipv6_changed: false,
+        };
+        let mut calls = Vec::new();
+        restore_interface_forwarding_entry_with(
+            &entry,
+            "ipv4",
+            "0",
+            true,
+            |key| {
+                calls.push(format!("read:{key}"));
+                Ok("1".to_owned())
+            },
+            |key, value| {
+                calls.push(format!("write:{key}={value}"));
+                Ok(())
+            },
+            |name, index| {
+                calls.push(format!("verify:{name}:{index}"));
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            calls,
+            vec![
+                "verify:eth0:7",
+                "read:net.ipv4.conf.eth0.forwarding",
+                "verify:eth0:7",
+                "write:net.ipv4.conf.eth0.forwarding=0"
+            ]
+        );
+    }
+
+    #[test]
+    fn interface_forwarding_restore_never_writes_after_identity_mismatch() {
+        let entry = InterfaceForwardingState {
+            name: "eth0".to_owned(),
+            ifindex: 7,
+            ipv4: "0".to_owned(),
+            ipv6: "0".to_owned(),
+            ipv4_changed: true,
+            ipv6_changed: false,
+        };
+        let mut writes = 0;
+        let result = restore_interface_forwarding_entry_with(
+            &entry,
+            "ipv4",
+            "0",
+            true,
+            |_| Ok("1".to_owned()),
+            |_, _| {
+                writes += 1;
+                Ok(())
+            },
+            |_, _| Err(RuntimeError::Forwarding("identity changed".to_owned())),
+        );
+        assert!(result.is_err());
+        assert_eq!(writes, 0);
+    }
+
+    #[test]
+    fn interface_forwarding_restore_preserves_operator_value() {
+        let entry = InterfaceForwardingState {
+            name: "eth0".to_owned(),
+            ifindex: 7,
+            ipv4: "0".to_owned(),
+            ipv6: "0".to_owned(),
+            ipv4_changed: true,
+            ipv6_changed: false,
+        };
+        let mut writes = 0;
+        restore_interface_forwarding_entry_with(
+            &entry,
+            "ipv4",
+            "0",
+            true,
+            |_| Ok("2".to_owned()),
+            |_, _| {
+                writes += 1;
+                Ok(())
+            },
+            |_, _| Ok(()),
+        )
+        .unwrap();
+        assert_eq!(writes, 0);
+    }
 
     #[test]
     fn forwarding_journal_accepts_legacy_namespace_only_state() {
