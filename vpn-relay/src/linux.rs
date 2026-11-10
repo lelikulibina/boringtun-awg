@@ -645,69 +645,76 @@ pub fn remove_egress_policy_routing(plan: &RoutingPlan) -> Result<(), LinuxError
 
 pub fn apply_policy_routing(plan: &RoutingPlan) -> Result<(), LinuxError> {
     ensure_policy_slots_available(plan)?;
-    for mark in &plan.socket_marks {
-        // Keep encrypted outer IPv6 transport on the main table even when inner IPv6 is disabled.
-        for family in ["-4", "-6"] {
-            let args = vec![
-                family.into(),
-                "rule".into(),
-                "del".into(),
-                "priority".into(),
-                "9000".into(),
-                "fwmark".into(),
-                format!("0x{:x}", mark),
-                "lookup".into(),
-                "main".into(),
-                "protocol".into(),
-                ROUTING_PROTOCOL.into(),
-            ];
-            if let Err(error) = run_ip_cleanup(&args) {
-                return match remove_policy_routing(plan) {
-                    Ok(()) => Err(error),
-                    Err(rollback) => Err(LinuxError::Rollback {
-                        operation: error.to_string(),
-                        rollback: rollback.to_string(),
-                    }),
-                };
-            }
-            let args = vec![
-                family.into(),
-                "rule".into(),
-                "add".into(),
-                "priority".into(),
-                "9000".into(),
-                "fwmark".into(),
-                format!("0x{:x}", mark),
-                "lookup".into(),
-                "main".into(),
-                "protocol".into(),
-                ROUTING_PROTOCOL.into(),
-            ];
-            if let Err(error) = run("ip", &args) {
-                return match remove_policy_routing(plan) {
-                    Ok(()) => Err(error),
-                    Err(rollback) => Err(LinuxError::Rollback {
-                        operation: error.to_string(),
-                        rollback: rollback.to_string(),
-                    }),
-                };
+    apply_policy_routing_with(plan, &mut run)
+}
+
+fn apply_policy_routing_with<F>(
+    plan: &RoutingPlan,
+    run_command: &mut F,
+) -> Result<(), LinuxError>
+where
+    F: FnMut(&str, &[String]) -> Result<(), LinuxError>,
+{
+    let install_result = (|| -> Result<(), LinuxError> {
+        for mark in &plan.socket_marks {
+            // Keep encrypted outer IPv6 transport on the main table even when inner IPv6 is disabled.
+            for family in ["-4", "-6"] {
+                let args = vec![
+                    family.into(),
+                    "rule".into(),
+                    "del".into(),
+                    "priority".into(),
+                    "9000".into(),
+                    "fwmark".into(),
+                    format!("0x{:x}", mark),
+                    "lookup".into(),
+                    "main".into(),
+                    "protocol".into(),
+                    ROUTING_PROTOCOL.into(),
+                ];
+                run_ip_cleanup_with(&args, run_command)?;
+                let args = vec![
+                    family.into(),
+                    "rule".into(),
+                    "add".into(),
+                    "priority".into(),
+                    "9000".into(),
+                    "fwmark".into(),
+                    format!("0x{:x}", mark),
+                    "lookup".into(),
+                    "main".into(),
+                    "protocol".into(),
+                    ROUTING_PROTOCOL.into(),
+                ];
+                run_command("ip", &args)?;
             }
         }
-    }
+        apply_egress_policy_routing_with(plan, run_command)
+    })();
 
-    if let Err(error) = apply_egress_policy_routing(plan) {
-        return match remove_policy_routing(plan) {
-            Ok(()) => Err(error),
+    match install_result {
+        Ok(()) => Ok(()),
+        Err(operation) => match remove_policy_routing_with(plan, run_command) {
+            Ok(()) => Err(operation),
             Err(rollback) => Err(LinuxError::Rollback {
-                operation: error.to_string(),
+                operation: operation.to_string(),
                 rollback: rollback.to_string(),
             }),
-        };
+        },
     }
-    Ok(())
 }
 
 pub fn remove_policy_routing(plan: &RoutingPlan) -> Result<(), LinuxError> {
+    remove_policy_routing_with(plan, &mut run)
+}
+
+fn remove_policy_routing_with<F>(
+    plan: &RoutingPlan,
+    run_command: &mut F,
+) -> Result<(), LinuxError>
+where
+    F: FnMut(&str, &[String]) -> Result<(), LinuxError>,
+{
     let mut failures = Vec::new();
     for mark in &plan.socket_marks {
         for family in ["-4", "-6"] {
@@ -724,12 +731,12 @@ pub fn remove_policy_routing(plan: &RoutingPlan) -> Result<(), LinuxError> {
                 "protocol".into(),
                 ROUTING_PROTOCOL.into(),
             ];
-            if let Err(error) = run_ip_cleanup(&args) {
+            if let Err(error) = run_ip_cleanup_with(&args, run_command) {
                 failures.push(error.to_string());
             }
         }
     }
-    if let Err(error) = remove_egress_policy_routing(plan) {
+    if let Err(error) = remove_egress_policy_routing_with(plan, run_command) {
         failures.push(error.to_string());
     }
     if failures.is_empty() {
@@ -808,6 +815,60 @@ mod tests {
             ipv6_blocked_interfaces: Vec::new(),
             interface_indices: None,
         }
+    }
+
+    #[test]
+    fn socket_fwmark_apply_failure_rolls_back_all_families_and_egress() {
+        let mut plan = cleanup_test_plan();
+        plan.socket_marks = vec![0x1000_0001, 0x1000_0002];
+        let mut calls = Vec::new();
+        let mut add_count = 0;
+        let result = apply_policy_routing_with(&plan, &mut |_program, args| {
+            calls.push(args.to_vec());
+            if args.get(2).is_some_and(|part| part == "add") {
+                add_count += 1;
+                if add_count == 2 {
+                    return Err(LinuxError::Command {
+                        program: format!("ip {}", args.join(" ")),
+                        status: "exit status 2".into(),
+                        stderr: "injected IPv6 socket rule failure".into(),
+                    });
+                }
+            }
+            Ok(())
+        });
+
+        assert!(matches!(result, Err(LinuxError::Command { ref stderr, .. })
+            if stderr.contains("injected IPv6 socket rule failure")));
+        let cleanup = calls.iter().filter(|args| {
+            args.get(2).is_some_and(|part| part == "del")
+                && args.get(4).is_some_and(|part| part == "9000")
+        }).count();
+        assert_eq!(cleanup, 4, "all socket rules must be attempted during rollback");
+    }
+
+    #[test]
+    fn socket_fwmark_cleanup_attempts_every_rule_after_failures() {
+        let mut plan = cleanup_test_plan();
+        plan.socket_marks = vec![0x1000_0001, 0x1000_0002];
+        let mut cleanup_attempts = 0;
+        let result = remove_policy_routing_with(&plan, &mut |_program, args| {
+            if args.get(2).is_some_and(|part| part == "del")
+                && args.get(4).is_some_and(|part| part == "9000")
+            {
+                cleanup_attempts += 1;
+                return Err(LinuxError::Command {
+                    program: format!("ip {}", args.join(" ")),
+                    status: "exit status 2".into(),
+                    stderr: "injected socket cleanup failure".into(),
+                });
+            }
+            Ok(())
+        });
+
+        assert_eq!(cleanup_attempts, 4);
+        assert!(matches!(result, Err(LinuxError::Cleanup(message))
+            if message.matches("injected socket cleanup failure").count() == 4));
     }
 
     #[test]
