@@ -696,6 +696,21 @@ wait "$capture_pid" || fail "could not capture masqueraded IPv6 packet"
 grep -Eq 'fd20::1 > 2001:db8:1::1' "$TMP/nat-masquerade-v6-capture.log" \
     || fail "IPv6 masquerade did not replace the source with the primary TUN address"
 
+# Masquerade must resolve the egress address for each new flow. Replacing the
+# primary TUN address must not leave a stale source address in nftables rules.
+ip -n "$ROUTER_NS" addr del 10.20.0.1/24 dev awg-primary
+ip -n "$ROUTER_NS" addr add 10.20.0.99/24 dev awg-primary
+ip netns exec "$PRIMARY_NS" timeout 5 tcpdump -nn -i up-primary -c 1 \
+    'icmp and src host 10.20.0.99 and dst host 203.0.113.1' \
+    >"$TMP/nat-masquerade-address-change.log" 2>&1 &
+capture_pid=$!
+sleep 0.25
+ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -c 1 -W 2 203.0.113.1 \
+    || fail "masquerade probe failed after changing the egress TUN address"
+wait "$capture_pid" || fail "could not capture masquerade packet after egress address change"
+grep -Fq '10.20.0.99 > 203.0.113.1' "$TMP/nat-masquerade-address-change.log" \
+    || fail "masquerade continued using the old egress address after address change"
+
 # AWG-secondary has no ingress routing rule. Even though the kernel has a
 # connected route to the WG client subnet, an AWG server must not initiate a
 # new connection through the router to a WG client.

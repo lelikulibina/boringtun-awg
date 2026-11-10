@@ -272,7 +272,9 @@ unmanaged output остаётся неизменным.
   packet captures подтверждают неизменность source для локальных INPUT/OUTPUT,
   а tcpdump на обоих uplink не видит пакеты без routing decision
   (integration-tests CI 42815100743).
-- [ ] Проверить поведение при изменении адреса egress для masquerade.
+- [~] Добавлен packet-level regression test смены IPv4 адреса egress:
+  после удаления 10.20.0.1/24 и назначения 10.20.0.99/24 новый masquerade
+  flow обязан выходить с 10.20.0.99. Ожидает полного integration CI.
 
 Критерий приёмки: пакет получает ровно одну ожидаемую NAT policy; запрещённый
 или локальный трафик не подвергается source NAT.
