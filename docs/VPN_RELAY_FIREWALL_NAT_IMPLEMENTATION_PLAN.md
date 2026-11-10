@@ -3,7 +3,7 @@
 > Рабочая ветка: `feature/vpn-relay-firewall-nat`
 > Базовая ветка: `feature/boringtun-router-daemon`
 > Базовый commit: `ad3f35d2790e7e47c8d050fb7b3c206c69ac2aa4`
-> Последнее обновление: 2026-11-10 (shutdown fail-closed lifecycle, forwarding restore failure-injection и CI timeout guard)
+> Последнее обновление: 2026-11-10 (startup/shutdown forwarding failure-injection, fail-closed rollback и CI timeout guard)
 >
 > Этот документ является рабочим журналом реализации. Статусы меняются только
 > после фактического изменения кода и выполнения соответствующих проверок.
@@ -694,3 +694,5 @@ Noise sessions для peer, чьи параметры не менялись; н�
 | 2026-11-10 | Добавлен предельный timeout для CI integration-tests | Job `integration-tests` ограничен 45 минутами, чтобы зависшие ignored tests или сетевые сценарии не блокировали workflow бесконечно. Предыдущий run 42798780332 оставался на шаге `cargo test -- --ignored` более 20 минут; новый timeout будет проверен следующим CI. Ожидает CI | Реализовано, ожидает CI |
 
 | 2026-11-10 | Ограничено время выполнения ignored integration suite | Шаг `cargo test -- --ignored` теперь имеет отдельный 15-минутный watchdog с принудительным завершением через 30 секунд после TERM; общий integration job ограничен 45 минутами. Это локализует зависание legacy Docker/TUN тестов и сохраняет верхнюю границу для всего CI job. Ожидает CI | Реализовано, ожидает CI |
+
+| 2026-11-10 | Проверен неопределённый результат IPv4 forwarding enable и двойной отказ rollback | Netns test теперь моделирует sysctl, который сначала применяет `ip_forward=1`, а затем возвращает ошибку. Проверяется успешное восстановление обоих семейств и полная очистка. Отдельный сценарий дополнительно ломает восстановление IPv6 и подтверждает сохранение fail-closed nftables policy при удалённых TUN/routes. Ожидает CI | Реализовано, ожидает CI |

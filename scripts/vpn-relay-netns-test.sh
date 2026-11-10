@@ -23,7 +23,7 @@ trap cleanup EXIT
 
 fail() {
     echo "vpn-relay namespace test: $*" >&2
-    for log in "$TMP/daemon.log" "$TMP/conflict.log" "$TMP/policy-conflict.log" "$TMP/route-conflict.log" "$TMP/policy-shadow-conflict.log" "$TMP/partial-setup-conflict.log" "$TMP/partial-policy-route.log" "$TMP/partial-forwarding.log" "$TMP/reload-failure.log" "$TMP/reload-route-failure.log" "$TMP/reload-immutable.log" "$TMP/shutdown-cleanup-failure.log" "$TMP/shutdown-forwarding-restore-failure.log" "$TMP/shutdown-ipv6-forwarding-restore-failure.log"; do
+    for log in "$TMP/daemon.log" "$TMP/conflict.log" "$TMP/policy-conflict.log" "$TMP/route-conflict.log" "$TMP/policy-shadow-conflict.log" "$TMP/partial-setup-conflict.log" "$TMP/partial-policy-route.log" "$TMP/partial-forwarding.log" "$TMP/partial-ipv4-forwarding.log" "$TMP/partial-ipv4-forwarding-restore-failure.log" "$TMP/reload-failure.log" "$TMP/reload-route-failure.log" "$TMP/reload-immutable.log" "$TMP/shutdown-cleanup-failure.log" "$TMP/shutdown-forwarding-restore-failure.log" "$TMP/shutdown-ipv6-forwarding-restore-failure.log"; do
         if [[ -f "$log" ]]; then
             cat "$log" >&2
         fi
@@ -324,6 +324,63 @@ for table in 10000 10001; do
         fi
     done
 done
+
+# A failed IPv4 enable write is ambiguous: the sysctl may have changed before
+# the command reported an error. Simulate that exact condition and require both
+# families, routes, TUN links and nftables state to be restored.
+REAL_SYSCTL_STARTUP="$(command -v sysctl)"
+mkdir -p "$TMP/fail-ipv4-enable-sysctl"
+cat >"$TMP/fail-ipv4-enable-sysctl/sysctl" <<EOF
+#!/bin/sh
+if [ "\$1" = "-w" ] && [ "\$2" = "net.ipv4.ip_forward=1" ]; then
+    "$REAL_SYSCTL_STARTUP" "\$@" || exit "\$?"
+    echo "injected IPv4 forwarding enable-after-write failure" >&2
+    exit 42
+fi
+exec "$REAL_SYSCTL_STARTUP" "\$@"
+EOF
+chmod +x "$TMP/fail-ipv4-enable-sysctl/sysctl"
+expect_startup_failure partial-ipv4-forwarding.log "IPv4 forwarding enable-after-write failure" "$TMP/fail-ipv4-enable-sysctl"
+grep -Fq "injected IPv4 forwarding enable-after-write failure" "$TMP/partial-ipv4-forwarding.log" || fail "IPv4 enable-after-write failure was not observed"
+
+# If the ambiguous IPv4 enable failure is followed by a failure restoring the
+# original IPv6 value, startup must retain the already-installed fail-closed
+# nftables policy instead of claiming a clean rollback.
+mkdir -p "$TMP/fail-ipv4-enable-restore-sysctl"
+cat >"$TMP/fail-ipv4-enable-restore-sysctl/sysctl" <<EOF
+#!/bin/sh
+if [ "\$1" = "-w" ] && [ "\$2" = "net.ipv4.ip_forward=1" ]; then
+    "$REAL_SYSCTL_STARTUP" "\$@" || exit "\$?"
+    echo "injected IPv4 forwarding enable-after-write failure" >&2
+    exit 42
+fi
+if [ "\$1" = "-w" ] && [ "\$2" = "net.ipv6.conf.all.forwarding=0" ]; then
+    echo "injected IPv6 forwarding restore failure after IPv4 enable error" >&2
+    exit 43
+fi
+exec "$REAL_SYSCTL_STARTUP" "\$@"
+EOF
+chmod +x "$TMP/fail-ipv4-enable-restore-sysctl/sysctl"
+if ip netns exec "$NS" env PATH="$TMP/fail-ipv4-enable-restore-sysctl:$PATH" "$BIN" --config "$TMP/config.toml" >"$TMP/partial-ipv4-forwarding-restore-failure.log" 2>&1; then
+    fail "daemon accepted an IPv4 enable failure followed by an IPv6 restore failure"
+fi
+grep -Fq "injected IPv4 forwarding enable-after-write failure" "$TMP/partial-ipv4-forwarding-restore-failure.log" || fail "ambiguous IPv4 enable failure was not reported"
+grep -Fq "injected IPv6 forwarding restore failure after IPv4 enable error" "$TMP/partial-ipv4-forwarding-restore-failure.log" || fail "IPv6 restore failure was not reported"
+grep -Fq "startup aborted with forwarding state uncertain; retaining nftables policy" "$TMP/partial-ipv4-forwarding-restore-failure.log" || fail "startup did not retain fail-closed policy after forwarding rollback failure"
+ip netns exec "$NS" nft list table inet vpn_relay_it >/dev/null 2>&1 || fail "fail-closed nftables policy was removed after forwarding rollback failure"
+[[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "0" ]] || fail "IPv4 forwarding was not restored after ambiguous enable failure"
+[[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "0" ]] || fail "IPv6 forwarding unexpectedly changed during failed restore"
+for iface in wg-server awg-primary awg-secondary; do
+    if ip netns exec "$NS" ip link show dev "$iface" >/dev/null 2>&1; then
+        fail "TUN interface $iface leaked after forwarding rollback failure"
+    fi
+done
+for family in -4 -6; do
+    if ip -n "$NS" "$family" rule show | grep -q 'proto 242'; then
+        fail "policy rules leaked after forwarding rollback failure for $family"
+    fi
+done
+ip netns exec "$NS" nft delete table inet vpn_relay_it
 
 REAL_NFT="$(command -v nft)"
 REAL_IP="$(command -v ip)"
