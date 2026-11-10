@@ -1799,7 +1799,7 @@ egress = "awg-uplink"
     fn rejects_equivalent_cidr_networks_with_different_host_bits() {
         let source = valid_config().replace(
             "destination = \"0.0.0.0/0\"",
-            "source = [\"10.10.0.0/24\", \"10.10.0.99/24\"]\\ndestination = \"0.0.0.0/0\"",
+            "source = [\"10.10.0.0/24\", \"10.10.0.99/24\"]\ndestination = \"0.0.0.0/0\"",
         );
         assert!(Config::parse_toml(&source)
             .unwrap_err()
