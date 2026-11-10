@@ -351,6 +351,8 @@ struct ControlResponse {
 struct ControlSocket {
     listener: UnixListener,
     path: PathBuf,
+    device: u64,
+    inode: u64,
 }
 
 impl ControlSocket {
@@ -395,33 +397,64 @@ impl ControlSocket {
     ) -> Result<Self, RuntimeError> {
         let listener =
             UnixListener::bind(&path).map_err(|error| RuntimeError::Control(error.to_string()))?;
+        let metadata = fs::symlink_metadata(&path)
+            .map_err(|error| RuntimeError::Control(error.to_string()))?;
+        if !metadata.file_type().is_socket() {
+            return Err(RuntimeError::Control(format!(
+                "control socket path was replaced during bind: {}",
+                path.display()
+            )));
+        }
+        let device = metadata.dev();
+        let inode = metadata.ino();
         if let Err(error) = configure(&path, &listener) {
-            // The socket path is created before permissions and listener mode
-            // are configured. Never leave an unconfigured endpoint behind on
-            // startup failure; dropping the listener alone does not unlink it.
             drop(listener);
-            if let Err(cleanup) = fs::remove_file(&path) {
-                if cleanup.kind() != std::io::ErrorKind::NotFound {
-                    tracing::warn!(
-                        path = %path.display(),
-                        %cleanup,
-                        "failed to remove incompletely configured control socket"
-                    );
-                }
-            }
+            remove_owned_socket_path(&path, device, inode);
             return Err(RuntimeError::Control(error.to_string()));
         }
-        Ok(Self { listener, path })
+        let metadata = fs::symlink_metadata(&path)
+            .map_err(|error| RuntimeError::Control(error.to_string()))?;
+        if !metadata.file_type().is_socket()
+            || metadata.dev() != device
+            || metadata.ino() != inode
+        {
+            return Err(RuntimeError::Control(format!(
+                "control socket path changed while being configured: {}",
+                path.display()
+            )));
+        }
+        Ok(Self {
+            listener,
+            path,
+            device,
+            inode,
+        })
+    }
+}
+
+fn remove_owned_socket_path(path: &Path, device: u64, inode: u64) {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+        Err(error) => {
+            tracing::warn!(path = %path.display(), %error, "failed to inspect control socket before unlink");
+            return;
+        }
+    };
+    if !metadata.file_type().is_socket() || metadata.dev() != device || metadata.ino() != inode {
+        tracing::warn!(path = %path.display(), "control socket path no longer refers to the daemon-owned socket; refusing to unlink it");
+        return;
+    }
+    if let Err(error) = fs::remove_file(path) {
+        if error.kind() != std::io::ErrorKind::NotFound {
+            tracing::warn!(path = %path.display(), %error, "failed to remove control socket");
+        }
     }
 }
 
 impl Drop for ControlSocket {
     fn drop(&mut self) {
-        if let Err(error) = fs::remove_file(&self.path) {
-            if error.kind() != std::io::ErrorKind::NotFound {
-                tracing::warn!(path = %self.path.display(), %error, "failed to remove control socket");
-            }
-        }
+        remove_owned_socket_path(&self.path, self.device, self.inode);
     }
 }
 
@@ -1319,6 +1352,24 @@ mod tests {
         });
         assert!(matches!(result, Err(RuntimeError::Control(message)) if message.contains("injected socket configuration failure")));
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn control_socket_drop_does_not_remove_replaced_path() {
+        let path = std::env::temp_dir().join(format!(
+            "vpn-relay-control-replaced-{}.sock",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        let socket = ControlSocket::bind(path.clone()).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        std::fs::write(&path, b"administrator-owned replacement").unwrap();
+        drop(socket);
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            b"administrator-owned replacement"
+        );
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]
