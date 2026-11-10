@@ -330,6 +330,8 @@ fn rollback_peer_replacements(
 struct ForwardingState {
     ipv4: String,
     ipv6: String,
+    ipv4_changed: bool,
+    ipv6_changed: bool,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Eq, PartialEq)]
@@ -1178,27 +1180,38 @@ fn enable_forwarding_with(
     mut read: impl FnMut(&str) -> Result<String, RuntimeError>,
     mut write: impl FnMut(&str, &str) -> Result<(), RuntimeError>,
 ) -> Result<ForwardingState, RuntimeError> {
-    let state = ForwardingState {
+    let mut state = ForwardingState {
         ipv4: read("net.ipv4.ip_forward")?,
         ipv6: read("net.ipv6.conf.all.forwarding")?,
+        ipv4_changed: false,
+        ipv6_changed: false,
     };
-    if let Err(enable_error) = write("net.ipv4.ip_forward", "1") {
-        if let Err(restore_error) = restore_forwarding_with(&state, &mut write) {
-            return Err(RuntimeError::FatalTransition(format!(
-                "IPv4 forwarding enable failed ({enable_error}); restoring original forwarding state also failed ({restore_error}); fail-closed nftables policy must remain installed"
-            )));
+    // Writing an already-enabled IPv4 ip_forward sysctl is not harmless:
+    // changing this switch resets IPv4 configuration parameters to router
+    // defaults. Avoid touching a family that is already enabled.
+    if state.ipv4 != "1" {
+        state.ipv4_changed = true;
+        if let Err(enable_error) = write("net.ipv4.ip_forward", "1") {
+            if let Err(restore_error) = restore_forwarding_with(&state, &mut write) {
+                return Err(RuntimeError::FatalTransition(format!(
+                    "IPv4 forwarding enable failed ({enable_error}); restoring original forwarding state also failed ({restore_error}); fail-closed nftables policy must remain installed"
+                )));
+            }
+            return Err(enable_error);
         }
-        return Err(enable_error);
     }
-    if let Err(enable_error) = write("net.ipv6.conf.all.forwarding", "1") {
-        // A failed sysctl write may leave its resulting value uncertain. Restore
-        // both families, not just IPv4, before allowing startup to remove nft.
-        if let Err(restore_error) = restore_forwarding_with(&state, &mut write) {
-            return Err(RuntimeError::FatalTransition(format!(
-                "IPv6 forwarding enable failed ({enable_error}); restoring original forwarding state also failed ({restore_error}); fail-closed nftables policy must remain installed"
-            )));
+    if state.ipv6 != "1" {
+        state.ipv6_changed = true;
+        if let Err(enable_error) = write("net.ipv6.conf.all.forwarding", "1") {
+            // A failed sysctl write may leave its resulting value uncertain.
+            // Restore only families that this startup attempted to change.
+            if let Err(restore_error) = restore_forwarding_with(&state, &mut write) {
+                return Err(RuntimeError::FatalTransition(format!(
+                    "IPv6 forwarding enable failed ({enable_error}); restoring original forwarding state also failed ({restore_error}); fail-closed nftables policy must remain installed"
+                )));
+            }
+            return Err(enable_error);
         }
-        return Err(enable_error);
     }
     Ok(state)
 }
@@ -1212,11 +1225,15 @@ fn restore_forwarding_with(
     mut write: impl FnMut(&str, &str) -> Result<(), RuntimeError>,
 ) -> Result<(), RuntimeError> {
     let mut failures = Vec::new();
-    if let Err(error) = write("net.ipv4.ip_forward", &state.ipv4) {
-        failures.push(format!("IPv4: {error}"));
+    if state.ipv4_changed {
+        if let Err(error) = write("net.ipv4.ip_forward", &state.ipv4) {
+            failures.push(format!("IPv4: {error}"));
+        }
     }
-    if let Err(error) = write("net.ipv6.conf.all.forwarding", &state.ipv6) {
-        failures.push(format!("IPv6: {error}"));
+    if state.ipv6_changed {
+        if let Err(error) = write("net.ipv6.conf.all.forwarding", &state.ipv6) {
+            failures.push(format!("IPv6: {error}"));
+        }
     }
     if failures.is_empty() {
         Ok(())
@@ -1235,6 +1252,57 @@ fn restore_forwarding(state: &ForwardingState) -> Result<(), RuntimeError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn forwarding_enable_does_not_rewrite_families_that_are_already_enabled() {
+        let state = enable_forwarding_with(
+            |key| match key {
+                "net.ipv4.ip_forward" | "net.ipv6.conf.all.forwarding" => Ok("1".to_owned()),
+                _ => unreachable!(),
+            },
+            |key, _| Err(RuntimeError::Forwarding(format!("unexpected write to {key}"))),
+        )
+        .unwrap();
+
+        assert!(!state.ipv4_changed);
+        assert!(!state.ipv6_changed);
+        restore_forwarding_with(&state, |key, _| {
+            Err(RuntimeError::Forwarding(format!("unexpected restore of {key}")))
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn forwarding_enable_changes_and_restores_only_the_disabled_family() {
+        let mut writes = Vec::new();
+        let state = enable_forwarding_with(
+            |key| match key {
+                "net.ipv4.ip_forward" => Ok("1".to_owned()),
+                "net.ipv6.conf.all.forwarding" => Ok("0".to_owned()),
+                _ => unreachable!(),
+            },
+            |key, value| {
+                writes.push((key.to_owned(), value.to_owned()));
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        assert!(!state.ipv4_changed);
+        assert!(state.ipv6_changed);
+        restore_forwarding_with(&state, |key, value| {
+            writes.push((key.to_owned(), value.to_owned()));
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(
+            writes,
+            vec![
+                ("net.ipv6.conf.all.forwarding".to_owned(), "1".to_owned()),
+                ("net.ipv6.conf.all.forwarding".to_owned(), "0".to_owned()),
+            ]
+        );
+    }
 
     #[test]
     fn forwarding_enable_restores_both_families_when_ipv4_enable_fails() {
@@ -1366,6 +1434,8 @@ mod tests {
         let state = ForwardingState {
             ipv4: "0".to_owned(),
             ipv6: "0".to_owned(),
+            ipv4_changed: true,
+            ipv6_changed: true,
         };
         let mut writes = Vec::new();
         let result = restore_forwarding_with(&state, |key, value| {
