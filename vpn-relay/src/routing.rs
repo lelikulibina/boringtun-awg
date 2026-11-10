@@ -565,11 +565,26 @@ impl RoutingPlan {
                      add rule {} {} forward iifname \"{}\" iif != {} drop\n\
                      add rule {} {} forward oifname \"{}\" oif != {} drop\n\
                      add rule {} {} output oifname \"{}\" oif != {} drop\n",
-                    self.nft_family, self.nft_table, name, index,
-                    self.nft_family, self.nft_table, name, index,
-                    self.nft_family, self.nft_table, name, index,
-                    self.nft_family, self.nft_table, name, index,
-                    self.nft_family, self.nft_table, name, index,
+                    self.nft_family,
+                    self.nft_table,
+                    name,
+                    index,
+                    self.nft_family,
+                    self.nft_table,
+                    name,
+                    index,
+                    self.nft_family,
+                    self.nft_table,
+                    name,
+                    index,
+                    self.nft_family,
+                    self.nft_table,
+                    name,
+                    index,
+                    self.nft_family,
+                    self.nft_table,
+                    name,
+                    index,
                 ));
             }
             let first_rule = output.find("add rule ").unwrap_or(output.len());
