@@ -679,9 +679,25 @@ impl Runtime {
     }
 
     fn accept_control_connections(&mut self) {
+        // A failed rollback or post-commit cleanup makes the datapath state
+        // unsuitable for further management operations. Do not drain queued
+        // requests after the transition to fatal state: run() will return and
+        // Runtime::drop will perform the ordered shutdown.
+        if self.fatal_error.is_some() {
+            return;
+        }
+
         loop {
             match self.control_socket.listener.accept() {
-                Ok((stream, _)) => self.handle_control_connection(stream),
+                Ok((stream, _)) => {
+                    self.handle_control_connection(stream);
+                    // A request may itself trigger a fatal transition. Stop
+                    // immediately rather than accepting another queued reload
+                    // or peer replacement in the partially committed state.
+                    if self.fatal_error.is_some() {
+                        break;
+                    }
+                }
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
                 Err(error) => {
                     tracing::warn!(%error, "failed to accept control connection");

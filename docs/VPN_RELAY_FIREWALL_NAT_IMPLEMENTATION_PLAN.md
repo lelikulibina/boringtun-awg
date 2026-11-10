@@ -632,7 +632,10 @@ Noise sessions для peer, чьи параметры не менялись; н�
 | 2026-11-10 | Усилен стресс-тест непрерывного трафика при повторных reload | Commit 828b386; CI run 42725497030: для WG и AWG выполнены три последовательных nftables reload (add/remove/add независимого INPUT exception) на фоне 100 ICMP echo; проверены 100/100 ответов, daemon liveness и post-reload traffic. Все jobs и all-systems-go — success; Windows job skipped | Подтверждено CI |
 
 
-| 2026-11-10 | Добавлен failure-injection тест ошибки cleanup старых policy routes после nftables switch | Netns integration test принудительно ломает удаление старого IPv4 route после успешного переключения nftables; проверяет fatal response, завершение daemon и повторную очистку старого и нового routing plan при Drop, включая восстановление forwarding и удаление TUN. Ожидает CI | В работе |
+| 2026-11-10 | Добавлен failure-injection тест ошибки cleanup старых policy routes после nftables switch | Netns integration test принудительно ломает удаление старого IPv4 route после успешного переключения nftables; проверяет fatal response, завершение daemon и повторную очистку старого и нового routing plan при Drop, включая восстановление forwarding и удаление TUN. CI run 42727974982: все обязательные jobs и all-systems-go — success; Windows job skipped | Подтверждено CI |
 
 
-| 2026-11-10 | Усилены проверки multi-device peer rollback | Успешный rollback теперь проверяет восстановление обоих device snapshots; неуспешный rollback проверяет фактическое смешанное состояние (candidate peer на первом device, old peer на втором), которое требует fatal shutdown и запрещает публикацию candidate config. Ожидает CI | В работе |
+| 2026-11-10 | Усилены проверки multi-device peer rollback | Успешный rollback теперь проверяет восстановление обоих device snapshots; неуспешный rollback проверяет фактическое смешанное состояние (candidate peer на первом device, old peer на втором), которое требует fatal shutdown и запрещает публикацию candidate config. CI run 42727974982: tests, clippy, rustfmt, check_features, integration-tests, AWG 3.1 и all-systems-go — success; Windows job skipped | Подтверждено CI |
+
+
+| 2026-11-10 | Прекращение обработки control socket после fatal transition | Runtime больше не дренирует очередь control socket после того, как reload привёл к fatal state: текущий запрос получает ошибку, затем accept loop прекращается, а run() немедленно переходит к Drop/shutdown. Это исключает обработку дополнительных peer replacement/reload запросов в частично committed состоянии | Реализовано, ожидает CI |
