@@ -514,18 +514,18 @@ impl RoutingPlan {
             );
             match rule.nat_action() {
                 NatAction::None => output.push_str(&format!(
-                    "add rule {} {} postrouting {} return\\n",
+                    "add rule {} {} postrouting {} return\n",
                     self.nft_family, self.nft_table, selector
                 )),
                 NatAction::Masquerade => output.push_str(&format!(
-                    "add rule {} {} postrouting {} masquerade\\n",
+                    "add rule {} {} postrouting {} masquerade\n",
                     self.nft_family, self.nft_table, selector
                 )),
                 NatAction::Snat(address) => {
                     let family = if address.is_ipv4() { "ip" } else { "ip6" };
                     let nfproto = if address.is_ipv4() { "ipv4" } else { "ipv6" };
                     output.push_str(&format!(
-                        "add rule {} {} postrouting {} meta nfproto {} snat {} to {}\\n",
+                        "add rule {} {} postrouting {} meta nfproto {} snat {} to {}\n",
                         self.nft_family, self.nft_table, selector, nfproto, family, address
                     ));
                 }
