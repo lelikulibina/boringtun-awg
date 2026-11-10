@@ -280,7 +280,10 @@ impl RoutingPlan {
     /// Bind firewall selectors to the kernel identities of the original interfaces.
     pub fn bind_interface_indices(&mut self, indices: BTreeMap<String, u32>) -> Result<(), String> {
         if indices.len() != self.managed_interfaces.len()
-            || self.managed_interfaces.iter().any(|name| indices.get(name).is_none_or(|index| *index == 0))
+            || self
+                .managed_interfaces
+                .iter()
+                .any(|name| indices.get(name).is_none_or(|index| *index == 0))
         {
             return Err("interface index map does not cover all managed interfaces".into());
         }
@@ -530,8 +533,14 @@ impl RoutingPlan {
                 .replace("type ifname;", "type ifindex;")
                 .replace("iifname @managed_interfaces", "iif @managed_interfaces")
                 .replace("oifname @managed_interfaces", "oif @managed_interfaces")
-                .replace("iifname @ipv6_blocked_interfaces", "iif @ipv6_blocked_interfaces")
-                .replace("oifname @ipv6_blocked_interfaces", "oif @ipv6_blocked_interfaces")
+                .replace(
+                    "iifname @ipv6_blocked_interfaces",
+                    "iif @ipv6_blocked_interfaces",
+                )
+                .replace(
+                    "oifname @ipv6_blocked_interfaces",
+                    "oif @ipv6_blocked_interfaces",
+                )
                 .replace("iifname", "iif")
                 .replace("oifname", "oif");
         }
