@@ -1328,6 +1328,48 @@ mod tests {
     }
 
     #[test]
+    fn policy_cleanup_aggregates_socket_and_egress_failures() {
+        let mut plan = cleanup_test_plan();
+        plan.socket_marks = vec![0x1000_0001, 0x1000_0002];
+        let mut calls = Vec::new();
+        let result = remove_policy_routing_with(&plan, &mut |_program, args| {
+            calls.push(args.to_vec());
+            let socket_rule = args.get(1).is_some_and(|kind| kind == "rule")
+                && args.get(4).is_some_and(|priority| priority == "9000");
+            let egress_rule = args.get(1).is_some_and(|kind| kind == "rule")
+                && args.get(4).is_some_and(|priority| priority == "10001");
+            let egress_route = args.get(1).is_some_and(|kind| kind == "route")
+                && args.iter().any(|value| value == "10001");
+            if socket_rule || egress_rule || egress_route {
+                let category = if socket_rule { "socket" } else { "egress" };
+                return Err(LinuxError::Command {
+                    program: format!("ip {}", args.join(" ")),
+                    status: "exit status 2".into(),
+                    stderr: format!("injected {category} cleanup failure"),
+                });
+            }
+            Ok(())
+        });
+
+        let socket_calls = calls.iter().filter(|args| {
+            args.get(1).is_some_and(|kind| kind == "rule")
+                && args.get(4).is_some_and(|priority| priority == "9000")
+        }).count();
+        let egress_calls = calls.iter().filter(|args| {
+            (args.get(1).is_some_and(|kind| kind == "rule")
+                && args.get(4).is_some_and(|priority| priority == "10001"))
+                || (args.get(1).is_some_and(|kind| kind == "route")
+                    && args.iter().any(|value| value == "10001"))
+        }).count();
+
+        assert_eq!(socket_calls, 4, "all socket marks and families must be attempted");
+        assert_eq!(egress_calls, 4, "both egress families and resource types must be attempted");
+        assert!(matches!(result, Err(LinuxError::Cleanup(message))
+            if message.matches("injected socket cleanup failure").count() == 4
+                && message.matches("injected egress cleanup failure").count() == 4));
+    }
+
+    #[test]
     fn nft_apply_does_not_mutate_when_inspection_fails() {
         let plan = cleanup_test_plan();
         let mut apply_calls = 0;
