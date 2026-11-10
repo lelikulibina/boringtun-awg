@@ -933,13 +933,11 @@ impl Runtime {
                     "per-interface forwarding state is missing while forwarding management is enabled".to_owned(),
                 )
             })?;
-            if let Err(error) = verify_managed_forwarding_runtime(
-                &self.config.daemon.forwarding_interfaces,
-                state,
-            ) {
-                let details = format!(
-                    "per-interface forwarding invariants changed at runtime: {error}"
-                );
+            if let Err(error) =
+                verify_managed_forwarding_runtime(&self.config.daemon.forwarding_interfaces, state)
+            {
+                let details =
+                    format!("per-interface forwarding invariants changed at runtime: {error}");
                 self.fatal_error = Some(details.clone());
                 self.retain_firewall = true;
                 return Err(RuntimeError::FatalTransition(details));
@@ -1602,7 +1600,10 @@ fn verify_managed_forwarding_runtime(
             "namespace-wide forwarding prerequisites changed".to_owned(),
         ));
     }
-    let allowed = allowed_names.iter().cloned().collect::<std::collections::BTreeSet<_>>();
+    let allowed = allowed_names
+        .iter()
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
     validate_unmanaged_forwarding_with(
         &allowed,
         &interface_sysctl_names("/proc/sys/net/ipv4/conf")?,
@@ -1997,7 +1998,7 @@ mod tests {
             interfaces: vec![InterfaceForwardingState {
                 name: "eth0".to_owned(),
                 ifindex: 7,
-            daemon_owned: false,
+                daemon_owned: false,
                 ipv4: "0".to_owned(),
                 ipv6: "0".to_owned(),
                 ipv4_changed: true,
