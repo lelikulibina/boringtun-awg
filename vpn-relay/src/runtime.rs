@@ -656,7 +656,11 @@ impl Runtime {
         }
 
         let forwarding_state = if config.daemon.manage_ip_forwarding {
-            match enable_forwarding_durable(&forwarding_state_path, namespace_inode) {
+            match enable_forwarding_durable(
+                &forwarding_state_path,
+                namespace_inode,
+                &config.daemon.forwarding_interfaces,
+            ) {
                 Ok(state) => Some(state),
                 Err(error) => {
                     let route_cleanup = linux::remove_policy_routing(&routing);
@@ -1520,6 +1524,94 @@ fn restore_interface_forwarding_entry(
     )
 }
 
+fn enable_interface_forwarding_durable(
+    path: &Path,
+    namespace_inode: u64,
+    names: &[String],
+) -> Result<ForwardingState, RuntimeError> {
+    // IPv4 and IPv6 global switches have broad namespace effects. In
+    // per-interface mode they are prerequisites managed by the container
+    // runtime/operator, not toggled here (toggling IPv4 ip_forward resets
+    // interface router/host defaults across the namespace).
+    if read_sysctl("net.ipv4.ip_forward")? != "1"
+        || read_sysctl("net.ipv6.conf.all.forwarding")? != "1"
+    {
+        return Err(RuntimeError::Forwarding(
+            "per-interface forwarding requires net.ipv4.ip_forward=1 and net.ipv6.conf.all.forwarding=1 to be enabled externally".to_owned(),
+        ));
+    }
+
+    let mut entries = Vec::with_capacity(names.len());
+    for name in names {
+        let ifindex = linux::interface_index(name)
+            .map_err(|error| RuntimeError::Forwarding(error.to_string()))?;
+        linux::verify_interface_identity(name, ifindex)
+            .map_err(|error| RuntimeError::Forwarding(error.to_string()))?;
+        let ipv4_key = interface_forwarding_sysctl_key(name, "ipv4")?;
+        let ipv6_key = interface_forwarding_sysctl_key(name, "ipv6")?;
+        entries.push(InterfaceForwardingState {
+            name: name.clone(),
+            ifindex,
+            ipv4: read_sysctl(&ipv4_key)?,
+            ipv6: read_sysctl(&ipv6_key)?,
+            ipv4_changed: false,
+            ipv6_changed: false,
+        });
+    }
+    let mut state = ForwardingState {
+        ipv4: "1".to_owned(),
+        ipv6: "1".to_owned(),
+        ipv4_changed: false,
+        ipv6_changed: false,
+        interfaces: entries,
+    };
+    for entry in &mut state.interfaces {
+        entry.ipv4_changed = entry.ipv4 != "1";
+        entry.ipv6_changed = entry.ipv6 != "1";
+    }
+    validate_forwarding_state(&state)?;
+    if state.interfaces.iter().any(|entry| entry.ipv4_changed || entry.ipv6_changed) {
+        persist_forwarding_state(path, namespace_inode, &state)?;
+    }
+
+    let mut failures = Vec::new();
+    for entry in &state.interfaces {
+        for (family, changed) in [
+            ("ipv4", entry.ipv4_changed),
+            ("ipv6", entry.ipv6_changed),
+        ] {
+            if !changed {
+                continue;
+            }
+            let key = interface_forwarding_sysctl_key(&entry.name, family)?;
+            let result = linux::verify_interface_identity(&entry.name, entry.ifindex)
+                .map_err(|error| RuntimeError::Forwarding(error.to_string()))
+                .and_then(|()| write_sysctl(&key, "1"));
+            if let Err(error) = result {
+                failures.push(format!("{} {family}: {error}", entry.name));
+            }
+        }
+    }
+    if !failures.is_empty() {
+        if let Err(restore_error) = restore_forwarding_state_with(
+            &state,
+            read_sysctl,
+            write_sysctl,
+        ) {
+            return Err(RuntimeError::FatalTransition(format!(
+                "per-interface forwarding setup failed ({}); rollback failed ({restore_error}); fail-closed nftables policy must remain installed",
+                failures.join("; ")
+            )));
+        }
+        remove_forwarding_state_file(path)?;
+        return Err(RuntimeError::Forwarding(format!(
+            "per-interface forwarding setup failed: {}",
+            failures.join("; ")
+        )));
+    }
+    Ok(state)
+}
+
 fn restore_forwarding_state_with(
     state: &ForwardingState,
     mut read: impl FnMut(&str) -> Result<String, RuntimeError>,
@@ -1593,7 +1685,11 @@ fn recover_forwarding_state_with(
 fn enable_forwarding_durable(
     path: &Path,
     namespace_inode: u64,
+    forwarding_interfaces: &[String],
 ) -> Result<ForwardingState, RuntimeError> {
+    if !forwarding_interfaces.is_empty() {
+        return enable_interface_forwarding_durable(path, namespace_inode, forwarding_interfaces);
+    }
     let state = ForwardingState {
         ipv4: read_sysctl("net.ipv4.ip_forward")?,
         ipv6: read_sysctl("net.ipv6.conf.all.forwarding")?,

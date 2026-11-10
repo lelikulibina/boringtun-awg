@@ -48,6 +48,11 @@ pub struct DaemonConfig {
     pub nft_table: String,
     #[serde(default)]
     pub manage_ip_forwarding: bool,
+    /// Interfaces whose link-scoped forwarding sysctls vpn-relay manages.
+    /// When non-empty, namespace-wide forwarding must already be enabled by
+    /// the container/runtime; only these links are changed by vpn-relay.
+    #[serde(default)]
+    pub forwarding_interfaces: Vec<String>,
 }
 
 impl Default for DaemonConfig {
@@ -57,6 +62,7 @@ impl Default for DaemonConfig {
             stats_interval_secs: default_stats_interval(),
             nft_table: default_nft_table(),
             manage_ip_forwarding: false,
+            forwarding_interfaces: Vec::new(),
         }
     }
 }
@@ -339,9 +345,11 @@ impl Config {
         if self.daemon.nft_table != next.daemon.nft_table {
             return invalid("reload cannot change daemon.nft_table while the daemon is running");
         }
-        if self.daemon.manage_ip_forwarding != next.daemon.manage_ip_forwarding {
+        if self.daemon.manage_ip_forwarding != next.daemon.manage_ip_forwarding
+            || self.daemon.forwarding_interfaces != next.daemon.forwarding_interfaces
+        {
             return invalid(
-                "reload cannot change daemon.manage_ip_forwarding while the daemon is running",
+                "reload cannot change daemon forwarding ownership while the daemon is running",
             );
         }
         if self.daemon.log_level != next.daemon.log_level {
@@ -435,6 +443,20 @@ impl Config {
         }
         if self.interfaces.is_empty() {
             return invalid("at least one interface must be configured");
+        }
+        if !self.daemon.forwarding_interfaces.is_empty() && !self.daemon.manage_ip_forwarding {
+            return invalid(
+                "[daemon].forwarding_interfaces requires manage_ip_forwarding = true",
+            );
+        }
+        let mut forwarding_names = HashSet::new();
+        for name in &self.daemon.forwarding_interfaces {
+            validate_interface_name(name)?;
+            if !forwarding_names.insert(name) {
+                return invalid(format!(
+                    "[daemon].forwarding_interfaces contains duplicate interface '{name}'"
+                ));
+            }
         }
         if self.daemon.stats_interval_secs == 0 {
             return invalid("[daemon].stats_interval_secs must be greater than zero");
