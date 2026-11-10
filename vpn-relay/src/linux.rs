@@ -917,6 +917,62 @@ mod tests {
     }
 
     #[test]
+    fn socket_fwmark_stale_rule_cleanup_failure_aborts_install_and_rolls_back() {
+        let mut plan = cleanup_test_plan();
+        plan.socket_marks = vec![0x1000_0001, 0x1000_0002];
+
+        for failure_position in 1..=4 {
+            let mut calls = Vec::new();
+            let mut stale_cleanup_attempts = 0;
+            let mut failure_injected = false;
+            let result = apply_policy_routing_with(&plan, &mut |_program, args| {
+                calls.push(args.to_vec());
+                let is_socket_rule = args.get(1).is_some_and(|part| part == "rule")
+                    && args.get(4).is_some_and(|part| part == "9000");
+                if is_socket_rule
+                    && args.get(2).is_some_and(|part| part == "del")
+                    && !failure_injected
+                {
+                    stale_cleanup_attempts += 1;
+                    if stale_cleanup_attempts == failure_position {
+                        failure_injected = true;
+                        return Err(LinuxError::Command {
+                            program: format!("ip {}", args.join(" ")),
+                            status: "exit status 2".into(),
+                            stderr: format!(
+                                "injected stale socket rule cleanup failure at step {failure_position}"
+                            ),
+                        });
+                    }
+                }
+                Ok(())
+            });
+
+            assert!(failure_injected, "failure point {failure_position} was not reached");
+            assert!(matches!(result, Err(LinuxError::Command { ref stderr, .. })
+                if stderr.contains(&format!("step {failure_position}"))));
+            assert!(
+                !calls.iter().any(|args| args.get(2).is_some_and(|part| part == "add")),
+                "socket rules must not be installed after stale-rule cleanup fails"
+            );
+
+            let rollback = calls
+                .iter()
+                .filter(|args| {
+                    args.get(1).is_some_and(|part| part == "rule")
+                        && args.get(2).is_some_and(|part| part == "del")
+                        && args.get(4).is_some_and(|part| part == "9000")
+                })
+                .count();
+            assert_eq!(
+                rollback,
+                failure_position + 4,
+                "failed pre-cleanup plus rollback must attempt all four socket rules"
+            );
+        }
+    }
+
+    #[test]
     fn socket_fwmark_cleanup_attempts_every_rule_after_failures() {
         let mut plan = cleanup_test_plan();
         plan.socket_marks = vec![0x1000_0001, 0x1000_0002];
