@@ -672,7 +672,8 @@ impl Config {
                         }
                         let mut unique = HashSet::new();
                         for prefix in prefixes {
-                            if !unique.insert(canonical_prefix(prefix, &format!("{path}.{field}"))?) {
+                            if !unique.insert(canonical_prefix(prefix, &format!("{path}.{field}"))?)
+                            {
                                 return invalid(format!(
                                     "{path}.{field} must not contain duplicate CIDR selectors (including equivalent CIDR networks)"
                                 ));

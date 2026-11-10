@@ -660,7 +660,9 @@ ip netns exec "$PRIMARY_NS" timeout 5 tcpdump -nn -i up-primary -c 1 \
     'icmp and dst host 203.0.113.1' >"$TMP/nat-masquerade-capture.log" 2>&1 &
 capture_pid=$!
 sleep 0.25
-ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -c 1 -W 2 203.0.113.1 \
+# Use the second client to guarantee a fresh conntrack tuple rather than
+# relying on any prior ICMP flow state for the first client.
+ip netns exec "$SECOND_CLIENT_NS" ping -n -I 10.77.0.3 -c 1 -W 2 203.0.113.1 \
     || fail "masqueraded IPv4 probe failed"
 wait "$capture_pid" || fail "could not capture masqueraded IPv4 packet"
 grep -Eq '10\.20\.0\.1 > 203\.0\.113\.1' "$TMP/nat-masquerade-capture.log" \

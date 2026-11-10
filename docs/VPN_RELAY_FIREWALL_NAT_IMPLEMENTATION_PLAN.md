@@ -728,3 +728,5 @@ Noise sessions для peer, чьи параметры не менялись; н�
 | 2026-11-10 | Проверена подмена control socket path непосредственно во время bind | Unit test подменяет только что созданный Unix socket обычным файлом из configure callback. Bind отклоняет изменившуюся identity и сохраняет внешний файл; тест прошёл в tests job CI 42809930151. | Проверено, CI 42809930151 |
 
 | 2026-11-10 | Ограничено время ожидания packet-level TCP/UDP probes | Все iperf3 client runs в multi-uplink integration test выполняются с timeout 15s. Изменение прошло полный integration job, включая packet-level multi-uplink routing, в CI 42810890525. | Проверено, CI 42810890525 |
+
+| 2026-11-10 | Разобран CI 42817022304: исправление rustfmt и изоляция masquerade address-change probe | rustfmt выявил перенос фигурной скобки в config.rs; исправлено. Packet-level multi-uplink test показал отсутствие пакета после смены адреса при повторном использовании клиента .2; probe переведён на .3 для гарантированно нового conntrack tuple. Оба изменения ожидают повторной проверки полного CI | Ожидает CI |
