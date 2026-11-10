@@ -349,7 +349,7 @@ impl Config {
             || self.daemon.forwarding_interfaces != next.daemon.forwarding_interfaces
         {
             return invalid(
-                "reload cannot change daemon forwarding ownership while the daemon is running",
+                "reload cannot change daemon.manage_ip_forwarding or daemon.forwarding_interfaces while the daemon is running",
             );
         }
         if self.daemon.log_level != next.daemon.log_level {
