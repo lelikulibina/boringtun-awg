@@ -30,7 +30,7 @@ trap cleanup EXIT
 
 fail() {
     echo "vpn-relay namespace test: $*" >&2
-    for log in "$TMP/bootstrap-nft-failure.log" "$TMP/indexed-nft-failure.log" "$TMP/daemon.log" "$TMP/conflict.log" "$TMP/policy-conflict.log" "$TMP/route-conflict.log" "$TMP/policy-shadow-conflict.log" "$TMP/partial-setup-conflict.log" "$TMP/partial-interface-config.log" "$TMP/partial-policy-route.log" "$TMP/partial-forwarding.log" "$TMP/partial-ipv4-forwarding.log" "$TMP/partial-ipv4-forwarding-restore-failure.log" "$TMP/reload-failure.log" "$TMP/reload-route-failure.log" "$TMP/reload-immutable.log" "$TMP/shutdown-cleanup-failure.log" "$TMP/shutdown-forwarding-restore-failure.log" "$TMP/shutdown-ipv6-forwarding-restore-failure.log" "$TMP/preexisting-forwarding.log" "$TMP/fail-route-commands.log" "$TMP/forwarding-management-disabled.log" "$TMP/tun-identity-loss.log"; do
+    for log in "$TMP/bootstrap-nft-failure.log" "$TMP/indexed-nft-failure.log" "$TMP/startup-route-rollback-failure.log" "$TMP/daemon.log" "$TMP/conflict.log" "$TMP/policy-conflict.log" "$TMP/route-conflict.log" "$TMP/policy-shadow-conflict.log" "$TMP/partial-setup-conflict.log" "$TMP/partial-interface-config.log" "$TMP/partial-policy-route.log" "$TMP/partial-forwarding.log" "$TMP/partial-ipv4-forwarding.log" "$TMP/partial-ipv4-forwarding-restore-failure.log" "$TMP/reload-failure.log" "$TMP/reload-route-failure.log" "$TMP/reload-immutable.log" "$TMP/shutdown-cleanup-failure.log" "$TMP/shutdown-forwarding-restore-failure.log" "$TMP/shutdown-ipv6-forwarding-restore-failure.log" "$TMP/preexisting-forwarding.log" "$TMP/fail-route-commands.log" "$TMP/forwarding-management-disabled.log" "$TMP/tun-identity-loss.log"; do
         if [[ -f "$log" ]]; then
             cat "$log" >&2
         fi
@@ -363,6 +363,48 @@ for table in 10000 10001; do
         fi
     done
 done
+
+# If policy-route installation fails and its rollback also fails, startup must
+# not remove the bootstrap/indexed drop policy. Keep the leaked route visible
+# for diagnosis and prove the daemon reports the compound failure.
+mkdir -p "$TMP/fail-route-rollback"
+cat >"$TMP/fail-route-rollback/ip" <<EOF
+#!/bin/sh
+if [ "\$1" = "-6" ] && [ "\$2" = "route" ] && [ "\$3" = "replace" ] \\
+    && [ "\$4" = "default" ] && [ "\$6" = "awg-primary" ] && [ "\$8" = "10000" ]; then
+    echo "injected IPv6 policy-route installation failure before rollback" >&2
+    exit 42
+fi
+if [ "\$1" = "-4" ] && [ "\$2" = "route" ] && [ "\$3" = "del" ] \\
+    && [ "\$6" = "awg-primary" ] && [ "\$8" = "10000" ]; then
+    echo "injected IPv4 policy-route rollback failure" >&2
+    exit 43
+fi
+exec "$REAL_IP" "\$@"
+EOF
+chmod +x "$TMP/fail-route-rollback/ip"
+if ip netns exec "$NS" env PATH="$TMP/fail-route-rollback:$PATH" "$BIN" --config "$TMP/config.toml" >"$TMP/startup-route-rollback-failure.log" 2>&1; then
+    fail "daemon accepted policy-route installation and rollback failures"
+fi
+grep -Fq "injected IPv6 policy-route installation failure before rollback" "$TMP/startup-route-rollback-failure.log" || fail "startup policy-route installation failure was not observed"
+grep -Fq "injected IPv4 policy-route rollback failure" "$TMP/startup-route-rollback-failure.log" || fail "startup policy-route rollback failure was not observed"
+grep -Fq "startup policy-routing rollback failed; retaining nftables policy" "$TMP/startup-route-rollback-failure.log" || fail "startup did not retain firewall after policy-route rollback failure"
+ip netns exec "$NS" nft list table inet vpn_relay_it >/dev/null 2>&1 || fail "fail-closed nftables policy was removed after policy-route rollback failure"
+for iface in wg-server awg-primary awg-secondary; do
+    if ip netns exec "$NS" ip link show dev "$iface" >/dev/null 2>&1; then
+        fail "TUN interface $iface leaked after policy-route rollback failure"
+    fi
+done
+if ip -n "$NS" -4 rule show | grep -q 'proto 242'; then
+    fail "policy rules leaked after policy-route rollback failure"
+fi
+ip -n "$NS" -4 route show table 10000 | grep -Fq 'default dev awg-primary proto 242' || fail "expected failed-cleanup route was not retained for diagnosis"
+[[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "0" ]] || fail "IPv4 forwarding changed after policy-route rollback failure"
+[[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "0" ]] || fail "IPv6 forwarding changed after policy-route rollback failure"
+# The injected route is deliberately retained. Remove only the test-owned
+# route and firewall with the real ip/nft commands before continuing.
+ip -n "$NS" -4 route del default dev awg-primary table 10000 proto 242
+ip netns exec "$NS" nft delete table inet vpn_relay_it
 
 # Force a known initial state: forwarding may already be enabled by the
 # runner's namespace setup, in which case startup correctly avoids rewriting it.
