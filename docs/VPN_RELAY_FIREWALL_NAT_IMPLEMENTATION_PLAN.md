@@ -3,7 +3,7 @@
 > Рабочая ветка: `feature/vpn-relay-firewall-nat`
 > Базовая ветка: `feature/boringtun-router-daemon`
 > Базовый commit: `ad3f35d2790e7e47c8d050fb7b3c206c69ac2aa4`
-> Последнее обновление: 2026-11-10 (SNAT implementation audit; CI 42836214324)
+> Последнее обновление: 2026-11-10 (durable forwarding crash recovery; полный CI 42849072652)
 >
 > Этот документ является рабочим журналом реализации. Статусы меняются только
 > после фактического изменения кода и выполнения соответствующих проверок.
@@ -117,7 +117,7 @@
 - [x] Shutdown останавливает backend workers, удаляет policy routes, затем
   уничтожает managed TUN links, и только после этого удаляет nftables policy;
   исходное forwarding состояние восстанавливается в самом конце.
-- [ ] Повторный запуск и аварийное завершение не оставляют опасного состояния.
+- [x] Повторный запуск и аварийное завершение не оставляют опасного состояния: после SIGKILL startup восстанавливает исходные namespace-wide forwarding sysctl из приватного durable journal, затем безопасно переустанавливает daemon-owned firewall, policy routes и TUN. Полный SIGKILL/restart lifecycle и graceful restore прошли CI 42849072652.
 - [!] `manage_ip_forwarding=true` меняет namespace-wide IPv4/IPv6 forwarding и затрагивает host/router settings интерфейсов; не включать на общем host namespace без отдельного решения. Для общего хоста использовать `false` и внешнее управление. Требуется отдельное проектирование per-interface forwarding (включая совместимость IPv6 kernels с `force_forwarding`) и packet-level проверка.
 
 Критерий приёмки: тесты проверяют передачу реальных пакетов в network namespaces,
@@ -331,11 +331,11 @@ unmanaged output остаётся неизменным.
   policy routes и nftables table.
 - [x] Проверить startup rollback при конфликте nft table, ip rule и route,
   включая сохранность чужих ресурсов (CI 42665725191).
-- [~] Сделать rollback симметричным каждому успешному шагу: setup TUN, interface configuration, nftables activation, policy-routing staging, forwarding enable и graceful shutdown имеют rollback/failure-injection покрытие; остаётся crash-consistent восстановление sysctl ownership и полный перебор ошибок cleanup.
+- [~] Сделать rollback симметричным каждому успешному шагу: setup TUN, interface configuration, nftables activation, policy-routing staging, forwarding enable, durable forwarding recovery и graceful shutdown имеют rollback/failure-injection покрытие. Crash-consistent sysctl ownership закрыт; остаётся полный перебор ошибок cleanup и rollback на каждой границе системного вызова.
 - [x] Не удалять чужие ip rules/routes/nftables objects; проверены foreign
   nftables table/base chains, masked ip rules и IPv4/IPv6 routes.
 - [~] Проверить частичные ошибки на каждом шаге установки: setup TUN, interface configuration, nftables, IPv4/IPv6 policy route, forwarding enable/restore и staged stale-rule cleanup имеют failure-injection сценарии; остаётся расширить матрицу cleanup rollback failures и проверить каждую точку системного вызова.
-- [~] Проверить shutdown, повторный запуск, lock и network namespace lifecycle: graceful shutdown, duplicate lock и SIGKILL/restart проверяются; после SIGKILL kernel-owned nftables/routes безопасно переустанавливаются при restart, но namespace-wide forwarding sysctl остаётся включённым, поскольку Drop не выполняется.
+- [x] Проверить shutdown, повторный запуск, lock и network namespace lifecycle: graceful shutdown, duplicate lock и SIGKILL/restart проверены. Versioned forwarding journal сохраняется до изменения sysctl, привязан к inode network namespace, проверяется по owner/mode/nlink/size/schema и восстанавливается до повторного включения forwarding. Journal удаляется только после успешного восстановления; при ошибке остаётся для следующего запуска. Полный lifecycle прошёл CI 42849072652.
   (CI 42665725191).
 - [x] Проверить удаление/переименование TUN во время работы: исходный FD
   проверяется через Linux `TUNGETIFF`; drop-only bootstrap исключает трафик до
@@ -809,3 +809,5 @@ successful shutdown removes the firewall.
 | 2026-11-10 | Проверена защита от удаления и подмены TUN | `TUNGETIFF` на исходном FD; drop-only bootstrap; атомарный переход nftables с `iifname/oifname` на `iif/oif` + `iface_index`; mismatch guards с `counter drop`; root netns тест удаляет и пересоздаёт TUN под тем же именем, проверяет блокировку пакета и сохранение firewall после fatal shutdown. CI 42831549649: rustfmt, clippy, tests, feature checks, AWG 3.1, namespace, WG/AWG peer traffic и multi-uplink — success; Windows skipped. HEAD `bcbf0cfaeab1b74688281b3b0cef27f63580cb02`. | Завершено и проверено |
 
 | 2026-11-10 | Закрыт основной packet-level firewall acceptance matrix | Полный CI run `42836214324` прошёл: IPv4/IPv6 INPUT/OUTPUT allow/deny, forged reply isolation для обоих направлений, socket-fwmark underlay, запрет новых потоков без routing decision, выбранная ingress/egress пара и TCP/UDP reverse traffic на обоих uplink. Отдельный полный CI `42831549649` подтвердил TUN identity replacement и masquerade после смены egress IPv4. | Проверено, полные CI `42836214324` и `42831549649` |
+
+| 2026-11-10 | Добавлено durable восстановление forwarding после SIGKILL | Введён versioned `.forwarding` journal, привязанный к inode network namespace. Состояние записывается атомарно с mode 0600 и fsync до изменения sysctl; чтение защищено `O_NOFOLLOW` и проверками owner/mode/nlink/size/schema/namespace. Startup восстанавливает только реально изменённые семейства и удаляет journal лишь после успешного восстановления; при ошибке запись сохраняется. Добавлены unit tests round-trip, namespace mismatch, corrupt JSON, dangling symlink и идемпотентное recovery. Netns test проверяет SIGKILL/restart, восстановление forwarding, policy rules/routes/TUN и штатный shutdown. | Полный CI `42849072652`: tests, clippy, rustfmt, feature checks, namespace lifecycle, WG/AWG peer traffic, multi-uplink и AWG 3.1 — success; Windows skipped. HEAD `b4c7197897f6b5b8eed1799b1ad6ab209971c8a2` |
