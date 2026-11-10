@@ -886,6 +886,26 @@ egress = "awg-primary"
     }
 
     #[test]
+    fn nft_policy_binds_managed_interfaces_to_numeric_kernel_indices() {
+        let mut plan = RoutingPlan::from_config(&sample_config());
+        plan.bind_interface_indices(BTreeMap::from([
+            ("wg-server".to_owned(), 17),
+            ("awg-primary".to_owned(), 18),
+            ("awg-secondary".to_owned(), 19),
+        ]))
+        .unwrap();
+
+        let script = plan.nft_script();
+        assert!(script.contains("managed_interfaces { type ifindex; elements = { 18, 19, 17 }"));
+        assert!(script.contains("prerouting iif 17 ct state new"));
+        assert!(script.contains("forward iif 17 oif 18"));
+        assert!(script.contains("postrouting iif 17 oif 18"));
+        assert!(!script.contains("iifname"));
+        assert!(!script.contains("oifname"));
+        assert!(!script.contains("type ifname"));
+    }
+
+    #[test]
     fn nft_policy_drops_unmatched_managed_interface_transit() {
         let plan = RoutingPlan::from_config(&sample_config());
         let script = plan.nft_script();
