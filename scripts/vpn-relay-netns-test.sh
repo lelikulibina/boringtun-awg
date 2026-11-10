@@ -507,7 +507,7 @@ for iface in wg-server awg-primary awg-secondary; do
     fi
 done
 
-ip netns exec "$NS" "$BIN" --config "$TMP/config.toml" >"$TMP/crash-restart.log" 2>&1 &
+ip netns exec "$NS" env PATH="$TMP/fail-nft-bin:$PATH" "$BIN" --config "$TMP/config.toml" >"$TMP/crash-restart.log" 2>&1 &
 DAEMON_PID=$!
 for _ in $(seq 1 30); do
     ready=1
