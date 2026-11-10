@@ -539,25 +539,6 @@ fi
 if ip -n "$NS" -6 route show table 10001 2>/dev/null | grep -q .; then
     fail "IPv6 route was installed for IPv6-disabled egress"
 fi
-kill -TERM "$DAEMON_PID"
-wait "$DAEMON_PID" || fail "recovered daemon failed graceful shutdown"
-DAEMON_PID=""
-if ip netns exec "$NS" nft list table inet vpn_relay_it >/dev/null 2>&1; then
-    fail "recovered daemon did not remove its owned firewall on graceful shutdown"
-fi
-if ip -n "$NS" -4 rule show | grep -q 'proto 242'; then
-    fail "recovered daemon left stale owned policy rules after graceful shutdown"
-fi
-# SIGKILL cannot run Drop: the namespace-wide forwarding sysctl has no
-# durable owner-state record yet. Reset the isolated test namespace explicitly;
-# the plan tracks this as a crash-recovery limitation, not as successful restore.
-[[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "0" ]] || fail "graceful shutdown did not restore IPv4 forwarding after crash recovery"
-[[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "0" ]] || fail "graceful shutdown did not restore IPv6 forwarding after crash recovery"
-
-[[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "0" ]] || fail "IPv4 forwarding test namespace was not reset after crash-recovery coverage"
-[[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "0" ]] || fail "IPv6 forwarding test namespace was not reset after crash-recovery coverage"
-
-
 for spec in \
     "0x80000000 awg-primary" \
     "0x80000001 awg-secondary" \
@@ -592,6 +573,21 @@ grep -Fq 'ct direction reply meta mark set 0' <<<"$chain" || fail "reply packet 
 grep -Eq 'iifname "wg-server" iif != .* counter packets [0-9]+ bytes [0-9]+ drop' <<<"$chain" || fail "same-name replacement ingress guard is missing"
 grep -Eq 'iif "?wg-server"? ct state new ip daddr 195.142.0.0/16 meta mark set 0x80000001' <<<"$chain" || fail "secondary exception rule missing"
 grep -Eq 'iif "?wg-server"? ct state new ip daddr 0.0.0.0/0 meta mark set 0x80000000' <<<"$chain" || fail "primary default rule missing"
+
+
+kill -TERM "$DAEMON_PID"
+wait "$DAEMON_PID" || fail "recovered daemon failed graceful shutdown"
+DAEMON_PID=""
+if ip netns exec "$NS" nft list table inet vpn_relay_it >/dev/null 2>&1; then
+    fail "recovered daemon did not remove its owned firewall on graceful shutdown"
+fi
+if ip -n "$NS" -4 rule show | grep -q 'proto 242'; then
+    fail "recovered daemon left stale owned policy rules after graceful shutdown"
+fi
+# The durable forwarding journal restores the pre-crash namespace values
+# before the recovered daemon enables forwarding for its new lifetime.
+[[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "0" ]] || fail "graceful shutdown did not restore IPv4 forwarding after crash recovery"
+[[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "0" ]] || fail "graceful shutdown did not restore IPv6 forwarding after crash recovery"
 
 # Exercise full runtime reload through the Unix control socket. The candidate
 # changes a routing selector, adds an INPUT exception and installs a peer. First
