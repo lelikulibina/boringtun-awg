@@ -470,15 +470,29 @@ where
         for egress in &plan.egresses {
             if !egress.ipv6_enabled {
                 let stale_rule = [
-                    "-6".into(), "rule".into(), "del".into(), "priority".into(),
-                    egress.ip_rule_priority.to_string(), "fwmark".into(),
-                    format!("0x{:x}", egress.mark), "lookup".into(),
-                    egress.table_id.to_string(), "protocol".into(), ROUTING_PROTOCOL.into(),
+                    "-6".into(),
+                    "rule".into(),
+                    "del".into(),
+                    "priority".into(),
+                    egress.ip_rule_priority.to_string(),
+                    "fwmark".into(),
+                    format!("0x{:x}", egress.mark),
+                    "lookup".into(),
+                    egress.table_id.to_string(),
+                    "protocol".into(),
+                    ROUTING_PROTOCOL.into(),
                 ];
                 let stale_route = [
-                    "-6".into(), "route".into(), "del".into(), "default".into(),
-                    "dev".into(), egress.interface.clone(), "table".into(),
-                    egress.table_id.to_string(), "proto".into(), ROUTING_PROTOCOL.into(),
+                    "-6".into(),
+                    "route".into(),
+                    "del".into(),
+                    "default".into(),
+                    "dev".into(),
+                    egress.interface.clone(),
+                    "table".into(),
+                    egress.table_id.to_string(),
+                    "proto".into(),
+                    ROUTING_PROTOCOL.into(),
                 ];
                 run_ip_cleanup_with(&stale_rule, run_command)?;
                 run_ip_cleanup_with(&stale_route, run_command)?;
@@ -489,21 +503,50 @@ where
                 let mark = format!("0x{:x}", egress.mark);
                 let table = egress.table_id.to_string();
                 let stale_rule = [
-                    family.into(), "rule".into(), "del".into(), "priority".into(),
-                    priority.clone(), "fwmark".into(), mark.clone(), "lookup".into(),
-                    table.clone(), "protocol".into(), ROUTING_PROTOCOL.into(),
+                    family.into(),
+                    "rule".into(),
+                    "del".into(),
+                    "priority".into(),
+                    priority.clone(),
+                    "fwmark".into(),
+                    mark.clone(),
+                    "lookup".into(),
+                    table.clone(),
+                    "protocol".into(),
+                    ROUTING_PROTOCOL.into(),
                 ];
                 run_ip_cleanup_with(&stale_rule, run_command)?;
-                run_command("ip", &[
-                    family.into(), "route".into(), "replace".into(), "default".into(),
-                    "dev".into(), egress.interface.clone(), "table".into(), table.clone(),
-                    "proto".into(), ROUTING_PROTOCOL.into(),
-                ])?;
-                run_command("ip", &[
-                    family.into(), "rule".into(), "add".into(), "priority".into(),
-                    priority, "fwmark".into(), mark, "lookup".into(), table,
-                    "protocol".into(), ROUTING_PROTOCOL.into(),
-                ])?;
+                run_command(
+                    "ip",
+                    &[
+                        family.into(),
+                        "route".into(),
+                        "replace".into(),
+                        "default".into(),
+                        "dev".into(),
+                        egress.interface.clone(),
+                        "table".into(),
+                        table.clone(),
+                        "proto".into(),
+                        ROUTING_PROTOCOL.into(),
+                    ],
+                )?;
+                run_command(
+                    "ip",
+                    &[
+                        family.into(),
+                        "rule".into(),
+                        "add".into(),
+                        "priority".into(),
+                        priority,
+                        "fwmark".into(),
+                        mark,
+                        "lookup".into(),
+                        table,
+                        "protocol".into(),
+                        ROUTING_PROTOCOL.into(),
+                    ],
+                )?;
             }
         }
         Ok(())
@@ -775,7 +818,8 @@ mod tests {
         let result = apply_egress_policy_routing_with(&plan, &mut |_program, args| {
             calls.push(args.to_vec());
             // The first add operation fails, after the IPv4 route was installed.
-            if !failed && args.get(1).is_some_and(|part| part == "rule")
+            if !failed
+                && args.get(1).is_some_and(|part| part == "rule")
                 && args.get(2).is_some_and(|part| part == "add")
             {
                 failed = true;
@@ -794,10 +838,14 @@ mod tests {
         // including the family whose installation had not yet started.
         let cleanup = &calls[calls.len() - 4..];
         assert_eq!(cleanup.len(), 4);
-        assert!(cleanup.iter().any(|args| args.first().is_some_and(|v| v == "-4")
-            && args.get(1).is_some_and(|v| v == "rule")));
-        assert!(cleanup.iter().any(|args| args.first().is_some_and(|v| v == "-6")
-            && args.get(1).is_some_and(|v| v == "route")));
+        assert!(cleanup
+            .iter()
+            .any(|args| args.first().is_some_and(|v| v == "-4")
+                && args.get(1).is_some_and(|v| v == "rule")));
+        assert!(cleanup
+            .iter()
+            .any(|args| args.first().is_some_and(|v| v == "-6")
+                && args.get(1).is_some_and(|v| v == "route")));
     }
 
     #[test]
@@ -823,9 +871,11 @@ mod tests {
             Ok(())
         });
 
-        assert!(matches!(result, Err(LinuxError::Rollback { operation, rollback })
-            if operation.contains("injected install failure")
-                && rollback.contains("injected rollback failure")));
+        assert!(
+            matches!(result, Err(LinuxError::Rollback { operation, rollback })
+                if operation.contains("injected install failure")
+                    && rollback.contains("injected rollback failure"))
+        );
     }
 
     #[test]
