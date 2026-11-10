@@ -554,6 +554,12 @@ impl Config {
                     if prefixes.is_empty() {
                         return invalid("routing.rules.source must not be an empty list");
                     }
+                    let mut unique = HashSet::new();
+                    for prefix in prefixes {
+                        if !unique.insert(prefix.as_str()) {
+                            return invalid("routing.rules.source must not contain duplicate CIDR selectors");
+                        }
+                    }
                     prefixes
                         .iter()
                         .map(|prefix| parse_prefix(prefix, "routing.rules.source"))
@@ -566,6 +572,12 @@ impl Config {
                 .map(|prefixes| {
                     if prefixes.is_empty() {
                         return invalid("routing.rules.destination must not be an empty list");
+                    }
+                    let mut unique = HashSet::new();
+                    for prefix in prefixes {
+                        if !unique.insert(prefix.as_str()) {
+                            return invalid("routing.rules.destination must not contain duplicate CIDR selectors");
+                        }
                     }
                     prefixes
                         .iter()
@@ -1731,6 +1743,27 @@ egress = "awg-uplink"
             "destination = \"0.0.0.0/0\"\nnat = \"snat\"",
         );
         assert!(Config::parse_toml(&input).is_err());
+    }
+
+    #[test]
+    fn rejects_duplicate_routing_cidr_selectors() {
+        let duplicate_source = valid_config().replace(
+            "destination = \"0.0.0.0/0\"",
+            "source = [\"10.10.0.0/24\", \"10.10.0.0/24\"]\\ndestination = \"0.0.0.0/0\"",
+        );
+        assert!(Config::parse_toml(&duplicate_source)
+            .unwrap_err()
+            .to_string()
+            .contains("source must not contain duplicate CIDR selectors"));
+
+        let duplicate_destination = valid_config().replace(
+            "destination = \"0.0.0.0/0\"",
+            "destination = [\"0.0.0.0/0\", \"0.0.0.0/0\"]",
+        );
+        assert!(Config::parse_toml(&duplicate_destination)
+            .unwrap_err()
+            .to_string()
+            .contains("destination must not contain duplicate CIDR selectors"));
     }
 
     #[test]
