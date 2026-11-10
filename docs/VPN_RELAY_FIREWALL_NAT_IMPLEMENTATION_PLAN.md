@@ -3,7 +3,7 @@
 > Рабочая ветка: `feature/vpn-relay-firewall-nat`
 > Базовая ветка: `feature/boringtun-router-daemon`
 > Базовый commit: `ad3f35d2790e7e47c8d050fb7b3c206c69ac2aa4`
-> Последнее обновление: 2026-11-10 (startup/shutdown forwarding failure-injection, fail-closed rollback и CI timeout guard)
+> Последнее обновление: 2026-11-10 (SNAT implementation audit; CI 42836214324)
 >
 > Этот документ является рабочим журналом реализации. Статусы меняются только
 > после фактического изменения кода и выполнения соответствующих проверок.
@@ -177,7 +177,7 @@
 - [x] Описать протоколы TCP/UDP/ICMP/ICMPv6 и семантику портов в `docs/VPN_RELAY_NFTABLES.md`.
 - [x] Описать IPv4/IPv6 CIDR и поведение при смешанных семействах:
   selectors сопоставляются только в пределах одного address family.
-- [ ] Добавить NAT action `Snat(IpAddr)` наряду с `None` и `Masquerade`.
+- [x] Добавить типизированный NAT action `Snat(IpAddr)` наряду с `None` и `Masquerade`: TOML `nat = "snat"` требует `nat_to`, семейство адреса валидируется относительно selectors и IPv6 ingress/egress, nftables генерирует `snat ip`/`snat ip6`; parser, typed-action и nft generation tests проходят.
 - [x] Зафиксировать NAT как свойство выбранного routing rule. Отдельная
   `[[nat.rules]]` секция не вводится: это исключает второй независимый
   механизм выбора ingress/egress. Расширение добавит адрес SNAT к routing rule.
@@ -492,6 +492,8 @@ Noise sessions для peer, чьи параметры не менялись; н�
 | 2026-11-09 | Добавлены failure-injection проверки частичного policy routing и IPv6 forwarding | Commit db3be5a; network-namespace job CI 42670711006 успешно проверил cleanup IPv4 routes/rules после отказа IPv6 route replace и restore IPv4 forwarding после отказа IPv6 sysctl | Подтверждено CI |
 
 | 2026-11-09 | Полная packet-level проверка firewall/NAT и coexistence | CI 42674872629 на HEAD c06082b8a0e2b776b1d563edfaca3d03f14665ef: `all-systems-go` success; netns startup/rollback, WG, AWG 3.1, loopback, foreign INPUT/OUTPUT/FORWARD chains, локальные source addresses и блокировка denied FORWARD на обоих uplink прошли | Подтверждено CI |
+
+| 2026-11-10 | Сверен статус статического SNAT с кодом и тестами | `NatAction::Snat(IpAddr)`, обязательный `nat_to`, проверка address family/IPv6 flags и генерация IPv4/IPv6 nftables SNAT уже реализованы; parser и routing unit tests присутствуют. Устаревший открытый пункт плана исправлен после успешного CI 42836214324. | Подтверждено CI 42836214324 |
 
 ## 14. Правила ведения плана
 
