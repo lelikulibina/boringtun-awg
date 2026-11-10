@@ -698,11 +698,21 @@ wait "$capture_pid" || fail "could not capture masqueraded IPv6 packet"
 grep -Eq 'fd20::1 > 2001:db8:1::1' "$TMP/nat-masquerade-v6-capture.log" \
     || fail "IPv6 masquerade did not replace the source with the primary TUN address"
 
-# Masquerade must resolve the egress address for each new flow. Replace
-# the address without leaving the TUN temporarily unnumbered: the kernel can
-# flush device routes when the last IPv4 address is removed.
+# Masquerade must resolve the egress address for each new flow. Linux
+# otherwise removes secondary addresses when the primary address is deleted.
+ip netns exec "$ROUTER_NS" sysctl -q -w net.ipv4.conf.awg-primary.promote_secondaries=1
 ip -n "$ROUTER_NS" addr add 10.20.0.99/24 dev awg-primary
 ip -n "$ROUTER_NS" addr del 10.20.0.1/24 dev awg-primary
+ip -n "$ROUTER_NS" -4 addr show dev awg-primary | grep -Fq "inet 10.20.0.99/24" \
+    || fail "replacement IPv4 address was removed with the former primary address"
+primary_table="$(ip -n "$ROUTER_NS" -4 rule show | awk '
+    $4 == "fwmark" && $5 == "0x80000000" {
+        for (i = 1; i <= NF; i++) if ($i == "lookup") { print $(i + 1); exit }
+    }')"
+[[ -n "$primary_table" ]] || fail "primary policy-routing table could not be identified"
+ip -n "$ROUTER_NS" -4 route show table "$primary_table" \
+    | grep -Eq '^default dev awg-primary( |$)' \
+    || fail "primary policy route disappeared during the IPv4 address replacement"
 ip netns exec "$PRIMARY_NS" timeout 5 tcpdump -nn -i up-primary -c 1 \
     'icmp and src host 10.20.0.99 and dst host 203.0.113.1' \
     >"$TMP/nat-masquerade-address-change.log" 2>&1 &
