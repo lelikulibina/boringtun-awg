@@ -929,29 +929,40 @@ mod tests {
                 if !injected
                     && args.first().is_some_and(|family| family == failed_family)
                     && args.get(1).is_some_and(|kind| kind == failed_kind)
-                    && args.get(2).is_some_and(|operation| operation == failed_operation)
+                    && args
+                        .get(2)
+                        .is_some_and(|operation| operation == failed_operation)
                 {
                     injected = true;
                     return Err(LinuxError::Command {
                         program: format!("ip {}", args.join(" ")),
                         status: "exit status 2".into(),
-                        stderr: format!("injected {failed_family} {failed_kind} {failed_operation} failure"),
+                        stderr: format!(
+                            "injected {failed_family} {failed_kind} {failed_operation} failure"
+                        ),
                     });
                 }
                 Ok(())
             });
 
-            assert!(injected, "failure point {failed_family} {failed_kind} {failed_operation} was not reached");
+            assert!(
+                injected,
+                "failure point {failed_family} {failed_kind} {failed_operation} was not reached"
+            );
             assert!(matches!(result, Err(LinuxError::Command { ref stderr, .. })
                 if stderr.contains(&format!("injected {failed_family} {failed_kind} {failed_operation} failure"))));
 
             let cleanup = &calls[calls.len() - 4..];
             assert_eq!(cleanup.len(), 4);
             for family in ["-4", "-6"] {
-                assert!(cleanup.iter().any(|args| args.first().is_some_and(|value| value == family)
+                assert!(cleanup.iter().any(|args| args
+                    .first()
+                    .is_some_and(|value| value == family)
                     && args.get(1).is_some_and(|value| value == "rule")
                     && args.get(2).is_some_and(|value| value == "del")));
-                assert!(cleanup.iter().any(|args| args.first().is_some_and(|value| value == family)
+                assert!(cleanup.iter().any(|args| args
+                    .first()
+                    .is_some_and(|value| value == family)
                     && args.get(1).is_some_and(|value| value == "route")
                     && args.get(2).is_some_and(|value| value == "del")));
             }
