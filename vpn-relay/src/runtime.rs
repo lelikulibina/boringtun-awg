@@ -2120,28 +2120,28 @@ mod tests {
             ipv4_changed: true,
             ipv6_changed: false,
         };
-        let mut calls = Vec::new();
+        let calls = std::cell::RefCell::new(Vec::new());
         restore_interface_forwarding_entry_with(
             &entry,
             "ipv4",
             "0",
             true,
             |key| {
-                calls.push(format!("read:{key}"));
+                calls.borrow_mut().push(format!("read:{key}"));
                 Ok("1".to_owned())
             },
             |key, value| {
-                calls.push(format!("write:{key}={value}"));
+                calls.borrow_mut().push(format!("write:{key}={value}"));
                 Ok(())
             },
             |name, index| {
-                calls.push(format!("verify:{name}:{index}"));
+                calls.borrow_mut().push(format!("verify:{name}:{index}"));
                 Ok(())
             },
         )
         .unwrap();
         assert_eq!(
-            calls,
+            calls.into_inner(),
             vec![
                 "verify:eth0:7",
                 "read:net.ipv4.conf.eth0.forwarding",
