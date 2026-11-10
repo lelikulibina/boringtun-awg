@@ -544,15 +544,36 @@ impl Runtime {
 
         // Replace bootstrap name selectors with indices resolved only after
         // checking each original TUN descriptor. This switch is atomic in nft.
-        let mut interface_indices = std::collections::BTreeMap::new();
-        for (index, (name, _)) in config.interfaces.iter().enumerate() {
-            devices[index].verify_identity()?;
-            interface_indices.insert(name.clone(), linux::interface_index(name)?);
-            devices[index].verify_identity()?;
+        let interface_indices_result = (|| -> Result<_, RuntimeError> {
+            let mut indices = std::collections::BTreeMap::new();
+            for (index, (name, _)) in config.interfaces.iter().enumerate() {
+                devices[index].verify_identity()?;
+                indices.insert(name.clone(), linux::interface_index(name)?);
+                devices[index].verify_identity()?;
+            }
+            Ok(indices)
+        })();
+        let interface_indices = match interface_indices_result {
+            Ok(indices) => indices,
+            Err(error) => {
+                drop(devices);
+                if let Err(cleanup) = linux::remove_nft(&routing) {
+                    return Err(RuntimeError::FatalTransition(format!(
+                        "interface identity resolution failed ({error}); bootstrap firewall cleanup failed ({cleanup})"
+                    )));
+                }
+                return Err(error);
+            }
+        };
+        if let Err(error) = routing.bind_interface_indices(interface_indices) {
+            drop(devices);
+            if let Err(cleanup) = linux::remove_nft(&routing) {
+                return Err(RuntimeError::FatalTransition(format!(
+                    "interface index binding failed ({error}); bootstrap firewall cleanup failed ({cleanup})"
+                )));
+            }
+            return Err(RuntimeError::Configuration(error));
         }
-        routing
-            .bind_interface_indices(interface_indices)
-            .map_err(RuntimeError::Configuration)?;
         if let Err(error) = linux::apply_nft(&routing) {
             drop(devices);
             if let Err(cleanup) = linux::remove_nft(&routing) {
@@ -561,6 +582,18 @@ impl Runtime {
                 )));
             }
             return Err(error.into());
+        }
+
+        // Close the lookup-to-activation race as far as userspace can:
+        // every descriptor must still identify its original link after the
+        // numeric nftables policy has been installed.
+        for (index, device) in devices.iter().enumerate() {
+            if let Err(error) = device.verify_identity() {
+                drop(devices);
+                return Err(RuntimeError::FatalTransition(format!(
+                    "tunnel identity changed while activating numeric firewall (device {index}): {error}; retaining fail-closed nftables policy"
+                )));
+            }
         }
 
         if let Err(error) = linux::apply_policy_routing(&routing) {
