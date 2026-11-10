@@ -129,15 +129,21 @@ pub fn apply_nft(plan: &RoutingPlan) -> Result<(), LinuxError> {
             program: "nft".into(),
             source,
         })?;
-    child
+    let write_result = child
         .stdin
         .take()
         .expect("piped stdin")
-        .write_all(script.as_bytes())
-        .map_err(|source| LinuxError::Spawn {
+        .write_all(script.as_bytes());
+    if let Err(source) = write_result {
+        // Closing stdin lets nft observe EOF. Always reap the child even when
+        // the pipe breaks, otherwise a failed policy update can leave an
+        // unreaped subprocess behind.
+        let _ = child.wait_with_output();
+        return Err(LinuxError::Spawn {
             program: "nft stdin".into(),
             source,
-        })?;
+        });
+    }
     let output = child
         .wait_with_output()
         .map_err(|source| LinuxError::Spawn {
