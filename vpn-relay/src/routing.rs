@@ -530,7 +530,7 @@ impl RoutingPlan {
                 output = output.replace(&format!("\"{name}\""), &index.to_string());
             }
             output = output
-                .replace("type ifname;", "type ifindex;")
+                .replace("type ifname;", "type iface_index;")
                 .replace("iifname @managed_interfaces", "iif @managed_interfaces")
                 .replace("oifname @managed_interfaces", "oif @managed_interfaces")
                 .replace(
@@ -905,7 +905,7 @@ egress = "awg-primary"
         .unwrap();
 
         let script = plan.nft_script();
-        assert!(script.contains("managed_interfaces { type ifindex; elements = { 18, 19, 17 }"));
+        assert!(script.contains("managed_interfaces { type iface_index; elements = { 18, 19, 17 }"));
         assert!(script.contains("prerouting iif 17 ct state new"));
         assert!(script.contains("forward iif 17 oif 18"));
         assert!(script.contains("postrouting iif 17 oif 18"));
