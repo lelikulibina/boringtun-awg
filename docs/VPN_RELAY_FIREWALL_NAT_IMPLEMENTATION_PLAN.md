@@ -662,3 +662,6 @@ Noise sessions для peer, чьи параметры не менялись; н�
 
 
 | 2026-11-10 | Защищён startup при двойной ошибке включения forwarding и rollback | Если включение IPv6 forwarding и восстановление исходного IPv4 forwarding оба завершаются ошибкой, startup теперь возвращает fatal transition и сохраняет установленную fail-closed nftables policy вместо её удаления. Добавлен unit test с инъекцией обеих ошибок; ожидает CI | Реализовано, ожидает CI |
+
+
+| 2026-11-10 | Исправлен rustfmt после fail-closed forwarding rollback | CI run 42795160585 выявил только форматирование двух match arms в failure-injection тесте; код и остальные обязательные jobs прошли, integration-tests ещё выполнялся на момент проверки. Исправлено форматирование без изменения логики; ожидается повторный CI | Исправлено, ожидает CI |

@@ -1025,12 +1025,12 @@ mod tests {
                 writes.push((key.to_owned(), value.to_owned()));
                 match (key, value) {
                     ("net.ipv4.ip_forward", "1") => Ok(()),
-                    ("net.ipv6.conf.all.forwarding", "1") => {
-                        Err(RuntimeError::Forwarding("injected IPv6 enable failure".to_owned()))
-                    }
-                    ("net.ipv4.ip_forward", "0") => {
-                        Err(RuntimeError::Forwarding("injected IPv4 restore failure".to_owned()))
-                    }
+                    ("net.ipv6.conf.all.forwarding", "1") => Err(RuntimeError::Forwarding(
+                        "injected IPv6 enable failure".to_owned(),
+                    )),
+                    ("net.ipv4.ip_forward", "0") => Err(RuntimeError::Forwarding(
+                        "injected IPv4 restore failure".to_owned(),
+                    )),
                     _ => unreachable!(),
                 }
             },
