@@ -113,7 +113,7 @@
 ### Владение и lifecycle
 
 - [x] Чужая nftables table с совпадающим именем не изменяется; отдельные foreign INPUT/OUTPUT/FORWARD chains coexist без обхода vpn-relay deny (CI 42674872629).
-- [~] Ошибка применения nftables и последующих шагов приводит к rollback ранее установленных ресурсов; конфликт таблицы и отдельные failure-injection сценарии проверены, полный перебор точек отказа ещё не выполнен.
+- [~] Ошибка применения nftables и последующих шагов приводит к rollback ранее установленных ресурсов; inspection conflict/error, atomic batch failure, owned-table replacement failure и запрет delete при failed inspection покрыты unit tests. Полный startup matrix всех системных вызовов ещё не выполнен.
 - [x] Shutdown останавливает backend workers, удаляет policy routes, затем
   уничтожает managed TUN links, и только после этого удаляет nftables policy;
   исходное forwarding состояние восстанавливается в самом конце.
@@ -308,12 +308,16 @@ unmanaged output остаётся неизменным.
 - [x] Зафиксировать границу ответственности: nftables не видит peer identity
   после декапсуляции; source anti-spoofing обеспечивает BoringTun backend,
   а interface-level routing rules не являются peer-specific ACL.
-- [!] Runtime AllowedIPs/peer hot reload не реализован: TunnelHandle сейчас
-  предоставляет snapshot/shutdown/wait, а peers настраиваются только при
-  BackendRegistry::create. Нельзя проверять update races до проектирования
-  API reconfiguration и атомарного согласования backend, routing и firewall.
-  Пересекающиеся prefix ownership для текущей статической конфигурации проверены
-  packet-level тестом (CI 42669268349).
+- [x] Реализован runtime reload peer-набора и изменяемой routing/firewall policy:
+  `Runtime::replace_peers` и `Runtime::reload_config` выполняют preflight endpoint,
+  проверку immutable-параметров, staging новых policy routes с непересекающимися
+  marks, commit peer sets, атомарную nftables replacement и удаление старых
+  routes только после переключения. При ошибке peer/nft commit выполняется
+  rollback; ошибка rollback переводит runtime в fatal state. Immutable остаются
+  interface identity/address/MTU/IPv6/listen port/private key/AWG parameters,
+  socket marks, nft table, forwarding ownership и lifecycle. Unit tests проверяют
+  multi-device commit rollback и fatal rollback failure; packet-level concurrency
+  и полный end-to-end reload acceptance остаются отдельным критерием.
 
 Критерий приёмки: гарантии подтверждены тестами на реальном BoringTun traffic;
 неподтверждённые свойства не заявляются.
@@ -332,10 +336,10 @@ unmanaged output остаётся неизменным.
   policy routes и nftables table.
 - [x] Проверить startup rollback при конфликте nft table, ip rule и route,
   включая сохранность чужих ресурсов (CI 42665725191).
-- [~] Сделать rollback симметричным каждому успешному шагу: setup TUN, interface configuration, nftables activation, policy-routing staging, forwarding enable, durable forwarding recovery и graceful shutdown имеют rollback/failure-injection покрытие. Crash-consistent sysctl ownership закрыт; остаётся полный перебор ошибок cleanup и rollback на каждой границе системного вызова.
+- [~] Rollback покрывает setup TUN, interface configuration, nftables activation, policy-routing staging, forwarding enable, durable forwarding recovery и graceful shutdown. Добавлена проверка продолжения multi-device peer rollback после отдельного отказа; остаётся полный перебор startup cleanup failures на каждой границе системного вызова.
 - [x] Не удалять чужие ip rules/routes/nftables objects; проверены foreign
   nftables table/base chains, masked ip rules и IPv4/IPv6 routes.
-- [~] Проверить частичные ошибки на каждом шаге установки: setup TUN, interface configuration, nftables, IPv4/IPv6 policy route, forwarding enable/restore и staged stale-rule cleanup имеют failure-injection сценарии; остаётся расширить матрицу cleanup rollback failures и проверить каждую точку системного вызова.
+- [~] Проверить частичные ошибки на каждом шаге установки: setup TUN, interface configuration, nftables inspection/transaction, IPv4/IPv6 policy route, forwarding enable/restore и staged stale-rule cleanup имеют failure-injection сценарии; остаётся расширить матрицу startup cleanup failures и проверить каждую точку системного вызова.
 - [x] Проверить shutdown, повторный запуск, lock и network namespace lifecycle: graceful shutdown, duplicate lock и SIGKILL/restart проверены. Versioned forwarding journal сохраняется до изменения sysctl, привязан к inode network namespace, проверяется по owner/mode/nlink/size/schema и восстанавливается до повторного включения forwarding. Journal удаляется только после успешного восстановления; при ошибке остаётся для следующего запуска. Полный lifecycle прошёл CI 42849072652.
   (CI 42665725191).
 - [x] Проверить удаление/переименование TUN во время работы: исходный FD
@@ -346,106 +350,100 @@ unmanaged output остаётся неизменным.
   отправляет пакет, проверяет `counter drop`, ожидает fatal shutdown и
   подтверждает сохранение firewall (CI 42831549649).
 
-### Архитектурное уточнение runtime reconfiguration (исследование 2026-11-09)
+### Runtime reconfiguration: реализованный контракт и оставшиеся проверки
 
-Проверены фактические интерфейсы `vpn-relay/src/backend/mod.rs`,
-`backend/boringtun.rs`, `runtime.rs`, `routing.rs` и typed API
-`boringtun/src/device/mod.rs`.
+Фактическая реализация находится в `vpn-relay/src/backend/mod.rs`,
+`backend/boringtun.rs`, `runtime.rs`, `routing.rs` и
+`config.rs::validate_reload_compatibility`.
 
-Подтверждённые ограничения текущего кода:
+Реализованный путь:
 
-- `DeviceHandle::update_peer` уже умеет добавлять, изменять и удалять peer,
-  заменять AllowedIPs, менять endpoint, keepalive и preshared key. Изменение
-  выполняется под write lock одного Device.
-- `DeviceHandle::snapshot` возвращает endpoint, AllowedIPs и keepalive, но не
-  preshared key. Поэтому snapshot работающего backend недостаточен для
-  достоверного восстановления предыдущей peer-конфигурации.
-- vpn-relay `TunnelHandle` экспортирует только counters snapshot, shutdown и
-  wait; backend peer-update API наружу не выведен.
-- `Runtime` не хранит исходный `Config` после startup. Следовательно,
-  отсутствует authoritative committed config, необходимый для diff и rollback.
-- Изменение routing rules, firewall selectors, NAT, интерфейсов или fwmarks
-  затрагивает несколько kernel ресурсов и не может быть безопасно реализовано
-  как последовательность независимых вызовов `update_peer`.
+1. `Runtime` хранит authoritative committed `Config`, prepared backend
+   endpoints и текущий `RoutingPlan`.
+2. До изменения live state кандидат проходит полную валидацию; endpoints
+   разрешаются заранее, неизменённые peers сохраняют прежние prepared
+   `SocketAddr`, поэтому rollback не зависит от повторного DNS lookup.
+3. Изменения egress resources сначала устанавливаются с disjoint fwmarks,
+   таблицами и priorities, пока текущая nftables policy ещё выдаёт старые marks.
+4. Peer sets заменяются через backend-neutral `TunnelHandle::replace_peers`;
+   BoringTun выполняет полную замену набора под единым эксклюзивным доступом
+   к `Device`. При ошибке commit уже заменённые интерфейсы восстанавливаются
+   в обратном порядке.
+5. Новая nftables policy переключается одной транзакцией. Только после неё
+   runtime публикует новый Config/Plan и удаляет устаревшие egress resources.
+   Старый plan сохраняется в `retired_routing`, если cleanup требует повтора.
+6. Неудачный rollback или cleanup переводит runtime в fatal state; продолжать
+   обслуживать управляющие запросы с частично применённой конфигурацией нельзя.
 
-Принято разделить будущую переконфигурацию на два уровня:
+Hot reload разрешает peer sets, routing decisions, NAT selectors и INPUT/OUTPUT
+firewall rules при неизменных interface keys и tunnel construction parameters.
+Добавление/удаление интерфейсов, адреса, MTU, IPv6 enablement, listen port,
+private key, socket fwmarks, AWG parameters, nft table, forwarding ownership и
+log level требуют restart. Если policy-routing resources меняются, старые и
+новые routing mark ranges обязаны быть непересекающимися.
 
-1. **Peer-only reconfiguration** — изменение набора peer и их endpoint,
-   AllowedIPs, PSK и keepalive при неизменной конфигурации интерфейсов и
-   неизменном `RoutingPlan`. Runtime хранит последнюю успешно применённую
-   конфигурацию как источник rollback; backend заранее валидирует/разбирает
-   все операции и предоставляет batch API с единой точкой сериализации.
-   При ошибке применяется предыдущий committed peer set; если rollback не
-   удался, runtime должен перейти в fail-closed состояние и явно сообщить
-   фатальную ошибку, а не продолжить работу со смешанным набором peer.
+Backend `DeviceHandle::snapshot` не содержит PSK и поэтому не является
+источником rollback. Runtime использует сохранённый committed Config и
+предварительно подготовленные backend данные. Batch replacement на одном
+устройстве сериализует datapath; замена нескольких устройств не является
+глобально атомарной, поэтому при ошибке используется reverse-order rollback,
+а его отказ приводит к fatal shutdown.
 
-2. **Network/policy reconfiguration** — изменения интерфейсов, адресов, MTU,
-   listen/socket marks, routing, firewall, NAT и forwarding. Для этого нужен
-   отдельный staged transaction: построить и проверить новый Config/Plan;
-   установить совместимую fail-closed policy; подготовить новые/изменённые
-   ресурсы; переключить routing и backend в определённом порядке; удалить
-   устаревшие ресурсы только после успешного commit; при ошибке восстановить
-   предыдущий snapshot ресурсов. До реализации такого transaction эти поля
-   считаются restart-required, а не hot-reloadable.
+Оставшиеся acceptance tests:
 
-`DeviceHandle::with_device_mut` уже предоставляет нужную точку сериализации:
-он инициирует cooperative yield datapath readers и выполняет closure под
-эксклюзивным доступом к `Device`. Поэтому серия внутренних изменений внутри
-одного такого closure не будет наблюдаться datapath как промежуточные
-состояния. Текущая публичная `update_peer`, напротив, берёт этот lock отдельно
-на каждый вызов, поэтому цикл вызовов из vpn-relay не атомарен.
+- failure injection на каждом шаге staging routes → peer commit → nft switch →
+  old-route cleanup, с проверкой точного active/retired resource set;
+- доказательство, что rollback продолжает восстанавливать остальные интерфейсы
+  после ошибки восстановления одного из них;
+- непрерывный двусторонний packet-level трафик при peer update, удалении peer,
+  AllowedIPs handoff и policy reload;
+- endpoint DNS failure до commit не меняет ни один live peer;
+- проверка, что неизменённые peers сохраняют активные Noise sessions.
 
-Однако единый lock сам по себе не обеспечивает all-or-nothing при ошибке:
-`Device::update_peer` может вернуть `Error::PeerSetup` при создании нового
-peer. Следовательно, все новые `Tunn`/`Peer` должны быть подготовлены до
-изменения `peers`, `peers_by_idx` и `peers_by_ip`, а commit closure должен
-содержать только операции без fallible setup. Ещё одна точка риска —
-`Peer::set_endpoint` и `Peer::shutdown_endpoint` вызывают `Socket::shutdown`
-через `unwrap`; перед использованием этих методов в транзакционном пути
-необходимо заменить panic-поведение на контролируемую ошибку либо сделать
-закрытие endpoint best-effort с диагностикой.
+Критерий приёмки: после успешного reload работает только новый Config; после
+обычной ошибки — прежний Config и прежняя policy; при невозможности rollback
+runtime останавливает управление и сохраняет fail-closed firewall.
 
-Нельзя считать замену списка peer атомарной только потому, что каждый
-`update_peer` защищён внутренним lock: серия вызовов может быть видна datapath
-между операциями. Нужны batch semantics и тесты одновременного трафика во время
-обновления, удаления и rollback. Также требуется отдельно проверить поведение
-при endpoint DNS resolution failure до начала commit.
+### Архитектура безопасного per-interface forwarding
 
+Текущее `manage_ip_forwarding` намеренно управляет namespace-wide
+`net.ipv4.ip_forward` и `net.ipv6.conf.all.forwarding`. Durable journal
+восстанавливает исходные значения после graceful shutdown и SIGKILL, но это
+не делает включение безопасным для общего host namespace: меняется поведение
+всех интерфейсов namespace.
 
-#### Контракт будущего peer batch API
+Целевое направление — отдельный режим per-interface forwarding, не заменяющий
+существующую namespace-wide опцию молча:
 
-Batch API должен реализовывать **полную замену peer set**, а не просто обёртку
-над циклом `update_peer`:
+- IPv4: владеть только `net.ipv4.conf.<managed-if>.forwarding` для явно
+  перечисленных managed ingress/egress интерфейсов; не менять `all.forwarding`
+  и `default.forwarding`. Проверить эффективную семантику Linux sysctl при
+  комбинациях `all`, `default` и per-interface values.
+- IPv6: до реализации проверить поведение `net.ipv6.conf.<if>.forwarding`,
+  `all.forwarding`, RA acceptance и доступность/семантику `force_forwarding`
+  на поддерживаемых ядрах. Нельзя включать IPv6 forwarding или отключать RA
+  на unmanaged интерфейсах как побочный эффект.
+- В конфигурации явно перечислять interfaces, для которых daemon вправе
+  менять forwarding; неизвестные и не-managed interfaces отклонять до startup.
+- Durable journal должен стать версионированным списком записей
+  (namespace inode, interface identity/ifindex, sysctl key, original value,
+  value written by daemon), а recovery — восстанавливать только значения,
+  которые daemon действительно менял, с защитой от повторного использования
+  ifindex и удаления/переименования интерфейса.
+- Startup: bootstrap firewall → TUN creation/identity verification →
+  per-interface sysctl journal persist → per-interface forwarding enable →
+  policy routes. Shutdown: stop workers → remove routes → remove TUN →
+  restore only daemon-owned per-interface values → remove firewall last.
+  При неопределённом результате restore firewall остаётся fail-closed.
+- Проверки: unit failure injection для каждого read/write/persist/fsync/restore;
+  kernel matrix для IPv4/IPv6 и старых/новых поддерживаемых ядер; netns packet
+  probes, подтверждающие forwarding на выбранных TUN и отсутствие изменений
+  на unmanaged interfaces, включая Router Advertisement поведение.
 
-1. До изменения live state разобрать ключи, PSK, AllowedIPs и endpoints;
-   разрешить DNS и проверить уникальность public keys, корректность prefix и
-   отсутствие конфликтующего владения AllowedIPs.
-2. Подготовить объекты всех новых `Peer`/`Tunn` до commit. Ошибка подготовки
-   любого нового peer не должна менять текущие peer, endpoint, ключи или
-   `peers_by_ip`; пропуск зарезервированных LFSR index допустим.
-3. Для существующих peer определить явную семантику **установить или очистить**
-   endpoint, PSK и keepalive. Обычный `Option<T>` в текущем `update_peer`
-   означает «не менять при None» и потому не подходит для полной замены.
-4. Commit выполнять одной операцией `with_device_mut`, под единым эксклюзивным
-   доступом к `Device`: datapath не должен увидеть промежуточное состояние
-   AllowedIPs или частично заменённый peer set. После начала commit не должно
-   оставаться fallible setup-операций.
-5. Runtime хранит последний успешно committed `Config` отдельно от live
-   snapshot. При ошибке до commit старое состояние остаётся нетронутым; после
-   успешного commit authoritative config обновляется только один раз.
-6. Rollback после ошибки commit допустим только через повторное применение
-   полного предыдущего peer set. Если восстановление не удалось, backend
-   обязан вернуть отдельную фатальную ошибку; runtime не должен продолжать
-   обычную работу с неопределённым peer state.
-
-Обязательные тесты: отказ staging нового peer без изменения старых peer;
-передача AllowedIPs между peer без наблюдаемого промежуточного владельца;
-удаление peer и очистка его endpoint/keepalive/PSK; сохранение существующих
-Noise sessions для peer, чьи параметры не менялись; непрерывный двусторонний
-трафик во время batch commit; rollback после искусственной ошибки подготовки.
-
-Критерий приёмки: каждый сценарий отказа оставляет namespace в безопасном и
-предсказуемом состоянии; чужие ресурсы не меняются.
+До завершения kernel compatibility matrix и packet-level тестов
+`manage_ip_forwarding=true` остаётся допустимым только в dedicated network
+namespace. На общем host namespace использовать `false` и внешнее управление
+forwarding.
 
 ## 12. Этап 9 — документация и CI
 
@@ -824,3 +822,7 @@ successful shutdown removes the firewall.
 | 2026-11-10 | Проверен отказ stale socket-rule cleanup перед установкой | Failure injection на каждой из четырёх IPv4/IPv6 × mark точек предварительной очистки. Установка новых правил не начинается после ошибки; rollback дополнительно пытается удалить все четыре возможных socket rules, исходная ошибка сохраняется. | Реализовано, ожидает CI |
 
 | 2026-11-10 | Закрыт forged-reply packet probe и проверен stale egress cleanup | Peer-traffic netns test содержит точный обратный tuple для host-originated UDP flow: underlay capture подтверждает исходный поток, TUN capture — доставку forged reply, host socket не получает пакет; отдельный OUTPUT probe блокирует ответ на unmanaged INPUT flow. Добавлен failure-injection на все три stale egress cleanup boundaries для IPv6-disabled uplink: установка не начинается, rollback пытается удалить все четыре egress resources. | Forged-reply: integration CI 42874289187 success; stale cleanup: ожидает CI |
+
+
+| 2026-11-10 | Проверен полный CI для cleanup и nft inspection failure | CI run 42883277254 на HEAD 49053da: rustfmt, clippy, tests, feature checks, integration-tests, AWG 3.1 и all-systems-go — success; Windows skipped. Включает stale socket/egress cleanup и проверку, что nft delete не вызывается после ошибки inspection. | Подтверждено |
+| 2026-11-10 | Усилена multi-device peer rollback матрица и синхронизирован архитектурный план | Добавлен тест, где восстановление второго интерфейса завершается ошибкой, но rollback первого всё равно выполняется. План обновлён по фактическому runtime reload контракту; добавлен безопасный per-interface forwarding design и явные kernel/netns acceptance criteria. | Ожидает CI |

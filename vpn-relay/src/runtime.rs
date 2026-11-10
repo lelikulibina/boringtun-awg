@@ -2137,6 +2137,43 @@ mod tests {
     }
 
     #[test]
+    fn multi_device_peer_rollback_continues_after_one_device_fails() {
+        let previous = peer_test_config("old-a", "old-b");
+        let candidate = peer_test_config("new-a", "new-b");
+        let prepared = peer_test_prepared();
+        let mut devices: Vec<Box<dyn TunnelHandle>> = vec![
+            Box::new(FaultInjectingTunnel {
+                name: "wg0".to_owned(),
+                peers: vec!["old-a".to_owned()],
+                calls: 0,
+                fail_calls: std::collections::HashSet::new(),
+            }),
+            Box::new(FaultInjectingTunnel {
+                name: "wg1".to_owned(),
+                peers: vec!["old-b".to_owned()],
+                calls: 0,
+                fail_calls: [2].into_iter().collect(),
+            }),
+        ];
+        let changed = vec![(0, "wg0".to_owned()), (1, "wg1".to_owned())];
+
+        let committed =
+            commit_peer_replacements(&mut devices, &changed, &candidate, &prepared)
+                .expect("both peer sets must commit before rollback is exercised");
+        assert_eq!(committed, vec![0, 1]);
+
+        // Rollback runs in reverse order. wg1 fails on its restore call, but
+        // wg0 must still be restored instead of being skipped by early return.
+        let failures = rollback_peer_replacements(&mut devices, &committed, &previous, &prepared);
+        assert_eq!(failures.len(), 1);
+        assert!(failures[0].contains("wg1"));
+
+        let restored_first = devices[0].snapshot().unwrap();
+        assert_eq!(restored_first.peers[0].public_key[0], b'o');
+        let failed_restore_second = devices[1].snapshot().unwrap();
+        assert_eq!(failed_restore_second.peers[0].public_key[0], b'n');
+    }
+
     fn multi_device_peer_rollback_failure_is_reported_for_fatal_shutdown() {
         let previous = peer_test_config("old-a", "old-b");
         let candidate = peer_test_config("new-a", "new-b");
