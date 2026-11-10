@@ -485,11 +485,13 @@ impl Runtime {
         let backends = BackendRegistry::default();
         let prepared_interfaces = backends.prepare_config(&config)?;
 
-        // Install the fail-closed policy before creating or bringing up any
-        // TUN interface. The nftables rules refer to interface names and do
-        // not require the links to exist yet. This closes the window even
-        // when forwarding was already enabled before vpn-relay started.
-        linux::apply_nft(&routing)?;
+        // Install a drop-only bootstrap policy before creating any TUN.
+        // It scopes drops by the configured names but contains no allow rules;
+        // after descriptor verification it is atomically replaced by the
+        // numeric-ifindex policy. This prevents traffic from slipping through
+        // during link creation/configuration even if forwarding is pre-enabled.
+        let bootstrap_routing = routing.fail_closed_bootstrap();
+        linux::apply_nft(&bootstrap_routing)?;
 
         let mut devices = Vec::with_capacity(config.interfaces.len());
         let setup_result = (|| -> Result<(), RuntimeError> {

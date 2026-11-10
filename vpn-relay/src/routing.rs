@@ -277,6 +277,16 @@ impl RoutingPlan {
         }
     }
 
+    /// Build a drop-only policy for the startup window before TUN descriptors
+    /// and their kernel interface indices have been established.
+    pub fn fail_closed_bootstrap(&self) -> Self {
+        let mut bootstrap = self.clone();
+        bootstrap.decisions.clear();
+        bootstrap.input_rules.clear();
+        bootstrap.output_rules.clear();
+        bootstrap
+    }
+
     /// Bind firewall selectors to the kernel identities of the original interfaces.
     pub fn bind_interface_indices(&mut self, indices: BTreeMap<String, u32>) -> Result<(), String> {
         if indices.len() != self.managed_interfaces.len()
@@ -892,6 +902,20 @@ egress = "awg-primary"
         assert!(script.contains("ip6 saddr 2001:db8:10::/48 ip6 daddr 2001:db8:20::/48"));
         assert!(!script.contains("ip saddr 10.0.0.0/24 ip6 daddr"));
         assert!(!script.contains("ip6 saddr 2001:db8:10::/48 ip daddr"));
+    }
+
+    #[test]
+    fn bootstrap_firewall_drops_all_managed_traffic_until_descriptors_are_bound() {
+        let plan = RoutingPlan::from_config(&sample_config()).fail_closed_bootstrap();
+        let script = plan.nft_script();
+        assert!(script.contains("input iifname @managed_interfaces drop"));
+        assert!(script.contains("output oifname @managed_interfaces drop"));
+        assert!(script.contains("forward iifname @managed_interfaces drop"));
+        assert!(script.contains("forward oifname @managed_interfaces drop"));
+        assert!(!script.contains(" ct direction original ct mark set "));
+        assert!(!script.contains(" meta mark set 0x"));
+        assert!(!script.contains(" masquerade"));
+        assert!(!script.contains(" snat "));
     }
 
     #[test]
