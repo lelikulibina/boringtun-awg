@@ -1113,6 +1113,30 @@ egress = "awg-uplink"
             .unwrap_err()
             .to_string()
             .contains("immutable tunnel parameters"));
+
+        let mut changed_tunnel_type = current.clone();
+        let awg_uplink = changed_tunnel_type
+            .interfaces
+            .get_mut("awg-uplink")
+            .unwrap();
+        awg_uplink.tunnel_type = TunnelType::WireGuard;
+        awg_uplink.awg = None;
+        changed_tunnel_type.validate().unwrap();
+        assert!(current
+            .validate_reload_compatibility(&changed_tunnel_type)
+            .unwrap_err()
+            .to_string()
+            .contains("immutable tunnel parameters"));
+
+        let mut removed_interface = current.clone();
+        removed_interface.interfaces.remove("awg-uplink");
+        removed_interface.routing.rules.clear();
+        removed_interface.validate().unwrap();
+        assert!(current
+            .validate_reload_compatibility(&removed_interface)
+            .unwrap_err()
+            .to_string()
+            .contains("add or remove interfaces"));
     }
 
     #[test]
