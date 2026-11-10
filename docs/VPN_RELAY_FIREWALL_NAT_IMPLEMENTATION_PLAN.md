@@ -73,29 +73,39 @@
 
 ### INPUT
 
-- [ ] managed ingress без разрешения не достигает локальных IPv4 сервисов.
-- [ ] managed ingress без разрешения не достигает локальных IPv6 сервисов.
-- [ ] Явно разрешённый source/interface/protocol/port доступ работает.
-- [ ] Ответы на соединения, инициированные хостом, не дают клиенту обходить
-  INPUT deny.
-- [~] В генератор добавлен stateful reply path: INPUT/OUTPUT разрешают
+- [x] managed ingress без разрешения не достигает локальных IPv4 сервисов (TCP deny packet probe, CI 42836214324).
+- [x] managed ingress без разрешения не достигает локальных IPv6 сервисов (TCP deny packet probe, CI 42836214324).
+- [x] Явно разрешённый source/interface/protocol/port доступ работает (IPv4/IPv6 TCP allow probes, CI 42836214324).
+- [x] Ответы на соединения, инициированные хостом, не дают клиенту обходить
+  INPUT deny: forged reverse tuple достигает TUN, но блокируется без host-flow tag (CI 42836214324).
+- [x] В генератор добавлен stateful reply path: INPUT/OUTPUT разрешают
   established/related только в conntrack reply direction, а явные allow rules
-  ограничены original direction. Ожидается packet-level проверка.
+  ограничены original direction. Два forged-reply packet probes проверяют INPUT
+  и OUTPUT; оба отклоняют reply для потока, начатого через unmanaged interface
+  (CI 42836214324).
 - [x] Loopback и трафик с unmanaged интерфейсов не меняются; loopback TCP и physical-ingress packet probes прошли (CI 42674872629).
 
 ### OUTPUT
 
-- [ ] Локальный пакет, направленный через managed TUN, проходит заданную OUTPUT
-  policy.
-- [ ] Запрещённый managed egress блокируется.
+- [x] Локальный пакет, направленный через managed TUN, проходит заданную OUTPUT
+  policy (IPv4/IPv6 TCP allow и ICMPv6 probes, CI 42836214324).
+- [x] Запрещённый managed egress блокируется (IPv4/IPv6 TCP deny и ICMPv6 deny
+  packet probes, CI 42836214324).
 - [x] Локальный трафик через физический/unmanaged интерфейс не меняется; underlay и локальные INPUT/OUTPUT source addresses проверены packet-level тестами (CI 42674872629).
-- [ ] Socket fwmark для внешнего WG/AWG UDP продолжает использовать main table.
+- [x] Socket fwmark для внешнего WG/AWG UDP продолжает использовать main table:
+  route lookup подтверждает underlay, а encrypted UDP наблюдается на физическом
+  veth и отсутствует на TUN (CI 42836214324).
 
 ### FORWARD и conntrack
 
-- [ ] Сохраняется запрет нового потока без routing rule.
-- [ ] Сохраняется разрешение только выбранной пары ingress/egress.
-- [ ] Ответный трафик разрешённого потока проходит только в обратную пару.
+- [x] Сохраняется запрет нового потока без routing rule: IPv4/IPv6 probes
+  отсутствуют на обоих uplink, даже при наличии обычного main route (CI 42836214324).
+- [x] Сохраняется разрешение только выбранной пары ingress/egress:
+  multi-uplink packet probes и TCP/UDP потоки наблюдаются на выбранном uplink,
+  а overlapping priority выбирает только заданный egress (CI 42836214324).
+- [x] Ответный трафик разрешённого потока проходит только в обратную пару:
+  TCP/UDP iperf3 forward и reverse проверены для primary/secondary uplink,
+  включая IPv6 (CI 42836214324).
 - [x] Неверный/нулевой/чужой conntrack mark не открывает транзит; для host
   INPUT/OUTPUT reply дополнительно требуется отдельный `0x80000000` tag.
 - [x] NAT не меняет поведение фильтрации и не применяется к запрещённым потокам; denied FORWARD не наблюдался ни на одном из двух uplink (CI 42674872629).
@@ -143,8 +153,9 @@
 - [x] Отсутствие allow rules означает deny для соответствующего managed hook.
 - [x] Добавлены parser tests на неизвестные интерфейсы и селекторы неверного
   направления; остальные отрицательные случаи ещё требуют отдельного покрытия.
-- [~] Добавлены реальные TCP listener/client probes в peer traffic netns test:
-  разрешённый TCP/8080 и запрещённый TCP/8081 для INPUT/OUTPUT; ожидается CI.
+- [x] Добавлены реальные TCP listener/client probes в peer traffic netns test:
+  разрешённый TCP/8080 и запрещённый TCP/8081 для INPUT/OUTPUT; IPv4/IPv6
+  probes прошли в CI 42836214324.
 
 
 
@@ -272,9 +283,9 @@ unmanaged output остаётся неизменным.
   packet captures подтверждают неизменность source для локальных INPUT/OUTPUT,
   а tcpdump на обоих uplink не видит пакеты без routing decision
   (integration-tests CI 42815100743).
-- [~] Добавлен packet-level regression test смены IPv4 адреса egress:
-  после удаления 10.20.0.1/24 и назначения 10.20.0.99/24 новый masquerade
-  flow обязан выходить с 10.20.0.99. Ожидает полного integration CI.
+- [x] Packet-level regression test смены IPv4 адреса egress прошёл: после удаления
+  10.20.0.1/24 и назначения 10.20.0.99/24 новый masquerade flow выходит с
+  10.20.0.99 (полный integration CI 42831549649).
 
 Критерий приёмки: пакет получает ровно одну ожидаемую NAT policy; запрещённый
 или локальный трафик не подвергается source NAT.
@@ -795,3 +806,5 @@ successful shutdown removes the firewall.
 ожидает аварийного завершения daemon и подтверждает сохранение firewall.
 
 | 2026-11-10 | Проверена защита от удаления и подмены TUN | `TUNGETIFF` на исходном FD; drop-only bootstrap; атомарный переход nftables с `iifname/oifname` на `iif/oif` + `iface_index`; mismatch guards с `counter drop`; root netns тест удаляет и пересоздаёт TUN под тем же именем, проверяет блокировку пакета и сохранение firewall после fatal shutdown. CI 42831549649: rustfmt, clippy, tests, feature checks, AWG 3.1, namespace, WG/AWG peer traffic и multi-uplink — success; Windows skipped. HEAD `bcbf0cfaeab1b74688281b3b0cef27f63580cb02`. | Завершено и проверено |
+
+| 2026-11-10 | Закрыт основной packet-level firewall acceptance matrix | Полный CI run `42836214324` прошёл: IPv4/IPv6 INPUT/OUTPUT allow/deny, forged reply isolation для обоих направлений, socket-fwmark underlay, запрет новых потоков без routing decision, выбранная ingress/egress пара и TCP/UDP reverse traffic на обоих uplink. Отдельный полный CI `42831549649` подтвердил TUN identity replacement и masquerade после смены egress IPv4. | Проверено, полные CI `42836214324` и `42831549649` |
