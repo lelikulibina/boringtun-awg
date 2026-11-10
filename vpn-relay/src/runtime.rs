@@ -1103,16 +1103,18 @@ impl Drop for Runtime {
             }
         }
 
-        if cleanup_failures.is_empty() && self.fatal_error.is_none() {
-            if let Err(error) = linux::remove_nft(&self.routing) {
-                tracing::error!(%error, "failed to remove vpn-relay nftables policy");
-            }
-        } else {
+        if !cleanup_failures.is_empty() {
             tracing::error!(
                 failures = %cleanup_failures.join("; "),
-                fatal_error = ?self.fatal_error,
-                "fatal transition or incomplete cleanup; retaining fail-closed nftables policy"
+                "shutdown cleanup incomplete; retaining fail-closed nftables policy"
             );
+        } else if let Some(error) = &self.fatal_error {
+            tracing::error!(
+                fatal_error = %error,
+                "fatal runtime transition; retaining fail-closed nftables policy"
+            );
+        } else if let Err(error) = linux::remove_nft(&self.routing) {
+            tracing::error!(%error, "failed to remove vpn-relay nftables policy");
         }
     }
 }
