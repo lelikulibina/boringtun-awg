@@ -890,7 +890,9 @@ mod tests {
                         return Err(LinuxError::Command {
                             program: format!("ip {}", args.join(" ")),
                             status: "exit status 2".into(),
-                            stderr: format!("injected socket install failure at step {failure_position}"),
+                            stderr: format!(
+                                "injected socket install failure at step {failure_position}"
+                            ),
                         });
                     }
                 }
@@ -900,10 +902,13 @@ mod tests {
             assert!(matches!(result, Err(LinuxError::Command { ref stderr, .. })
                 if stderr.contains(&format!("step {failure_position}"))));
             let rollback = &calls[failure_index.expect("failure was injected")..];
-            let cleanup = rollback.iter().filter(|args| {
-                args.get(2).is_some_and(|part| part == "del")
-                    && args.get(4).is_some_and(|part| part == "9000")
-            }).count();
+            let cleanup = rollback
+                .iter()
+                .filter(|args| {
+                    args.get(2).is_some_and(|part| part == "del")
+                        && args.get(4).is_some_and(|part| part == "9000")
+                })
+                .count();
             assert_eq!(
                 cleanup, 4,
                 "failure at socket install step {failure_position} must roll back every mark/family"
