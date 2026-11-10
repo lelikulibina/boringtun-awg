@@ -508,7 +508,25 @@ impl Runtime {
                     })?,
                 )?;
                 devices.push(handle);
+                devices
+                    .last()
+                    .expect("just-pushed tunnel handle")
+                    .verify_identity()
+                    .map_err(|error| {
+                        RuntimeError::FatalTransition(format!(
+                            "new tunnel interface '{interface_name}' failed its identity check: {error}"
+                        ))
+                    })?;
                 linux::configure_interface(interface_name, interface.mtu, &interface.address)?;
+            }
+            // Recheck the complete set after address/MTU configuration and
+            // before installing any policy routes that refer to interface names.
+            for (index, device) in devices.iter().enumerate() {
+                device.verify_identity().map_err(|error| {
+                    RuntimeError::FatalTransition(format!(
+                        "tunnel device at runtime index {index} lost its identity during startup: {error}"
+                    ))
+                })?;
             }
             Ok(())
         })();
