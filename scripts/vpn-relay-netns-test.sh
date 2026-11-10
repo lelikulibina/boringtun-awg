@@ -364,14 +364,14 @@ for table in 10000 10001; do
     done
 done
 
-# If policy-route installation fails and its rollback also fails, startup must
-# not remove the bootstrap/indexed drop policy. Keep the leaked route visible
-# for diagnosis and prove the daemon reports the compound failure.
+# If policy-route installation fails on the second egress and rollback of the
+# first egress also fails, startup must retain the bootstrap/indexed drop policy.
+# The first egress route is guaranteed to have been installed before injection.
 mkdir -p "$TMP/fail-route-rollback"
 cat >"$TMP/fail-route-rollback/ip" <<EOF
 #!/bin/sh
 if [ "\$1" = "-6" ] && [ "\$2" = "route" ] && [ "\$3" = "replace" ] \\
-    && [ "\$4" = "default" ] && [ "\$6" = "awg-primary" ] && [ "\$8" = "10000" ]; then
+    && [ "\$4" = "default" ] && [ "\$6" = "awg-secondary" ] && [ "\$8" = "10001" ]; then
     echo "injected IPv6 policy-route installation failure before rollback" >&2
     exit 42
 fi
@@ -398,10 +398,10 @@ done
 if ip -n "$NS" -4 rule show | grep -q 'proto 242'; then
     fail "policy rules leaked after policy-route rollback failure"
 fi
-ip -n "$NS" -4 route show table 10000 | grep -Fq 'default dev awg-primary proto 242' || fail "expected failed-cleanup route was not retained for diagnosis"
+ip -n "$NS" -4 route show table 10000 | grep -Fq 'default dev awg-primary proto 242' || fail "expected first-egress route was not retained after injected cleanup failure"
 [[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "0" ]] || fail "IPv4 forwarding changed after policy-route rollback failure"
 [[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "0" ]] || fail "IPv6 forwarding changed after policy-route rollback failure"
-# The injected route is deliberately retained. Remove only the test-owned
+# The first-egress route is deliberately retained. Remove only this test-owned
 # route and firewall with the real ip/nft commands before continuing.
 ip -n "$NS" -4 route del default dev awg-primary table 10000 proto 242
 ip netns exec "$NS" nft delete table inet vpn_relay_it
