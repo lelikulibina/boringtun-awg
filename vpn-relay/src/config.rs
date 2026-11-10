@@ -557,7 +557,9 @@ impl Config {
                     let mut unique = HashSet::new();
                     for prefix in prefixes {
                         if !unique.insert(prefix.as_str()) {
-                            return invalid("routing.rules.source must not contain duplicate CIDR selectors");
+                            return invalid(
+                                "routing.rules.source must not contain duplicate CIDR selectors",
+                            );
                         }
                     }
                     prefixes
@@ -669,7 +671,9 @@ impl Config {
                         let mut unique = HashSet::new();
                         for prefix in prefixes {
                             if !unique.insert(prefix.as_str()) {
-                                return invalid(format!("{path}.{field} must not contain duplicate CIDR selectors"));
+                                return invalid(format!(
+                                    "{path}.{field} must not contain duplicate CIDR selectors"
+                                ));
                             }
                         }
                         for prefix in prefixes {
