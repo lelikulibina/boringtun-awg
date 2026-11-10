@@ -674,3 +674,6 @@ Noise sessions для peer, чьи параметры не менялись; н�
 
 
 | 2026-11-10 | Добавлен netns regression test fail-closed shutdown при ошибке удаления policy rule | В изолированном network namespace запускается daemon с ip-wrapper, который начинает отклонять удаление IPv4 socket rules только после успешного старта. При graceful SIGTERM проверяется, что Drop восстанавливает forwarding, оставляет неочищенное правило и сохраняет nftables policy; лог обязан содержать сообщение о fail-closed cleanup. Тест вручную удаляет оставленную policy перед завершением namespace | Реализовано, ожидает CI |
+
+
+| 2026-11-10 | Ошибки удаления устаревших IPv6 policy resources больше не игнорируются | При применении routing plan с IPv6-disabled egress очистка оставшихся IPv6 fwmark rules и default routes теперь проверяет результат каждой операции. Отсутствующие записи считаются уже очищенными; реальные ошибки приводят к отказу установки плана и запускают существующий rollback, не позволяя заявить IPv6 isolation при оставшемся stale route | Реализовано, ожидает CI |

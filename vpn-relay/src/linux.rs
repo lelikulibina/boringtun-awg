@@ -476,8 +476,8 @@ pub fn apply_egress_policy_routing(plan: &RoutingPlan) -> Result<(), LinuxError>
                 "proto".into(),
                 ROUTING_PROTOCOL.into(),
             ];
-            let _ = run("ip", &stale_rule);
-            let _ = run("ip", &stale_route);
+            run_ip_cleanup(&stale_rule)?;
+            run_ip_cleanup(&stale_route)?;
         }
 
         for &family in RoutingPlan::ip_families(egress) {
