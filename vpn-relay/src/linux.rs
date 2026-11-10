@@ -821,6 +821,46 @@ pub fn interface_index(name: &str) -> Result<u32, LinuxError> {
     Ok(index)
 }
 
+
+/// Resolve an interface index back to its current name in this process' network namespace.
+/// This reverse lookup is used by durable forwarding-state recovery to avoid
+/// restoring sysctls onto a different link that later reused an interface name.
+pub fn interface_name(index: u32) -> Result<String, LinuxError> {
+    if index == 0 {
+        return Err(LinuxError::Conflict {
+            resource: "network interface index 0".into(),
+            details: "zero is not a valid Linux interface index".into(),
+        });
+    }
+    let mut name = [0 as libc::c_char; libc::IFNAMSIZ];
+    let result = unsafe { libc::if_indextoname(index, name.as_mut_ptr()) };
+    if result.is_null() {
+        return Err(LinuxError::Command {
+            program: "if_indextoname".into(),
+            status: "failed".into(),
+            stderr: std::io::Error::last_os_error().to_string(),
+        });
+    }
+    let name = unsafe { std::ffi::CStr::from_ptr(name.as_ptr()) };
+    Ok(name.to_string_lossy().into_owned())
+}
+
+/// Verify both directions of the name/index mapping. A matching name alone is
+/// insufficient because Linux may recycle an ifindex after a link disappears.
+pub fn verify_interface_identity(name: &str, expected_index: u32) -> Result<(), LinuxError> {
+    let current_index = interface_index(name)?;
+    let current_name = interface_name(expected_index)?;
+    if current_index != expected_index || current_name != name {
+        return Err(LinuxError::Conflict {
+            resource: format!("network interface '{name}' (ifindex {expected_index})"),
+            details: format!(
+                "interface identity changed: name resolves to ifindex {current_index}, while saved ifindex resolves to '{current_name}'"
+            ),
+        });
+    }
+    Ok(())
+}
+
 pub fn configure_interface(name: &str, mtu: u16, addresses: &[String]) -> Result<(), LinuxError> {
     run(
         "ip",
@@ -1680,6 +1720,26 @@ mod tests {
         })
         .unwrap();
         assert_eq!(calls, 1, "replacement must be a single nft transaction");
+    }
+
+    #[test]
+    fn interface_name_round_trips_current_network_namespace_identity() {
+        let index = interface_index("lo").expect("loopback interface exists");
+        assert_eq!(interface_name(index).unwrap(), "lo");
+        verify_interface_identity("lo", index).unwrap();
+    }
+
+    #[test]
+    fn interface_identity_rejects_zero_and_mismatched_links() {
+        assert!(matches!(
+            interface_name(0),
+            Err(LinuxError::Conflict { .. })
+        ));
+        let index = interface_index("lo").unwrap();
+        assert!(matches!(
+            verify_interface_identity("lo", index.saturating_add(1)),
+            Err(LinuxError::Conflict { .. }) | Err(LinuxError::Command { .. })
+        ));
     }
 
     #[test]
