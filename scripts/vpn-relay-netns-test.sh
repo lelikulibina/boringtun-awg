@@ -410,9 +410,9 @@ done
 mkdir -p "$TMP/fail-route-rollback"
 cat >"$TMP/fail-route-rollback/ip" <<EOF
 #!/bin/sh
-if [ "\$1" = "-6" ] && [ "\$2" = "route" ] && [ "\$3" = "replace" ] \\
+if [ "\$1" = "-4" ] && [ "\$2" = "route" ] && [ "\$3" = "replace" ] \\
     && [ "\$4" = "default" ] && [ "\$6" = "awg-secondary" ] && [ "\$8" = "10001" ]; then
-    echo "injected IPv6 policy-route installation failure before rollback" >&2
+    echo "injected second-egress IPv4 policy-route installation failure before rollback" >&2
     exit 42
 fi
 if [ "\$1" = "-4" ] && [ "\$2" = "route" ] && [ "\$3" = "del" ] \\
@@ -426,7 +426,7 @@ chmod +x "$TMP/fail-route-rollback/ip"
 if ip netns exec "$NS" env PATH="$TMP/fail-route-rollback:$PATH" "$BIN" --config "$TMP/config.toml" >"$TMP/startup-route-rollback-failure.log" 2>&1; then
     fail "daemon accepted policy-route installation and rollback failures"
 fi
-grep -Fq "injected IPv6 policy-route installation failure before rollback" "$TMP/startup-route-rollback-failure.log" || fail "startup policy-route installation failure was not observed"
+grep -Fq "injected second-egress IPv4 policy-route installation failure before rollback" "$TMP/startup-route-rollback-failure.log" || fail "second-egress policy-route installation failure was not observed"
 grep -Fq "injected IPv4 policy-route rollback failure" "$TMP/startup-route-rollback-failure.log" || fail "startup policy-route rollback failure was not observed"
 grep -Fq "startup policy-routing rollback failed; retaining nftables policy" "$TMP/startup-route-rollback-failure.log" || fail "startup did not retain firewall after policy-route rollback failure"
 ip netns exec "$NS" nft list table inet vpn_relay_it >/dev/null 2>&1 || fail "fail-closed nftables policy was removed after policy-route rollback failure"
