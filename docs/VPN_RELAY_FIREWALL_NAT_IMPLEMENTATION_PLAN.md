@@ -781,3 +781,9 @@ a configured TUN name but a different index is explicitly dropped before any
 allow rule. On fatal runtime transitions the daemon also retains nftables
 policy after stopping workers and cleaning owned routes; only a normal,
 successful shutdown removes the firewall.
+
+
+Проверка подмены теперь выполняется и на уровне пакета: интеграционный сценарий
+удаляет рабочий TUN, создаёт новое устройство с тем же именем и другим ifindex,
+отправляет через него пакет, проверяет увеличение счётчика правила `counter drop`,
+ожидает аварийного завершения daemon и подтверждает сохранение firewall.

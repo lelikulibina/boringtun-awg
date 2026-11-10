@@ -560,11 +560,11 @@ impl RoutingPlan {
             let mut guards = String::new();
             for (name, index) in indices {
                 guards.push_str(&format!(
-                    "add rule {} {} prerouting iifname \"{}\" iif != {} drop\n\
-                     add rule {} {} input iifname \"{}\" iif != {} drop\n\
-                     add rule {} {} forward iifname \"{}\" iif != {} drop\n\
-                     add rule {} {} forward oifname \"{}\" oif != {} drop\n\
-                     add rule {} {} output oifname \"{}\" oif != {} drop\n",
+                    "add rule {} {} prerouting iifname \"{}\" iif != {} counter drop\n\
+                     add rule {} {} input iifname \"{}\" iif != {} counter drop\n\
+                     add rule {} {} forward iifname \"{}\" iif != {} counter drop\n\
+                     add rule {} {} forward oifname \"{}\" oif != {} counter drop\n\
+                     add rule {} {} output oifname \"{}\" oif != {} counter drop\n",
                     self.nft_family,
                     self.nft_table,
                     name,
@@ -969,11 +969,11 @@ egress = "awg-primary"
         assert!(script.contains("prerouting iif 17 ct state new"));
         assert!(script.contains("forward iif 17 oif 18"));
         assert!(script.contains("postrouting iif 17 oif 18"));
-        assert!(script.contains("prerouting iifname \"wg-server\" iif != 17 drop"));
-        assert!(script.contains("input iifname \"wg-server\" iif != 17 drop"));
-        assert!(script.contains("forward iifname \"wg-server\" iif != 17 drop"));
-        assert!(script.contains("forward oifname \"awg-primary\" oif != 18 drop"));
-        assert!(script.contains("output oifname \"awg-secondary\" oif != 19 drop"));
+        assert!(script.contains("prerouting iifname \"wg-server\" iif != 17 counter drop"));
+        assert!(script.contains("input iifname \"wg-server\" iif != 17 counter drop"));
+        assert!(script.contains("forward iifname \"wg-server\" iif != 17 counter drop"));
+        assert!(script.contains("forward oifname \"awg-primary\" oif != 18 counter drop"));
+        assert!(script.contains("output oifname \"awg-secondary\" oif != 19 counter drop"));
         assert!(!script.contains("type ifname"));
     }
 

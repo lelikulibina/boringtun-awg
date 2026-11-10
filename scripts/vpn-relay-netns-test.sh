@@ -521,7 +521,7 @@ output_chain="$(ip netns exec "$NS" nft list chain inet vpn_relay_it output)"
 grep -Fq 'oif @ipv6_blocked_interfaces meta nfproto ipv6 drop' <<<"$output_chain" || fail "locally generated IPv6 egress drop is missing"
 grep -Fq 'ct direction reply meta mark set 0' <<<"$chain" || fail "reply packet mark reset is missing"
 
-grep -Eq 'iifname "wg-server" iif != .* drop' <<<"$chain" || fail "same-name replacement ingress guard is missing"
+grep -Eq 'iifname "wg-server" iif != .* counter drop' <<<"$chain" || fail "same-name replacement ingress guard is missing"
 grep -Eq 'iif "?wg-server"? ct state new ip daddr 195.142.0.0/16 meta mark set 0x80000001' <<<"$chain" || fail "secondary exception rule missing"
 grep -Eq 'iif "?wg-server"? ct state new ip daddr 0.0.0.0/0 meta mark set 0x80000000' <<<"$chain" || fail "primary default rule missing"
 
@@ -895,5 +895,55 @@ if ip netns exec "$NS" nft list table inet vpn_relay_it >/dev/null 2>&1; then
     fail "daemon-owned nftables table survived shutdown with forwarding management disabled"
 fi
 ip netns exec "$NS" sysctl -qw net.ipv4.ip_forward=0
+
+# Deleting a managed TUN and creating a different device with the same name
+# must not transfer its firewall privileges. The old descriptor check should
+# stop the daemon, while the retained name+ifindex guard drops packets emitted
+# through the replacement link.
+ip netns exec "$NS" "$BIN" --config "$TMP/config-no-forwarding-management.toml" >"$TMP/tun-identity-loss.log" 2>&1 &
+DAEMON_PID=$!
+for _ in $(seq 1 30); do
+    ready=1
+    ip netns exec "$NS" nft list table inet vpn_relay_it >/dev/null 2>&1 || ready=0
+    for iface in wg-server awg-primary awg-secondary; do
+        ip netns exec "$NS" ip link show dev "$iface" >/dev/null 2>&1 || ready=0
+    done
+    [[ $ready -eq 1 ]] && break
+    if ! kill -0 "$DAEMON_PID" 2>/dev/null; then
+        fail "daemon exited before TUN identity-loss test became ready"
+    fi
+    sleep 1
+done
+[[ $ready -eq 1 ]] || fail "daemon did not become ready for TUN identity-loss test"
+old_ifindex="$(ip -n "$NS" -o link show dev awg-primary | cut -d: -f1)"
+ip -n "$NS" link delete dev awg-primary
+ip -n "$NS" tuntap add dev awg-primary mode tun
+ip -n "$NS" link set dev awg-primary up
+new_ifindex="$(ip -n "$NS" -o link show dev awg-primary | cut -d: -f1)"
+[[ "$new_ifindex" != "$old_ifindex" ]] || fail "replacement TUN unexpectedly reused the original ifindex"
+ip -n "$NS" address add 10.99.0.1/32 dev awg-primary
+ip -n "$NS" route replace 198.51.100.1/32 dev awg-primary src 10.99.0.1
+ip netns exec "$NS" ping -n -c 1 -W 1 198.51.100.1 >/dev/null 2>&1 || true
+output_chain="$(ip netns exec "$NS" nft list chain inet vpn_relay_it output)"
+grep -Eq 'oifname "awg-primary" oif != .* counter packets [1-9][0-9]* bytes [1-9][0-9]* drop' <<<"$output_chain" || fail "same-name replacement packet was not dropped by the indexed output guard"
+for _ in $(seq 1 10); do
+    state="$(ps -o stat= -p "$DAEMON_PID" 2>/dev/null | tr -d ' ' || true)"
+    [[ -z "$state" || "$state" == Z* ]] && break
+    sleep 1
+done
+state="$(ps -o stat= -p "$DAEMON_PID" 2>/dev/null | tr -d ' ' || true)"
+if [[ -n "$state" && "$state" != Z* ]]; then
+    fail "daemon did not stop after losing its original TUN descriptor"
+fi
+set +e
+wait "$DAEMON_PID"
+status=$?
+set -e
+DAEMON_PID=""
+[[ $status -ne 0 ]] || fail "daemon exited successfully after losing its original TUN descriptor"
+ip netns exec "$NS" nft list table inet vpn_relay_it >/dev/null 2>&1 || fail "fail-closed nftables policy was removed after TUN identity loss"
+ip netns exec "$NS" ip link show dev awg-primary >/dev/null 2>&1 || fail "same-name replacement TUN was unexpectedly removed"
+grep -Fq "lost its original interface identity" "$TMP/tun-identity-loss.log" || fail "daemon did not report loss of original TUN identity"
+grep -Fq "retaining fail-closed nftables policy" "$TMP/tun-identity-loss.log" || fail "daemon did not retain firewall after TUN identity loss"
 
 echo "vpn-relay namespace integration test passed"
