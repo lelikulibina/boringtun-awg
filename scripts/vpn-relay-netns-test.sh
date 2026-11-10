@@ -361,33 +361,33 @@ chmod +x "$TMP/fail-ipv4-enable-sysctl/sysctl"
 expect_startup_failure partial-ipv4-forwarding.log "IPv4 forwarding enable-after-write failure" "$TMP/fail-ipv4-enable-sysctl"
 grep -Fq "injected IPv4 forwarding enable-after-write failure" "$TMP/partial-ipv4-forwarding.log" || fail "IPv4 enable-after-write failure was not observed"
 
-# If the ambiguous IPv4 enable failure is followed by a failure restoring the
-# original IPv6 value, startup must retain the already-installed fail-closed
-# nftables policy instead of claiming a clean rollback.
-mkdir -p "$TMP/fail-ipv4-enable-restore-sysctl"
-cat >"$TMP/fail-ipv4-enable-restore-sysctl/sysctl" <<EOF
+# If IPv6 enable fails after changing the sysctl and restoring that
+# same family also fails, startup must retain the already-installed
+# fail-closed nftables policy.
+mkdir -p "$TMP/fail-ipv6-enable-restore-sysctl"
+cat >"$TMP/fail-ipv6-enable-restore-sysctl/sysctl" <<EOF
 #!/bin/sh
-if [ "\$1" = "-w" ] && [ "\$2" = "net.ipv4.ip_forward=1" ]; then
+if [ "\$1" = "-w" ] && [ "\$2" = "net.ipv6.conf.all.forwarding=1" ]; then
     "$REAL_SYSCTL_STARTUP" "\$@" || exit "\$?"
-    echo "injected IPv4 forwarding enable-after-write failure" >&2
+    echo "injected IPv6 forwarding enable-after-write failure" >&2
     exit 42
 fi
 if [ "\$1" = "-w" ] && [ "\$2" = "net.ipv6.conf.all.forwarding=0" ]; then
-    echo "injected IPv6 forwarding restore failure after IPv4 enable error" >&2
+    echo "injected IPv6 forwarding restore failure after IPv6 enable error" >&2
     exit 43
 fi
 exec "$REAL_SYSCTL_STARTUP" "\$@"
 EOF
-chmod +x "$TMP/fail-ipv4-enable-restore-sysctl/sysctl"
-if ip netns exec "$NS" env PATH="$TMP/fail-ipv4-enable-restore-sysctl:$PATH" "$BIN" --config "$TMP/config.toml" >"$TMP/partial-ipv4-forwarding-restore-failure.log" 2>&1; then
-    fail "daemon accepted an IPv4 enable failure followed by an IPv6 restore failure"
+chmod +x "$TMP/fail-ipv6-enable-restore-sysctl/sysctl"
+if ip netns exec "$NS" env PATH="$TMP/fail-ipv6-enable-restore-sysctl:$PATH" "$BIN" --config "$TMP/config.toml" >"$TMP/partial-ipv6-forwarding-restore-failure.log" 2>&1; then
+    fail "daemon accepted an IPv6 enable failure followed by an IPv6 restore failure"
 fi
-grep -Fq "injected IPv4 forwarding enable-after-write failure" "$TMP/partial-ipv4-forwarding-restore-failure.log" || fail "ambiguous IPv4 enable failure was not reported"
-grep -Fq "injected IPv6 forwarding restore failure after IPv4 enable error" "$TMP/partial-ipv4-forwarding-restore-failure.log" || fail "IPv6 restore failure was not reported"
-grep -Fq "startup aborted with forwarding state uncertain; retaining nftables policy" "$TMP/partial-ipv4-forwarding-restore-failure.log" || fail "startup did not retain fail-closed policy after forwarding rollback failure"
+grep -Fq "injected IPv6 forwarding enable-after-write failure" "$TMP/partial-ipv6-forwarding-restore-failure.log" || fail "ambiguous IPv6 enable failure was not reported"
+grep -Fq "injected IPv6 forwarding restore failure after IPv6 enable error" "$TMP/partial-ipv6-forwarding-restore-failure.log" || fail "IPv6 restore failure was not reported"
+grep -Fq "startup aborted with forwarding state uncertain; retaining nftables policy" "$TMP/partial-ipv6-forwarding-restore-failure.log" || fail "startup did not retain fail-closed policy after forwarding rollback failure"
 ip netns exec "$NS" nft list table inet vpn_relay_it >/dev/null 2>&1 || fail "fail-closed nftables policy was removed after forwarding rollback failure"
-[[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "0" ]] || fail "IPv4 forwarding was not restored after ambiguous enable failure"
-[[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "0" ]] || fail "IPv6 forwarding unexpectedly changed during failed restore"
+[[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "0" ]] || fail "IPv4 forwarding was not restored after IPv6 enable failure"
+[[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "1" ]] || fail "IPv6 forwarding state did not reflect the injected restore failure"
 for iface in wg-server awg-primary awg-secondary; do
     if ip netns exec "$NS" ip link show dev "$iface" >/dev/null 2>&1; then
         fail "TUN interface $iface leaked after forwarding rollback failure"
@@ -398,6 +398,7 @@ for family in -4 -6; do
         fail "policy rules leaked after forwarding rollback failure for $family"
     fi
 done
+ip netns exec "$NS" sysctl -qw net.ipv6.conf.all.forwarding=0
 ip netns exec "$NS" nft delete table inet vpn_relay_it
 
 REAL_NFT="$(command -v nft)"
