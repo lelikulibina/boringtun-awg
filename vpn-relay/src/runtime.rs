@@ -2157,9 +2157,8 @@ mod tests {
         ];
         let changed = vec![(0, "wg0".to_owned()), (1, "wg1".to_owned())];
 
-        let committed =
-            commit_peer_replacements(&mut devices, &changed, &candidate, &prepared)
-                .expect("both peer sets must commit before rollback is exercised");
+        let committed = commit_peer_replacements(&mut devices, &changed, &candidate, &prepared)
+            .expect("both peer sets must commit before rollback is exercised");
         assert_eq!(committed, vec![0, 1]);
 
         // Rollback runs in reverse order. wg1 fails on its restore call, but
