@@ -96,6 +96,16 @@ pub enum NatMode {
     Snat,
 }
 
+/// Fully-resolved source NAT action used by the routing and firewall layers.
+/// The TOML representation keeps the backward-compatible `nat` + `nat_to`
+/// fields, while this type makes it impossible to represent SNAT without an IP.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NatAction {
+    None,
+    Masquerade,
+    Snat(IpAddr),
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct InterfaceConfig {
@@ -218,6 +228,20 @@ pub struct RoutingRule {
     /// Required only for static source NAT.
     #[serde(default)]
     pub nat_to: Option<IpAddr>,
+}
+
+impl RoutingRule {
+    /// Resolve the validated TOML fields into one exhaustive, typed action.
+    pub fn nat_action(&self) -> NatAction {
+        match self.nat {
+            NatMode::None => NatAction::None,
+            NatMode::Masquerade => NatAction::Masquerade,
+            NatMode::Snat => NatAction::Snat(
+                self.nat_to
+                    .expect("validated SNAT routing rule must contain nat_to"),
+            ),
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -1271,6 +1295,29 @@ egress = "awg-uplink"
             .unwrap_err()
             .to_string()
             .contains("icmpv6\" requires IPv6"));
+    }
+
+    #[test]
+    fn routing_rule_resolves_nat_fields_into_a_typed_action() {
+        let mut rule: RoutingRule = toml::from_str(
+            r#"
+                priority = 1
+                ingress = "wg-server"
+                egress = "awg-uplink"
+            "#,
+        )
+        .unwrap();
+        assert_eq!(rule.nat_action(), NatAction::None);
+
+        rule.nat = NatMode::Masquerade;
+        assert_eq!(rule.nat_action(), NatAction::Masquerade);
+
+        rule.nat = NatMode::Snat;
+        rule.nat_to = Some("203.0.113.9".parse().unwrap());
+        assert_eq!(
+            rule.nat_action(),
+            NatAction::Snat("203.0.113.9".parse().unwrap())
+        );
     }
 
     #[test]

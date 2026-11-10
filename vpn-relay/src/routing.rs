@@ -4,7 +4,7 @@
 //! validated TOML configuration into deterministic nftables and policy-routing
 //! operations; the runtime layer can apply these operations transactionally.
 
-use crate::config::{Config, FirewallProtocol, FirewallRule, NatMode};
+use crate::config::{Config, FirewallProtocol, FirewallRule, NatAction, NatMode};
 use std::collections::BTreeMap;
 
 pub(crate) const FIRST_ROUTING_TABLE: u32 = 10_000;
@@ -512,21 +512,20 @@ impl RoutingPlan {
                 "iifname \"{}\" oifname \"{}\" ct mark & 0x{:08x} == 0x{:08x}",
                 rule.ingress, rule.egress, CONNTRACK_MARK_MASK, rule.conntrack_mark
             );
-            match rule.nat {
-                NatMode::None => output.push_str(&format!(
-                    "add rule {} {} postrouting {} return\n",
+            match rule.nat_action() {
+                NatAction::None => output.push_str(&format!(
+                    "add rule {} {} postrouting {} return\\n",
                     self.nft_family, self.nft_table, selector
                 )),
-                NatMode::Masquerade => output.push_str(&format!(
-                    "add rule {} {} postrouting {} masquerade\n",
+                NatAction::Masquerade => output.push_str(&format!(
+                    "add rule {} {} postrouting {} masquerade\\n",
                     self.nft_family, self.nft_table, selector
                 )),
-                NatMode::Snat => {
-                    let address = rule.nat_to.expect("validated SNAT rule has nat_to");
+                NatAction::Snat(address) => {
                     let family = if address.is_ipv4() { "ip" } else { "ip6" };
                     let nfproto = if address.is_ipv4() { "ipv4" } else { "ipv6" };
                     output.push_str(&format!(
-                        "add rule {} {} postrouting {} meta nfproto {} snat {} to {}\n",
+                        "add rule {} {} postrouting {} meta nfproto {} snat {} to {}\\n",
                         self.nft_family, self.nft_table, selector, nfproto, family, address
                     ));
                 }
