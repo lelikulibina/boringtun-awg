@@ -630,3 +630,6 @@ Noise sessions для peer, чьи параметры не менялись; н�
 
 
 | 2026-11-10 | Усилен стресс-тест непрерывного трафика при повторных reload | Commit 828b386; CI run 42725497030: для WG и AWG выполнены три последовательных nftables reload (add/remove/add независимого INPUT exception) на фоне 100 ICMP echo; проверены 100/100 ответов, daemon liveness и post-reload traffic. Все jobs и all-systems-go — success; Windows job skipped | Подтверждено CI |
+
+
+| 2026-11-10 | Добавлен failure-injection тест ошибки cleanup старых policy routes после nftables switch | Netns integration test принудительно ломает удаление старого IPv4 route после успешного переключения nftables; проверяет fatal response, завершение daemon и повторную очистку старого и нового routing plan при Drop, включая восстановление forwarding и удаление TUN. Ожидает CI | В работе |

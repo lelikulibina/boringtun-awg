@@ -335,6 +335,12 @@ if [ -f "$TMP/fail-route" ] && [ "\$1" = "-4" ] && [ "\$2" = "route" ] \
     echo "injected reload policy-route failure" >&2
     exit 42
 fi
+if [ -f "$TMP/fail-old-route-cleanup" ] && [ "\$1" = "-4" ] && [ "\$2" = "route" ] \
+    && [ "\$3" = "del" ] && [ "\$8" = "11001" ]; then
+    rm -f "$TMP/fail-old-route-cleanup"
+    echo "injected old policy-route cleanup failure" >&2
+    exit 42
+fi
 exec "$REAL_IP" "\$@"
 EOF
 cat >"$TMP/fail-nft-bin/nft" <<EOF
@@ -555,9 +561,37 @@ kill -0 "$DAEMON_PID" 2>/dev/null || fail "daemon exited after rejecting an immu
 input_after_rejected_reload="$(ip netns exec "$NS" nft list chain inet vpn_relay_it input)"
 grep -Fq 'ip saddr 10.10.0.2 udp dport 53' <<<"$input_after_rejected_reload" || fail "rejected immutable reload changed the active firewall policy"
 
-kill -TERM "$DAEMON_PID"
-wait "$DAEMON_PID" || fail "daemon returned an error during graceful shutdown"
+# A failure while retiring the old routes happens after nftables has switched.
+# The daemon must report a fatal transition, stop, and retry cleanup of both
+# the partially-retired old plan and the newly active plan during Drop.
+sed -i 's/0x90000000/0xA0000000/g; s/egress = "awg-secondary"/egress = "awg-primary"/g' "$TMP/config.toml"
+touch "$TMP/fail-old-route-cleanup"
+if ip netns exec "$NS" "$BIN" --config "$TMP/config.toml" --reload >"$TMP/reload-old-route-cleanup.log" 2>&1; then
+    fail "runtime reload succeeded despite injected old-route cleanup failure"
+fi
+grep -Fq 'old policy routes could not be removed' "$TMP/reload-old-route-cleanup.log" || fail "reload did not report fatal old-route cleanup failure"
+if wait "$DAEMON_PID"; then
+    fail "daemon exited successfully after fatal old-route cleanup failure"
+fi
 DAEMON_PID=""
+if ip netns exec "$NS" nft list table inet vpn_relay_it >/dev/null 2>&1; then
+    fail "daemon-owned nftables table survived fatal cleanup shutdown"
+fi
+for table in 11001 11002; do
+    if ip -n "$NS" -4 route show table "$table" | grep -q .; then
+        fail "policy routes survived fatal cleanup shutdown in table $table"
+    fi
+done
+if ip -n "$NS" -4 rule show | grep -q 'proto 242'; then
+    fail "vpn-relay policy rules survived fatal cleanup shutdown"
+fi
+[[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "0" ]] || fail "IPv4 forwarding was not restored after fatal cleanup"
+[[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "0" ]] || fail "IPv6 forwarding was not restored after fatal cleanup"
+for iface in wg-server awg-primary awg-secondary; do
+    if ip netns exec "$NS" ip link show dev "$iface" >/dev/null 2>&1; then
+        fail "TUN interface $iface survived fatal cleanup shutdown"
+    fi
+done
 
 [[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "0" ]] || fail "IPv4 forwarding value was not restored"
 [[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "0" ]] || fail "IPv6 forwarding value was not restored"
