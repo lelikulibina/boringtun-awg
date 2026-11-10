@@ -499,15 +499,16 @@ ip -n "$SECOND_CLIENT_NS" -6 route replace 2001:db8:195:1::1/128 dev wg-client-2
 chain="$(ip netns exec "$ROUTER_NS" nft list chain inet "vpn_relay_mu_router_$SUFFIX" prerouting)"
 forward_chain="$(ip netns exec "$ROUTER_NS" nft list chain inet "vpn_relay_mu_router_$SUFFIX" forward)"
 nat_chain="$(ip netns exec "$ROUTER_NS" nft list chain inet "vpn_relay_mu_router_$SUFFIX" postrouting)"
-grep -Fq 'iifname @managed_interfaces drop' <<<"$forward_chain" || fail "managed ingress isolation drop is missing"
-grep -Fq 'oifname @managed_interfaces drop' <<<"$forward_chain" || fail "managed egress isolation drop is missing"
-grep -Fq 'iifname "wg-ingress" oifname "awg-primary"' <<<"$nat_chain" && grep -Eq 'ct mark & 0xffff0000 == 0x50070000 masquerade' <<<"$nat_chain" || fail "primary IPv4 masquerade rule is missing"
-grep -Fq 'iifname "wg-ingress" oifname "awg-primary"' <<<"$nat_chain" && grep -Eq 'ct mark & 0xffff0000 == 0x50080000 masquerade' <<<"$nat_chain" || fail "primary IPv6 masquerade rule is missing"
+grep -Fq 'iif @managed_interfaces drop' <<<"$forward_chain" || fail "managed ingress isolation drop is missing"
+grep -Fq 'oif @managed_interfaces drop' <<<"$forward_chain" || fail "managed egress isolation drop is missing"
+grep -Fq 'iifname "wg-ingress" iif !=' <<<"$chain" || fail "same-name replacement guard is missing"
+grep -Fq 'iif "wg-ingress" oif "awg-primary"' <<<"$nat_chain" && grep -Eq 'ct mark & 0xffff0000 == 0x50070000 masquerade' <<<"$nat_chain" || fail "primary IPv4 masquerade rule is missing"
+grep -Fq 'iif "wg-ingress" oif "awg-primary"' <<<"$nat_chain" && grep -Eq 'ct mark & 0xffff0000 == 0x50080000 masquerade' <<<"$nat_chain" || fail "primary IPv6 masquerade rule is missing"
 
-grep -Fq 'iifname "wg-ingress" ct state new ip saddr { 10.77.0.2/31 } ip daddr { 79.100.22.0/24, 195.142.0.0/16 } meta mark set 0x80000001' <<<"$chain" && grep -Eq 'ct mark set .*0x50020000 return' <<<"$chain" || fail "secondary IPv4 source/destination CIDR arrays are missing"
-grep -Fq 'iifname "wg-ingress" ct state new ip saddr 10.77.0.2 ip daddr 203.0.113.0/24 meta mark set 0x80000000' <<<"$chain" && grep -Eq 'ct mark set .*0x50070000 return' <<<"$chain" || fail "primary destination-limited classifier is missing"
-grep -Fq 'iifname "wg-ingress" ct state new ip6 saddr { fd77::2/127 } ip6 daddr 2001:db8:195::/48 meta mark set 0x80000001' <<<"$chain" && grep -Eq 'ct mark set .*0x50040000 return' <<<"$chain" || fail "secondary IPv6 source array classifier is missing"
-grep -Fq 'iifname "wg-ingress" ct state new ip6 saddr fd77::2 ip6 daddr 2001:db8:1::/48 meta mark set 0x80000000' <<<"$chain" && grep -Eq 'ct mark set .*0x50080000 return' <<<"$chain" || fail "IPv6 primary destination-limited classifier is missing"
+grep -Fq 'iif "wg-ingress" ct state new ip saddr { 10.77.0.2/31 } ip daddr { 79.100.22.0/24, 195.142.0.0/16 } meta mark set 0x80000001' <<<"$chain" && grep -Eq 'ct mark set .*0x50020000 return' <<<"$chain" || fail "secondary IPv4 source/destination CIDR arrays are missing"
+grep -Fq 'iif "wg-ingress" ct state new ip saddr 10.77.0.2 ip daddr 203.0.113.0/24 meta mark set 0x80000000' <<<"$chain" && grep -Eq 'ct mark set .*0x50070000 return' <<<"$chain" || fail "primary destination-limited classifier is missing"
+grep -Fq 'iif "wg-ingress" ct state new ip6 saddr { fd77::2/127 } ip6 daddr 2001:db8:195::/48 meta mark set 0x80000001' <<<"$chain" && grep -Eq 'ct mark set .*0x50040000 return' <<<"$chain" || fail "secondary IPv6 source array classifier is missing"
+grep -Fq 'iif "wg-ingress" ct state new ip6 saddr fd77::2 ip6 daddr 2001:db8:1::/48 meta mark set 0x80000000' <<<"$chain" && grep -Eq 'ct mark set .*0x50080000 return' <<<"$chain" || fail "IPv6 primary destination-limited classifier is missing"
 
 
 # INPUT must preserve the original peer source address; source NAT is only
