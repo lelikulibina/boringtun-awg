@@ -1764,6 +1764,41 @@ mod tests {
     }
 
     #[test]
+    fn interface_identity_propagates_missing_link_lookup_errors() {
+        let missing_name = verify_interface_identity_with(
+            "eth0",
+            7,
+            |_| {
+                Err(LinuxError::Conflict {
+                    resource: "network interface 'eth0'".into(),
+                    details: "interface disappeared".into(),
+                })
+            },
+            |_| Ok("eth0".to_owned()),
+        );
+        assert!(matches!(
+            missing_name,
+            Err(LinuxError::Conflict { details, .. }) if details == "interface disappeared"
+        ));
+
+        let missing_index = verify_interface_identity_with(
+            "eth0",
+            7,
+            |_| Ok(7),
+            |_| {
+                Err(LinuxError::Conflict {
+                    resource: "network interface index 7".into(),
+                    details: "interface index disappeared".into(),
+                })
+            },
+        );
+        assert!(matches!(
+            missing_index,
+            Err(LinuxError::Conflict { details, .. }) if details == "interface index disappeared"
+        ));
+    }
+
+    #[test]
     fn nft_ownership_requires_table_level_comment_and_exact_identity() {
         let owned = r#"{"nftables":[{"table":{"family":"inet","name":"vpn_relay","comment":"managed by vpn-relay"}}]}"#;
         assert!(table_is_owned(owned, "inet", "vpn_relay"));
