@@ -1962,12 +1962,9 @@ mod tests {
     #[test]
     fn unmanaged_forwarding_treats_any_nonzero_value_as_enabled() {
         let allowed = std::collections::BTreeSet::new();
-        validate_unmanaged_forwarding_with(
-            &allowed,
-            &["eth0".to_owned()],
-            &[],
-            |_| Ok("2".to_owned()),
-        )
+        validate_unmanaged_forwarding_with(&allowed, &["eth0".to_owned()], &[], |_| {
+            Ok("2".to_owned())
+        })
         .unwrap_err();
     }
 
@@ -2069,7 +2066,10 @@ mod tests {
         };
         let values = std::cell::RefCell::new(std::collections::BTreeMap::from([
             ("net.ipv4.conf.eth0.forwarding".to_owned(), "0".to_owned()),
-            ("net.ipv6.conf.eth0.force_forwarding".to_owned(), "0".to_owned()),
+            (
+                "net.ipv6.conf.eth0.force_forwarding".to_owned(),
+                "0".to_owned(),
+            ),
         ]));
         let result = enable_interface_forwarding_entries_with(
             &state,
@@ -2082,10 +2082,14 @@ mod tests {
             },
             |key, value| {
                 if key.starts_with("net.ipv6.") && value == "1" {
-                    return Err(RuntimeError::Forwarding("injected setup failure".to_owned()));
+                    return Err(RuntimeError::Forwarding(
+                        "injected setup failure".to_owned(),
+                    ));
                 }
                 if key.starts_with("net.ipv4.") && value == "0" {
-                    return Err(RuntimeError::Forwarding("injected rollback failure".to_owned()));
+                    return Err(RuntimeError::Forwarding(
+                        "injected rollback failure".to_owned(),
+                    ));
                 }
                 values.borrow_mut().insert(key.to_owned(), value.to_owned());
                 Ok(())
