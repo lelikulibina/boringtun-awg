@@ -315,6 +315,10 @@ for table in 10000 10001; do
     done
 done
 
+# Force a known initial state: forwarding may already be enabled by the
+# runner's namespace setup, in which case startup correctly avoids rewriting it.
+ip netns exec "$NS" sysctl -qw net.ipv4.ip_forward=0
+ip netns exec "$NS" sysctl -qw net.ipv6.conf.all.forwarding=0
 # Fail IPv6 forwarding after IPv4 forwarding has already been enabled. The
 # daemon must restore IPv4 immediately and remove the routes, TUNs and nft
 # policy that were installed earlier in startup.
@@ -343,9 +347,11 @@ for table in 10000 10001; do
     done
 done
 
+# Reset IPv4 explicitly so the injected write is guaranteed to be attempted.
+ip netns exec "$NS" sysctl -qw net.ipv4.ip_forward=0
 # A failed IPv4 enable write is ambiguous: the sysctl may have changed before
-# the command reported an error. Simulate that exact condition and require both
-# families, routes, TUN links and nftables state to be restored.
+# the command reported an error. Simulate that exact condition and require the
+# attempted family, routes, TUN links and nftables state to be restored.
 REAL_SYSCTL_STARTUP="$(command -v sysctl)"
 mkdir -p "$TMP/fail-ipv4-enable-sysctl"
 cat >"$TMP/fail-ipv4-enable-sysctl/sysctl" <<EOF
@@ -361,6 +367,9 @@ chmod +x "$TMP/fail-ipv4-enable-sysctl/sysctl"
 expect_startup_failure partial-ipv4-forwarding.log "IPv4 forwarding enable-after-write failure" "$TMP/fail-ipv4-enable-sysctl"
 grep -Fq "injected IPv4 forwarding enable-after-write failure" "$TMP/partial-ipv4-forwarding.log" || fail "IPv4 enable-after-write failure was not observed"
 
+# Force IPv6 off so the startup path attempts to enable it and exercises
+# the ambiguous-write/restore-failure branch deterministically.
+ip netns exec "$NS" sysctl -qw net.ipv6.conf.all.forwarding=0
 # If IPv6 enable fails after changing the sysctl and restoring that
 # same family also fails, startup must retain the already-installed
 # fail-closed nftables policy.
