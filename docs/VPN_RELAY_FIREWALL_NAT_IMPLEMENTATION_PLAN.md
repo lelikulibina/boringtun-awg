@@ -858,7 +858,8 @@ successful shutdown removes the firewall.
 ### Per-interface forwarding — первый runtime проход
 
 - [x] Добавлен конфигурационный allowlist `daemon.forwarding_interfaces`; дубли, некорректные имена и изменение allowlist через reload отклоняются.
-- [x] Per-interface режим не переключает namespace-wide forwarding sysctls. Он требует, чтобы IPv4 и IPv6 global forwarding уже были включены контейнерным runtime/оператором: переключение IPv4 `ip_forward` меняет router/host defaults других интерфейсов в namespace.
-- [x] Включение и recovery используют `net.ipv4.conf.<if>.forwarding` и `net.ipv6.conf.<if>.forwarding`, сохраняют name/ifindex и проверяют identity до чтения/записи.
+- [x] Per-interface режим не переключает namespace-wide forwarding sysctls. Для IPv4 требуется заранее включённый `net.ipv4.ip_forward=1`; его переключение сбрасывает host/router defaults интерфейсов namespace.
+- [x] Для IPv6 требуется `net.ipv6.conf.all.forwarding=0`; включение global forwarding разрешает forwarding на всех links. Allowlist управляется через `net.ipv6.conf.<if>.force_forwarding=1`, что включает IPv6 forwarding только на выбранных links.
+- [x] Включение и recovery используют IPv4 `net.ipv4.conf.<if>.forwarding` и IPv6 `net.ipv6.conf.<if>.force_forwarding`, сохраняют name/ifindex и проверяют identity до чтения/записи.
 - [x] Recovery пишет original value только если текущее значение ещё равно daemon enable value (`1`); внешнее изменение не перезаписывается.
 - [ ] IPv6 RA/force_forwarding semantics, packet-level namespace tests, partial-write rollback failure injection и full CI остаются обязательными до завершения этапа.

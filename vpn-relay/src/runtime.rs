@@ -1461,16 +1461,19 @@ fn interface_forwarding_sysctl_key(name: &str, family: &str) -> Result<String, R
             "refusing to construct a sysctl path from an invalid interface name".to_owned(),
         ));
     }
-    let suffix = match family {
-        "ipv4" => "net.ipv4.conf",
-        "ipv6" => "net.ipv6.conf",
+    let key = match family {
+        "ipv4" => format!("net.ipv4.conf.{name}.forwarding"),
+        // IPv6 global forwarding enables every link. Use force_forwarding
+        // instead, with conf/all/forwarding kept disabled, to opt in only
+        // the explicitly managed links.
+        "ipv6" => format!("net.ipv6.conf.{name}.force_forwarding"),
         _ => {
             return Err(RuntimeError::Forwarding(
                 "unsupported interface forwarding address family".to_owned(),
             ))
         }
     };
-    Ok(format!("{suffix}.{name}.forwarding"))
+    Ok(key)
 }
 
 /// Restore one link-scoped sysctl only while the saved name/ifindex identity
@@ -1549,15 +1552,15 @@ fn enable_interface_forwarding_durable(
     namespace_inode: u64,
     names: &[String],
 ) -> Result<ForwardingState, RuntimeError> {
-    // IPv4 and IPv6 global switches have broad namespace effects. In
-    // per-interface mode they are prerequisites managed by the container
-    // runtime/operator, not toggled here (toggling IPv4 ip_forward resets
-    // interface router/host defaults across the namespace).
+    // IPv4 requires the namespace-wide switch, but toggling it resets
+    // interface host/router defaults; require the runtime/operator to enable
+    // it before vpn-relay starts. IPv6 uses force_forwarding per link and must
+    // keep conf/all/forwarding disabled, otherwise every link can forward.
     if read_sysctl("net.ipv4.ip_forward")? != "1"
-        || read_sysctl("net.ipv6.conf.all.forwarding")? != "1"
+        || read_sysctl("net.ipv6.conf.all.forwarding")? != "0"
     {
         return Err(RuntimeError::Forwarding(
-            "per-interface forwarding requires net.ipv4.ip_forward=1 and net.ipv6.conf.all.forwarding=1 to be enabled externally".to_owned(),
+            "per-interface forwarding requires net.ipv4.ip_forward=1 and net.ipv6.conf.all.forwarding=0; configure these namespace-wide prerequisites externally".to_owned(),
         ));
     }
 
@@ -1797,7 +1800,7 @@ mod tests {
         );
         assert_eq!(
             interface_forwarding_sysctl_key("awg0", "ipv6").unwrap(),
-            "net.ipv6.conf.awg0.forwarding"
+            "net.ipv6.conf.awg0.force_forwarding"
         );
         assert!(interface_forwarding_sysctl_key("../eth0", "ipv4").is_err());
         assert!(interface_forwarding_sysctl_key("eth0", "other").is_err());
