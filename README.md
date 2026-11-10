@@ -158,7 +158,16 @@ podman run -d \
 
 `NET_ADMIN` нужен для настройки TUN, маршрутов, nftables и сетевых sysctl; `/dev/net/tun` должен быть доступен контейнеру. Не используйте `--privileged` как замену точечной выдаче capability и устройства. IPv4 `net.ipv4.ip_forward=1` — namespace-wide переключатель ядра: per-interface IPv4 forwarding сам по себе не заменяет его. Пример предполагает, что контейнеру действительно разрешено управлять nftables и sysctl в его network namespace.
 
-Текущий параметр `daemon.manage_ip_forwarding` управляет **глобальными для network namespace** значениями IPv4/IPv6 forwarding. Поэтому `true` допустим только если вы осознанно принимаете изменение режима маршрутизатора для всех интерфейсов этого namespace. В частности, IPv6 forwarding влияет на обработку Router Advertisement. До завершения per-interface реализации безопасный вариант — выставить необходимые глобальные sysctl средствами Podman/оркестратора и оставить `manage_ip_forwarding = false`.
+Для per-interface режима задайте в конфигурации явный allowlist:
+```toml
+[daemon]
+manage_ip_forwarding = true
+forwarding_interfaces = ["eth0", "wg0"]
+```
+
+В этом режиме заранее установите внутри network namespace IPv4 `net.ipv4.ip_forward=1` и оставьте IPv6 `net.ipv6.conf.all.forwarding=0`; демон не меняет эти глобальные значения. IPv4 ограничивается `net.ipv4.conf.<if>.forwarding`, IPv6 — `net.ipv6.conf.<if>.force_forwarding`. Все интерфейсы вне allowlist должны иметь соответствующие forwarding-флаги выключенными. Если после установки `ip_forward=1` у `lo` или другого неразрешённого интерфейса forwarding равен 1, сбросьте его до запуска daemon, например `sysctl -w net.ipv4.conf.lo.forwarding=0`. Демон повторно проверяет условия во время работы и сохраняет fail-closed firewall при нарушении.
+
+IPv6 `force_forwarding` не переключает Host/Router setting интерфейса и не меняет `accept_ra`; если uplink должен принимать Router Advertisements, проверьте его `accept_ra` отдельно. Legacy-режим `manage_ip_forwarding=true` с пустым `forwarding_interfaces` по-прежнему управляет namespace-wide IPv4/IPv6 sysctl и не рекомендуется на общем host namespace.
 
 Не запускайте контейнер с `--network host` вместе с `manage_ip_forwarding = true`: такой контейнер разделяет network namespace хоста, и sysctl могут изменить сетевое поведение самого хоста. Podman также ограничивает передачу `--sysctl` для host network mode. Rootless Podman не считается поддерживаемым режимом для полного VPN relay: доступность TUN, NET_ADMIN, маршрутизации, nftables и записи sysctl зависит от конфигурации user/network namespace. Демон должен завершаться с диагностикой при отсутствии полномочий, а не пытаться обходить ограничения.
 ## Supported platforms

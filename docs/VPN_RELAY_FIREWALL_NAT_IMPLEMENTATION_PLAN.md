@@ -833,33 +833,21 @@ successful shutdown removes the firewall.
 
 ## Podman и границы network namespace
 
-Поддерживаемая базовая схема развёртывания — rootful Podman с private network namespace (`bridge`), `CAP_NET_ADMIN` и доступом к `/dev/net/tun`. Все имена интерфейсов и ifindex для будущего per-interface manager должны разрешаться внутри namespace процесса vpn-relay: контейнерный `eth0` — это veth endpoint контейнера, а не физический интерфейс хоста.
+Поддерживаемая базовая схема развёртывания — rootful Podman с private network namespace (bridge), CAP_NET_ADMIN и доступом к /dev/net/tun. Имена интерфейсов и ifindex разрешаются внутри namespace процесса vpn-relay. --network host не рекомендуется; rootless Podman не объявляется поддерживаемым режимом полного relay до проверки TUN, netlink, nftables и sysctl capabilities.
 
-До реализации per-interface sysctl manager параметр `daemon.manage_ip_forwarding` остаётся namespace-wide. Для контейнера предпочтительно задать требуемый IPv4 `net.ipv4.ip_forward=1` через Podman и оставить daemon ownership выключенным. Это не является per-interface изоляцией: IPv4 global switch обязателен для forwarding, а интерфейсные sysctl должны дополнительно ограничивать входящий forwarding. IPv6 `conf/all/forwarding`, `force_forwarding` и `accept_ra` требуют отдельной последовательной обработки и восстановления.
+### Per-interface forwarding — реализация
 
-`--network host` с включённым `manage_ip_forwarding` не рекомендован и потенциально меняет sysctl хоста. Rootless Podman не объявляется поддерживаемым для полного relay до проверки реальных прав на TUN, netlink, nftables и sysctl. Не использовать `--privileged` как обход этих проверок.
+- [x] Добавлен конфигурационный allowlist daemon.forwarding_interfaces; имена валидируются, дубликаты отклоняются, изменение списка через reload запрещено.
+- [x] Per-interface режим включается только при manage_ip_forwarding=true и непустом allowlist. Пустой список сохраняет прежний namespace-wide режим для обратной совместимости.
+- [x] IPv4 требует внешнего net.ipv4.ip_forward=1; демон не переключает его, поскольку изменение сбрасывает host/router defaults в namespace.
+- [x] IPv4 allowlist управляется через net.ipv4.conf.<if>.forwarding. На старте и каждую секунду проверяется, что неразрешённые интерфейсы имеют forwarding=0.
+- [x] IPv6 требует net.ipv6.conf.all.forwarding=0; allowlist использует net.ipv6.conf.<if>.force_forwarding=1. Это сохраняет per-interface Host/Router setting и не меняет accept_ra; RA policy остаётся ответственностью оператора.
+- [x] Внешние interface sysctl journal включают namespace inode, name, ifindex, original value и ownership flag; identity проверяется перед каждым чтением/записью. Восстановление выполняется только если текущее значение всё ещё равно daemon-written 1.
+- [x] Записи daemon-owned TUN не восстанавливаются: их sysctl исчезает вместе с непостоянным TUN, а попытка записи по сохранённым name/ifindex могла бы попасть в новый интерфейс после повторного использования идентификаторов.
+- [x] Журнал записывается до изменения sysctl. Частичная ошибка запуска запускает rollback; неуспешный rollback оставляет journal и fail-closed firewall.
+- [x] Runtime проверяет global prerequisites, состояние unmanaged links и allowlisted links; при drift выполняется fatal shutdown с сохранением firewall.
+- [x] Добавлены unit tests для валидации allowlist, identity mismatch, внешних изменений sysctl, partial-write rollback и TUN recovery.
+- [x] Добавлены root-only network namespace suites: daemon lifecycle/recovery, unmanaged interface rejection, runtime drift, а также реальные IPv4/IPv6 packet probes для allowlisted и blocked ingress interfaces.
+- [ ] Остаточный риск: проверка name/ifindex и sysctl write не атомарны; guard выполняется непосредственно перед операцией, но для полного устранения TOCTOU потребуется переход на netlink API, адресующий интерфейс по ifindex. Это отдельное усиление, не блокирующее текущую ограниченную модель.
 
-### Следующие критерии per-interface реализации
-
-- явный allowlist интерфейсов, разрешённых для forwarding; имена и ifindex разрешаются только внутри текущего network namespace;
-- IPv4 global `ip_forward` рассматривается отдельно от интерфейсных `conf/<if>/forwarding`; отсутствие global enable не маскируется интерфейсными флагами;
-- IPv6 global forwarding, per-interface `forwarding`, `force_forwarding` и `accept_ra` изменяются и восстанавливаются в определённом порядке;
-- durable journal хранит namespace inode, interface name/ifindex, исходное и установленное daemon значение каждого sysctl; восстановление не должно писать в новый интерфейс, случайно получивший прежнее имя;
-- тесты проверяют private netns, исчезновение/переиспользование ifindex, частичный отказ записи и recovery после SIGKILL;
-- host network mode и rootless ограничения документируются как отдельные режимы, без неявного расширения полномочий.
-
-| 2026-11-10 | Зафиксирована модель развёртывания в Podman перед per-interface runtime | README описывает rootful bridge/private netns, NET_ADMIN, /dev/net/tun, IPv4 global switch и запрет считать host/rootless режимы безопасными по умолчанию. Следующий шаг — реализация интерфейсного allowlist и journal с identity guard; код per-interface sysctl ещё не реализован. | Документация обновлена; ожидает CI |
-
-| 2026-11-10 | Добавлена обратная проверка Linux interface identity для будущего forwarding journal | Реализован ifindex → interface name через `if_indextoname`; identity guard проверяет обе стороны отображения name/index. Проверки вынесены в функцию с внедряемыми lookup-операциями, чтобы тестировать сценарии повторного использования имени и индекса без изменения реального netns. CI предыдущего коммита выявил только rustfmt (исправлено в `34e3dde`); полный CI нового коммита `1cf4cd0` ожидает запуска. | Реализовано; CI ожидает завершения |
-
-| 2026-11-10 | Добавлены тесты обработки исчезнувшего forwarding-интерфейса | Проверки name → ifindex и ifindex → name теперь отдельно подтверждают передачу ошибки, если интерфейс исчез до lookup. Это гарантирует, что будущий recovery не сможет трактовать недоступную идентичность как успешное совпадение и должен оставить journal при невозможности безопасного восстановления. | Реализовано; CI ожидает завершения |
-
-
-### Per-interface forwarding — первый runtime проход
-
-- [x] Добавлен конфигурационный allowlist `daemon.forwarding_interfaces`; дубли, некорректные имена и изменение allowlist через reload отклоняются.
-- [x] Per-interface режим не переключает namespace-wide forwarding sysctls. Для IPv4 требуется заранее включённый `net.ipv4.ip_forward=1`; его переключение сбрасывает host/router defaults интерфейсов namespace.
-- [x] Для IPv6 требуется `net.ipv6.conf.all.forwarding=0`; включение global forwarding разрешает forwarding на всех links. Allowlist управляется через `net.ipv6.conf.<if>.force_forwarding=1`, что включает IPv6 forwarding только на выбранных links.
-- [x] Включение и recovery используют IPv4 `net.ipv4.conf.<if>.forwarding` и IPv6 `net.ipv6.conf.<if>.force_forwarding`, сохраняют name/ifindex и проверяют identity до чтения/записи.
-- [x] Recovery пишет original value только если текущее значение ещё равно daemon enable value (`1`); внешнее изменение не перезаписывается.
-- [ ] IPv6 RA/force_forwarding semantics, packet-level namespace tests, partial-write rollback failure injection и full CI остаются обязательными до завершения этапа.
+net.ipv4.ip_forward=1 и net.ipv6.conf.all.forwarding=0 должны быть выставлены до запуска daemon и оставаться неизменными на протяжении его работы. Если global IPv6 forwarding включить, ядро переключит Host/Router setting всех интерфейсов и сбросит force_forwarding; runtime monitor завершит daemon и сохранит fail-closed firewall. Внешние интерфейсы, на которых forwarding уже включён, должны быть включены в allowlist; иначе startup отклоняется.

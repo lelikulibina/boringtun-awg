@@ -68,6 +68,9 @@ for iface in lo uplink0 untrusted0; do
     ip netns exec "$NS" sysctl -qw "net.ipv4.conf.$iface.forwarding=0"
     ip netns exec "$NS" sysctl -qw "net.ipv6.conf.$iface.force_forwarding=0"
 done
+# force_forwarding must not alter the IPv6 Host/Router mode or RA policy.
+ip netns exec "$NS" sysctl -qw net.ipv6.conf.uplink0.forwarding=0
+ip netns exec "$NS" sysctl -qw net.ipv6.conf.uplink0.accept_ra=2
 
 # An unmanaged interface with forwarding enabled must make startup fail
 # before the daemon changes any interface sysctl or installs its firewall.
@@ -112,6 +115,8 @@ start_daemon || fail "daemon did not enable selected per-interface forwarding"
 [[ "$(ip netns exec "$NS" sysctl -n net.ipv4.conf.untrusted0.forwarding)" == "0" ]] || fail "unmanaged IPv4 interface was enabled"
 [[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.untrusted0.force_forwarding)" == "0" ]] || fail "unmanaged IPv6 interface was enabled"
 [[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "0" ]] || fail "daemon enabled namespace-wide IPv6 forwarding"
+[[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.uplink0.forwarding)" == "0" ]] || fail "daemon changed IPv6 Host/Router forwarding mode"
+[[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.uplink0.accept_ra)" == "2" ]] || fail "daemon changed uplink Router Advertisement policy"
 
 # Changes made by another administrator while the daemon is running must be
 # detected; the daemon stops and retains its fail-closed firewall.
@@ -147,13 +152,14 @@ PID=""
 ip netns exec "$NS" nft list table inet vpn_relay_per_if_test >/dev/null 2>&1 && fail "firewall survived graceful shutdown"
 
 # SIGKILL leaves the durable journal but closes the TUN descriptor. Recovery
-# must restore the persistent uplink and skip only the vanished daemon-owned
-# TUN entry, never writing it into a same-name replacement link.
+# restores persistent links and never applies a daemon-owned TUN entry to a
+# replacement, even if the kernel recycles the old name and ifindex.
 start_daemon || fail "daemon did not restart for SIGKILL recovery test"
 kill -KILL "$PID"
 wait "$PID" 2>/dev/null || true
 PID=""
 [[ -f "/run/vpn-relay-netns-$INODE.forwarding" ]] || fail "SIGKILL did not leave the forwarding journal"
+grep -Fq '"daemon_owned":true' "/run/vpn-relay-netns-$INODE.forwarding" || fail "journal did not mark the daemon-owned TUN entry"
 ip netns exec "$NS" ip link show dev wg0 >/dev/null 2>&1 && fail "TUN survived SIGKILL unexpectedly"
 
 start_daemon || fail "daemon could not recover journal after its TUN disappeared"
