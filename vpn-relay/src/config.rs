@@ -445,9 +445,7 @@ impl Config {
             return invalid("at least one interface must be configured");
         }
         if !self.daemon.forwarding_interfaces.is_empty() && !self.daemon.manage_ip_forwarding {
-            return invalid(
-                "[daemon].forwarding_interfaces requires manage_ip_forwarding = true",
-            );
+            return invalid("[daemon].forwarding_interfaces requires manage_ip_forwarding = true");
         }
         let mut forwarding_names = HashSet::new();
         for name in &self.daemon.forwarding_interfaces {

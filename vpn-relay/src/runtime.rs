@@ -1596,7 +1596,11 @@ fn enable_interface_forwarding_durable(
         entry.ipv6_changed = entry.ipv6 != "1";
     }
     validate_forwarding_state(&state)?;
-    if state.interfaces.iter().any(|entry| entry.ipv4_changed || entry.ipv6_changed) {
+    if state
+        .interfaces
+        .iter()
+        .any(|entry| entry.ipv4_changed || entry.ipv6_changed)
+    {
         persist_forwarding_state(path, namespace_inode, &state)?;
     }
 
@@ -1623,16 +1627,12 @@ fn enable_interface_forwarding_entries_with(
 ) -> Result<(), RuntimeError> {
     let mut failures = Vec::new();
     for entry in &state.interfaces {
-        for (family, changed) in [
-            ("ipv4", entry.ipv4_changed),
-            ("ipv6", entry.ipv6_changed),
-        ] {
+        for (family, changed) in [("ipv4", entry.ipv4_changed), ("ipv6", entry.ipv6_changed)] {
             if !changed {
                 continue;
             }
             let key = interface_forwarding_sysctl_key(&entry.name, family)?;
-            let result = verify(&entry.name, entry.ifindex)
-                .and_then(|()| write(&key, "1"));
+            let result = verify(&entry.name, entry.ifindex).and_then(|()| write(&key, "1"));
             if let Err(error) = result {
                 failures.push(format!("{} {family}: {error}", entry.name));
             }
