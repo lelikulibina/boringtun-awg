@@ -737,3 +737,5 @@ Noise sessions для peer, чьи параметры не менялись; н�
 - Run `42818275020`: `rustfmt`, unit tests, `clippy`, feature checks and AWG 3.1 interoperability passed; integration failed in the multi-uplink masquerade address-change probe.
 - Root cause: the attempted switch to client `10.77.0.3` used destination `203.0.113.1`, but the fixture's matching routing decision for that destination is scoped to `10.77.0.2/32`. The packet therefore had no routing decision and correctly did not reach the uplink. Restore client `.2` and force a fresh ICMP conntrack tuple with identifier `4242`; keep packet capture asserting source `10.20.0.99`.
 - Address-change masquerade coverage remains pending a successful integration CI run.
+
+- Follow-up test isolation: the post-address-change ping also uses a distinct ICMP identifier (`4243`) so it cannot reuse conntrack NAT state established by the earlier masquerade probe. The preceding general masquerade probe uses identifier `4242`.

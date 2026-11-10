@@ -707,7 +707,9 @@ ip netns exec "$PRIMARY_NS" timeout 5 tcpdump -nn -i up-primary -c 1 \
     >"$TMP/nat-masquerade-address-change.log" 2>&1 &
 capture_pid=$!
 sleep 0.25
-ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -c 1 -W 2 203.0.113.1 \
+# Use a distinct ICMP identifier to force a new conntrack mapping after the
+# primary egress address changes.
+ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -e 4243 -c 1 -W 2 203.0.113.1 \
     || fail "masquerade probe failed after changing the egress TUN address"
 wait "$capture_pid" || fail "could not capture masquerade packet after egress address change"
 grep -Fq '10.20.0.99 > 203.0.113.1' "$TMP/nat-masquerade-address-change.log" \
