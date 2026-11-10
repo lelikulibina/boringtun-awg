@@ -1303,6 +1303,77 @@ mod tests {
     }
 
     #[test]
+    fn conntrack_mark_state_rejects_hard_links() {
+        let directory = std::env::temp_dir().join(format!(
+            "vpn-relay-marks-hardlink-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir(&directory).unwrap();
+        let path = directory.join("namespace.marks");
+        let linked_path = directory.join("linked.marks");
+        persist_conntrack_mark_history(&path, &[sample_conntrack_decision()]).unwrap();
+        fs::hard_link(&path, &linked_path).unwrap();
+
+        assert!(matches!(
+            load_conntrack_mark_history(&path),
+            Err(RuntimeError::ConntrackMarkState(_))
+        ));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn conntrack_mark_state_persistence_refuses_unsafe_existing_files() {
+        let directory = std::env::temp_dir().join(format!(
+            "vpn-relay-marks-persist-safety-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir(&directory).unwrap();
+        let path = directory.join("namespace.marks");
+        let linked_path = directory.join("linked.marks");
+        fs::write(&path, b"untrusted").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        fs::hard_link(&path, &linked_path).unwrap();
+
+        assert!(matches!(
+            persist_conntrack_mark_history(&path, &[sample_conntrack_decision()]),
+            Err(RuntimeError::ConntrackMarkState(_))
+        ));
+        assert_eq!(fs::read(&path).unwrap(), b"untrusted");
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn conntrack_mark_state_persistence_refuses_unsafe_temporary_symlinks() {
+        let directory = std::env::temp_dir().join(format!(
+            "vpn-relay-marks-temp-symlink-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir(&directory).unwrap();
+        let path = directory.join("namespace.marks");
+        let target = directory.join("target");
+        let temporary_path = path.with_extension(format!("marks.tmp-{}", std::process::id()));
+        fs::write(&target, b"do not modify").unwrap();
+        std::os::unix::fs::symlink(&target, &temporary_path).unwrap();
+
+        assert!(matches!(
+            persist_conntrack_mark_history(&path, &[sample_conntrack_decision()]),
+            Err(RuntimeError::ConntrackMarkState(_))
+        ));
+        assert_eq!(fs::read(&target).unwrap(), b"do not modify");
+        assert!(fs::symlink_metadata(&temporary_path)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn network_namespace_lock_paths_are_keyed_by_namespace_inode() {
         assert_ne!(
             InstanceLock::path_for_netns_inode(100),
