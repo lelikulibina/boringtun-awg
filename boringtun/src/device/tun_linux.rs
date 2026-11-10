@@ -130,9 +130,8 @@ impl TunSocket {
             return Err(Error::IOCtl(io::Error::last_os_error()));
         }
 
-        let actual =
-            unsafe { std::ffi::CStr::from_ptr(ifr.ifr_name.as_ptr() as *const c_char) }
-                .to_string_lossy();
+        let actual = unsafe { std::ffi::CStr::from_ptr(ifr.ifr_name.as_ptr() as *const c_char) }
+            .to_string_lossy();
         if actual != self.name {
             return Err(Error::IOCtl(io::Error::new(
                 io::ErrorKind::NotConnected,
