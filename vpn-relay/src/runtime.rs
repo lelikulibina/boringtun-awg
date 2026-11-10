@@ -476,7 +476,7 @@ impl Runtime {
                     drop(devices);
                     // If restoring the original forwarding value failed, the
                     // firewall is the remaining fail-closed protection.
-                    if !matches!(error, RuntimeError::FatalTransition(_)) {
+                    if !matches!(&error, RuntimeError::FatalTransition(_)) {
                         linux::remove_nft(&routing);
                     } else {
                         tracing::error!(
