@@ -322,7 +322,7 @@ unmanaged output остаётся неизменным.
 Критерий приёмки: гарантии подтверждены тестами на реальном BoringTun traffic;
 неподтверждённые свойства не заявляются.
 
-## 11. Этап 8 — runtime, rollback, ownership
+| 2026-11-11 | Добавлена проверка отказа nftables delete при startup rollback | Failure injection сначала прерывает настройку адреса TUN, затем блокирует удаление принадлежащей демону nftables table. Проверяется fatal error с обеими причинами, отсутствие TUN, восстановление forwarding sysctl и сохранение fail-closed table; тест удаляет оставленную таблицу только после проверки. | Реализовано, ожидает CI |\n\n## 11. Этап 8 — runtime, rollback, ownership
 
 - [x] Сформировать и валидировать Config, socket marks, RoutingPlan и backend
   config до изменения системного состояния.

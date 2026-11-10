@@ -30,7 +30,7 @@ trap cleanup EXIT
 
 fail() {
     echo "vpn-relay namespace test: $*" >&2
-    for log in "$TMP/bootstrap-nft-failure.log" "$TMP/indexed-nft-failure.log" "$TMP/startup-route-rollback-failure.log" "$TMP/daemon.log" "$TMP/conflict.log" "$TMP/policy-conflict.log" "$TMP/route-conflict.log" "$TMP/policy-shadow-conflict.log" "$TMP/partial-setup-conflict.log" "$TMP/partial-interface-config.log" "$TMP/partial-policy-route.log" "$TMP/partial-forwarding.log" "$TMP/partial-ipv4-forwarding.log" "$TMP/partial-ipv4-forwarding-restore-failure.log" "$TMP/reload-failure.log" "$TMP/reload-route-failure.log" "$TMP/reload-immutable.log" "$TMP/shutdown-cleanup-failure.log" "$TMP/shutdown-forwarding-restore-failure.log" "$TMP/shutdown-ipv6-forwarding-restore-failure.log" "$TMP/preexisting-forwarding.log" "$TMP/fail-route-commands.log" "$TMP/forwarding-management-disabled.log" "$TMP/tun-identity-loss.log"; do
+    for log in "$TMP/bootstrap-nft-failure.log" "$TMP/indexed-nft-failure.log" "$TMP/startup-route-rollback-failure.log" "$TMP/startup-nft-cleanup-failure.log" "$TMP/daemon.log" "$TMP/conflict.log" "$TMP/policy-conflict.log" "$TMP/route-conflict.log" "$TMP/policy-shadow-conflict.log" "$TMP/partial-setup-conflict.log" "$TMP/partial-interface-config.log" "$TMP/partial-policy-route.log" "$TMP/partial-forwarding.log" "$TMP/partial-ipv4-forwarding.log" "$TMP/partial-ipv4-forwarding-restore-failure.log" "$TMP/reload-failure.log" "$TMP/reload-route-failure.log" "$TMP/reload-immutable.log" "$TMP/shutdown-cleanup-failure.log" "$TMP/shutdown-forwarding-restore-failure.log" "$TMP/shutdown-ipv6-forwarding-restore-failure.log" "$TMP/preexisting-forwarding.log" "$TMP/fail-route-commands.log" "$TMP/forwarding-management-disabled.log" "$TMP/tun-identity-loss.log"; do
         if [[ -f "$log" ]]; then
             cat "$log" >&2
         fi
@@ -292,6 +292,46 @@ EOF
 chmod +x "$TMP/fail-interface-config/ip"
 expect_startup_failure partial-interface-config.log "injected TUN address configuration failure" "$TMP/fail-interface-config"
 grep -Fq "injected TUN address configuration failure" "$TMP/partial-interface-config.log" || fail "TUN address configuration failure was not observed"
+
+# A failed firewall deletion after a partial interface setup must be reported
+# as fatal and must leave the owned drop policy installed. The test repairs only
+# its own retained table after verifying TUN and forwarding rollback.
+REAL_NFT_CLEANUP="$(command -v nft)"
+mkdir -p "$TMP/fail-interface-and-nft-cleanup"
+cat >"$TMP/fail-interface-and-nft-cleanup/ip" <<EOF
+#!/bin/sh
+if [ "\$1" = "-4" ] && [ "\$2" = "address" ] && [ "\$3" = "replace" \\
+    && [ "\$6" = "awg-primary" ]; then
+    echo "injected TUN address failure before nft cleanup" >&2
+    exit 42
+fi
+exec "$REAL_IP_CONFIG" "\$@"
+EOF
+cat >"$TMP/fail-interface-and-nft-cleanup/nft" <<EOF
+#!/bin/sh
+if [ "\$1" = "delete" ] && [ "\$2" = "table" ] \\
+    && [ "\$3" = "inet" ] && [ "\$4" = "vpn_relay_it" ]; then
+    echo "injected nftables deletion failure during startup rollback" >&2
+    exit 43
+fi
+exec "$REAL_NFT_CLEANUP" "\$@"
+EOF
+chmod +x "$TMP/fail-interface-and-nft-cleanup/ip" "$TMP/fail-interface-and-nft-cleanup/nft"
+if ip netns exec "$NS" env PATH="$TMP/fail-interface-and-nft-cleanup:$PATH" "$BIN" --config "$TMP/config.toml" >"$TMP/startup-nft-cleanup-failure.log" 2>&1; then
+    fail "daemon accepted startup rollback after nftables deletion failure"
+fi
+grep -Fq "injected TUN address failure before nft cleanup" "$TMP/startup-nft-cleanup-failure.log" || fail "partial interface setup failure was not observed in nft cleanup scenario"
+grep -Fq "injected nftables deletion failure during startup rollback" "$TMP/startup-nft-cleanup-failure.log" || fail "nftables deletion failure was not observed during startup rollback"
+grep -Fq "nftables cleanup failed" "$TMP/startup-nft-cleanup-failure.log" || fail "startup did not report nftables cleanup failure"
+ip netns exec "$NS" nft list table inet vpn_relay_it >/dev/null 2>&1 || fail "fail-closed nftables table was removed despite injected deletion failure"
+for iface in wg-server awg-primary awg-secondary; do
+    if ip netns exec "$NS" ip link show dev "$iface" >/dev/null 2>&1; then
+        fail "TUN interface $iface leaked after nftables cleanup failure"
+    fi
+done
+[[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "0" ]] || fail "IPv4 forwarding changed after nftables cleanup failure"
+[[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "0" ]] || fail "IPv6 forwarding changed after nftables cleanup failure"
+ip netns exec "$NS" nft delete table inet vpn_relay_it
 
 # Exercise both nftables installation boundaries during initial startup.
 # The first batch is the drop-only bootstrap; the second atomically activates
