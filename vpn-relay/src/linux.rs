@@ -1036,10 +1036,12 @@ mod tests {
         let mut apply_calls = 0;
         let result = apply_nft_with(
             &plan,
-            &mut |_plan| Err(LinuxError::Conflict {
-                resource: "nft table inet vpn_relay".into(),
-                details: "unowned table".into(),
-            }),
+            &mut |_plan| {
+                Err(LinuxError::Conflict {
+                    resource: "nft table inet vpn_relay".into(),
+                    details: "unowned table".into(),
+                })
+            },
             &mut |_script| {
                 apply_calls += 1;
                 Ok(())
@@ -1054,14 +1056,10 @@ mod tests {
     fn nft_apply_creates_missing_table_without_delete_command() {
         let plan = cleanup_test_plan();
         let mut submitted = None;
-        apply_nft_with(
-            &plan,
-            &mut |_plan| Ok(false),
-            &mut |script| {
-                submitted = Some(script.to_owned());
-                Ok(())
-            },
-        )
+        apply_nft_with(&plan, &mut |_plan| Ok(false), &mut |script| {
+            submitted = Some(script.to_owned());
+            Ok(())
+        })
         .unwrap();
 
         let script = submitted.expect("nft batch must be submitted");
@@ -1073,22 +1071,18 @@ mod tests {
     fn nft_apply_preserves_owned_table_on_transaction_failure() {
         let plan = cleanup_test_plan();
         let mut submitted = None;
-        let result = apply_nft_with(
-            &plan,
-            &mut |_plan| Ok(true),
-            &mut |script| {
-                submitted = Some(script.to_owned());
-                Err(LinuxError::Command {
-                    program: "nft -f -".into(),
-                    status: "exit status 1".into(),
-                    stderr: "injected transaction failure".into(),
-                })
-            },
-        );
+        let result = apply_nft_with(&plan, &mut |_plan| Ok(true), &mut |script| {
+            submitted = Some(script.to_owned());
+            Err(LinuxError::Command {
+                program: "nft -f -".into(),
+                status: "exit status 1".into(),
+                stderr: "injected transaction failure".into(),
+            })
+        });
 
         assert!(submitted
             .as_deref()
-            .is_some_and(|script| script.starts_with("delete table inet vpn_relay\\n")));
+            .is_some_and(|script| script.starts_with("delete table inet vpn_relay\n")));
         assert!(matches!(result, Err(LinuxError::Command { ref stderr, .. })
             if stderr.contains("injected transaction failure")));
     }
@@ -1097,31 +1091,23 @@ mod tests {
     fn nft_remove_skips_missing_table_and_propagates_delete_failure() {
         let plan = cleanup_test_plan();
         let mut delete_calls = 0;
-        remove_nft_with(
-            &plan,
-            &mut |_plan| Ok(false),
-            &mut |_program, _args| {
-                delete_calls += 1;
-                Ok(())
-            },
-        )
+        remove_nft_with(&plan, &mut |_plan| Ok(false), &mut |_program, _args| {
+            delete_calls += 1;
+            Ok(())
+        })
         .unwrap();
         assert_eq!(delete_calls, 0);
 
-        let result = remove_nft_with(
-            &plan,
-            &mut |_plan| Ok(true),
-            &mut |program, args| {
-                delete_calls += 1;
-                assert_eq!(program, "nft");
-                assert_eq!(args, ["delete", "table", "inet", "vpn_relay"]);
-                Err(LinuxError::Command {
-                    program: "nft delete table".into(),
-                    status: "exit status 1".into(),
-                    stderr: "injected delete failure".into(),
-                })
-            },
-        );
+        let result = remove_nft_with(&plan, &mut |_plan| Ok(true), &mut |program, args| {
+            delete_calls += 1;
+            assert_eq!(program, "nft");
+            assert_eq!(args, ["delete", "table", "inet", "vpn_relay"]);
+            Err(LinuxError::Command {
+                program: "nft delete table".into(),
+                status: "exit status 1".into(),
+                stderr: "injected delete failure".into(),
+            })
+        });
         assert_eq!(delete_calls, 1);
         assert!(matches!(result, Err(LinuxError::Command { ref stderr, .. })
             if stderr.contains("injected delete failure")));
