@@ -1325,6 +1325,55 @@ mod tests {
     }
 
     #[test]
+    fn conntrack_mark_state_rejects_oversized_files_before_deserializing() {
+        const MAX_STATE_FILE_SIZE: usize = 4 * 1024 * 1024;
+        let directory = std::env::temp_dir().join(format!(
+            "vpn-relay-marks-oversized-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir(&directory).unwrap();
+        let path = directory.join("namespace.marks");
+        fs::write(&path, vec![b'x'; MAX_STATE_FILE_SIZE + 1]).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+
+        assert!(matches!(
+            load_conntrack_mark_history(&path),
+            Err(RuntimeError::ConntrackMarkState(message))
+                if message.contains("exceeds 4 MiB")
+        ));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn conntrack_mark_state_rejects_malformed_json_and_unsupported_versions() {
+        let directory = std::env::temp_dir().join(format!(
+            "vpn-relay-marks-format-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir(&directory).unwrap();
+        let path = directory.join("namespace.marks");
+
+        fs::write(&path, b"{not-json").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(matches!(
+            load_conntrack_mark_history(&path),
+            Err(RuntimeError::ConntrackMarkState(_))
+        ));
+
+        fs::write(&path, br#"{"version":2,"decisions":[]}"#).unwrap();
+        assert!(matches!(
+            load_conntrack_mark_history(&path),
+            Err(RuntimeError::ConntrackMarkState(message))
+                if message.contains("unsupported state file version 2")
+        ));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn conntrack_mark_state_rejects_hard_links() {
         let directory = std::env::temp_dir().join(format!(
             "vpn-relay-marks-hardlink-{}-{}",
