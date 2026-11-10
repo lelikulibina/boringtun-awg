@@ -831,11 +831,13 @@ mod tests {
         plan.socket_marks = vec![0x1000_0001, 0x1000_0002];
         let mut calls = Vec::new();
         let mut add_count = 0;
+        let mut failure_index = None;
         let result = apply_policy_routing_with(&plan, &mut |_program, args| {
             calls.push(args.to_vec());
             if args.get(2).is_some_and(|part| part == "add") {
                 add_count += 1;
                 if add_count == 2 {
+                    failure_index = Some(calls.len() - 1);
                     return Err(LinuxError::Command {
                         program: format!("ip {}", args.join(" ")),
                         status: "exit status 2".into(),
@@ -848,7 +850,7 @@ mod tests {
 
         assert!(matches!(result, Err(LinuxError::Command { ref stderr, .. })
             if stderr.contains("injected IPv6 socket rule failure")));
-        let cleanup = calls
+        let cleanup = calls[failure_index.expect("failure was injected")..]
             .iter()
             .filter(|args| {
                 args.get(2).is_some_and(|part| part == "del")
