@@ -122,7 +122,21 @@ The daemon requires Linux TUN support, `iproute2`, and `nftables`. It installs p
 
 A privileged network-namespace smoke/integration test is available at `scripts/vpn-relay-netns-test.sh`. It exercises WG/AWG device creation, IPv4/IPv6 fwmark routing, nftables rule installation, collision rollback, and graceful cleanup. The daemon is experimental; run it in an isolated test environment before production use.
 
-**Forwarding warning:** keep `daemon.manage_ip_forwarding = false` on a shared host unless you explicitly accept global host/router sysctl changes. Enabling it writes the namespace-wide IPv4 and IPv6 forwarding sysctls; Linux applies host/router-mode changes across interfaces (including IPv6 Router Advertisement behaviour). Prefer a dedicated network namespace, or enable forwarding externally and leave this option disabled.
+**Управление forwarding.** По умолчанию оставляйте `daemon.manage_ip_forwarding = false`. При `true` и пустом `forwarding_interfaces` сохраняется legacy-режим: daemon переключает namespace-wide IPv4/IPv6 forwarding. На общем host namespace так делать не следует.
+
+Для ограниченного per-interface режима задайте явный allowlist, например:
+
+```toml
+[daemon]
+manage_ip_forwarding = true
+forwarding_interfaces = ["eth0", "wg-server", "awg-uplink"]
+```
+
+В этом режиме vpn-relay не меняет global sysctl: заранее установите внутри того же network namespace `net.ipv4.ip_forward=1` и оставьте `net.ipv6.conf.all.forwarding=0`. IPv4 разрешается только на перечисленных links через `net.ipv4.conf.<if>.forwarding`; IPv6 — через `net.ipv6.conf.<if>.force_forwarding`. Перед включением daemon проверяет, что на всех неперечисленных интерфейсах эти forwarding-флаги выключены, иначе отказывается запускаться. В allowlist включайте все ingress-интерфейсы, через которые должны маршрутизироваться пакеты, включая daemon-owned TUN, если они используются как ingress.
+
+Journal сохраняет исходные значения, namespace inode, имя и ifindex. При штатном shutdown link-scoped sysctls восстанавливаются до удаления TUN. При crash recovery записи daemon-owned TUN пропускаются: сам TUN и его sysctl исчезают вместе с закрытием descriptor, а запись нельзя применять к новому link, даже если ядро повторно использовало то же имя и ifindex. Внешние интерфейсы восстанавливаются только при совпадении identity и пока значение равно установленному daemon значению.
+
+IPv6 `force_forwarding` включает forwarding на конкретном интерфейсе независимо от global `conf/all/forwarding`; он не заменяет настройку Router Advertisement. `accept_ra` daemon не меняет: проверьте требуемое поведение RA на uplink отдельно. Этот режим требует ядра с поддержкой `force_forwarding` и rootful/private network namespace с необходимыми сетевыми полномочиями.
 
 ## Запуск в Podman
 

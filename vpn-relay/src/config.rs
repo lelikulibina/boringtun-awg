@@ -927,6 +927,8 @@ fn validate_interface_name(name: &str) -> Result<(), ConfigError> {
         ));
     }
     if name.is_empty()
+        || name == "."
+        || name == ".."
         || name.len() > 15
         || !name
             .bytes()
@@ -1078,6 +1080,8 @@ egress = "awg-uplink"
         assert!(validate_interface_name("123").is_err());
         assert!(validate_interface_name("-1").is_err());
         assert!(validate_interface_name("wg123").is_ok());
+        assert!(validate_interface_name(".").is_err());
+        assert!(validate_interface_name("..").is_err());
     }
 
     #[test]
