@@ -629,4 +629,4 @@ Noise sessions для peer, чьи параметры не менялись; н�
 | 2026-11-10 | Подтверждена непрерывность WG/AWG packet traffic во время runtime reload | Run 42724351018: в обоих peer-traffic сценариях клиентский ICMP поток прошёл через полный server reload; проверены 60/60 ответов, живой daemon и post-reload ping. Все jobs и all-systems-go завершились success; Windows job skipped | Подтверждено CI |
 
 
-| 2026-11-10 | Усилен стресс-тест непрерывного трафика при повторных reload | Вместо одного переключения firewall peer-traffic test теперь выполняет три последовательных nftables reload (add/remove/add независимого INPUT exception) на фоне 100 ICMP echo через WG/AWG; проверяет 100/100 ответов, daemon liveness и post-reload traffic. Ожидает CI | В работе |
+| 2026-11-10 | Усилен стресс-тест непрерывного трафика при повторных reload | Commit 828b386; CI run 42725497030: для WG и AWG выполнены три последовательных nftables reload (add/remove/add независимого INPUT exception) на фоне 100 ICMP echo; проверены 100/100 ответов, daemon liveness и post-reload traffic. Все jobs и all-systems-go — success; Windows job skipped | Подтверждено CI |
