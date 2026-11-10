@@ -1604,7 +1604,10 @@ mod tests {
             result,
             Err(LinuxError::Command { ref stderr, .. }) if stderr == "permission denied"
         ));
-        assert_eq!(delete_calls, 0, "delete must not run after failed inspection");
+        assert_eq!(
+            delete_calls, 0,
+            "delete must not run after failed inspection"
+        );
     }
 
     #[test]
