@@ -556,9 +556,9 @@ impl Config {
                     }
                     let mut unique = HashSet::new();
                     for prefix in prefixes {
-                        if !unique.insert(prefix.as_str()) {
+                        if !unique.insert(canonical_prefix(prefix, "routing.rules.source")?) {
                             return invalid(
-                                "routing.rules.source must not contain duplicate CIDR selectors",
+                                "routing.rules.source must not contain duplicate or equivalent CIDR networks",
                             );
                         }
                     }
@@ -577,8 +577,10 @@ impl Config {
                     }
                     let mut unique = HashSet::new();
                     for prefix in prefixes {
-                        if !unique.insert(prefix.as_str()) {
-                            return invalid("routing.rules.destination must not contain duplicate CIDR selectors");
+                        if !unique.insert(canonical_prefix(prefix, "routing.rules.destination")?) {
+                            return invalid(
+                                "routing.rules.destination must not contain duplicate or equivalent CIDR networks",
+                            );
                         }
                     }
                     prefixes
@@ -670,9 +672,9 @@ impl Config {
                         }
                         let mut unique = HashSet::new();
                         for prefix in prefixes {
-                            if !unique.insert(prefix.as_str()) {
+                            if !unique.insert(canonical_prefix(prefix, &format!("{path}.{field}"))?) {
                                 return invalid(format!(
-                                    "{path}.{field} must not contain duplicate CIDR selectors"
+                                    "{path}.{field} must not contain duplicate or equivalent CIDR networks"
                                 ));
                             }
                         }
@@ -813,6 +815,23 @@ pub fn decode_key(value: &str, field: &str) -> Result<[u8; 32], ConfigError> {
             bytes.len()
         ))
     })
+}
+
+fn canonical_prefix(value: &str, field: &str) -> Result<(IpAddr, u8), ConfigError> {
+    let (address, prefix) = parse_prefix(value, field)?;
+    let network = match address {
+        IpAddr::V4(address) => {
+            let bits = u32::from(address);
+            let mask = if prefix == 0 { 0 } else { u32::MAX << (32 - prefix) };
+            IpAddr::V4(std::net::Ipv4Addr::from(bits & mask))
+        }
+        IpAddr::V6(address) => {
+            let bits = u128::from(address);
+            let mask = if prefix == 0 { 0 } else { u128::MAX << (128 - prefix) };
+            IpAddr::V6(std::net::Ipv6Addr::from(bits & mask))
+        }
+    };
+    Ok((network, prefix))
 }
 
 fn parse_prefix(value: &str, field: &str) -> Result<(IpAddr, u8), ConfigError> {
@@ -1774,6 +1793,27 @@ egress = "awg-uplink"
             .unwrap_err()
             .to_string()
             .contains("destination must not contain duplicate CIDR selectors"));
+    }
+
+    #[test]
+    fn rejects_equivalent_cidr_networks_with_different_host_bits() {
+        let source = valid_config().replace(
+            "destination = \"0.0.0.0/0\"",
+            "source = [\"10.10.0.0/24\", \"10.10.0.99/24\"]\\ndestination = \"0.0.0.0/0\"",
+        );
+        assert!(Config::parse_toml(&source)
+            .unwrap_err()
+            .to_string()
+            .contains("duplicate or equivalent CIDR networks"));
+
+        let destination = valid_config().replace(
+            "destination = \"0.0.0.0/0\"",
+            "destination = [\"2001:db8::/32\", \"2001:db8:abcd::1/32\"]",
+        );
+        assert!(Config::parse_toml(&destination)
+            .unwrap_err()
+            .to_string()
+            .contains("duplicate or equivalent CIDR networks"));
     }
 
     #[test]
