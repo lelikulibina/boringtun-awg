@@ -1177,7 +1177,8 @@ mod tests {
                     stderr: "injected egress install failure".into(),
                 });
             }
-            if args.get(2).is_some_and(|v| v == "del") && args.get(1).is_some_and(|v| v == "route") {
+            if args.get(2).is_some_and(|v| v == "del") && args.get(1).is_some_and(|v| v == "route")
+            {
                 return Err(LinuxError::Command {
                     program: format!("ip {}", args.join(" ")),
                     status: "exit status 2".into(),
