@@ -870,41 +870,45 @@ mod tests {
     }
 
     #[test]
-    fn socket_fwmark_apply_failure_rolls_back_all_families_and_egress() {
-        let mut plan = cleanup_test_plan();
-        plan.socket_marks = vec![0x1000_0001, 0x1000_0002];
-        let mut calls = Vec::new();
-        let mut add_count = 0;
-        let mut failure_index = None;
-        let result = apply_policy_routing_with(&plan, &mut |_program, args| {
-            calls.push(args.to_vec());
-            if args.get(2).is_some_and(|part| part == "add") {
-                add_count += 1;
-                if add_count == 2 {
-                    failure_index = Some(calls.len() - 1);
-                    return Err(LinuxError::Command {
-                        program: format!("ip {}", args.join(" ")),
-                        status: "exit status 2".into(),
-                        stderr: "injected IPv6 socket rule failure".into(),
-                    });
-                }
-            }
-            Ok(())
-        });
+    fn socket_fwmark_apply_failure_at_each_install_boundary_rolls_back_all_rules() {
+        let plan = {
+            let mut plan = cleanup_test_plan();
+            plan.socket_marks = vec![0x1000_0001, 0x1000_0002];
+            plan
+        };
 
-        assert!(matches!(result, Err(LinuxError::Command { ref stderr, .. })
-            if stderr.contains("injected IPv6 socket rule failure")));
-        let cleanup = calls[failure_index.expect("failure was injected")..]
-            .iter()
-            .filter(|args| {
+        for failure_position in 1..=4 {
+            let mut calls = Vec::new();
+            let mut add_count = 0;
+            let mut failure_index = None;
+            let result = apply_policy_routing_with(&plan, &mut |_program, args| {
+                calls.push(args.to_vec());
+                if args.get(2).is_some_and(|part| part == "add") {
+                    add_count += 1;
+                    if add_count == failure_position {
+                        failure_index = Some(calls.len() - 1);
+                        return Err(LinuxError::Command {
+                            program: format!("ip {}", args.join(" ")),
+                            status: "exit status 2".into(),
+                            stderr: format!("injected socket install failure at step {failure_position}"),
+                        });
+                    }
+                }
+                Ok(())
+            });
+
+            assert!(matches!(result, Err(LinuxError::Command { ref stderr, .. })
+                if stderr.contains(&format!("step {failure_position}"))));
+            let rollback = &calls[failure_index.expect("failure was injected")..];
+            let cleanup = rollback.iter().filter(|args| {
                 args.get(2).is_some_and(|part| part == "del")
                     && args.get(4).is_some_and(|part| part == "9000")
-            })
-            .count();
-        assert_eq!(
-            cleanup, 4,
-            "all socket rules must be attempted during rollback"
-        );
+            }).count();
+            assert_eq!(
+                cleanup, 4,
+                "failure at socket install step {failure_position} must roll back every mark/family"
+            );
+        }
     }
 
     #[test]

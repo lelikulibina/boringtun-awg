@@ -815,6 +815,8 @@ successful shutdown removes the firewall.
 
 | 2026-11-10 | Закрыты дополнительные отрицательные parser cases | Добавлены regression tests на пустые INPUT/OUTPUT CIDR selectors, неизвестный firewall interface, пустой/нулевой port list, ports с ICMP и пустой routing destination. `Config::validate` отклоняет каждую конфигурацию до создания системных ресурсов. | Полный CI `42851385258`: tests, clippy, rustfmt, feature checks, namespace lifecycle, WG/AWG peer traffic, packet-level multi-uplink и AWG 3.1 — success; Windows skipped. HEAD `db71837251551026beb0a8fa6b58a11867bb521a` |
 
+| 2026-11-10 | Проверены все границы установки socket fwmark rules | Сценарий отказа расширен на каждую из четырёх комбинаций двух marks и IPv4/IPv6. Для каждой точки проверяется исходная ошибка и попытка удалить все четыре возможных socket rules. | Реализовано, ожидает CI |
+
 | 2026-11-10 | Проверена агрегация ошибок полного policy-routing cleanup | `remove_policy_routing_with` теперь покрыт отдельным failure-injection сценарием, в котором одновременно падают все четыре socket-mark cleanup и все четыре egress cleanup. Тест подтверждает, что очистка обеих групп выполняется полностью, а итоговая ошибка сохраняет все восемь причин. | Реализовано, ожидает CI |
 
 | 2026-11-10 | Расширена матрица rollback и исправлен двойной cleanup policy routing | Проверены все четыре границы установки IPv4/IPv6 route/rule; агрегирование восьми cleanup failures на двух интерфейсах; вложенный rollback без повторного удаления egress; и сохранение socket cleanup при ошибке egress rollback. Дополнительно добавлен тест, который инъецирует отказ каждого из четырёх cleanup-вызовов после ошибки установки и проверяет агрегацию всех ошибок при сохранении исходной причины. | Реализовано, ожидает CI |
