@@ -821,7 +821,6 @@ pub fn interface_index(name: &str) -> Result<u32, LinuxError> {
     Ok(index)
 }
 
-
 /// Resolve an interface index back to its current name in this process' network namespace.
 /// This reverse lookup is used by durable forwarding-state recovery to avoid
 /// restoring sysctls onto a different link that later reused an interface name.
