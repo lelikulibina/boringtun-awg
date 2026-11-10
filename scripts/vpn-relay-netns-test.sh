@@ -521,7 +521,7 @@ output_chain="$(ip netns exec "$NS" nft list chain inet vpn_relay_it output)"
 grep -Fq 'oif @ipv6_blocked_interfaces meta nfproto ipv6 drop' <<<"$output_chain" || fail "locally generated IPv6 egress drop is missing"
 grep -Fq 'ct direction reply meta mark set 0' <<<"$chain" || fail "reply packet mark reset is missing"
 
-grep -Eq 'iifname "wg-server" iif != .* counter drop' <<<"$chain" || fail "same-name replacement ingress guard is missing"
+grep -Eq 'iifname "wg-server" iif != .* counter packets [0-9]+ bytes [0-9]+ drop' <<<"$chain" || fail "same-name replacement ingress guard is missing"
 grep -Eq 'iif "?wg-server"? ct state new ip daddr 195.142.0.0/16 meta mark set 0x80000001' <<<"$chain" || fail "secondary exception rule missing"
 grep -Eq 'iif "?wg-server"? ct state new ip daddr 0.0.0.0/0 meta mark set 0x80000000' <<<"$chain" || fail "primary default rule missing"
 
