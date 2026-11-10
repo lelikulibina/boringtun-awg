@@ -166,6 +166,7 @@ fn run_nft_script(script: &str) -> Result<(), LinuxError> {
     })
 }
 
+#[cfg(test)]
 fn apply_nft_script_with<F>(script: &str, run_script: &mut F) -> Result<(), LinuxError>
 where
     F: FnMut(&str) -> Result<(), LinuxError>,
