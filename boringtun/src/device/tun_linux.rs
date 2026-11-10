@@ -190,7 +190,6 @@ impl TunSocket {
     }
 }
 
-
 #[cfg(test)]
 mod identity_tests {
     use super::*;
