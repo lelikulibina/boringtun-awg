@@ -45,6 +45,20 @@ pub struct RoutingDecision {
     pub ipv6_enabled: bool,
 }
 
+impl RoutingDecision {
+    /// Resolve persisted routing-decision fields into one exhaustive NAT action.
+    fn nat_action(&self) -> NatAction {
+        match self.nat {
+            NatMode::None => NatAction::None,
+            NatMode::Masquerade => NatAction::Masquerade,
+            NatMode::Snat => NatAction::Snat(
+                self.nat_to
+                    .expect("validated SNAT routing decision must contain nat_to"),
+            ),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NftFirewallRule {
     pub interface: String,
