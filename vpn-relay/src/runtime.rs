@@ -1280,18 +1280,17 @@ fn validate_forwarding_state(state: &ForwardingState) -> Result<(), RuntimeError
         if entry.name.is_empty()
             || entry.name.len() > 15
             || !entry.name.is_ascii()
-            || !entry.name.bytes().all(|byte| {
-                byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-')
-            })
+            || !entry
+                .name
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
             || entry.ifindex == 0
         {
             return Err(RuntimeError::Forwarding(
                 "forwarding journal contains an invalid interface identity".to_owned(),
             ));
         }
-        if !matches!(entry.ipv4.as_str(), "0" | "1")
-            || !matches!(entry.ipv6.as_str(), "0" | "1")
-        {
+        if !matches!(entry.ipv4.as_str(), "0" | "1") || !matches!(entry.ipv6.as_str(), "0" | "1") {
             return Err(RuntimeError::Forwarding(format!(
                 "forwarding journal contains an invalid sysctl value for interface '{}'",
                 entry.name
