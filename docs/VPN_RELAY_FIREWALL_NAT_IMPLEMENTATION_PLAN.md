@@ -330,7 +330,13 @@ unmanaged output остаётся неизменным.
   отказа пока не выполнен.
 - [x] Проверить shutdown, повторный запуск, lock и network namespace lifecycle
   (CI 42665725191).
-- [ ] Проверить поведение при удалении/переименовании интерфейса во время работы.
+- [x] Проверить удаление/переименование TUN во время работы: исходный FD
+  проверяется через Linux `TUNGETIFF`; drop-only bootstrap исключает трафик до
+  верификации; рабочие nftables selectors привязаны к `iface_index`; имя+index
+  mismatch guards блокируют одноимённую замену. Root netns integration test
+  удаляет `awg-primary`, создаёт новый TUN с тем же именем и другим ifindex,
+  отправляет пакет, проверяет `counter drop`, ожидает fatal shutdown и
+  подтверждает сохранение firewall (CI 42831549649).
 
 ### Архитектурное уточнение runtime reconfiguration (исследование 2026-11-09)
 
@@ -787,3 +793,5 @@ successful shutdown removes the firewall.
 удаляет рабочий TUN, создаёт новое устройство с тем же именем и другим ifindex,
 отправляет через него пакет, проверяет увеличение счётчика правила `counter drop`,
 ожидает аварийного завершения daemon и подтверждает сохранение firewall.
+
+| 2026-11-10 | Проверена защита от удаления и подмены TUN | `TUNGETIFF` на исходном FD; drop-only bootstrap; атомарный переход nftables с `iifname/oifname` на `iif/oif` + `iface_index`; mismatch guards с `counter drop`; root netns тест удаляет и пересоздаёт TUN под тем же именем, проверяет блокировку пакета и сохранение firewall после fatal shutdown. CI 42831549649: rustfmt, clippy, tests, feature checks, AWG 3.1, namespace, WG/AWG peer traffic и multi-uplink — success; Windows skipped. HEAD `bcbf0cfaeab1b74688281b3b0cef27f63580cb02`. | Завершено и проверено |
