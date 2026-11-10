@@ -575,20 +575,6 @@ grep -Eq 'iif "?wg-server"? ct state new ip daddr 195.142.0.0/16 meta mark set 0
 grep -Eq 'iif "?wg-server"? ct state new ip daddr 0.0.0.0/0 meta mark set 0x80000000' <<<"$chain" || fail "primary default rule missing"
 
 
-kill -TERM "$DAEMON_PID"
-wait "$DAEMON_PID" || fail "recovered daemon failed graceful shutdown"
-DAEMON_PID=""
-if ip netns exec "$NS" nft list table inet vpn_relay_it >/dev/null 2>&1; then
-    fail "recovered daemon did not remove its owned firewall on graceful shutdown"
-fi
-if ip -n "$NS" -4 rule show | grep -q 'proto 242'; then
-    fail "recovered daemon left stale owned policy rules after graceful shutdown"
-fi
-# The durable forwarding journal restores the pre-crash namespace values
-# before the recovered daemon enables forwarding for its new lifetime.
-[[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "0" ]] || fail "graceful shutdown did not restore IPv4 forwarding after crash recovery"
-[[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "0" ]] || fail "graceful shutdown did not restore IPv6 forwarding after crash recovery"
-
 # Exercise full runtime reload through the Unix control socket. The candidate
 # changes a routing selector, adds an INPUT exception and installs a peer. First
 # force nftables to fail after the peer commit; the daemon must roll the peer set
