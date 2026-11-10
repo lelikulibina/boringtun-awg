@@ -671,3 +671,6 @@ Noise sessions для peer, чьи параметры не менялись; н�
 
 
 | 2026-11-10 | Закрыт startup forwarding rollback при ошибке очистки policy routes | Дополнительно обработан путь отказа включения forwarding: если удаление уже установленных policy rules/routes не удалось, daemon возвращает fatal transition и не снимает nftables policy; при ошибке удаления firewall также возвращается fatal transition. Добавлен тест, подтверждающий попытку восстановления обоих sysctl и агрегацию обеих ошибок | Реализовано, ожидает CI |
+
+
+| 2026-11-10 | Добавлен netns regression test fail-closed shutdown при ошибке удаления policy rule | В изолированном network namespace запускается daemon с ip-wrapper, который начинает отклонять удаление IPv4 socket rules только после успешного старта. При graceful SIGTERM проверяется, что Drop восстанавливает forwarding, оставляет неочищенное правило и сохраняет nftables policy; лог обязан содержать сообщение о fail-closed cleanup. Тест вручную удаляет оставленную policy перед завершением namespace | Реализовано, ожидает CI |

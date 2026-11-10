@@ -630,4 +630,45 @@ for iface in wg-server awg-primary awg-secondary; do
     fi
 done
 
+# A failed policy-rule cleanup during graceful shutdown must retain the
+# nftables policy. Let startup complete before enabling the ip wrapper failure,
+# then request graceful shutdown through SIGTERM (handled by the daemon).
+REAL_IP_SHUTDOWN="$(command -v ip)"
+mkdir -p "$TMP/fail-shutdown-ip"
+cat >"$TMP/fail-shutdown-ip/ip" <<EOF
+#!/bin/sh
+if [ -f "$TMP/fail-shutdown-rule-delete" ] && [ "\$1" = "-4" ] \
+    && [ "\$2" = "rule" ] && [ "\$3" = "del" ] \
+    && [ "\$4" = "priority" ] && [ "\$5" = "9000" ]; then
+    echo "injected shutdown policy-rule cleanup failure" >&2
+    exit 42
+fi
+exec "$REAL_IP_SHUTDOWN" "\$@"
+EOF
+chmod +x "$TMP/fail-shutdown-ip/ip"
+ip netns exec "$NS" env PATH="$TMP/fail-shutdown-ip:$PATH" "$BIN" --config "$TMP/config.toml" >"$TMP/shutdown-cleanup-failure.log" 2>&1 &
+DAEMON_PID=$!
+for _ in $(seq 1 30); do
+    ready=1
+    ip netns exec "$NS" nft list table inet vpn_relay_it >/dev/null 2>&1 || ready=0
+    ip -n "$NS" -4 rule show | grep -Fq 'fwmark 0x1001 lookup main proto 242' || ready=0
+    [[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "1" ]] || ready=0
+    [[ $ready -eq 1 ]] && break
+    if ! kill -0 "$DAEMON_PID" 2>/dev/null; then
+        fail "daemon exited before shutdown-cleanup failure test became ready"
+    fi
+    sleep 1
+done
+[[ $ready -eq 1 ]] || fail "daemon did not become ready for shutdown-cleanup failure test"
+touch "$TMP/fail-shutdown-rule-delete"
+kill -TERM "$DAEMON_PID"
+wait "$DAEMON_PID" || fail "daemon failed while handling graceful shutdown cleanup failure"
+DAEMON_PID=""
+ip netns exec "$NS" nft list table inet vpn_relay_it >/dev/null 2>&1 || fail "nftables fail-closed policy was removed despite policy-rule cleanup failure"
+ip -n "$NS" -4 rule show | grep -Fq 'fwmark 0x1001 lookup main proto 242' || fail "injected policy rule unexpectedly disappeared during failed cleanup"
+[[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "0" ]] || fail "IPv4 forwarding was not restored after shutdown cleanup failure"
+grep -Fq "shutdown cleanup incomplete; retaining fail-closed nftables policy" "$TMP/shutdown-cleanup-failure.log" || fail "daemon did not report retained fail-closed policy"
+# Remove the intentionally retained table so the namespace teardown remains tidy.
+ip netns exec "$NS" nft delete table inet vpn_relay_it
+
 echo "vpn-relay namespace integration test passed"
