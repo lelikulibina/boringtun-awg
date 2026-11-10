@@ -454,40 +454,34 @@ pub fn allocate_policy_routing_resources(
 /// left untouched so they remain continuously active during a plan transition.
 pub fn apply_egress_policy_routing(plan: &RoutingPlan) -> Result<(), LinuxError> {
     ensure_policy_slots_available(plan)?;
+    apply_egress_policy_routing_with(plan, &mut run)
+}
 
-    // Treat the complete multi-egress install as one transaction. In
-    // particular, stale-resource cleanup can fail after earlier egresses have
-    // already been installed; every such failure must unwind the whole plan.
+fn apply_egress_policy_routing_with<F>(
+    plan: &RoutingPlan,
+    run_command: &mut F,
+) -> Result<(), LinuxError>
+where
+    F: FnMut(&str, &[String]) -> Result<(), LinuxError>,
+{
+    // Treat the complete multi-egress install as one transaction. Keep the
+    // runner injectable so every partial-apply and rollback boundary is tested.
     let install_result = (|| -> Result<(), LinuxError> {
         for egress in &plan.egresses {
             if !egress.ipv6_enabled {
                 let stale_rule = [
-                    "-6".into(),
-                    "rule".into(),
-                    "del".into(),
-                    "priority".into(),
-                    egress.ip_rule_priority.to_string(),
-                    "fwmark".into(),
-                    format!("0x{:x}", egress.mark),
-                    "lookup".into(),
-                    egress.table_id.to_string(),
-                    "protocol".into(),
-                    ROUTING_PROTOCOL.into(),
+                    "-6".into(), "rule".into(), "del".into(), "priority".into(),
+                    egress.ip_rule_priority.to_string(), "fwmark".into(),
+                    format!("0x{:x}", egress.mark), "lookup".into(),
+                    egress.table_id.to_string(), "protocol".into(), ROUTING_PROTOCOL.into(),
                 ];
                 let stale_route = [
-                    "-6".into(),
-                    "route".into(),
-                    "del".into(),
-                    "default".into(),
-                    "dev".into(),
-                    egress.interface.clone(),
-                    "table".into(),
-                    egress.table_id.to_string(),
-                    "proto".into(),
-                    ROUTING_PROTOCOL.into(),
+                    "-6".into(), "route".into(), "del".into(), "default".into(),
+                    "dev".into(), egress.interface.clone(), "table".into(),
+                    egress.table_id.to_string(), "proto".into(), ROUTING_PROTOCOL.into(),
                 ];
-                run_ip_cleanup(&stale_rule)?;
-                run_ip_cleanup(&stale_route)?;
+                run_ip_cleanup_with(&stale_rule, run_command)?;
+                run_ip_cleanup_with(&stale_route, run_command)?;
             }
 
             for &family in RoutingPlan::ip_families(egress) {
@@ -495,50 +489,21 @@ pub fn apply_egress_policy_routing(plan: &RoutingPlan) -> Result<(), LinuxError>
                 let mark = format!("0x{:x}", egress.mark);
                 let table = egress.table_id.to_string();
                 let stale_rule = [
-                    family.into(),
-                    "rule".into(),
-                    "del".into(),
-                    "priority".into(),
-                    priority.clone(),
-                    "fwmark".into(),
-                    mark.clone(),
-                    "lookup".into(),
-                    table.clone(),
-                    "protocol".into(),
-                    ROUTING_PROTOCOL.into(),
+                    family.into(), "rule".into(), "del".into(), "priority".into(),
+                    priority.clone(), "fwmark".into(), mark.clone(), "lookup".into(),
+                    table.clone(), "protocol".into(), ROUTING_PROTOCOL.into(),
                 ];
-                run_ip_cleanup(&stale_rule)?;
-                run(
-                    "ip",
-                    &[
-                        family.into(),
-                        "route".into(),
-                        "replace".into(),
-                        "default".into(),
-                        "dev".into(),
-                        egress.interface.clone(),
-                        "table".into(),
-                        table.clone(),
-                        "proto".into(),
-                        ROUTING_PROTOCOL.into(),
-                    ],
-                )?;
-                run(
-                    "ip",
-                    &[
-                        family.into(),
-                        "rule".into(),
-                        "add".into(),
-                        "priority".into(),
-                        priority,
-                        "fwmark".into(),
-                        mark,
-                        "lookup".into(),
-                        table,
-                        "protocol".into(),
-                        ROUTING_PROTOCOL.into(),
-                    ],
-                )?;
+                run_ip_cleanup_with(&stale_rule, run_command)?;
+                run_command("ip", &[
+                    family.into(), "route".into(), "replace".into(), "default".into(),
+                    "dev".into(), egress.interface.clone(), "table".into(), table.clone(),
+                    "proto".into(), ROUTING_PROTOCOL.into(),
+                ])?;
+                run_command("ip", &[
+                    family.into(), "rule".into(), "add".into(), "priority".into(),
+                    priority, "fwmark".into(), mark, "lookup".into(), table,
+                    "protocol".into(), ROUTING_PROTOCOL.into(),
+                ])?;
             }
         }
         Ok(())
@@ -546,7 +511,7 @@ pub fn apply_egress_policy_routing(plan: &RoutingPlan) -> Result<(), LinuxError>
 
     match install_result {
         Ok(()) => Ok(()),
-        Err(operation) => match remove_egress_policy_routing(plan) {
+        Err(operation) => match remove_egress_policy_routing_with(plan, run_command) {
             Ok(()) => Err(operation),
             Err(rollback) => Err(LinuxError::Rollback {
                 operation: operation.to_string(),
@@ -800,6 +765,67 @@ mod tests {
             ipv6_blocked_interfaces: Vec::new(),
             interface_indices: None,
         }
+    }
+
+    #[test]
+    fn egress_apply_failure_rolls_back_every_family_and_resource() {
+        let plan = cleanup_test_plan();
+        let mut calls = Vec::new();
+        let mut failed = false;
+        let result = apply_egress_policy_routing_with(&plan, &mut |_program, args| {
+            calls.push(args.to_vec());
+            // The first add operation fails, after the IPv4 route was installed.
+            if !failed && args.get(1).is_some_and(|part| part == "rule")
+                && args.get(2).is_some_and(|part| part == "add")
+            {
+                failed = true;
+                return Err(LinuxError::Command {
+                    program: format!("ip {}", args.join(" ")),
+                    status: "exit status 2".into(),
+                    stderr: "injected rule installation failure".into(),
+                });
+            }
+            Ok(())
+        });
+
+        assert!(matches!(result, Err(LinuxError::Command { ref stderr, .. })
+            if stderr.contains("injected rule installation failure")));
+        // Cleanup is attempted for both families and both resource types,
+        // including the family whose installation had not yet started.
+        let cleanup = &calls[calls.len() - 4..];
+        assert_eq!(cleanup.len(), 4);
+        assert!(cleanup.iter().any(|args| args.first().is_some_and(|v| v == "-4")
+            && args.get(1).is_some_and(|v| v == "rule")));
+        assert!(cleanup.iter().any(|args| args.first().is_some_and(|v| v == "-6")
+            && args.get(1).is_some_and(|v| v == "route")));
+    }
+
+    #[test]
+    fn egress_apply_reports_rollback_failure_without_hiding_install_failure() {
+        let plan = cleanup_test_plan();
+        let mut calls = 0usize;
+        let result = apply_egress_policy_routing_with(&plan, &mut |_program, args| {
+            calls += 1;
+            if args.get(2).is_some_and(|part| part == "add") {
+                return Err(LinuxError::Command {
+                    program: format!("ip {}", args.join(" ")),
+                    status: "exit status 2".into(),
+                    stderr: "injected install failure".into(),
+                });
+            }
+            if calls > 3 {
+                return Err(LinuxError::Command {
+                    program: format!("ip {}", args.join(" ")),
+                    status: "exit status 2".into(),
+                    stderr: "injected rollback failure".into(),
+                });
+            }
+            Ok(())
+        });
+
+        assert!(matches!(result, Err(LinuxError::Rollback { operation, rollback })
+            if operation.contains("injected install failure")
+                && rollback.contains("injected rollback failure")));
     }
 
     #[test]
