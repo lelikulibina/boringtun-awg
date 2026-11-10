@@ -113,7 +113,7 @@
 ### Владение и lifecycle
 
 - [x] Чужая nftables table с совпадающим именем не изменяется; отдельные foreign INPUT/OUTPUT/FORWARD chains coexist без обхода vpn-relay deny (CI 42674872629).
-- [~] Ошибка применения nftables и последующих шагов приводит к rollback ранее установленных ресурсов; inspection conflict/error, atomic batch failure, owned-table replacement failure и запрет delete при failed inspection покрыты unit tests. Полный startup matrix всех системных вызовов ещё не выполнен.
+- [~] Ошибка применения nftables и последующих шагов приводит к rollback ранее установленных ресурсов; inspection conflict/error, atomic batch failure, owned-table replacement failure и запрет delete при failed inspection покрыты unit tests. Добавлены netns failure-injection сценарии отказа bootstrap nft transaction и indexed-policy activation после создания TUN; ожидают CI. Полный startup matrix системных вызовов ещё не выполнен.
 - [x] Shutdown останавливает backend workers, удаляет policy routes, затем
   уничтожает managed TUN links, и только после этого удаляет nftables policy;
   исходное forwarding состояние восстанавливается в самом конце.
@@ -336,7 +336,7 @@ unmanaged output остаётся неизменным.
   policy routes и nftables table.
 - [x] Проверить startup rollback при конфликте nft table, ip rule и route,
   включая сохранность чужих ресурсов (CI 42665725191).
-- [~] Rollback покрывает setup TUN, interface configuration, nftables activation, policy-routing staging, forwarding enable, durable forwarding recovery и graceful shutdown. Добавлена проверка продолжения multi-device peer rollback после отдельного отказа; остаётся полный перебор startup cleanup failures на каждой границе системного вызова.
+- [~] Rollback покрывает setup TUN, interface configuration, nftables activation, policy-routing staging, forwarding enable, durable forwarding recovery и graceful shutdown. Добавлены отдельные nftables bootstrap/indexed activation failure-injection сценарии; ожидают CI. Остаётся полный перебор startup cleanup failures на каждой границе системного вызова.
 - [x] Не удалять чужие ip rules/routes/nftables objects; проверены foreign
   nftables table/base chains, masked ip rules и IPv4/IPv6 routes.
 - [~] Проверить частичные ошибки на каждом шаге установки: setup TUN, interface configuration, nftables inspection/transaction, IPv4/IPv6 policy route, forwarding enable/restore и staged stale-rule cleanup имеют failure-injection сценарии; остаётся расширить матрицу startup cleanup failures и проверить каждую точку системного вызова.

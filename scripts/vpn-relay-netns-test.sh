@@ -30,7 +30,7 @@ trap cleanup EXIT
 
 fail() {
     echo "vpn-relay namespace test: $*" >&2
-    for log in "$TMP/daemon.log" "$TMP/conflict.log" "$TMP/policy-conflict.log" "$TMP/route-conflict.log" "$TMP/policy-shadow-conflict.log" "$TMP/partial-setup-conflict.log" "$TMP/partial-interface-config.log" "$TMP/partial-policy-route.log" "$TMP/partial-forwarding.log" "$TMP/partial-ipv4-forwarding.log" "$TMP/partial-ipv4-forwarding-restore-failure.log" "$TMP/reload-failure.log" "$TMP/reload-route-failure.log" "$TMP/reload-immutable.log" "$TMP/shutdown-cleanup-failure.log" "$TMP/shutdown-forwarding-restore-failure.log" "$TMP/shutdown-ipv6-forwarding-restore-failure.log" "$TMP/preexisting-forwarding.log" "$TMP/fail-route-commands.log" "$TMP/forwarding-management-disabled.log" "$TMP/tun-identity-loss.log"; do
+    for log in "$TMP/bootstrap-nft-failure.log" "$TMP/indexed-nft-failure.log" "$TMP/daemon.log" "$TMP/conflict.log" "$TMP/policy-conflict.log" "$TMP/route-conflict.log" "$TMP/policy-shadow-conflict.log" "$TMP/partial-setup-conflict.log" "$TMP/partial-interface-config.log" "$TMP/partial-policy-route.log" "$TMP/partial-forwarding.log" "$TMP/partial-ipv4-forwarding.log" "$TMP/partial-ipv4-forwarding-restore-failure.log" "$TMP/reload-failure.log" "$TMP/reload-route-failure.log" "$TMP/reload-immutable.log" "$TMP/shutdown-cleanup-failure.log" "$TMP/shutdown-forwarding-restore-failure.log" "$TMP/shutdown-ipv6-forwarding-restore-failure.log" "$TMP/preexisting-forwarding.log" "$TMP/fail-route-commands.log" "$TMP/forwarding-management-disabled.log" "$TMP/tun-identity-loss.log"; do
         if [[ -f "$log" ]]; then
             cat "$log" >&2
         fi
@@ -292,6 +292,48 @@ EOF
 chmod +x "$TMP/fail-interface-config/ip"
 expect_startup_failure partial-interface-config.log "injected TUN address configuration failure" "$TMP/fail-interface-config"
 grep -Fq "injected TUN address configuration failure" "$TMP/partial-interface-config.log" || fail "TUN address configuration failure was not observed"
+
+# Exercise both nftables installation boundaries during initial startup.
+# The first batch is the drop-only bootstrap; the second atomically activates
+# the indexed policy after all TUN descriptors have been created and checked.
+REAL_NFT_STARTUP="$(command -v nft)"
+mkdir -p "$TMP/fail-bootstrap-nft" "$TMP/fail-indexed-nft"
+cat >"$TMP/fail-bootstrap-nft/nft" <<EOF
+#!/bin/sh
+if [ "\$1" = "-f" ]; then
+    echo "injected bootstrap nftables transaction failure" >&2
+    exit 42
+fi
+exec "$REAL_NFT_STARTUP" "\$@"
+EOF
+cat >"$TMP/fail-indexed-nft/nft" <<EOF
+#!/bin/sh
+COUNT_FILE="$TMP/indexed-nft-count"
+if [ "\$1" = "-f" ]; then
+    count=0
+    [ ! -f "\$COUNT_FILE" ] || count=\$(cat "\$COUNT_FILE")
+    count=\$((count + 1))
+    echo "\$count" >"\$COUNT_FILE"
+    if [ "\$count" -eq 2 ]; then
+        cat >/dev/null
+        echo "injected indexed nftables activation failure" >&2
+        exit 42
+    fi
+fi
+exec "$REAL_NFT_STARTUP" "\$@"
+EOF
+chmod +x "$TMP/fail-bootstrap-nft/nft" "$TMP/fail-indexed-nft/nft"
+
+expect_startup_failure bootstrap-nft-failure.log "drop-only bootstrap nftables transaction failure" "$TMP/fail-bootstrap-nft"
+grep -Fq "injected bootstrap nftables transaction failure" "$TMP/bootstrap-nft-failure.log" || fail "bootstrap nftables failure was not observed"
+
+expect_startup_failure indexed-nft-failure.log "indexed nftables activation failure" "$TMP/fail-indexed-nft"
+grep -Fq "injected indexed nftables activation failure" "$TMP/indexed-nft-failure.log" || fail "indexed nftables activation failure was not observed"
+for family in -4 -6; do
+    if ip -n "$NS" "$family" rule show | grep -q 'proto 242'; then
+        fail "policy rules leaked after indexed nftables activation failure for $family"
+    fi
+done
 
 # Inject an iproute2 failure after the first egress has installed its IPv4
 # route and rule. Rollback must remove those partial resources as well as the
