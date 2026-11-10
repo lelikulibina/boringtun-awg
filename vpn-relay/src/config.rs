@@ -996,8 +996,7 @@ egress = "awg-uplink"
             .contains("daemon.nft_table"));
 
         let mut changed_forwarding = current.clone();
-        changed_forwarding.daemon.manage_ip_forwarding =
-            !current.daemon.manage_ip_forwarding;
+        changed_forwarding.daemon.manage_ip_forwarding = !current.daemon.manage_ip_forwarding;
         assert!(current
             .validate_reload_compatibility(&changed_forwarding)
             .unwrap_err()
