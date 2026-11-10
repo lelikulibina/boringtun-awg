@@ -1177,9 +1177,7 @@ mod tests {
                     stderr: "injected egress install failure".into(),
                 });
             }
-            if args.get(2).is_some_and(|v| v == "del")
-                && args.get(1).is_some_and(|v| v == "route")
-            {
+            if args.get(2).is_some_and(|v| v == "del") && args.get(1).is_some_and(|v| v == "route") {
                 return Err(LinuxError::Command {
                     program: format!("ip {}", args.join(" ")),
                     status: "exit status 2".into(),
@@ -1189,21 +1187,27 @@ mod tests {
             Ok(())
         });
 
-        assert!(matches!(result, Err(LinuxError::Rollback { operation, rollback })
-            if operation.contains("injected egress install failure")
-                && rollback.contains("injected egress rollback failure")));
+        assert!(
+            matches!(result, Err(LinuxError::Rollback { operation, rollback })
+                if operation.contains("injected egress install failure")
+                    && rollback.contains("injected egress rollback failure"))
+        );
         let egress_cleanup_calls = calls[failure_index.expect("install failure injected")..]
             .iter()
             .filter(|args| {
-                args.get(2).is_some_and(|v| v == "del")
-                    && args.iter().any(|v| v == "10001")
+                args.get(2).is_some_and(|v| v == "del") && args.iter().any(|v| v == "10001")
             })
             .count();
-        assert_eq!(egress_cleanup_calls, 4, "egress rollback must run exactly once");
-        let socket_cleanup_calls = calls.iter().filter(|args| {
-            args.get(2).is_some_and(|v| v == "del")
-                && args.get(4).is_some_and(|v| v == "9000")
-        }).count();
+        assert_eq!(
+            egress_cleanup_calls, 4,
+            "egress rollback must run exactly once"
+        );
+        let socket_cleanup_calls = calls
+            .iter()
+            .filter(|args| {
+                args.get(2).is_some_and(|v| v == "del") && args.get(4).is_some_and(|v| v == "9000")
+            })
+            .count();
         assert_eq!(
             socket_cleanup_calls, 2,
             "outer rollback must still clean both socket families"
