@@ -455,71 +455,74 @@ pub fn allocate_policy_routing_resources(
 pub fn apply_egress_policy_routing(plan: &RoutingPlan) -> Result<(), LinuxError> {
     ensure_policy_slots_available(plan)?;
 
-    for egress in &plan.egresses {
-        if !egress.ipv6_enabled {
-            let stale_rule = [
-                "-6".into(),
-                "rule".into(),
-                "del".into(),
-                "priority".into(),
-                egress.ip_rule_priority.to_string(),
-                "fwmark".into(),
-                format!("0x{:x}", egress.mark),
-                "lookup".into(),
-                egress.table_id.to_string(),
-                "protocol".into(),
-                ROUTING_PROTOCOL.into(),
-            ];
-            let stale_route = [
-                "-6".into(),
-                "route".into(),
-                "del".into(),
-                "default".into(),
-                "dev".into(),
-                egress.interface.clone(),
-                "table".into(),
-                egress.table_id.to_string(),
-                "proto".into(),
-                ROUTING_PROTOCOL.into(),
-            ];
-            run_ip_cleanup(&stale_rule)?;
-            run_ip_cleanup(&stale_route)?;
-        }
-
-        for &family in RoutingPlan::ip_families(egress) {
-            let priority = egress.ip_rule_priority.to_string();
-            let mark = format!("0x{:x}", egress.mark);
-            let table = egress.table_id.to_string();
-            let stale_rule = [
-                family.into(),
-                "rule".into(),
-                "del".into(),
-                "priority".into(),
-                priority.clone(),
-                "fwmark".into(),
-                mark.clone(),
-                "lookup".into(),
-                table.clone(),
-                "protocol".into(),
-                ROUTING_PROTOCOL.into(),
-            ];
-            run_ip_cleanup(&stale_rule)?;
-            if let Err(error) = run(
-                "ip",
-                &[
-                    family.into(),
+    // Treat the complete multi-egress install as one transaction. In
+    // particular, stale-resource cleanup can fail after earlier egresses have
+    // already been installed; every such failure must unwind the whole plan.
+    let install_result = (|| -> Result<(), LinuxError> {
+        for egress in &plan.egresses {
+            if !egress.ipv6_enabled {
+                let stale_rule = [
+                    "-6".into(),
+                    "rule".into(),
+                    "del".into(),
+                    "priority".into(),
+                    egress.ip_rule_priority.to_string(),
+                    "fwmark".into(),
+                    format!("0x{:x}", egress.mark),
+                    "lookup".into(),
+                    egress.table_id.to_string(),
+                    "protocol".into(),
+                    ROUTING_PROTOCOL.into(),
+                ];
+                let stale_route = [
+                    "-6".into(),
                     "route".into(),
-                    "replace".into(),
+                    "del".into(),
                     "default".into(),
                     "dev".into(),
                     egress.interface.clone(),
                     "table".into(),
-                    table.clone(),
+                    egress.table_id.to_string(),
                     "proto".into(),
                     ROUTING_PROTOCOL.into(),
-                ],
-            )
-            .and_then(|_| {
+                ];
+                run_ip_cleanup(&stale_rule)?;
+                run_ip_cleanup(&stale_route)?;
+            }
+
+            for &family in RoutingPlan::ip_families(egress) {
+                let priority = egress.ip_rule_priority.to_string();
+                let mark = format!("0x{:x}", egress.mark);
+                let table = egress.table_id.to_string();
+                let stale_rule = [
+                    family.into(),
+                    "rule".into(),
+                    "del".into(),
+                    "priority".into(),
+                    priority.clone(),
+                    "fwmark".into(),
+                    mark.clone(),
+                    "lookup".into(),
+                    table.clone(),
+                    "protocol".into(),
+                    ROUTING_PROTOCOL.into(),
+                ];
+                run_ip_cleanup(&stale_rule)?;
+                run(
+                    "ip",
+                    &[
+                        family.into(),
+                        "route".into(),
+                        "replace".into(),
+                        "default".into(),
+                        "dev".into(),
+                        egress.interface.clone(),
+                        "table".into(),
+                        table.clone(),
+                        "proto".into(),
+                        ROUTING_PROTOCOL.into(),
+                    ],
+                )?;
                 run(
                     "ip",
                     &[
@@ -535,19 +538,22 @@ pub fn apply_egress_policy_routing(plan: &RoutingPlan) -> Result<(), LinuxError>
                         "protocol".into(),
                         ROUTING_PROTOCOL.into(),
                     ],
-                )
-            }) {
-                return match remove_egress_policy_routing(plan) {
-                    Ok(()) => Err(error),
-                    Err(rollback) => Err(LinuxError::Rollback {
-                        operation: error.to_string(),
-                        rollback: rollback.to_string(),
-                    }),
-                };
+                )?;
             }
         }
+        Ok(())
+    })();
+
+    match install_result {
+        Ok(()) => Ok(()),
+        Err(operation) => match remove_egress_policy_routing(plan) {
+            Ok(()) => Err(operation),
+            Err(rollback) => Err(LinuxError::Rollback {
+                operation: operation.to_string(),
+                rollback: rollback.to_string(),
+            }),
+        },
     }
-    Ok(())
 }
 
 fn run_ip_cleanup(args: &[String]) -> Result<(), LinuxError> {
