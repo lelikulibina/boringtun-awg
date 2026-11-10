@@ -23,7 +23,7 @@ trap cleanup EXIT
 
 fail() {
     echo "vpn-relay namespace test: $*" >&2
-    for log in "$TMP/daemon.log" "$TMP/conflict.log" "$TMP/policy-conflict.log" "$TMP/route-conflict.log" "$TMP/policy-shadow-conflict.log" "$TMP/partial-setup-conflict.log" "$TMP/partial-policy-route.log" "$TMP/partial-forwarding.log" "$TMP/reload-failure.log" "$TMP/reload-route-failure.log" "$TMP/reload-immutable.log"; do
+    for log in "$TMP/daemon.log" "$TMP/conflict.log" "$TMP/policy-conflict.log" "$TMP/route-conflict.log" "$TMP/policy-shadow-conflict.log" "$TMP/partial-setup-conflict.log" "$TMP/partial-policy-route.log" "$TMP/partial-forwarding.log" "$TMP/reload-failure.log" "$TMP/reload-route-failure.log" "$TMP/reload-immutable.log" "$TMP/shutdown-cleanup-failure.log" "$TMP/shutdown-forwarding-restore-failure.log" "$TMP/shutdown-ipv6-forwarding-restore-failure.log"; do
         if [[ -f "$log" ]]; then
             cat "$log" >&2
         fi
@@ -668,7 +668,84 @@ ip netns exec "$NS" nft list table inet vpn_relay_it >/dev/null 2>&1 || fail "nf
 ip -n "$NS" -4 rule show | grep -Fq 'fwmark 0x1001 lookup main proto 242' || fail "injected policy rule unexpectedly disappeared during failed cleanup"
 [[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "0" ]] || fail "IPv4 forwarding was not restored after shutdown cleanup failure"
 grep -Fq "shutdown cleanup incomplete; retaining fail-closed nftables policy" "$TMP/shutdown-cleanup-failure.log" || fail "daemon did not report retained fail-closed policy"
-# Remove the intentionally retained table so the namespace teardown remains tidy.
+# A failed IPv4 forwarding restore during graceful shutdown must also retain
+# the nftables policy, while restoration of IPv6 must still be attempted.
+REAL_SYSCTL_SHUTDOWN="$(command -v sysctl)"
+mkdir -p "$TMP/fail-shutdown-sysctl"
+cat >"$TMP/fail-shutdown-sysctl/sysctl" <<EOF
+#!/bin/sh
+if [ -f "$TMP/fail-shutdown-forwarding-restore" ] && [ "\$1" = "-w" ] \
+    && [ "\$2" = "net.ipv4.ip_forward=0" ]; then
+    echo "injected shutdown IPv4 forwarding restore failure" >&2
+    exit 42
+fi
+exec "$REAL_SYSCTL_SHUTDOWN" "\$@"
+EOF
+chmod +x "$TMP/fail-shutdown-sysctl/sysctl"
+ip netns exec "$NS" env PATH="$TMP/fail-shutdown-sysctl:$PATH" "$BIN" --config "$TMP/config.toml" >"$TMP/shutdown-forwarding-restore-failure.log" 2>&1 &
+DAEMON_PID=$!
+for _ in $(seq 1 30); do
+    ready=1
+    ip netns exec "$NS" nft list table inet vpn_relay_it >/dev/null 2>&1 || ready=0
+    [[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "1" ]] || ready=0
+    [[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "1" ]] || ready=0
+    [[ $ready -eq 1 ]] && break
+    if ! kill -0 "$DAEMON_PID" 2>/dev/null; then
+        fail "daemon exited before shutdown-forwarding failure test became ready"
+    fi
+    sleep 1
+done
+[[ $ready -eq 1 ]] || fail "daemon did not become ready for shutdown-forwarding failure test"
+touch "$TMP/fail-shutdown-forwarding-restore"
+kill -TERM "$DAEMON_PID"
+wait "$DAEMON_PID" || fail "daemon failed while handling graceful shutdown forwarding restore failure"
+DAEMON_PID=""
+ip netns exec "$NS" nft list table inet vpn_relay_it >/dev/null 2>&1 || fail "nftables fail-closed policy was removed despite IPv4 forwarding restore failure"
+[[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "1" ]] || fail "injected IPv4 forwarding restore unexpectedly succeeded"
+[[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "0" ]] || fail "IPv6 forwarding was not restored after IPv4 restore failure"
+grep -Fq "injected shutdown IPv4 forwarding restore failure" "$TMP/shutdown-forwarding-restore-failure.log" || fail "daemon log omitted injected IPv4 forwarding restore failure"
+grep -Fq "shutdown cleanup incomplete; retaining fail-closed nftables policy" "$TMP/shutdown-forwarding-restore-failure.log" || fail "daemon did not report retained fail-closed policy after forwarding restore failure"
+# Repair the deliberately retained state with the real sysctl executable.
+ip netns exec "$NS" "$REAL_SYSCTL_SHUTDOWN" -w net.ipv4.ip_forward=0 >/dev/null
+ip netns exec "$NS" nft delete table inet vpn_relay_it
+
+# Exercise the other forwarding family independently: an IPv6 restore failure
+# must preserve the policy without preventing IPv4 from being restored.
+mkdir -p "$TMP/fail-shutdown-ipv6-sysctl"
+cat >"$TMP/fail-shutdown-ipv6-sysctl/sysctl" <<EOF
+#!/bin/sh
+if [ -f "$TMP/fail-shutdown-ipv6-forwarding-restore" ] && [ "\$1" = "-w" ] \
+    && [ "\$2" = "net.ipv6.conf.all.forwarding=0" ]; then
+    echo "injected shutdown IPv6 forwarding restore failure" >&2
+    exit 42
+fi
+exec "$REAL_SYSCTL_SHUTDOWN" "\$@"
+EOF
+chmod +x "$TMP/fail-shutdown-ipv6-sysctl/sysctl"
+ip netns exec "$NS" env PATH="$TMP/fail-shutdown-ipv6-sysctl:$PATH" "$BIN" --config "$TMP/config.toml" >"$TMP/shutdown-ipv6-forwarding-restore-failure.log" 2>&1 &
+DAEMON_PID=$!
+for _ in $(seq 1 30); do
+    ready=1
+    ip netns exec "$NS" nft list table inet vpn_relay_it >/dev/null 2>&1 || ready=0
+    [[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "1" ]] || ready=0
+    [[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "1" ]] || ready=0
+    [[ $ready -eq 1 ]] && break
+    if ! kill -0 "$DAEMON_PID" 2>/dev/null; then
+        fail "daemon exited before IPv6 shutdown-forwarding failure test became ready"
+    fi
+    sleep 1
+done
+[[ $ready -eq 1 ]] || fail "daemon did not become ready for IPv6 shutdown-forwarding failure test"
+touch "$TMP/fail-shutdown-ipv6-forwarding-restore"
+kill -TERM "$DAEMON_PID"
+wait "$DAEMON_PID" || fail "daemon failed while handling graceful IPv6 forwarding restore failure"
+DAEMON_PID=""
+ip netns exec "$NS" nft list table inet vpn_relay_it >/dev/null 2>&1 || fail "nftables fail-closed policy was removed despite IPv6 forwarding restore failure"
+[[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "0" ]] || fail "IPv4 forwarding was not restored after IPv6 restore failure"
+[[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "1" ]] || fail "injected IPv6 forwarding restore unexpectedly succeeded"
+grep -Fq "injected shutdown IPv6 forwarding restore failure" "$TMP/shutdown-ipv6-forwarding-restore-failure.log" || fail "daemon log omitted injected IPv6 forwarding restore failure"
+grep -Fq "shutdown cleanup incomplete; retaining fail-closed nftables policy" "$TMP/shutdown-ipv6-forwarding-restore-failure.log" || fail "daemon did not retain fail-closed policy after IPv6 forwarding restore failure"
+ip netns exec "$NS" "$REAL_SYSCTL_SHUTDOWN" -w net.ipv6.conf.all.forwarding=0 >/dev/null
 ip netns exec "$NS" nft delete table inet vpn_relay_it
 
 echo "vpn-relay namespace integration test passed"

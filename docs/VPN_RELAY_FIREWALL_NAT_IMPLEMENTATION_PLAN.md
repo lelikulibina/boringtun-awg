@@ -3,7 +3,7 @@
 > Рабочая ветка: `feature/vpn-relay-firewall-nat`
 > Базовая ветка: `feature/boringtun-router-daemon`
 > Базовый commit: `ad3f35d2790e7e47c8d050fb7b3c206c69ac2aa4`
-> Последнее обновление: 2026-11-09 (backend preflight, сохранение DNS endpoint и CI run 42680908328)
+> Последнее обновление: 2026-11-10 (shutdown fail-closed lifecycle, forwarding restore failure-injection и CI timeout guard)
 >
 > Этот документ является рабочим журналом реализации. Статусы меняются только
 > после фактического изменения кода и выполнения соответствующих проверок.
@@ -686,3 +686,11 @@ Noise sessions для peer, чьи параметры не менялись; н�
 
 
 | 2026-11-10 | Гарантировано ожидание nft subprocess при ошибке записи policy script | В `apply_nft` ошибка записи в stdin раньше немедленно возвращала управление, оставляя дочерний процесс без явного ожидания. Теперь stdin закрывается при ошибке и выполняется `wait_with_output`, чтобы nft завершился и был reap-нут даже при broken pipe; исходная ошибка записи сохраняется для диагностики. Проверки rustfmt/tests/clippy и network-namespace integration ожидают CI | Реализовано, ожидает CI |
+
+
+| 2026-11-10 | Расширены shutdown forwarding failure-injection тесты для IPv4 и IPv6 | Два независимых namespace сценария отклоняют восстановление одного семейства после SIGTERM. Каждый проверяет, что nftables policy сохраняется, второе семейство forwarding успешно восстанавливается, а журнал содержит причину и fail-closed сообщение; после проверок тесты вручную возвращают sysctl и удаляют policy. Ожидает CI | Реализовано, ожидает CI |
+
+
+| 2026-11-10 | Добавлен предельный timeout для CI integration-tests | Job `integration-tests` ограничен 45 минутами, чтобы зависшие ignored tests или сетевые сценарии не блокировали workflow бесконечно. Предыдущий run 42798780332 оставался на шаге `cargo test -- --ignored` более 20 минут; новый timeout будет проверен следующим CI. Ожидает CI | Реализовано, ожидает CI |
+
+| 2026-11-10 | Ограничено время выполнения ignored integration suite | Шаг `cargo test -- --ignored` теперь имеет отдельный 15-минутный watchdog с принудительным завершением через 30 секунд после TERM; общий integration job ограничен 45 минутами. Это локализует зависание legacy Docker/TUN тестов и сохраняет верхнюю границу для всего CI job. Ожидает CI | Реализовано, ожидает CI |
