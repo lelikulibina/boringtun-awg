@@ -139,10 +139,10 @@
 - [x] Peer traffic netns test использует явные INPUT/OUTPUT allow rules.
 - [x] Packet-level probes подтверждают разрешённый TCP/8080 и запрет TCP/8081
   отдельно на server INPUT и server OUTPUT; также проверяется ICMP.
-- [~] Добавлен отдельный forged-reply probe: host-originated UDP flow идёт через
-  unmanaged underlay, а ответ с точным обратным tuple приходит через managed
-  TUN; пакет должен быть виден на TUN, но не должен попасть в host socket.
-  Ожидает CI.
+- [x] Forged-reply packet probe подтверждён успешным netns CI: host-originated UDP flow идёт через
+  unmanaged underlay, точный обратный tuple приходит через managed TUN и виден
+  на TUN, но не попадает в host socket; отдельно проверен OUTPUT для ответа
+  на unmanaged INPUT flow.
 
 - [x] Добавлен `[firewall]` с независимыми `input.rules` и `output.rules`.
 - [x] Правило разрешения привязано к одному существующему managed interface.
@@ -822,3 +822,5 @@ successful shutdown removes the firewall.
 | 2026-11-10 | Расширена матрица rollback и исправлен двойной cleanup policy routing | Проверены все четыре границы установки IPv4/IPv6 route/rule; агрегирование восьми cleanup failures на двух интерфейсах; вложенный rollback без повторного удаления egress; и сохранение socket cleanup при ошибке egress rollback. Дополнительно добавлен тест, который инъецирует отказ каждого из четырёх cleanup-вызовов после ошибки установки и проверяет агрегацию всех ошибок при сохранении исходной причины. | Реализовано, ожидает CI |
 
 | 2026-11-10 | Проверен отказ stale socket-rule cleanup перед установкой | Failure injection на каждой из четырёх IPv4/IPv6 × mark точек предварительной очистки. Установка новых правил не начинается после ошибки; rollback дополнительно пытается удалить все четыре возможных socket rules, исходная ошибка сохраняется. | Реализовано, ожидает CI |
+
+| 2026-11-10 | Закрыт forged-reply packet probe и проверен stale egress cleanup | Peer-traffic netns test содержит точный обратный tuple для host-originated UDP flow: underlay capture подтверждает исходный поток, TUN capture — доставку forged reply, host socket не получает пакет; отдельный OUTPUT probe блокирует ответ на unmanaged INPUT flow. Добавлен failure-injection на все три stale egress cleanup boundaries для IPv6-disabled uplink: установка не начинается, rollback пытается удалить все четыре egress resources. | Forged-reply: integration CI 42874289187 success; stale cleanup: ожидает CI |

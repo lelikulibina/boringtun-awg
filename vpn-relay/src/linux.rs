@@ -997,6 +997,63 @@ mod tests {
     }
 
     #[test]
+    fn egress_stale_rule_cleanup_failure_aborts_install_and_rolls_back() {
+        let mut plan = cleanup_test_plan();
+        plan.egresses[0].ipv6_enabled = false;
+
+        for failure_position in 1..=3 {
+            let mut calls = Vec::new();
+            let mut stale_cleanup_attempts = 0;
+            let mut failure_injected = false;
+            let result = apply_egress_policy_routing_with(&plan, &mut |_program, args| {
+                calls.push(args.to_vec());
+                let is_stale_delete = args.get(2).is_some_and(|part| part == "del")
+                    && (args.get(1).is_some_and(|part| part == "rule")
+                        || args.get(1).is_some_and(|part| part == "route"));
+                if is_stale_delete && !failure_injected {
+                    stale_cleanup_attempts += 1;
+                    if stale_cleanup_attempts == failure_position {
+                        failure_injected = true;
+                        return Err(LinuxError::Command {
+                            program: format!("ip {}", args.join(" ")),
+                            status: "exit status 2".into(),
+                            stderr: format!(
+                                "injected stale egress cleanup failure at step {failure_position}"
+                            ),
+                        });
+                    }
+                }
+                Ok(())
+            });
+
+            assert!(failure_injected, "failure point {failure_position} was not reached");
+            assert!(matches!(result, Err(LinuxError::Command { ref stderr, .. })
+                if stderr.contains(&format!("step {failure_position}"))));
+            assert!(
+                !calls.iter().any(|args| {
+                    args.get(2).is_some_and(|part| part == "replace")
+                        || args.get(2).is_some_and(|part| part == "add")
+                }),
+                "egress routes and rules must not be installed after stale cleanup fails"
+            );
+
+            let cleanup = calls
+                .iter()
+                .filter(|args| {
+                    args.get(2).is_some_and(|part| part == "del")
+                        && (args.get(1).is_some_and(|part| part == "rule")
+                            || args.get(1).is_some_and(|part| part == "route"))
+                })
+                .count();
+            assert_eq!(
+                cleanup,
+                failure_position + 4,
+                "failed pre-cleanup plus rollback must attempt all four egress resources"
+            );
+        }
+    }
+
+    #[test]
     fn egress_apply_failure_at_each_install_boundary_rolls_back_all_resources() {
         let plan = cleanup_test_plan();
         let failure_points = [
