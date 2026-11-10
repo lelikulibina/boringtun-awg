@@ -849,3 +849,5 @@ successful shutdown removes the firewall.
 - host network mode и rootless ограничения документируются как отдельные режимы, без неявного расширения полномочий.
 
 | 2026-11-10 | Зафиксирована модель развёртывания в Podman перед per-interface runtime | README описывает rootful bridge/private netns, NET_ADMIN, /dev/net/tun, IPv4 global switch и запрет считать host/rootless режимы безопасными по умолчанию. Следующий шаг — реализация интерфейсного allowlist и journal с identity guard; код per-interface sysctl ещё не реализован. | Документация обновлена; ожидает CI |
+
+| 2026-11-10 | Добавлена обратная проверка Linux interface identity для будущего forwarding journal | Реализован ifindex → interface name через `if_indextoname`; identity guard проверяет обе стороны отображения name/index. Проверки вынесены в функцию с внедряемыми lookup-операциями, чтобы тестировать сценарии повторного использования имени и индекса без изменения реального netns. CI предыдущего коммита выявил только rustfmt (исправлено в `34e3dde`); полный CI нового коммита `1cf4cd0` ожидает запуска. | Реализовано; CI ожидает завершения |
