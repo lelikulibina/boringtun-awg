@@ -1801,7 +1801,10 @@ mod tests {
             persist_forwarding_state(&path, 1234, &sample_forwarding_state()),
             Err(RuntimeError::Forwarding(_))
         ));
-        assert!(std::fs::symlink_metadata(&path).unwrap().file_type().is_symlink());
+        assert!(std::fs::symlink_metadata(&path)
+            .unwrap()
+            .file_type()
+            .is_symlink());
         assert!(!target.exists());
 
         std::fs::remove_file(path).unwrap();
