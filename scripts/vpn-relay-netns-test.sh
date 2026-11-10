@@ -510,8 +510,11 @@ for _ in $(seq 1 30); do
     ready=1
     ip netns exec "$NS" nft list table inet vpn_relay_it >/dev/null 2>&1 || ready=0
     ip -n "$NS" -4 rule show | grep -Fq 'fwmark 0x80000000 lookup 10000 proto 242' || ready=0
+    ip -n "$NS" -4 rule show | grep -Fq 'fwmark 0x1001 lookup main proto 242' || ready=0
+    ip -n "$NS" -6 rule show | grep -Fq 'fwmark 0x1001 lookup main proto 242' || ready=0
     ip -n "$NS" -4 route show table 10000 | grep -Fq 'default dev awg-primary proto 242' || ready=0
     ip netns exec "$NS" ip link show dev wg-server >/dev/null 2>&1 || ready=0
+    grep -Fq 'vpn-relay runtime started' "$TMP/crash-restart.log" || ready=0
     [[ $ready -eq 1 ]] && break
     if ! kill -0 "$DAEMON_PID" 2>/dev/null; then
         fail "daemon failed to recover from stale owned resources after SIGKILL"
