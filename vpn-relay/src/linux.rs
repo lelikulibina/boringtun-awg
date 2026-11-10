@@ -691,8 +691,10 @@ where
     F: FnMut(&str, &[String]) -> Result<(), LinuxError>,
 {
     let install_result = (|| -> Result<(), LinuxError> {
+        // Remove every stale socket rule before installing any replacement.
+        // Interleaving delete/add per family could leave a partially refreshed
+        // policy when a later stale-rule deletion fails.
         for mark in &plan.socket_marks {
-            // Keep encrypted outer IPv6 transport on the main table even when inner IPv6 is disabled.
             for family in ["-4", "-6"] {
                 let args = vec![
                     family.into(),
@@ -708,6 +710,11 @@ where
                     ROUTING_PROTOCOL.into(),
                 ];
                 run_ip_cleanup_with(&args, run_command)?;
+            }
+        }
+        // Keep encrypted outer IPv6 transport on the main table even when inner IPv6 is disabled.
+        for mark in &plan.socket_marks {
+            for family in ["-4", "-6"] {
                 let args = vec![
                     family.into(),
                     "rule".into(),
