@@ -1361,6 +1361,26 @@ mod tests {
     }
 
     #[test]
+    fn control_socket_bind_rejects_replaced_path_without_unlinking_it() {
+        let path = std::env::temp_dir().join(format!(
+            "vpn-relay-control-bind-replaced-{}.sock",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        let result = ControlSocket::bind_with(path.clone(), |path, _| {
+            std::fs::remove_file(path)?;
+            std::fs::write(path, b"external replacement")?;
+            Ok(())
+        });
+        assert!(matches!(
+            result,
+            Err(RuntimeError::Control(message)) if message.contains("path changed while being configured")
+        ));
+        assert_eq!(std::fs::read(&path).unwrap(), b"external replacement");
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
     fn control_socket_drop_does_not_remove_replaced_path() {
         let path = std::env::temp_dir().join(format!(
             "vpn-relay-control-replaced-{}.sock",
