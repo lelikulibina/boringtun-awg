@@ -317,7 +317,7 @@ unmanaged output остаётся неизменным.
   interface identity/address/MTU/IPv6/listen port/private key/AWG parameters,
   socket marks, nft table, forwarding ownership и lifecycle. Unit tests проверяют
   multi-device commit rollback и fatal rollback failure; packet-level concurrency
-  и полный end-to-end reload acceptance остаются отдельным критерием.
+  и полный end-to-end reload acceptance остаются отдельным критерием. Packet-level WG/AWG test now also adds and removes IPv4/IPv6 AllowedIPs for a live peer and verifies actual packet acceptance/rejection without restarting either daemon.
 
 Критерий приёмки: гарантии подтверждены тестами на реальном BoringTun traffic;
 неподтверждённые свойства не заявляются.
@@ -826,3 +826,6 @@ successful shutdown removes the firewall.
 
 | 2026-11-10 | Проверен полный CI для cleanup и nft inspection failure | CI run 42883277254 на HEAD 49053da: rustfmt, clippy, tests, feature checks, integration-tests, AWG 3.1 и all-systems-go — success; Windows skipped. Включает stale socket/egress cleanup и проверку, что nft delete не вызывается после ошибки inspection. | Подтверждено |
 | 2026-11-10 | Усилена multi-device peer rollback матрица и синхронизирован архитектурный план | Добавлен тест, где восстановление второго интерфейса завершается ошибкой, но rollback первого всё равно выполняется. План обновлён по фактическому runtime reload контракту; добавлен безопасный per-interface forwarding design и явные kernel/netns acceptance criteria. | Ожидает CI |
+
+
+| 2026-11-10 | Добавлены packet-level проверки peer AllowedIPs при runtime reload | WG/AWG network-namespace test добавляет и удаляет IPv4/IPv6 адреса у работающего peer через reload без перезапуска daemon; реальные ping probes подтверждают разрешение новых source addresses, блокировку удалённых и сохранение исходного peer traffic. | Ожидает CI |

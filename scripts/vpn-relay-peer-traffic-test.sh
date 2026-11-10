@@ -749,6 +749,143 @@ kill -0 "$SERVER_PID" 2>/dev/null || fail "server daemon exited after traffic re
 ip netns exec "$CLIENT_NS" ping -n -c 3 -W 2 10.77.0.1 \
     || fail "tunnel traffic did not recover after repeated runtime reload"
 
+# Exercise a real peer AllowedIPs transition while authenticated traffic is
+# flowing. Add new IPv4/IPv6 source addresses to the existing client peer,
+# apply the server config without restarting either daemon, and prove that
+# packets sourced from those addresses are accepted only during the new config.
+ip -n "$CLIENT_NS" address add 10.77.0.22/32 dev wg-peer-test
+ip -n "$CLIENT_NS" -6 address add fd77::22/128 dev wg-peer-test
+python3 - "$TMP/server.toml" add <<'PY'
+import sys
+path, action = sys.argv[1:]
+with open(path, encoding="utf-8") as stream:
+    config = stream.read()
+old = 'allowed_ips = ["10.77.0.2/32", "fd77::2/128", "fd77::3/128", "192.0.2.20/32", "192.0.2.21/32"]'
+new = 'allowed_ips = ["10.77.0.2/32", "10.77.0.22/32", "fd77::2/128", "fd77::3/128", "fd77::22/128", "192.0.2.20/32", "192.0.2.21/32"]'
+if action == "add":
+    if config.count(old) != 1:
+        raise SystemExit("cannot find unique server peer AllowedIPs entry")
+    config = config.replace(old, new, 1)
+    config += """
+[[firewall.input.rules]]
+interface = "wg-peer-test"
+source = ["10.77.0.22/32"]
+protocol = "icmp"
+
+[[firewall.input.rules]]
+interface = "wg-peer-test"
+source = ["fd77::22/128"]
+protocol = "icmpv6"
+
+[[firewall.output.rules]]
+interface = "wg-peer-test"
+destination = ["10.77.0.22/32"]
+protocol = "icmp"
+
+[[firewall.output.rules]]
+interface = "wg-peer-test"
+destination = ["fd77::22/128"]
+protocol = "icmpv6"
+"""
+elif action == "remove":
+    if config.count(new) != 1:
+        raise SystemExit("cannot find unique updated server peer AllowedIPs entry")
+    config = config.replace(new, old, 1)
+    for block in (
+        '''[[firewall.input.rules]]
+interface = "wg-peer-test"
+source = ["10.77.0.22/32"]
+protocol = "icmp"
+
+''',
+        '''[[firewall.input.rules]]
+interface = "wg-peer-test"
+source = ["fd77::22/128"]
+protocol = "icmpv6"
+
+''',
+        '''[[firewall.output.rules]]
+interface = "wg-peer-test"
+destination = ["10.77.0.22/32"]
+protocol = "icmp"
+
+''',
+        '''[[firewall.output.rules]]
+interface = "wg-peer-test"
+destination = ["fd77::22/128"]
+protocol = "icmpv6"
+''',
+    ):
+        if config.count(block) != 1:
+            raise SystemExit("cannot find unique temporary peer firewall rule")
+        config = config.replace(block, "", 1)
+else:
+    raise SystemExit(f"unknown peer update action: {action}")
+with open(path, "w", encoding="utf-8") as stream:
+    stream.write(config)
+PY
+ip netns exec "$SERVER_NS" "$BIN" --config "$TMP/server.toml" --reload \
+    >"$TMP/reload-peer-add.log" 2>&1 || fail "server peer AllowedIPs addition failed"
+ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.22 -c 4 -W 2 10.77.0.1 \
+    || fail "IPv4 packet from newly allowed peer address did not pass after reload"
+ip netns exec "$CLIENT_NS" ping -6 -n -I fd77::22 -c 4 -W 2 fd77::1 \
+    || fail "IPv6 packet from newly allowed peer address did not pass after reload"
+
+python3 - "$TMP/server.toml" remove <<'PY'
+import sys
+path, action = sys.argv[1:]
+with open(path, encoding="utf-8") as stream:
+    config = stream.read()
+old = 'allowed_ips = ["10.77.0.2/32", "fd77::2/128", "fd77::3/128", "192.0.2.20/32", "192.0.2.21/32"]'
+new = 'allowed_ips = ["10.77.0.2/32", "10.77.0.22/32", "fd77::2/128", "fd77::3/128", "fd77::22/128", "192.0.2.20/32", "192.0.2.21/32"]'
+if config.count(new) != 1:
+    raise SystemExit("cannot find updated server peer AllowedIPs entry")
+config = config.replace(new, old, 1)
+for block in (
+    '''[[firewall.input.rules]]
+interface = "wg-peer-test"
+source = ["10.77.0.22/32"]
+protocol = "icmp"
+
+''',
+    '''[[firewall.input.rules]]
+interface = "wg-peer-test"
+source = ["fd77::22/128"]
+protocol = "icmpv6"
+
+''',
+    '''[[firewall.output.rules]]
+interface = "wg-peer-test"
+destination = ["10.77.0.22/32"]
+protocol = "icmp"
+
+''',
+    '''[[firewall.output.rules]]
+interface = "wg-peer-test"
+destination = ["fd77::22/128"]
+protocol = "icmpv6"
+''',
+):
+    if config.count(block) != 1:
+        raise SystemExit("cannot find unique temporary peer firewall rule")
+    config = config.replace(block, "", 1)
+with open(path, "w", encoding="utf-8") as stream:
+    stream.write(config)
+PY
+ip netns exec "$SERVER_NS" "$BIN" --config "$TMP/server.toml" --reload \
+    >"$TMP/reload-peer-remove.log" 2>&1 || fail "server peer AllowedIPs removal failed"
+if ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.22 -c 2 -W 1 10.77.0.1 \
+    >"$TMP/reload-peer-deny-ipv4.log" 2>&1; then
+    fail "IPv4 packet from removed peer address passed after reload"
+fi
+if ip netns exec "$CLIENT_NS" ping -6 -I fd77::22 -c 2 -W 1 fd77::1 \
+    >"$TMP/reload-peer-deny-ipv6.log" 2>&1; then
+    fail "IPv6 packet from removed peer address passed after reload"
+fi
+ip netns exec "$CLIENT_NS" ping -n -c 3 -W 2 10.77.0.1 \
+    || fail "existing peer traffic stopped after AllowedIPs removal"
+kill -0 "$SERVER_PID" 2>/dev/null || fail "server daemon exited after peer AllowedIPs reload"
+
 sleep 2
 
 assert_peer_counters() {
