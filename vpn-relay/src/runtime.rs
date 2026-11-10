@@ -345,6 +345,19 @@ struct ForwardingState {
     ipv6: String,
     ipv4_changed: bool,
     ipv6_changed: bool,
+    /// Per-link state is optional so version-1 namespace-only journals remain readable.
+    #[serde(default)]
+    interfaces: Vec<InterfaceForwardingState>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Eq, PartialEq)]
+struct InterfaceForwardingState {
+    name: String,
+    ifindex: u32,
+    ipv4: String,
+    ipv6: String,
+    ipv4_changed: bool,
+    ipv6_changed: bool,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -1216,6 +1229,7 @@ fn enable_forwarding_with(
         ipv6: read("net.ipv6.conf.all.forwarding")?,
         ipv4_changed: false,
         ipv6_changed: false,
+        interfaces: Vec::new(),
     };
     enable_forwarding_state_with(state, &mut write)
 }
@@ -1260,6 +1274,35 @@ fn validate_forwarding_state(state: &ForwardingState) -> Result<(), RuntimeError
             "forwarding state contains an invalid sysctl value".to_owned(),
         ));
     }
+    let mut identities = std::collections::BTreeSet::new();
+    for entry in &state.interfaces {
+        if entry.name.is_empty()
+            || entry.name.len() > 15
+            || !entry.name.is_ascii()
+            || !entry.name.bytes().all(|byte| {
+                byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-')
+            })
+            || entry.ifindex == 0
+        {
+            return Err(RuntimeError::Forwarding(
+                "forwarding journal contains an invalid interface identity".to_owned(),
+            ));
+        }
+        if !matches!(entry.ipv4.as_str(), "0" | "1")
+            || !matches!(entry.ipv6.as_str(), "0" | "1")
+        {
+            return Err(RuntimeError::Forwarding(format!(
+                "forwarding journal contains an invalid sysctl value for interface '{}'",
+                entry.name
+            )));
+        }
+        if !identities.insert((entry.name.as_str(), entry.ifindex)) {
+            return Err(RuntimeError::Forwarding(format!(
+                "forwarding journal contains duplicate interface identity '{}'/{}",
+                entry.name, entry.ifindex
+            )));
+        }
+    }
     Ok(())
 }
 
@@ -1289,10 +1332,10 @@ fn load_forwarding_state(
             path.display()
         )));
     }
-    const MAX_FORWARDING_STATE_SIZE: u64 = 4096;
+    const MAX_FORWARDING_STATE_SIZE: u64 = 64 * 1024;
     if metadata.len() > MAX_FORWARDING_STATE_SIZE {
         return Err(RuntimeError::Forwarding(
-            "forwarding state file exceeds 4 KiB".to_owned(),
+            "forwarding state file exceeds 64 KiB".to_owned(),
         ));
     }
     let mut bytes = Vec::with_capacity(metadata.len() as usize);
@@ -1703,6 +1746,7 @@ mod tests {
             ipv6: "0".to_owned(),
             ipv4_changed: true,
             ipv6_changed: true,
+            interfaces: Vec::new(),
         };
         let mut writes = Vec::new();
         let result = restore_forwarding_with(&state, |key, value| {
