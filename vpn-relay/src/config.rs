@@ -666,6 +666,12 @@ impl Config {
                         if prefixes.is_empty() {
                             return invalid(format!("{path}.{field} must not be an empty list"));
                         }
+                        let mut unique = HashSet::new();
+                        for prefix in prefixes {
+                            if !unique.insert(prefix.as_str()) {
+                                return invalid(format!("{path}.{field} must not contain duplicate CIDR selectors"));
+                            }
+                        }
                         for prefix in prefixes {
                             let (address, _) = parse_prefix(prefix, &format!("{path}.{field}"))?;
                             has_ipv6_selector |= address.is_ipv6();
@@ -1764,6 +1770,18 @@ egress = "awg-uplink"
             .unwrap_err()
             .to_string()
             .contains("destination must not contain duplicate CIDR selectors"));
+    }
+
+    #[test]
+    fn rejects_duplicate_firewall_cidr_selectors() {
+        let input = format!(
+            "{}\\n[firewall.input]\\n[[firewall.input.rules]]\\ninterface = \"wg-server\"\\nsource = [\"10.10.0.0/24\", \"10.10.0.0/24\"]\\n",
+            valid_config()
+        );
+        assert!(Config::parse_toml(&input)
+            .unwrap_err()
+            .to_string()
+            .contains("firewall.input.rules[0].source must not contain duplicate CIDR selectors"));
     }
 
     #[test]
