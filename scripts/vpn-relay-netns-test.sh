@@ -23,7 +23,7 @@ trap cleanup EXIT
 
 fail() {
     echo "vpn-relay namespace test: $*" >&2
-    for log in "$TMP/daemon.log" "$TMP/conflict.log" "$TMP/policy-conflict.log" "$TMP/route-conflict.log" "$TMP/policy-shadow-conflict.log" "$TMP/partial-setup-conflict.log" "$TMP/partial-policy-route.log" "$TMP/partial-forwarding.log" "$TMP/partial-ipv4-forwarding.log" "$TMP/partial-ipv4-forwarding-restore-failure.log" "$TMP/reload-failure.log" "$TMP/reload-route-failure.log" "$TMP/reload-immutable.log" "$TMP/shutdown-cleanup-failure.log" "$TMP/shutdown-forwarding-restore-failure.log" "$TMP/shutdown-ipv6-forwarding-restore-failure.log" "$TMP/preexisting-forwarding.log" "$TMP/forwarding-management-disabled.log"; do
+    for log in "$TMP/daemon.log" "$TMP/conflict.log" "$TMP/policy-conflict.log" "$TMP/route-conflict.log" "$TMP/policy-shadow-conflict.log" "$TMP/partial-setup-conflict.log" "$TMP/partial-interface-config.log" "$TMP/partial-policy-route.log" "$TMP/partial-forwarding.log" "$TMP/partial-ipv4-forwarding.log" "$TMP/partial-ipv4-forwarding-restore-failure.log" "$TMP/reload-failure.log" "$TMP/reload-route-failure.log" "$TMP/reload-immutable.log" "$TMP/shutdown-cleanup-failure.log" "$TMP/shutdown-forwarding-restore-failure.log" "$TMP/shutdown-ipv6-forwarding-restore-failure.log" "$TMP/preexisting-forwarding.log" "$TMP/forwarding-management-disabled.log"; do
         if [[ -f "$log" ]]; then
             cat "$log" >&2
         fi
@@ -267,6 +267,24 @@ fi
 [[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "0" ]] || fail "partial setup failure changed IPv4 forwarding"
 [[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "0" ]] || fail "partial setup failure changed IPv6 forwarding"
 ip -n "$NS" link del wg-server
+
+# Fail while configure_interface is applying the first TUN address, after the
+# backend has created and brought the link up. Startup must destroy that partial
+# interface and remove the fail-closed table without touching host forwarding.
+REAL_IP_CONFIG="$(command -v ip)"
+mkdir -p "$TMP/fail-interface-config"
+cat >"$TMP/fail-interface-config/ip" <<EOF
+#!/bin/sh
+if [ "\$1" = "-4" ] && [ "\$2" = "address" ] && [ "\$3" = "replace" ] \
+    && [ "\$6" = "awg-primary" ]; then
+    echo "injected TUN address configuration failure" >&2
+    exit 42
+fi
+exec "$REAL_IP_CONFIG" "\$@"
+EOF
+chmod +x "$TMP/fail-interface-config/ip"
+expect_startup_failure partial-interface-config.log "injected TUN address configuration failure" "$TMP/fail-interface-config"
+grep -Fq "injected TUN address configuration failure" "$TMP/partial-interface-config.log" || fail "TUN address configuration failure was not observed"
 
 # Inject an iproute2 failure after the first egress has installed its IPv4
 # route and rule. Rollback must remove those partial resources as well as the
