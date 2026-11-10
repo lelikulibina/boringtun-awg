@@ -1565,6 +1565,52 @@ mod tests {
     use super::*;
 
     #[test]
+    fn forwarding_journal_accepts_legacy_namespace_only_state() {
+        let legacy = r#"{"ipv4":"0","ipv6":"1","ipv4_changed":true,"ipv6_changed":false}"#;
+        let state: ForwardingState = serde_json::from_str(legacy).unwrap();
+        assert!(state.interfaces.is_empty());
+        validate_forwarding_state(&state).unwrap();
+    }
+
+    #[test]
+    fn forwarding_journal_validates_link_identity_and_values() {
+        let mut state = sample_forwarding_state();
+        state.interfaces.push(InterfaceForwardingState {
+            name: "awg0".to_owned(),
+            ifindex: 17,
+            ipv4: "0".to_owned(),
+            ipv6: "1".to_owned(),
+            ipv4_changed: true,
+            ipv6_changed: false,
+        });
+        validate_forwarding_state(&state).unwrap();
+
+        state.interfaces[0].ifindex = 0;
+        assert!(validate_forwarding_state(&state).is_err());
+        state.interfaces[0].ifindex = 17;
+        state.interfaces[0].name = "../net/eth0".to_owned();
+        assert!(validate_forwarding_state(&state).is_err());
+        state.interfaces[0].name = "awg0".to_owned();
+        state.interfaces[0].ipv6 = "2".to_owned();
+        assert!(validate_forwarding_state(&state).is_err());
+    }
+
+    #[test]
+    fn forwarding_journal_rejects_duplicate_link_identity() {
+        let mut state = sample_forwarding_state();
+        let entry = InterfaceForwardingState {
+            name: "awg0".to_owned(),
+            ifindex: 17,
+            ipv4: "0".to_owned(),
+            ipv6: "0".to_owned(),
+            ipv4_changed: true,
+            ipv6_changed: true,
+        };
+        state.interfaces = vec![entry.clone(), entry];
+        assert!(validate_forwarding_state(&state).is_err());
+    }
+
+    #[test]
     fn forwarding_enable_does_not_rewrite_families_that_are_already_enabled() {
         let state = enable_forwarding_with(
             |key| match key {
