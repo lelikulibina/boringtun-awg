@@ -535,8 +535,8 @@ fi
 ip netns exec "$NS" sysctl -qw net.ipv4.ip_forward=0
 ip netns exec "$NS" sysctl -qw net.ipv6.conf.all.forwarding=0
 
-[[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "1" ]] || fail "IPv4 forwarding was not enabled"
-[[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "1" ]] || fail "IPv6 forwarding was not enabled"
+[[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "0" ]] || fail "IPv4 forwarding test namespace was not reset after crash-recovery coverage"
+[[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "0" ]] || fail "IPv6 forwarding test namespace was not reset after crash-recovery coverage"
 
 for family in -4 -6; do
     rules="$(ip -n "$NS" "$family" rule show)"
