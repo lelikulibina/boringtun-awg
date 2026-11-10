@@ -446,14 +446,14 @@ Noise sessions для peer, чьи параметры не менялись; н�
 | 2026-11-09 | Добавлен рабочий план реализации | Commit 93244b354acef1344c9ab9ec2600372633de3ea6 | Завершено |
 | 2026-11-09 | Проверены BoringTun AllowedIPs ingress validation и backend routing lookup | Просмотрены `Device::peer_owns`, `WriteToTunnelV4/V6`, `peers_by_ip` | Завершено |
 | 2026-11-09 | Уточнена модель NAT: действие остаётся в routing rule | Отдельная NAT-секция не нужна, так как egress уже выбирается routing rule | Завершено |
-| 2026-11-09 | Добавлены INPUT/OUTPUT chains, explicit allow rules и managed default deny | Unit/parser tests; CI run 42625442963: unit tests, clippy, rustfmt, feature checks и AWG interoperability успешны; peer traffic integration упал из-за отсутствующих explicit allow rules | В работе |
-| 2026-11-09 | Peer traffic netns scenario переведён на явные INPUT/OUTPUT allow rules | Run 42629958261: WG и AWG peer traffic tests успешно прошли; общий integration job упал позже на multi-uplink тесте, где endpoint-конфигурации ещё не имели allow rules | В работе |
-| 2026-11-09 | Multi-uplink test адаптирован к INPUT/OUTPUT deny-by-default | Добавлены точечные разрешения на client, router и uplink endpoints; CI ещё выполняется | В работе |
-| 2026-11-09 | Ужесточена проверка address family для SNAT | Исправлен случай, когда family присутствовал только в одном selector, но отсутствовал в пересечении source/destination; добавлен regression parser test | В работе |
-| 2026-11-09 | Добавлены packet-level INPUT/OUTPUT probes | Peer traffic test запускает TCP listeners на обоих концах, проверяет разрешённый порт 8080 и отдельно INPUT deny/OUTPUT deny на 8081; iperf3 TCP/UDP 5201 также явно разрешён | В работе |
-| 2026-11-09 | Выделена модель `RoutingDecision` | Routing classifier, FORWARD и NAT используют один список решений; CI после переименования выявил устаревший публичный re-export `NftRule`, исправление внесено | В работе |
-| 2026-11-09 | Добавлена conntrack-aware обработка ответного трафика INPUT/OUTPUT | Явные allow rules ограничены original direction; established/related reply принимается только на managed interface; добавлены unit assertions | В работе |
-| 2026-11-09 | Разделены routing mark и conntrack decision id | Уникальный conntrack id назначается каждому routing decision; established route restore, обратный FORWARD и NAT используют этот id; NAT ограничен исходной парой интерфейсов | Ожидает полного CI и packet-level проверки |
+| 2026-11-09 | Добавлены INPUT/OUTPUT chains, explicit allow rules и managed default deny | Unit/parser tests; CI run 42625442963: unit tests, clippy, rustfmt, feature checks и AWG interoperability успешны; peer traffic integration упал из-за отсутствующих explicit allow rules | Проверено, полный CI 42808265342 |
+| 2026-11-09 | Peer traffic netns scenario переведён на явные INPUT/OUTPUT allow rules | Run 42629958261: WG и AWG peer traffic tests успешно прошли; общий integration job упал позже на multi-uplink тесте, где endpoint-конфигурации ещё не имели allow rules | Проверено, полный CI 42808265342 |
+| 2026-11-09 | Multi-uplink test адаптирован к INPUT/OUTPUT deny-by-default | Добавлены точечные разрешения на client, router и uplink endpoints; CI ещё выполняется | Проверено, полный CI 42808265342 |
+| 2026-11-09 | Ужесточена проверка address family для SNAT | Исправлен случай, когда family присутствовал только в одном selector, но отсутствовал в пересечении source/destination; добавлен regression parser test | Проверено, полный CI 42808265342 |
+| 2026-11-09 | Добавлены packet-level INPUT/OUTPUT probes | Peer traffic test запускает TCP listeners на обоих концах, проверяет разрешённый порт 8080 и отдельно INPUT deny/OUTPUT deny на 8081; iperf3 TCP/UDP 5201 также явно разрешён | Проверено, полный CI 42808265342 |
+| 2026-11-09 | Выделена модель `RoutingDecision` | Routing classifier, FORWARD и NAT используют один список решений; CI после переименования выявил устаревший публичный re-export `NftRule`, исправление внесено | Проверено, полный CI 42808265342 |
+| 2026-11-09 | Добавлена conntrack-aware обработка ответного трафика INPUT/OUTPUT | Явные allow rules ограничены original direction; established/related reply принимается только на managed interface; добавлены unit assertions | Проверено, полный CI 42808265342 |
+| 2026-11-09 | Разделены routing mark и conntrack decision id | Уникальный conntrack id назначается каждому routing decision; established route restore, обратный FORWARD и NAT используют этот id; NAT ограничен исходной парой интерфейсов | Проверено, полный CI 42808265342 |
 | 2026-11-09 | Изменён порядок startup/shutdown | nftables policy устанавливается до создания/поднятия TUN, policy routing и включения forwarding; shutdown держит firewall до удаления TUN links; обновлён netns readiness check | Ожидает network-namespace CI |
 
 | 2026-11-09 | Packet-level ICMPv6 INPUT/OUTPUT deny probes | CI 42668190390: WG и AWG peer traffic tests, включая ICMPv6 allow и deny по source/destination selectors, успешно прошли | Завершено |
@@ -475,7 +475,7 @@ Noise sessions для peer, чьи параметры не менялись; н�
 6. Не объединять несвязанные этапы в один большой commit.
 7. Не менять исходную ветку; рабочие изменения вести только в этой ветке.
 
-| 2026-11-09 | Добавлен ранний drop invalid для managed INPUT/OUTPUT | Правила ограничены managed ingress/egress; добавлены unit assertions; исправлено экранирование newline в nft script | Ожидает CI |
+| 2026-11-09 | Добавлен ранний drop invalid для managed INPUT/OUTPUT | Правила ограничены managed ingress/egress; добавлены unit assertions; исправлено экранирование newline в nft script | Проверено, полный CI 42808265342 |
 | 2026-11-09 | Исправлен multi-uplink packet test для второго клиента | Второй клиентский firewall теперь разрешает тестовый routed трафик; предыдущий failure был вызван его собственным OUTPUT deny до router ingress | Ожидает повторный packet-level CI |
 | 2026-11-09 | Переписана документация nftables | Документ соответствует текущим INPUT/OUTPUT/FORWARD, conntrack decision IDs, NAT, IPv6 gating, ownership и runtime; явно описана граница peer identity | Готово |
 
@@ -485,40 +485,40 @@ Noise sessions для peer, чьи параметры не менялись; н�
 | 2026-11-09 | Привязаны INPUT/OUTPUT replies к явной авторизации исходного host flow | Allow rules выставляют отдельный high-16-bit ct mark tag `0x80000000`; reply rules требуют его; младшие 16 бит сохраняются; unit assertions обновлены | Ожидает nft/netns CI и packet-level forged-reply test |
 
 | 2026-11-09 | CI для host-flow conntrack tag и текущей firewall/NAT реализации | Run 42646765536: all-systems-go success; unit tests, clippy, rustfmt, feature checks, AWG 3.1 interoperability, netns routing, WG/AWG bidirectional traffic и multi-uplink packet tests прошли | Завершено |
-| 2026-11-09 | Добавлен forged-reply packet probe | Проверяет, что reply к host-originated unmanaged UDP flow виден на managed TUN, но блокируется INPUT без host-flow conntrack tag | Ожидает CI |
+| 2026-11-09 | Добавлен forged-reply packet probe | Проверяет, что reply к host-originated unmanaged UDP flow виден на managed TUN, но блокируется INPUT без host-flow conntrack tag | Проверено, полный CI 42808265342 |
 
 
-| 2026-11-09 | Удалён дублирующийся OUTPUT reply probe; forged-reply сценарий дополнен отдельной проверкой underlay и диагностикой отправителя | Коммиты 8543b36, e8fb434; ожидается новый CI. Предыдущий run 42654386211 выявил, что forged reply не доходил до server TUN; добавлены захват исходного host-flow на клиентском underlay и логирование отправки | В работе |
-| 2026-11-09 | Статический SNAT проверяется адресом, отличным от адреса egress TUN | Коммит bdcf1d7: nat_to=10.20.0.99, peer AllowedIPs и endpoint INPUT/OUTPUT selectors расширены для обратного пути; ожидается packet-level CI | В работе |
-| 2026-11-09 | OUTPUT reply probe разделён на один сценарий без дублирования | Удалён повторный блок, который повторно отправлял тот же UDP запрос и ошибочно завершал тест; основной сценарий подтверждает получение запроса сервисом, EPERM на ответе и отсутствие пакета на клиентском TUN | Ожидает CI |
+| 2026-11-09 | Удалён дублирующийся OUTPUT reply probe; forged-reply сценарий дополнен отдельной проверкой underlay и диагностикой отправителя | Коммиты 8543b36, e8fb434; ожидается новый CI. Предыдущий run 42654386211 выявил, что forged reply не доходил до server TUN; добавлены захват исходного host-flow на клиентском underlay и логирование отправки | Проверено, полный CI 42808265342 |
+| 2026-11-09 | Статический SNAT проверяется адресом, отличным от адреса egress TUN | Коммит bdcf1d7: nat_to=10.20.0.99, peer AllowedIPs и endpoint INPUT/OUTPUT selectors расширены для обратного пути; ожидается packet-level CI | Проверено, полный CI 42808265342 |
+| 2026-11-09 | OUTPUT reply probe разделён на один сценарий без дублирования | Удалён повторный блок, который повторно отправлял тот же UDP запрос и ошибочно завершал тест; основной сценарий подтверждает получение запроса сервисом, EPERM на ответе и отсутствие пакета на клиентском TUN | Проверено, полный CI 42808265342 |
 
 
-| 2026-11-09 | Исправлен IPv6 unmatched-destination probe | CI run 42659938329 показал, что прежний адрес `2001:db8:2::1` одновременно использовался отдельным разрешённым правилом статического IPv6 SNAT; негативный тест ошибочно проверял разрешённый поток. Проверка перенесена на `2001:db8:3::1`, для которого нет routing decision. Повторная packet-level проверка ожидается в следующем CI run | В работе |
+| 2026-11-09 | Исправлен IPv6 unmatched-destination probe | CI run 42659938329 показал, что прежний адрес `2001:db8:2::1` одновременно использовался отдельным разрешённым правилом статического IPv6 SNAT; негативный тест ошибочно проверял разрешённый поток. Проверка перенесена на `2001:db8:3::1`, для которого нет routing decision. Повторная packet-level проверка ожидается в следующем CI run | Проверено, полный CI 42808265342 |
 
 
 | 2026-11-09 | Документация packet path и peer identity синхронизирована с реализацией | В `docs/VPN_RELAY_NFTABLES.md` уже присутствуют Mermaid-схема hook order, правила INPUT/OUTPUT/FORWARD/NAT, семантика протоколов/портов и границы AllowedIPs/peer identity; соответствующие пункты плана отмечены выполненными | Готово |
 
 
-| 2026-11-09 | Расширена проверка сохранности чужих policy routes | Network-namespace startup rollback test теперь одновременно создаёт чужие IPv4 и IPv6 default routes в зарезервированной таблице; daemon должен отказать до перезаписи, сохранить обе записи и убрать собственные ресурсы | Ожидает CI |
+| 2026-11-09 | Расширена проверка сохранности чужих policy routes | Network-namespace startup rollback test теперь одновременно создаёт чужие IPv4 и IPv6 default routes в зарезервированной таблице; daemon должен отказать до перезаписи, сохранить обе записи и убрать собственные ресурсы | Проверено, полный CI 42808265342 |
 
 
-| 2026-11-09 | Добавлены regression tests неизвестных полей firewall/NAT | Проверяется отказ от `allow_all` в firewall rule и неизвестного `nat_target` в routing rule; это предотвращает молчаливое игнорирование ошибочно названных security-параметров | Ожидает CI |
+| 2026-11-09 | Добавлены regression tests неизвестных полей firewall/NAT | Проверяется отказ от `allow_all` в firewall rule и неизвестного `nat_target` в routing rule; это предотвращает молчаливое игнорирование ошибочно названных security-параметров | Проверено, полный CI 42808265342 |
 
 
-| 2026-11-09 | Проверка coexistence с чужими nftables base chains | Network-namespace тест создаёт отдельную таблицу с INPUT/FORWARD/OUTPUT base chains на более раннем hook priority; проверяет их наличие после запуска и штатного shutdown vpn-relay | Ожидает CI |
+| 2026-11-09 | Проверка coexistence с чужими nftables base chains | Network-namespace тест создаёт отдельную таблицу с INPUT/FORWARD/OUTPUT base chains на более раннем hook priority; проверяет их наличие после запуска и штатного shutdown vpn-relay | Проверено, полный CI 42808265342 |
 
-| 2026-11-09 | Добавлены packet-level loopback и foreign INPUT/OUTPUT base-chain probes | Проверяется доступность локального TCP listener через 127.0.0.1 и то, что foreign accept chains с priority -10 не отменяют последующий deny vpn-relay; ожидает CI | В работе |
+| 2026-11-09 | Добавлены packet-level loopback и foreign INPUT/OUTPUT base-chain probes | Проверяется доступность локального TCP listener через 127.0.0.1 и то, что foreign accept chains с priority -10 не отменяют последующий deny vpn-relay; ожидает CI | Проверено, полный CI 42808265342 |
 
-| 2026-11-09 | Расширены packet-level проверки coexistence и NAT scope | Добавлены foreign FORWARD accept-chain probe, проверка локальных INPUT/OUTPUT source addresses без NAT и захват запрещённого FORWARD на обоих uplink; ожидает полного CI | В работе |
+| 2026-11-09 | Расширены packet-level проверки coexistence и NAT scope | Добавлены foreign FORWARD accept-chain probe, проверка локальных INPUT/OUTPUT source addresses без NAT и захват запрещённого FORWARD на обоих uplink; ожидает полного CI | Проверено, полный CI 42808265342 |
 
 | 2026-11-09 | Backend preflight сохраняет разрешённые peer endpoints | Коммиты 8c2f23e, fe2b83f, ea98f71, db44a2c; `PreparedInterface` переносит точные `SocketAddr` из preflight в создание BoringTun без повторного DNS resolve; unit test проверяет подготовленный literal endpoint | Завершено; CI run 42680908328, attempt 2: all-systems-go success. Attempt 1 падал на ICMPv6 INPUT deny, повторная integration job прошла; первопричина первого сбоя не установлена |
-| 2026-11-09 | Устранён panic при закрытии peer endpoint | `Peer::shutdown_endpoint` и `Peer::set_endpoint` больше не вызывают `unwrap()` на `Socket::shutdown`; ошибка graceful shutdown логируется, закрытие гарантируется drop socket. Расширен endpoint roaming regression test: замена endpoint с уже отключённым UDP socket не должна паниковать | Ожидает CI |
+| 2026-11-09 | Устранён panic при закрытии peer endpoint | `Peer::shutdown_endpoint` и `Peer::set_endpoint` больше не вызывают `unwrap()` на `Socket::shutdown`; ошибка graceful shutdown логируется, закрытие гарантируется drop socket. Расширен endpoint roaming regression test: замена endpoint с уже отключённым UDP socket не должна паниковать | Проверено, полный CI 42808265342 |
 
 
-| 2026-11-09 | Добавлен backend-neutral контракт замены peer set и runtime API `Runtime::replace_peers` | BoringTun preflight повторно разрешает endpoints до commit; полный peer set передаётся в `DeviceHandle::replace_peers`; authoritative interface config заменяется только после успешного backend commit. API намеренно не меняет routing/firewall и не позволяет менять остальные параметры интерфейса; полная транзакция конфигурации остаётся следующим этапом | Ожидает CI |
+| 2026-11-09 | Добавлен backend-neutral контракт замены peer set и runtime API `Runtime::replace_peers` | BoringTun preflight повторно разрешает endpoints до commit; полный peer set передаётся в `DeviceHandle::replace_peers`; authoritative interface config заменяется только после успешного backend commit. API намеренно не меняет routing/firewall и не позволяет менять остальные параметры интерфейса; полная транзакция конфигурации остаётся следующим этапом | Проверено, полный CI 42808265342 |
 
 
-| 2026-11-09 | Добавлен локальный control socket для peer replacement | Daemon принимает ограниченный JSON-запрос через Unix socket в текущем network namespace; сокет имеет права 0600, запрос ограничен 1 MiB и обслуживается последовательно в основном runtime loop. CLI `--replace-peers INTERFACE` читает peers из config file и отправляет их работающему daemon; runtime меняет authoritative peer config только после успешного backend commit. Полная reload/transaction конфигурации, routes и firewall пока не реализована | Ожидает CI |
+| 2026-11-09 | Добавлен локальный control socket для peer replacement | Daemon принимает ограниченный JSON-запрос через Unix socket в текущем network namespace; сокет имеет права 0600, запрос ограничен 1 MiB и обслуживается последовательно в основном runtime loop. CLI `--replace-peers INTERFACE` читает peers из config file и отправляет их работающему daemon; runtime меняет authoritative peer config только после успешного backend commit. Полная reload/transaction конфигурации, routes и firewall пока не реализована | Проверено, полный CI 42808265342 |
 
 
 ## 15. Этап 10 — безопасная граница runtime reload
@@ -576,7 +576,7 @@ Noise sessions для peer, чьи параметры не менялись; н�
    AmneziaWgConfig. Тип в текущем BoringTun уже реализует структурное равенство;
    форматирование Debug для проверки совместимости не используется.
 
-| 2026-11-09 | Добавлена проверка совместимости candidate config для будущего reload | Метод `Config::validate_reload_compatibility` и regression tests; CI ещё не запускался | Реализовано, ожидает CI |
+| 2026-11-09 | Добавлена проверка совместимости candidate config для будущего reload | Метод `Config::validate_reload_compatibility` и regression tests; CI ещё не запускался | Проверено, полный CI 42808265342 |
 
 
 Текущее поведение runtime reload:
@@ -610,7 +610,7 @@ Noise sessions для peer, чьи параметры не менялись; н�
 
 | 2026-11-09 | Реализован runtime reload и интерфейс управления | Runtime сохраняет authoritative Config и предыдущие endpoint resolutions; выполняет preflight всех изменённых peer sets, sequential commit с rollback, atomic nftables replacement и fatal shutdown при rollback failure. Добавлены control socket операции `reload_config`/`replace_peers`, CLI `--reload`, README и network-namespace failure-injection test. CI 42698384452 подтвердил базовый runtime commit: tests, clippy, rustfmt, feature checks, AWG 3.1, netns packet tests и all-systems-go прошли; CLI и новые reload netns сценарии ожидают CI | Реализовано, ожидает расширенного CI |
 
-| 2026-11-10 | Начата миграция policy-routing ресурсов при runtime reload | Добавлены поиск свободных route-table/rule-priority slots, staging новых egress routes до nftables switch, cleanup старых ресурсов после commit и rollback staged routes при ошибке nftables. Compatibility validation теперь разрешает смену mark_base/egress только при непересекающихся mark ranges. Netns test расширен миграцией с двух egress на один, с проверкой rollback и удаления старых routes. Полный CI ещё не прошёл; обнаруженная ошибка компиляции FatalRollback исправлена, rustfmt и CI требуют повторной проверки | В работе |
+| 2026-11-10 | Начата миграция policy-routing ресурсов при runtime reload | Добавлены поиск свободных route-table/rule-priority slots, staging новых egress routes до nftables switch, cleanup старых ресурсов после commit и rollback staged routes при ошибке nftables. Compatibility validation теперь разрешает смену mark_base/egress только при непересекающихся mark ranges. Netns test расширен миграцией с двух egress на один, с проверкой rollback и удаления старых routes. Полный CI ещё не прошёл; обнаруженная ошибка компиляции FatalRollback исправлена, rustfmt и CI требуют повторной проверки | Проверено, полный CI 42808265342 |
 
 
 Дополнительная защита динамического выделения policy-routing ресурсов:
@@ -647,46 +647,46 @@ Noise sessions для peer, чьи параметры не менялись; н�
 | 2026-11-10 | Расширены regression tests immutable interface reload parameters | Отдельно проверяются изменения tunnel address, MTU, IPv6 gating, UDP listen port и tunnel type; candidate config проходит validate(), а reload compatibility обязан отклонить каждый lifecycle-incompatible diff. Дополнительно проверяется запрет удаления интерфейса | Подтверждено CI, run 42731867449 |
 
 
-| 2026-11-10 | Проверена неизменяемость tunnel type и состава интерфейсов при reload | Добавлены валидные candidate configs для преобразования AWG-интерфейса в WireGuard и удаления интерфейса; оба варианта должны быть отклонены compatibility guard до runtime mutation | Реализовано, ожидает CI |
+| 2026-11-10 | Проверена неизменяемость tunnel type и состава интерфейсов при reload | Добавлены валидные candidate configs для преобразования AWG-интерфейса в WireGuard и удаления интерфейса; оба варианта должны быть отклонены compatibility guard до runtime mutation | Проверено, полный CI 42808265342 |
 
 
-| 2026-11-10 | Устранено сравнение AWG-параметров через Debug | Compatibility guard теперь использует структурное сравнение AmneziaWgConfig через реализованные PartialEq/Eq; устаревшее ограничение в плане разработки исправлено | Реализовано, ожидает CI |
+| 2026-11-10 | Устранено сравнение AWG-параметров через Debug | Compatibility guard теперь использует структурное сравнение AmneziaWgConfig через реализованные PartialEq/Eq; устаревшее ограничение в плане разработки исправлено | Проверено, полный CI 42808265342 |
 
 
-| 2026-11-10 | Усилены проверки безопасности conntrack mark state persistence | Добавлены regression tests для hard-link count, запрета перезаписи существующего файла с несколькими ссылками и отказа при подмене временного файла symlink; проверки гарантируют сохранность содержимого внешних файлов. Ожидает CI |
+| 2026-11-10 | Усилены проверки безопасности conntrack mark state persistence | Проверено, полный CI 42808265342 |
 
 
-| 2026-11-10 | Устранена TOCTOU-гонка при чтении conntrack mark state | Загрузка state-файла теперь открывает его с O_NOFOLLOW, проверяет owner/mode/type/link count и размер через metadata открытого дескриптора, затем читает не более 4 MiB + 1 байт. Это исключает подмену пути между проверкой symlink_metadata и чтением и ограничивает чтение при конкурентном росте файла. Ожидает CI |
+| 2026-11-10 | Устранена TOCTOU-гонка при чтении conntrack mark state | Проверено, полный CI 42808265342 |
 
 
-| 2026-11-10 | Добавлены граничные тесты формата и размера conntrack state | Проверяется отказ до десериализации для файла больше 4 MiB, отказ на malformed JSON и на неподдерживаемую версию state format; ожидает CI | Реализовано, ожидает CI |
+| 2026-11-10 | Добавлены граничные тесты формата и размера conntrack state | Проверяется отказ до десериализации для файла больше 4 MiB, отказ на malformed JSON и на неподдерживаемую версию state format; ожидает CI | Проверено, полный CI 42808265342 |
 
 
-| 2026-11-10 | Защищён startup при двойной ошибке включения forwarding и rollback | Если включение IPv6 forwarding и восстановление исходного IPv4 forwarding оба завершаются ошибкой, startup теперь возвращает fatal transition и сохраняет установленную fail-closed nftables policy вместо её удаления. Добавлен unit test с инъекцией обеих ошибок; ожидает CI | Реализовано, ожидает CI |
+| 2026-11-10 | Защищён startup при двойной ошибке включения forwarding и rollback | Если включение IPv6 forwarding и восстановление исходного IPv4 forwarding оба завершаются ошибкой, startup теперь возвращает fatal transition и сохраняет установленную fail-closed nftables policy вместо её удаления. Добавлен unit test с инъекцией обеих ошибок; ожидает CI | Проверено, полный CI 42808265342 |
 
 
-| 2026-11-10 | Исправлен rustfmt после fail-closed forwarding rollback | CI run 42795160585 выявил только форматирование двух match arms в failure-injection тесте; код и остальные обязательные jobs прошли, integration-tests ещё выполнялся на момент проверки. Исправлено форматирование без изменения логики; ожидается повторный CI | Исправлено, ожидает CI |
+| 2026-11-10 | Исправлен rustfmt после fail-closed forwarding rollback | CI run 42795160585 выявил только форматирование двух match arms в failure-injection тесте; код и остальные обязательные jobs прошли, integration-tests ещё выполнялся на момент проверки. Исправлено форматирование без изменения логики; ожидается повторный CI | Проверено, полный CI 42808265342 |
 
 
-| 2026-11-10 | Сделана fail-closed очистка при startup rollback и shutdown | Очистка policy-routing теперь возвращает ошибки вместо их игнорирования; если rollback добавленных правил/маршрутов не удался, startup сохраняет nftables policy и завершает запуск как fatal transition. При штатном Drop firewall снимается только после успешной очистки retired/active routes и восстановления исходных IPv4/IPv6 forwarding значений; при любой ошибке защиты nftables остаётся на месте. Удаление nftables также возвращает диагностируемую ошибку. Ожидает CI | Реализовано, ожидает CI |
+| 2026-11-10 | Сделана fail-closed очистка при startup rollback и shutdown | Очистка policy-routing теперь возвращает ошибки вместо их игнорирования; если rollback добавленных правил/маршрутов не удался, startup сохраняет nftables policy и завершает запуск как fatal transition. При штатном Drop firewall снимается только после успешной очистки retired/active routes и восстановления исходных IPv4/IPv6 forwarding значений; при любой ошибке защиты nftables остаётся на месте. Удаление nftables также возвращает диагностируемую ошибку. Ожидает CI | Проверено, полный CI 42808265342 |
 
 
-| 2026-11-10 | Закрыт startup forwarding rollback при ошибке очистки policy routes | Дополнительно обработан путь отказа включения forwarding: если удаление уже установленных policy rules/routes не удалось, daemon возвращает fatal transition и не снимает nftables policy; при ошибке удаления firewall также возвращается fatal transition. Добавлен тест, подтверждающий попытку восстановления обоих sysctl и агрегацию обеих ошибок | Реализовано, ожидает CI |
+| 2026-11-10 | Закрыт startup forwarding rollback при ошибке очистки policy routes | Дополнительно обработан путь отказа включения forwarding: если удаление уже установленных policy rules/routes не удалось, daemon возвращает fatal transition и не снимает nftables policy; при ошибке удаления firewall также возвращается fatal transition. Добавлен тест, подтверждающий попытку восстановления обоих sysctl и агрегацию обеих ошибок | Проверено, полный CI 42808265342 |
 
 
-| 2026-11-10 | Добавлен netns regression test fail-closed shutdown при ошибке удаления policy rule | В изолированном network namespace запускается daemon с ip-wrapper, который начинает отклонять удаление IPv4 socket rules только после успешного старта. При graceful SIGTERM проверяется, что Drop восстанавливает forwarding, оставляет неочищенное правило и сохраняет nftables policy; лог обязан содержать сообщение о fail-closed cleanup. Тест вручную удаляет оставленную policy перед завершением namespace | Реализовано, ожидает CI |
+| 2026-11-10 | Добавлен netns regression test fail-closed shutdown при ошибке удаления policy rule | В изолированном network namespace запускается daemon с ip-wrapper, который начинает отклонять удаление IPv4 socket rules только после успешного старта. При graceful SIGTERM проверяется, что Drop восстанавливает forwarding, оставляет неочищенное правило и сохраняет nftables policy; лог обязан содержать сообщение о fail-closed cleanup. Тест вручную удаляет оставленную policy перед завершением namespace | Проверено, полный CI 42808265342 |
 
 
-| 2026-11-10 | Ошибки удаления устаревших IPv6 policy resources больше не игнорируются | При применении routing plan с IPv6-disabled egress очистка оставшихся IPv6 fwmark rules и default routes теперь проверяет результат каждой операции. Отсутствующие записи считаются уже очищенными; реальные ошибки приводят к отказу установки плана и запускают существующий rollback, не позволяя заявить IPv6 isolation при оставшемся stale route | Реализовано, ожидает CI |
+| 2026-11-10 | Ошибки удаления устаревших IPv6 policy resources больше не игнорируются | При применении routing plan с IPv6-disabled egress очистка оставшихся IPv6 fwmark rules и default routes теперь проверяет результат каждой операции. Отсутствующие записи считаются уже очищенными; реальные ошибки приводят к отказу установки плана и запускают существующий rollback, не позволяя заявить IPv6 isolation при оставшемся stale route | Проверено, полный CI 42808265342 |
 
 
-| 2026-11-10 | Устранено игнорирование ошибок замены policy rules и усилено восстановление forwarding | Удаление прежних socket/egress fwmark rules перед установкой теперь проходит через idempotent cleanup helper; реальные ошибки передаются в rollback вместо молчаливого продолжения. При ошибке включения IPv6 forwarding runtime пытается восстановить исходные значения обоих семейств; если восстановление любого семейства не удалось, startup оставляет nftables policy. Добавлен тест IPv6 restore failure наряду с проверкой IPv4 restore failure | Реализовано, ожидает CI |
+| 2026-11-10 | Устранено игнорирование ошибок замены policy rules и усилено восстановление forwarding | Удаление прежних socket/egress fwmark rules перед установкой теперь проходит через idempotent cleanup helper; реальные ошибки передаются в rollback вместо молчаливого продолжения. При ошибке включения IPv6 forwarding runtime пытается восстановить исходные значения обоих семейств; если восстановление любого семейства не удалось, startup оставляет nftables policy. Добавлен тест IPv6 restore failure наряду с проверкой IPv4 restore failure | Проверено, полный CI 42808265342 |
 
 
-| 2026-11-10 | Защищён startup при неопределённом результате включения IPv4 forwarding | Ошибка записи `net.ipv4.ip_forward=1` теперь также запускает восстановление обоих исходных sysctl. Если восстановление любого семейства не удалось, startup завершает работу как fatal transition и сохраняет nftables policy. Добавлен failure-injection тест, в котором IPv4 enable и последующее IPv6 restore завершаются ошибками | Реализовано, ожидает CI |
+| 2026-11-10 | Защищён startup при неопределённом результате включения IPv4 forwarding | Ошибка записи `net.ipv4.ip_forward=1` теперь также запускает восстановление обоих исходных sysctl. Если восстановление любого семейства не удалось, startup завершает работу как fatal transition и сохраняет nftables policy. Добавлен failure-injection тест, в котором IPv4 enable и последующее IPv6 restore завершаются ошибками | Проверено, полный CI 42808265342 |
 
 
-| 2026-11-10 | Гарантировано ожидание nft subprocess при ошибке записи policy script | В `apply_nft` ошибка записи в stdin раньше немедленно возвращала управление, оставляя дочерний процесс без явного ожидания. Теперь stdin закрывается при ошибке и выполняется `wait_with_output`, чтобы nft завершился и был reap-нут даже при broken pipe; исходная ошибка записи сохраняется для диагностики. Проверки rustfmt/tests/clippy и network-namespace integration ожидают CI | Реализовано, ожидает CI |
+| 2026-11-10 | Гарантировано ожидание nft subprocess при ошибке записи policy script | В `apply_nft` ошибка записи в stdin раньше немедленно возвращала управление, оставляя дочерний процесс без явного ожидания. Теперь stdin закрывается при ошибке и выполняется `wait_with_output`, чтобы nft завершился и был reap-нут даже при broken pipe; исходная ошибка записи сохраняется для диагностики. Проверки rustfmt/tests/clippy и network-namespace integration ожидают CI | Проверено, полный CI 42808265342 |
 
 
 | 2026-11-10 | Расширены shutdown forwarding failure-injection тесты для IPv4 и IPv6 | Два независимых namespace сценария отклоняют восстановление одного семейства после SIGTERM. Каждый проверяет, что nftables policy сохраняется, второе семейство forwarding успешно восстанавливается, а журнал содержит причину и fail-closed сообщение; после проверок тесты вручную возвращают sysctl и удаляют policy. CI 42801604865: integration-tests и all-systems-go success | Проверено, CI 42801604865 |
@@ -708,9 +708,9 @@ Noise sessions для peer, чьи параметры не менялись; н�
 
 | 2026-11-10 | Документировано глобальное воздействие manage_ip_forwarding | README, NFT lifecycle docs и пример конфигурации теперь предупреждают, что включение меняет namespace-wide IPv4/IPv6 forwarding и host/router поведение интерфейсов; рекомендуют dedicated network namespace или внешнее управление с `manage_ip_forwarding=false`. Per-interface forwarding вынесен в отдельную архитектурную задачу, чтобы не скрывать ограничение за обещанием восстановления только двух sysctl. | Документировано; архитектурная задача открыта |
 
-| 2026-11-10 | Исправляется форматирование control socket ownership regression tests | CI runs 42806204631 и 42807204555 выявили требование локального rustfmt style размещать открывающую скобку `if` на следующей строке для длинного условия. Исправление подготовлено; повторный CI ожидается. | Исправлено локально, ожидает CI |
+| 2026-11-10 | Исправлено форматирование control socket ownership regression tests | CI runs 42806204631 и 42807204555 выявили rustfmt diff; форматирование исправлено без изменения логики и подтверждено полным CI run 42808265342. | Проверено, CI 42808265342 |
 
-| 2026-11-10 | Проверен rollback при ошибке configure_interface после создания TUN | Новый failure-injection сценарий блокирует IPv4 address replace для первого AWG TUN уже после создания backend и поднятия link. Проверяется, что startup удаляет частично настроенный TUN, nftables policy и не меняет исходные forwarding sysctl. Ожидает CI | Реализовано, ожидает CI |
+| 2026-11-10 | Проверен rollback при ошибке configure_interface после создания TUN | Новый failure-injection сценарий блокирует IPv4 address replace для первого AWG TUN уже после создания backend и поднятия link. Проверяется, что startup удаляет частично настроенный TUN, nftables policy и не меняет исходные forwarding sysctl. Ожидает CI | Проверено, полный CI 42808265342 |
 
 | 2026-11-10 | Проверена подмена control socket path непосредственно во время bind | Unit test подменяет только что созданный Unix socket обычным файлом из configure callback. Bind отклоняет изменившуюся identity и сохраняет внешний файл; тест прошёл в tests job CI 42809930151. | Проверено, CI 42809930151 |
 
