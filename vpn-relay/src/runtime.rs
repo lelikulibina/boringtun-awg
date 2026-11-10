@@ -1124,9 +1124,9 @@ impl Runtime {
 
 impl Drop for Runtime {
     fn drop(&mut self) {
-        // Stop datapath workers first, but keep the firewall active until all
-        // managed TUN links have been destroyed. This matters when the host's
-        // original forwarding state was already enabled.
+        // Stop datapath workers first. Keep firewall installed while policy
+        // routing and forwarding state are restored, then destroy managed
+        // TUN links and finally remove the firewall.
         for device in &self.devices {
             device.shutdown();
         }
@@ -1143,8 +1143,9 @@ impl Drop for Runtime {
         if let Err(error) = linux::remove_policy_routing(&self.routing) {
             cleanup_failures.push(format!("active policy routing: {error}"));
         }
-        self.devices.clear();
-
+        // Restore link-scoped sysctls while their links (including daemon-owned
+        // TUNs) still exist. The fail-closed firewall remains installed until
+        // after both forwarding restoration and TUN destruction complete.
         if let Some(state) = &self.forwarding_state {
             match restore_forwarding(state) {
                 Ok(()) => {
@@ -1155,6 +1156,7 @@ impl Drop for Runtime {
                 Err(error) => cleanup_failures.push(error.to_string()),
             }
         }
+        self.devices.clear();
 
         if !cleanup_failures.is_empty() {
             tracing::error!(
