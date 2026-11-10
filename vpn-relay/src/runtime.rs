@@ -1504,24 +1504,44 @@ fn restore_interface_forwarding_entry_with(
     write(&key, original)
 }
 
-fn restore_interface_forwarding_entry(
-    entry: &InterfaceForwardingState,
-    family: &str,
-    original: &str,
-    changed: bool,
+fn verify_forwarding_interface(name: &str, index: u32) -> Result<(), RuntimeError> {
+    linux::verify_interface_identity(name, index)
+        .map_err(|error| RuntimeError::Forwarding(error.to_string()))
+}
+
+fn restore_interface_forwarding_entries_with(
+    state: &ForwardingState,
+    mut read: impl FnMut(&str) -> Result<String, RuntimeError>,
+    mut write: impl FnMut(&str, &str) -> Result<(), RuntimeError>,
+    mut verify: impl FnMut(&str, u32) -> Result<(), RuntimeError>,
 ) -> Result<(), RuntimeError> {
-    restore_interface_forwarding_entry_with(
-        entry,
-        family,
-        original,
-        changed,
-        read_sysctl,
-        write_sysctl,
-        |name, index| {
-            linux::verify_interface_identity(name, index)
-                .map_err(|error| RuntimeError::Forwarding(error.to_string()))
-        },
-    )
+    let mut failures = Vec::new();
+    for entry in &state.interfaces {
+        for (family, original, changed) in [
+            ("ipv4", entry.ipv4.as_str(), entry.ipv4_changed),
+            ("ipv6", entry.ipv6.as_str(), entry.ipv6_changed),
+        ] {
+            if let Err(error) = restore_interface_forwarding_entry_with(
+                entry,
+                family,
+                original,
+                changed,
+                &mut read,
+                &mut write,
+                &mut verify,
+            ) {
+                failures.push(format!("{} {family}: {error}", entry.name));
+            }
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(RuntimeError::FatalTransition(format!(
+            "failed to recover per-interface forwarding state: {}",
+            failures.join("; ")
+        )))
+    }
 }
 
 fn enable_interface_forwarding_durable(
@@ -1580,6 +1600,27 @@ fn enable_interface_forwarding_durable(
         persist_forwarding_state(path, namespace_inode, &state)?;
     }
 
+    if let Err(error) = enable_interface_forwarding_entries_with(
+        &state,
+        read_sysctl,
+        write_sysctl,
+        verify_forwarding_interface,
+    ) {
+        if matches!(error, RuntimeError::FatalTransition(_)) {
+            return Err(error);
+        }
+        remove_forwarding_state_file(path)?;
+        return Err(error);
+    }
+    Ok(state)
+}
+
+fn enable_interface_forwarding_entries_with(
+    state: &ForwardingState,
+    mut read: impl FnMut(&str) -> Result<String, RuntimeError>,
+    mut write: impl FnMut(&str, &str) -> Result<(), RuntimeError>,
+    mut verify: impl FnMut(&str, u32) -> Result<(), RuntimeError>,
+) -> Result<(), RuntimeError> {
     let mut failures = Vec::new();
     for entry in &state.interfaces {
         for (family, changed) in [
@@ -1590,32 +1631,28 @@ fn enable_interface_forwarding_durable(
                 continue;
             }
             let key = interface_forwarding_sysctl_key(&entry.name, family)?;
-            let result = linux::verify_interface_identity(&entry.name, entry.ifindex)
-                .map_err(|error| RuntimeError::Forwarding(error.to_string()))
-                .and_then(|()| write_sysctl(&key, "1"));
+            let result = verify(&entry.name, entry.ifindex)
+                .and_then(|()| write(&key, "1"));
             if let Err(error) = result {
                 failures.push(format!("{} {family}: {error}", entry.name));
             }
         }
     }
-    if !failures.is_empty() {
-        if let Err(restore_error) = restore_forwarding_state_with(
-            &state,
-            read_sysctl,
-            write_sysctl,
-        ) {
-            return Err(RuntimeError::FatalTransition(format!(
-                "per-interface forwarding setup failed ({}); rollback failed ({restore_error}); fail-closed nftables policy must remain installed",
-                failures.join("; ")
-            )));
-        }
-        remove_forwarding_state_file(path)?;
-        return Err(RuntimeError::Forwarding(format!(
-            "per-interface forwarding setup failed: {}",
+    if failures.is_empty() {
+        return Ok(());
+    }
+    if let Err(rollback_error) =
+        restore_interface_forwarding_entries_with(state, &mut read, &mut write, &mut verify)
+    {
+        return Err(RuntimeError::FatalTransition(format!(
+            "per-interface forwarding setup failed ({}); rollback failed ({rollback_error}); fail-closed nftables policy must remain installed",
             failures.join("; ")
         )));
     }
-    Ok(state)
+    Err(RuntimeError::Forwarding(format!(
+        "per-interface forwarding setup failed: {}",
+        failures.join("; ")
+    )))
 }
 
 fn restore_forwarding_state_with(
@@ -1651,15 +1688,13 @@ fn restore_forwarding_state_with(
             Err(error) => failures.push(format!("{family} read: {error}")),
         }
     }
-    for entry in &state.interfaces {
-        for (family, original, changed) in [
-            ("ipv4", entry.ipv4.as_str(), entry.ipv4_changed),
-            ("ipv6", entry.ipv6.as_str(), entry.ipv6_changed),
-        ] {
-            if let Err(error) = restore_interface_forwarding_entry(entry, family, original, changed) {
-                failures.push(format!("{} {family}: {error}", entry.name));
-            }
-        }
+    if let Err(error) = restore_interface_forwarding_entries_with(
+        state,
+        &mut read,
+        &mut write,
+        verify_forwarding_interface,
+    ) {
+        failures.push(error.to_string());
     }
     if failures.is_empty() {
         Ok(())
