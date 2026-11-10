@@ -815,13 +815,25 @@ mod tests {
             })
         });
 
-        assert_eq!(calls.len(), 4, "both families and resource types must be attempted");
+        assert_eq!(
+            calls.len(),
+            4,
+            "both families and resource types must be attempted"
+        );
         assert!(matches!(result, Err(LinuxError::Cleanup(message))
             if message.matches("Operation not permitted").count() == 4));
-        assert!(calls.iter().any(|args| args.first().is_some_and(|family| family == "-4")));
-        assert!(calls.iter().any(|args| args.first().is_some_and(|family| family == "-6")));
-        assert!(calls.iter().any(|args| args.get(1).is_some_and(|kind| kind == "rule")));
-        assert!(calls.iter().any(|args| args.get(1).is_some_and(|kind| kind == "route")));
+        assert!(calls
+            .iter()
+            .any(|args| args.first().is_some_and(|family| family == "-4")));
+        assert!(calls
+            .iter()
+            .any(|args| args.first().is_some_and(|family| family == "-6")));
+        assert!(calls
+            .iter()
+            .any(|args| args.get(1).is_some_and(|kind| kind == "rule")));
+        assert!(calls
+            .iter()
+            .any(|args| args.get(1).is_some_and(|kind| kind == "route")));
     }
 
     #[test]
