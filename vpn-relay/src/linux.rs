@@ -114,7 +114,7 @@ pub fn apply_nft(plan: &RoutingPlan) -> Result<(), LinuxError> {
     let mut script = String::new();
     if inspect_nft_table(plan)? {
         script.push_str(&format!(
-            "delete table {} {}\\n",
+            "delete table {} {}\n",
             plan.nft_family, plan.nft_table
         ));
     }
@@ -1008,7 +1008,7 @@ mod tests {
 
     #[test]
     fn nft_batch_failure_is_reported_without_mutating_the_committed_policy() {
-        let script = "delete table inet vpn_relay\\ntable inet vpn_relay { }\\n";
+        let script = "delete table inet vpn_relay\ntable inet vpn_relay { }\n";
         let mut submitted = None;
         let result = apply_nft_script_with(script, &mut |batch| {
             submitted = Some(batch.to_owned());
@@ -1029,7 +1029,7 @@ mod tests {
         let plan = cleanup_test_plan();
         let mut batch = String::new();
         batch.push_str(&format!(
-            "delete table {} {}\\n",
+            "delete table {} {}\n",
             plan.nft_family, plan.nft_table
         ));
         batch.push_str(&plan.nft_script());
@@ -1037,7 +1037,7 @@ mod tests {
         let mut calls = 0;
         apply_nft_script_with(&batch, &mut |script| {
             calls += 1;
-            assert!(script.starts_with("delete table inet vpn_relay\\n"));
+            assert!(script.starts_with("delete table inet vpn_relay\n"));
             assert!(script.contains("table inet vpn_relay"));
             Ok(())
         })
