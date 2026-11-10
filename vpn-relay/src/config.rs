@@ -984,6 +984,43 @@ egress = "awg-uplink"
     }
 
     #[test]
+    fn reload_compatibility_rejects_daemon_lifecycle_changes_but_allows_stats_interval() {
+        let current = Config::parse_toml(&valid_config()).unwrap();
+
+        let mut changed_table = current.clone();
+        changed_table.daemon.nft_table = "other_table".to_owned();
+        assert!(current
+            .validate_reload_compatibility(&changed_table)
+            .unwrap_err()
+            .to_string()
+            .contains("daemon.nft_table"));
+
+        let mut changed_forwarding = current.clone();
+        changed_forwarding.daemon.manage_ip_forwarding =
+            !current.daemon.manage_ip_forwarding;
+        assert!(current
+            .validate_reload_compatibility(&changed_forwarding)
+            .unwrap_err()
+            .to_string()
+            .contains("manage_ip_forwarding"));
+
+        let mut changed_log_level = current.clone();
+        changed_log_level.daemon.log_level = "debug".to_owned();
+        assert!(current
+            .validate_reload_compatibility(&changed_log_level)
+            .unwrap_err()
+            .to_string()
+            .contains("daemon.log_level"));
+
+        let mut changed_stats_interval = current.clone();
+        changed_stats_interval.daemon.stats_interval_secs += 1;
+        changed_stats_interval.validate().unwrap();
+        current
+            .validate_reload_compatibility(&changed_stats_interval)
+            .unwrap();
+    }
+
+    #[test]
     fn reload_compatibility_rejects_tunnel_identity_and_lifecycle_changes() {
         let current = Config::parse_toml(&valid_config()).unwrap();
 

@@ -639,3 +639,6 @@ Noise sessions для peer, чьи параметры не менялись; н�
 
 
 | 2026-11-10 | Прекращение обработки control socket после fatal transition | Runtime больше не дренирует очередь control socket после того, как reload привёл к fatal state: текущий запрос получает ошибку, затем accept loop прекращается, а run() немедленно переходит к Drop/shutdown. Netns test дополнительно проверяет, что после fatal exit повторная команда reload не может подключиться к control socket | Реализовано, ожидает CI |
+
+
+| 2026-11-10 | Проверены daemon-level ограничения reload | Добавлен regression test: изменение nft table, владения IP forwarding и log level отклоняется как lifecycle-incompatible; изменение stats interval разрешено и проходит полную валидацию | Реализовано, ожидает CI |
