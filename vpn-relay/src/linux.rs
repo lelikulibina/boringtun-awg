@@ -661,10 +661,7 @@ pub fn apply_policy_routing(plan: &RoutingPlan) -> Result<(), LinuxError> {
     apply_policy_routing_with(plan, &mut run)
 }
 
-fn apply_policy_routing_with<F>(
-    plan: &RoutingPlan,
-    run_command: &mut F,
-) -> Result<(), LinuxError>
+fn apply_policy_routing_with<F>(plan: &RoutingPlan, run_command: &mut F) -> Result<(), LinuxError>
 where
     F: FnMut(&str, &[String]) -> Result<(), LinuxError>,
 {
@@ -721,10 +718,7 @@ pub fn remove_policy_routing(plan: &RoutingPlan) -> Result<(), LinuxError> {
     remove_policy_routing_with(plan, &mut run)
 }
 
-fn remove_policy_routing_with<F>(
-    plan: &RoutingPlan,
-    run_command: &mut F,
-) -> Result<(), LinuxError>
+fn remove_policy_routing_with<F>(plan: &RoutingPlan, run_command: &mut F) -> Result<(), LinuxError>
 where
     F: FnMut(&str, &[String]) -> Result<(), LinuxError>,
 {
@@ -853,11 +847,17 @@ mod tests {
 
         assert!(matches!(result, Err(LinuxError::Command { ref stderr, .. })
             if stderr.contains("injected IPv6 socket rule failure")));
-        let cleanup = calls.iter().filter(|args| {
-            args.get(2).is_some_and(|part| part == "del")
-                && args.get(4).is_some_and(|part| part == "9000")
-        }).count();
-        assert_eq!(cleanup, 4, "all socket rules must be attempted during rollback");
+        let cleanup = calls
+            .iter()
+            .filter(|args| {
+                args.get(2).is_some_and(|part| part == "del")
+                    && args.get(4).is_some_and(|part| part == "9000")
+            })
+            .count();
+        assert_eq!(
+            cleanup, 4,
+            "all socket rules must be attempted during rollback"
+        );
     }
 
     #[test]
