@@ -1355,19 +1355,31 @@ mod tests {
             Ok(())
         });
 
-        let socket_calls = calls.iter().filter(|args| {
-            args.get(1).is_some_and(|kind| kind == "rule")
-                && args.get(4).is_some_and(|priority| priority == "9000")
-        }).count();
-        let egress_calls = calls.iter().filter(|args| {
-            (args.get(1).is_some_and(|kind| kind == "rule")
-                && args.get(4).is_some_and(|priority| priority == "10001"))
-                || (args.get(1).is_some_and(|kind| kind == "route")
-                    && args.iter().any(|value| value == "10001"))
-        }).count();
+        let socket_calls = calls
+            .iter()
+            .filter(|args| {
+                args.get(1).is_some_and(|kind| kind == "rule")
+                    && args.get(4).is_some_and(|priority| priority == "9000")
+            })
+            .count();
+        let egress_calls = calls
+            .iter()
+            .filter(|args| {
+                (args.get(1).is_some_and(|kind| kind == "rule")
+                    && args.get(4).is_some_and(|priority| priority == "10001"))
+                    || (args.get(1).is_some_and(|kind| kind == "route")
+                        && args.iter().any(|value| value == "10001"))
+            })
+            .count();
 
-        assert_eq!(socket_calls, 4, "all socket marks and families must be attempted");
-        assert_eq!(egress_calls, 4, "both egress families and resource types must be attempted");
+        assert_eq!(
+            socket_calls, 4,
+            "all socket marks and families must be attempted"
+        );
+        assert_eq!(
+            egress_calls, 4,
+            "both egress families and resource types must be attempted"
+        );
         assert!(matches!(result, Err(LinuxError::Cleanup(message))
             if message.matches("injected socket cleanup failure").count() == 4
                 && message.matches("injected egress cleanup failure").count() == 4));
