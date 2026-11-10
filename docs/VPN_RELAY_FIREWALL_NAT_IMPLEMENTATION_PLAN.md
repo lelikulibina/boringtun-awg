@@ -331,15 +331,11 @@ unmanaged output остаётся неизменным.
   policy routes и nftables table.
 - [x] Проверить startup rollback при конфликте nft table, ip rule и route,
   включая сохранность чужих ресурсов (CI 42665725191).
-- [ ] Сделать rollback симметричным каждому успешному шагу.
+- [~] Сделать rollback симметричным каждому успешному шагу: setup TUN, interface configuration, nftables activation, policy-routing staging, forwarding enable и graceful shutdown имеют rollback/failure-injection покрытие; остаётся crash-consistent восстановление sysctl ownership и полный перебор ошибок cleanup.
 - [x] Не удалять чужие ip rules/routes/nftables objects; проверены foreign
   nftables table/base chains, masked ip rules и IPv4/IPv6 routes.
-- [~] Проверить частичные ошибки на каждом шаге установки: уже проверен отказ
-  после частичного создания TUN; failure-injection сценарии отказа после
-  установки IPv4 policy route и при включении IPv6 forwarding подтверждены
-  network-namespace job CI 42670711006. Полный перебор всех возможных точек
-  отказа пока не выполнен.
-- [x] Проверить shutdown, повторный запуск, lock и network namespace lifecycle
+- [~] Проверить частичные ошибки на каждом шаге установки: setup TUN, interface configuration, nftables, IPv4/IPv6 policy route, forwarding enable/restore и staged stale-rule cleanup имеют failure-injection сценарии; остаётся расширить матрицу cleanup rollback failures и проверить каждую точку системного вызова.
+- [~] Проверить shutdown, повторный запуск, lock и network namespace lifecycle: graceful shutdown, duplicate lock и SIGKILL/restart проверяются; после SIGKILL kernel-owned nftables/routes безопасно переустанавливаются при restart, но namespace-wide forwarding sysctl остаётся включённым, поскольку Drop не выполняется.
   (CI 42665725191).
 - [x] Проверить удаление/переименование TUN во время работы: исходный FD
   проверяется через Linux `TUNGETIFF`; drop-only bootstrap исключает трафик до
@@ -494,6 +490,9 @@ Noise sessions для peer, чьи параметры не менялись; н�
 | 2026-11-09 | Полная packet-level проверка firewall/NAT и coexistence | CI 42674872629 на HEAD c06082b8a0e2b776b1d563edfaca3d03f14665ef: `all-systems-go` success; netns startup/rollback, WG, AWG 3.1, loopback, foreign INPUT/OUTPUT/FORWARD chains, локальные source addresses и блокировка denied FORWARD на обоих uplink прошли | Подтверждено CI |
 
 | 2026-11-10 | Сверен статус статического SNAT с кодом и тестами | `NatAction::Snat(IpAddr)`, обязательный `nat_to`, проверка address family/IPv6 flags и генерация IPv4/IPv6 nftables SNAT уже реализованы; parser и routing unit tests присутствуют. Устаревший открытый пункт плана исправлен после успешного CI 42836214324. | Подтверждено CI 42836214324 |
+
+| 2026-11-10 | Добавлена проверка восстановления после SIGKILL | Namespace integration test принудительно завершает daemon через SIGKILL, проверяет сохранение fail-closed nftables и policy routes, исчезновение TUN links, повторный запуск поверх принадлежащих daemon ресурсов и штатную очистку после restart. Тест явно фиксирует оставшееся ограничение: namespace-wide forwarding sysctl переживает SIGKILL, так как Drop не выполняется; для безопасного автоматического восстановления требуется durable ownership state. | Ожидает CI |
+| 2026-11-10 | Усилен rollback multi-egress policy staging | `apply_egress_policy_routing` теперь откатывает все candidate resources при любой ошибке, включая отказ удаления stale IPv6 resources или stale fwmark rule; добавлен отдельный failure-injection probe. CI 42840732399 прошёл полностью. | Подтверждено CI 42840732399 |
 
 ## 14. Правила ведения плана
 
