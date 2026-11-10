@@ -1260,14 +1260,20 @@ mod tests {
                 "net.ipv4.ip_forward" | "net.ipv6.conf.all.forwarding" => Ok("1".to_owned()),
                 _ => unreachable!(),
             },
-            |key, _| Err(RuntimeError::Forwarding(format!("unexpected write to {key}"))),
+            |key, _| {
+                Err(RuntimeError::Forwarding(format!(
+                    "unexpected write to {key}"
+                )))
+            },
         )
         .unwrap();
 
         assert!(!state.ipv4_changed);
         assert!(!state.ipv6_changed);
         restore_forwarding_with(&state, |key, _| {
-            Err(RuntimeError::Forwarding(format!("unexpected restore of {key}")))
+            Err(RuntimeError::Forwarding(format!(
+                "unexpected restore of {key}"
+            )))
         })
         .unwrap();
     }
