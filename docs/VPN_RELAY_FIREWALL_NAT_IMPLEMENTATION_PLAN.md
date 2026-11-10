@@ -714,4 +714,4 @@ Noise sessions для peer, чьи параметры не менялись; н�
 
 | 2026-11-10 | Проверена подмена control socket path непосредственно во время bind | Unit test подменяет только что созданный Unix socket обычным файлом из configure callback. Bind отклоняет изменившуюся identity и сохраняет внешний файл; тест прошёл в tests job CI 42809930151. | Проверено, CI 42809930151 |
 
-| 2026-11-10 | Ограничено время ожидания packet-level TCP/UDP probes | Все iperf3 client runs в multi-uplink integration test теперь выполняются с timeout 15s. При потере маршрута или зависшем TCP connect CI завершится с диагностикой вместо ожидания системного TCP timeout для каждого направления. | Реализовано, ожидает CI |
+| 2026-11-10 | Ограничено время ожидания packet-level TCP/UDP probes | Все iperf3 client runs в multi-uplink integration test выполняются с timeout 15s. Изменение прошло полный integration job, включая packet-level multi-uplink routing, в CI 42810890525. | Проверено, CI 42810890525 |
