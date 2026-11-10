@@ -80,6 +80,15 @@ grep -Fq "unmanaged interface 'untrusted0' has IPv4 forwarding enabled" "$TMP/re
 ip netns exec "$NS" nft list table inet vpn_relay_per_if_test >/dev/null 2>&1 && fail "firewall leaked after unmanaged-forwarding rejection"
 ip netns exec "$NS" sysctl -qw net.ipv4.conf.untrusted0.forwarding=0
 
+# IPv6's per-link force_forwarding flag is also part of the unmanaged-link
+# guard and must be rejected independently.
+ip netns exec "$NS" sysctl -qw net.ipv6.conf.untrusted0.force_forwarding=1
+if ip netns exec "$NS" "$BIN" --config "$TMP/config.toml" >"$TMP/reject.log" 2>&1; then
+    fail "daemon accepted an unmanaged IPv6 forwarding interface"
+fi
+grep -Fq "unmanaged interface 'untrusted0' has IPv6 forwarding enabled" "$TMP/reject.log" || fail "IPv6 startup rejection did not identify the unmanaged interface"
+ip netns exec "$NS" sysctl -qw net.ipv6.conf.untrusted0.force_forwarding=0
+
 start_daemon() {
     ip netns exec "$NS" "$BIN" --config "$TMP/config.toml" >"$TMP/daemon.log" 2>&1 &
     PID=$!
@@ -104,6 +113,30 @@ start_daemon || fail "daemon did not enable selected per-interface forwarding"
 [[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.untrusted0.force_forwarding)" == "0" ]] || fail "unmanaged IPv6 interface was enabled"
 [[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "0" ]] || fail "daemon enabled namespace-wide IPv6 forwarding"
 
+# Changes made by another administrator while the daemon is running must be
+# detected; the daemon stops and retains its fail-closed firewall.
+ip netns exec "$NS" sysctl -qw net.ipv4.conf.untrusted0.forwarding=1
+for _ in $(seq 1 10); do
+    if ! kill -0 "$PID" 2>/dev/null; then
+        break
+    fi
+    sleep 1
+done
+if kill -0 "$PID" 2>/dev/null; then
+    fail "daemon did not detect runtime forwarding isolation drift"
+fi
+set +e
+wait "$PID"
+tamper_status=$?
+set -e
+PID=""
+[[ $tamper_status -ne 0 ]] || fail "daemon exited successfully after forwarding isolation drift"
+ip netns exec "$NS" nft list table inet vpn_relay_per_if_test >/dev/null 2>&1 || fail "fail-closed firewall was removed after forwarding isolation drift"
+grep -Fq "per-interface forwarding invariants changed at runtime" "$TMP/daemon.log" || fail "daemon did not report runtime forwarding isolation drift"
+ip netns exec "$NS" sysctl -qw net.ipv4.conf.untrusted0.forwarding=0
+ip netns exec "$NS" nft delete table inet vpn_relay_per_if_test
+
+start_daemon || fail "daemon did not restart after forwarding drift recovery"
 kill -TERM "$PID"
 wait "$PID" || fail "daemon failed during graceful per-interface restore"
 PID=""
