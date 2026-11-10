@@ -1885,7 +1885,7 @@ fn restore_forwarding_with(
 }
 
 fn restore_forwarding(state: &ForwardingState) -> Result<(), RuntimeError> {
-    restore_forwarding_with(state, write_sysctl)
+    restore_forwarding_state_with(state, read_sysctl, write_sysctl)
 }
 
 #[cfg(test)]
