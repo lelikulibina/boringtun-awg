@@ -157,11 +157,15 @@
 
 Задачи:
 
-- [ ] Определить, какие firewall policies являются фиксированными defaults,
-  а какие настраиваемыми параметрами.
-- [ ] Описать типизированные INPUT/OUTPUT rule selectors.
+- [x] Зафиксировать security defaults: INPUT/OUTPUT managed deny без явных
+  allow rules, FORWARD deny без routing decision; политики не переключаются
+  конфигурационными флагами. Значение base-chain policy accept не меняет
+  этот локальный deny и не затрагивает глобальный firewall хоста.
+- [x] Описать типизированные INPUT/OUTPUT rule selectors в конфигурационной
+  модели и документации.
 - [x] Описать протоколы TCP/UDP/ICMP/ICMPv6 и семантику портов в `docs/VPN_RELAY_NFTABLES.md`.
-- [ ] Описать IPv4/IPv6 CIDR и поведение при смешанных семействах.
+- [x] Описать IPv4/IPv6 CIDR и поведение при смешанных семействах:
+  selectors сопоставляются только в пределах одного address family.
 - [ ] Добавить NAT action `Snat(IpAddr)` наряду с `None` и `Masquerade`.
 - [x] Зафиксировать NAT как свойство выбранного routing rule. Отдельная
   `[[nat.rules]]` секция не вводится: это исключает второй независимый

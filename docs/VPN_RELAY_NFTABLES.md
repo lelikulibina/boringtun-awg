@@ -54,6 +54,28 @@ INPUT, OUTPUT и FORWARD base chains используют `policy accept`: vpn-r
 vpn-relay deny rules. Остальные nftables base chains продолжают действовать
 независимо; drop в другой base chain не отменяется accept в таблице vpn-relay.
 
+
+### Фиксированные security defaults
+
+Политики безопасности не переключаются конфигурационными флагами:
+
+- INPUT: явные allow rules для managed ingress, затем deny для остального
+  managed ingress;
+- OUTPUT: явные allow rules для фактического managed TUN egress, затем deny
+  для остального managed egress;
+- FORWARD: разрешение только для потока с выбранным routing decision и
+  соответствующей парой ingress/egress; unmatched и invalid managed traffic
+  блокируется;
+- NAT: применяется только к разрешённому original-direction FORWARD flow,
+  выбранному тем же routing decision.
+
+policy accept у base chains означает только то, что vpn-relay не меняет
+глобальную политику host namespace. Это не отменяет локальный deny внутри
+managed hooks. Отсутствие firewall allow rules эквивалентно deny для
+соответствующего managed INPUT/OUTPUT направления. Отдельных параметров
+input_policy, output_policy или forward_policy конфигурация не имеет.
+
+
 ## Конфигурационная модель
 
 Направление определяется каждым routing rule, а не ролью интерфейса:
