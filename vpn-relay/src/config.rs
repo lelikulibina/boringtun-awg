@@ -672,7 +672,9 @@ impl Config {
                         }
                         let mut unique = HashSet::new();
                         for prefix in prefixes {
-                            if !unique.insert(canonical_prefix(prefix, &format!("{path}.{field}"))?) {
+                            if !unique
+                                .insert(canonical_prefix(prefix, &format!("{path}.{field}"))?)
+                            {
                                 return invalid(format!(
                                     "{path}.{field} must not contain duplicate CIDR selectors (including equivalent CIDR networks)"
                                 ));
@@ -822,12 +824,20 @@ fn canonical_prefix(value: &str, field: &str) -> Result<(IpAddr, u8), ConfigErro
     let network = match address {
         IpAddr::V4(address) => {
             let bits = u32::from(address);
-            let mask = if prefix == 0 { 0 } else { u32::MAX << (32 - prefix) };
+            let mask = if prefix == 0 {
+                0
+            } else {
+                u32::MAX << (32 - prefix)
+            };
             IpAddr::V4(std::net::Ipv4Addr::from(bits & mask))
         }
         IpAddr::V6(address) => {
             let bits = u128::from(address);
-            let mask = if prefix == 0 { 0 } else { u128::MAX << (128 - prefix) };
+            let mask = if prefix == 0 {
+                0
+            } else {
+                u128::MAX << (128 - prefix)
+            };
             IpAddr::V6(std::net::Ipv6Addr::from(bits & mask))
         }
     };
