@@ -1558,9 +1558,7 @@ fn restore_forwarding_state_with(
             ("ipv4", entry.ipv4.as_str(), entry.ipv4_changed),
             ("ipv6", entry.ipv6.as_str(), entry.ipv6_changed),
         ] {
-            if let Err(error) =
-                restore_interface_forwarding_entry(entry, family, original, changed)
-            {
+            if let Err(error) = restore_interface_forwarding_entry(entry, family, original, changed) {
                 failures.push(format!("{} {family}: {error}", entry.name));
             }
         }
