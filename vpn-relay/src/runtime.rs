@@ -1801,10 +1801,7 @@ mod tests {
             persist_forwarding_state(&path, 1234, &sample_forwarding_state()),
             Err(RuntimeError::Forwarding(_))
         ));
-        assert!(std::fs::symlink_metadata(&path)
-            .unwrap()
-            .file_type()
-            .is_symlink());
+        assert!(std::fs::symlink_metadata(&path).unwrap().file_type().is_symlink());
         assert!(!target.exists());
 
         std::fs::remove_file(path).unwrap();
@@ -1818,8 +1815,8 @@ mod tests {
         let path = forwarding_state_test_path("recovery");
         persist_forwarding_state(&path, 1234, &sample_forwarding_state()).unwrap();
         let values = RefCell::new(HashMap::from([
-            ("net.ipv4.ip_forward", "1".to_owned()),
-            ("net.ipv6.conf.all.forwarding", "1".to_owned()),
+            ("net.ipv4.ip_forward".to_owned(), "1".to_owned()),
+            ("net.ipv6.conf.all.forwarding".to_owned(), "1".to_owned()),
         ]));
         let writes = RefCell::new(Vec::new());
 
@@ -1830,7 +1827,7 @@ mod tests {
                 |key| Ok(values.borrow().get(key).unwrap().clone()),
                 |key, value| {
                     writes.borrow_mut().push((key.to_owned(), value.to_owned()));
-                    values.borrow_mut().insert(key, value.to_owned());
+                    values.borrow_mut().insert(key.to_owned(), value.to_owned());
                     Ok(())
                 },
             )
