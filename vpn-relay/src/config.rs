@@ -1891,7 +1891,7 @@ egress = "awg-uplink"
     #[test]
     fn rejects_empty_firewall_selectors_and_unknown_interfaces() {
         let empty_input = format!(
-            "{}\\n[firewall.input]\\n[[firewall.input.rules]]\\ninterface = \\"wg-server\\"\\nsource = []\\n",
+            "{}\n[firewall.input]\n[[firewall.input.rules]]\ninterface = \"wg-server\"\nsource = []\n",
             valid_config()
         );
         assert!(Config::parse_toml(&empty_input)
@@ -1900,7 +1900,7 @@ egress = "awg-uplink"
             .contains("firewall.input.rules[0].source must not be an empty list"));
 
         let empty_output = format!(
-            "{}\\n[firewall.output]\\n[[firewall.output.rules]]\\ninterface = \\"awg-uplink\\"\\ndestination = []\\n",
+            "{}\n[firewall.output]\n[[firewall.output.rules]]\ninterface = \"awg-uplink\"\ndestination = []\n",
             valid_config()
         );
         assert!(Config::parse_toml(&empty_output)
@@ -1909,7 +1909,7 @@ egress = "awg-uplink"
             .contains("firewall.output.rules[0].destination must not be an empty list"));
 
         let unknown_interface = format!(
-            "{}\\n[firewall.input]\\n[[firewall.input.rules]]\\ninterface = \\"wg-missing\\"\\n",
+            "{}\n[firewall.input]\n[[firewall.input.rules]]\ninterface = \"wg-missing\"\n",
             valid_config()
         );
         assert!(Config::parse_toml(&unknown_interface)
@@ -1921,7 +1921,7 @@ egress = "awg-uplink"
     #[test]
     fn rejects_empty_zero_and_non_transport_firewall_ports() {
         let empty_ports = format!(
-            "{}\\n[firewall.input]\\n[[firewall.input.rules]]\\ninterface = \\"wg-server\\"\\nprotocol = \\"tcp\\"\\nports = []\\n",
+            "{}\n[firewall.input]\n[[firewall.input.rules]]\ninterface = \"wg-server\"\nprotocol = \"tcp\"\nports = []\n",
             valid_config()
         );
         assert!(Config::parse_toml(&empty_ports)
@@ -1930,7 +1930,7 @@ egress = "awg-uplink"
             .contains("ports must contain one or more ports"));
 
         let zero_port = format!(
-            "{}\\n[firewall.output]\\n[[firewall.output.rules]]\\ninterface = \\"awg-uplink\\"\\nprotocol = \\"udp\\"\\nports = [0]\\n",
+            "{}\n[firewall.output]\n[[firewall.output.rules]]\ninterface = \"awg-uplink\"\nprotocol = \"udp\"\nports = [0]\n",
             valid_config()
         );
         assert!(Config::parse_toml(&zero_port)
@@ -1939,7 +1939,7 @@ egress = "awg-uplink"
             .contains("ports must contain one or more ports"));
 
         let icmp_ports = format!(
-            "{}\\n[firewall.input]\\n[[firewall.input.rules]]\\ninterface = \\"wg-server\\"\\nprotocol = \\"icmp\\"\\nports = [53]\\n",
+            "{}\n[firewall.input]\n[[firewall.input.rules]]\ninterface = \"wg-server\"\nprotocol = \"icmp\"\nports = [53]\n",
             valid_config()
         );
         assert!(Config::parse_toml(&icmp_ports)
@@ -1951,7 +1951,7 @@ egress = "awg-uplink"
     #[test]
     fn rejects_empty_routing_destination_list() {
         let input = valid_config().replace(
-            "destination = \\"0.0.0.0/0\\"",
+            "destination = \"0.0.0.0/0\"",
             "destination = []",
         );
         assert!(Config::parse_toml(&input)
