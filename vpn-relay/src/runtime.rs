@@ -2174,6 +2174,7 @@ mod tests {
         assert_eq!(failed_restore_second.peers[0].public_key[0], b'n');
     }
 
+    #[test]
     fn multi_device_peer_rollback_failure_is_reported_for_fatal_shutdown() {
         let previous = peer_test_config("old-a", "old-b");
         let candidate = peer_test_config("new-a", "new-b");
