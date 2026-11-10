@@ -1163,9 +1163,9 @@ impl Drop for Runtime {
         if let Err(error) = linux::remove_policy_routing(&self.routing) {
             cleanup_failures.push(format!("active policy routing: {error}"));
         }
-        // Restore link-scoped sysctls while their links (including daemon-owned
-        // TUNs) still exist. The fail-closed firewall remains installed until
-        // after both forwarding restoration and TUN destruction complete.
+        // Restore persistent external-link sysctls before tearing down TUNs.
+        // Daemon-owned TUN entries are skipped because their sysctls disappear
+        // with the non-persistent link; keep the firewall until teardown ends.
         if let Some(state) = &self.forwarding_state {
             match restore_forwarding(state) {
                 Ok(()) => {
@@ -1643,7 +1643,7 @@ fn validate_unmanaged_forwarding_with(
             } else {
                 format!("{suffix}.{name}.force_forwarding")
             };
-            if read(&key)? == "1" {
+            if read(&key)? != "0" {
                 return Err(RuntimeError::Forwarding(format!(
                     "unmanaged interface '{name}' has {family} forwarding enabled; disable it or add the interface to daemon.forwarding_interfaces"
                 )));
@@ -1725,7 +1725,7 @@ fn enable_interface_forwarding_durable(
     }
     let mut state = ForwardingState {
         ipv4: "1".to_owned(),
-        ipv6: "1".to_owned(),
+        ipv6: "0".to_owned(),
         ipv4_changed: false,
         ipv6_changed: false,
         interfaces: entries,
@@ -1960,6 +1960,18 @@ mod tests {
     }
 
     #[test]
+    fn unmanaged_forwarding_treats_any_nonzero_value_as_enabled() {
+        let allowed = std::collections::BTreeSet::new();
+        validate_unmanaged_forwarding_with(
+            &allowed,
+            &["eth0".to_owned()],
+            &[],
+            |_| Ok("2".to_owned()),
+        )
+        .unwrap_err();
+    }
+
+    #[test]
     fn unmanaged_forwarding_validation_ignores_allowlisted_links() {
         let allowed = std::collections::BTreeSet::from(["wg0".to_owned()]);
         validate_unmanaged_forwarding_with(
@@ -2036,6 +2048,52 @@ mod tests {
         assert!(matches!(result, Err(RuntimeError::Forwarding(_))));
         assert_eq!(values.borrow()["net.ipv4.conf.eth0.forwarding"], "0");
         assert_eq!(values.borrow()["net.ipv6.conf.eth0.force_forwarding"], "0");
+    }
+
+    #[test]
+    fn interface_forwarding_enable_reports_fatal_when_rollback_fails() {
+        let state = ForwardingState {
+            ipv4: "1".to_owned(),
+            ipv6: "0".to_owned(),
+            ipv4_changed: false,
+            ipv6_changed: false,
+            interfaces: vec![InterfaceForwardingState {
+                name: "eth0".to_owned(),
+                ifindex: 7,
+                daemon_owned: false,
+                ipv4: "0".to_owned(),
+                ipv6: "0".to_owned(),
+                ipv4_changed: true,
+                ipv6_changed: true,
+            }],
+        };
+        let values = std::cell::RefCell::new(std::collections::BTreeMap::from([
+            ("net.ipv4.conf.eth0.forwarding".to_owned(), "0".to_owned()),
+            ("net.ipv6.conf.eth0.force_forwarding".to_owned(), "0".to_owned()),
+        ]));
+        let result = enable_interface_forwarding_entries_with(
+            &state,
+            |key| {
+                Ok(values
+                    .borrow()
+                    .get(key)
+                    .cloned()
+                    .expect("test sysctl key exists"))
+            },
+            |key, value| {
+                if key.starts_with("net.ipv6.") && value == "1" {
+                    return Err(RuntimeError::Forwarding("injected setup failure".to_owned()));
+                }
+                if key.starts_with("net.ipv4.") && value == "0" {
+                    return Err(RuntimeError::Forwarding("injected rollback failure".to_owned()));
+                }
+                values.borrow_mut().insert(key.to_owned(), value.to_owned());
+                Ok(())
+            },
+            |_, _| Ok(()),
+        );
+        assert!(matches!(result, Err(RuntimeError::FatalTransition(_))));
+        assert_eq!(values.borrow()["net.ipv4.conf.eth0.forwarding"], "1");
     }
 
     #[test]

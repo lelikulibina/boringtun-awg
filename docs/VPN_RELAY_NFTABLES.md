@@ -255,23 +255,34 @@ Policy routing использует зарезервированный iproute2 
 Перед установкой проверяются конфликтующие rule priorities и таблицы.
 Удаляются только ресурсы с ожидаемой identity.
 
-Startup: instance lock для network namespace → nftables policy → создание и
-подъём TUN → policy routes → включение IP forwarding (если включено в config).
-При ошибке последующих этапов уже установленные ресурсы удаляются в обратном
-порядке.
+Startup: instance lock для network namespace → nftables fail-closed policy →
+создание TUN → policy routes → forwarding ownership. Legacy mode управляет
+namespace-wide sysctl; per-interface mode сначала проверяет глобальные
+prerequisites и unmanaged links, затем сохраняет journal и включает только
+allowlisted links.
 
-Shutdown: остановка и join backend workers → удаление policy routes → удаление
-TUN links через backend lifecycle → восстановление исходного состояния IPv4/IPv6
-forwarding → удаление nftables policy. При ошибке cleanup firewall остаётся
-установленным. Lock удерживается до уничтожения Runtime.
+Shutdown: остановка и join backend workers → удаление policy routes →
+восстановление sysctl внешних интерфейсов при совпадении name/ifindex и
+daemon-written value → удаление TUN links → удаление nftables policy. Записи
+daemon-owned TUN не восстанавливаются: их sysctl исчезают вместе с
+непостоянным TUN. При ошибке cleanup firewall остаётся установленным. Lock
+удерживается до уничтожения Runtime.
 
-**Ограничение `manage_ip_forwarding`:** значение `true` меняет глобальные
-`net.ipv4.ip_forward` и `net.ipv6.conf.all.forwarding`, а не только managed TUN.
-Переходы host/router затрагивают interface forwarding и поведение IPv6 RA;
-поэтому эту опцию нельзя безоговорочно включать на общем хосте. Для общего
-хоста оставляйте `false` и настраивайте forwarding отдельно; предпочтительный
-вариант автоматического управления — отдельный network namespace. Сужение
-forwarding до managed interfaces остаётся отдельной архитектурной задачей.
+**Режимы `manage_ip_forwarding`:**
+
+- `false`: forwarding sysctl не меняются.
+- `true` + пустой `forwarding_interfaces`: legacy namespace-wide режим,
+  который переключает `net.ipv4.ip_forward` и
+  `net.ipv6.conf.all.forwarding`. Он может изменить host/router defaults и
+  IPv6 RA behaviour, поэтому не подходит для общего host namespace.
+- `true` + непустой `forwarding_interfaces`: per-interface режим. Требует
+  заранее включённый `net.ipv4.ip_forward=1` и выключенный
+  `net.ipv6.conf.all.forwarding=0`. IPv4 использует
+  `net.ipv4.conf.<if>.forwarding`, IPv6 — `net.ipv6.conf.<if>.force_forwarding`.
+  Все неразрешённые интерфейсы должны иметь forwarding-флаги 0. Демон
+  проверяет prerequisites и allowlist каждую секунду; при drift завершает
+  работу, сохраняя fail-closed firewall. IPv6 `force_forwarding` не меняет
+  Host/Router setting интерфейса и `accept_ra`.
 
 ## Проверки и ограничения
 
