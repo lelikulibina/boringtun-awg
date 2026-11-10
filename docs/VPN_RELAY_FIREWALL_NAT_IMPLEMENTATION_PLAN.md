@@ -730,3 +730,10 @@ Noise sessions для peer, чьи параметры не менялись; н�
 | 2026-11-10 | Ограничено время ожидания packet-level TCP/UDP probes | Все iperf3 client runs в multi-uplink integration test выполняются с timeout 15s. Изменение прошло полный integration job, включая packet-level multi-uplink routing, в CI 42810890525. | Проверено, CI 42810890525 |
 
 | 2026-11-10 | Разобран CI 42817022304: исправление rustfmt и изоляция masquerade address-change probe | rustfmt выявил перенос фигурной скобки в config.rs; исправлено. Packet-level multi-uplink test показал отсутствие пакета после смены адреса при повторном использовании клиента .2; probe переведён на .3 для гарантированно нового conntrack tuple. Оба изменения ожидают повторной проверки полного CI | Ожидает CI |
+
+
+### CI follow-up — 2026-11-10
+
+- Run `42818275020`: `rustfmt`, unit tests, `clippy`, feature checks and AWG 3.1 interoperability passed; integration failed in the multi-uplink masquerade address-change probe.
+- Root cause: the attempted switch to client `10.77.0.3` used destination `203.0.113.1`, but the fixture's matching routing decision for that destination is scoped to `10.77.0.2/32`. The packet therefore had no routing decision and correctly did not reach the uplink. Restore client `.2` and force a fresh ICMP conntrack tuple with identifier `4242`; keep packet capture asserting source `10.20.0.99`.
+- Address-change masquerade coverage remains pending a successful integration CI run.
