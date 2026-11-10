@@ -3,7 +3,7 @@
 > Рабочая ветка: `feature/vpn-relay-firewall-nat`
 > Базовая ветка: `feature/boringtun-router-daemon`
 > Базовый commit: `ad3f35d2790e7e47c8d050fb7b3c206c69ac2aa4`
-> Последнее обновление: 2026-11-10 (durable forwarding crash recovery; полный CI 42849072652)
+> Последнее обновление: 2026-11-10 (negative config parser coverage; полный CI 42851385258)
 >
 > Этот документ является рабочим журналом реализации. Статусы меняются только
 > после фактического изменения кода и выполнения соответствующих проверок.
@@ -812,3 +812,5 @@ successful shutdown removes the firewall.
 | 2026-11-10 | Закрыт основной packet-level firewall acceptance matrix | Полный CI run `42836214324` прошёл: IPv4/IPv6 INPUT/OUTPUT allow/deny, forged reply isolation для обоих направлений, socket-fwmark underlay, запрет новых потоков без routing decision, выбранная ingress/egress пара и TCP/UDP reverse traffic на обоих uplink. Отдельный полный CI `42831549649` подтвердил TUN identity replacement и masquerade после смены egress IPv4. | Проверено, полные CI `42836214324` и `42831549649` |
 
 | 2026-11-10 | Добавлено durable восстановление forwarding после SIGKILL | Введён versioned `.forwarding` journal, привязанный к inode network namespace. Состояние записывается атомарно с mode 0600 и fsync до изменения sysctl; чтение защищено `O_NOFOLLOW` и проверками owner/mode/nlink/size/schema/namespace. Startup восстанавливает только реально изменённые семейства и удаляет journal лишь после успешного восстановления; при ошибке запись сохраняется. Добавлены unit tests round-trip, namespace mismatch, corrupt JSON, dangling symlink и идемпотентное recovery. Netns test проверяет SIGKILL/restart, восстановление forwarding, policy rules/routes/TUN и штатный shutdown. | Полный CI `42849072652`: tests, clippy, rustfmt, feature checks, namespace lifecycle, WG/AWG peer traffic, multi-uplink и AWG 3.1 — success; Windows skipped. HEAD `b4c7197897f6b5b8eed1799b1ad6ab209971c8a2` |
+
+| 2026-11-10 | Закрыты дополнительные отрицательные parser cases | Добавлены regression tests на пустые INPUT/OUTPUT CIDR selectors, неизвестный firewall interface, пустой/нулевой port list, ports с ICMP и пустой routing destination. `Config::validate` отклоняет каждую конфигурацию до создания системных ресурсов. | Полный CI `42851385258`: tests, clippy, rustfmt, feature checks, namespace lifecycle, WG/AWG peer traffic, packet-level multi-uplink и AWG 3.1 — success; Windows skipped. HEAD `db71837251551026beb0a8fa6b58a11867bb521a` |
