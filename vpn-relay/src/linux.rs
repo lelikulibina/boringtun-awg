@@ -1191,6 +1191,61 @@ mod tests {
     }
 
     #[test]
+    fn policy_apply_aggregates_socket_rollback_failures_after_egress_rollback() {
+        let plan = cleanup_test_plan();
+        let mut calls = Vec::new();
+        let mut install_failure_index = None;
+        let result = apply_policy_routing_with(&plan, &mut |_program, args| {
+            calls.push(args.to_vec());
+            if install_failure_index.is_none()
+                && args.get(1).is_some_and(|part| part == "rule")
+                && args.get(2).is_some_and(|part| part == "add")
+                && args.first().is_some_and(|family| family == "-4")
+            {
+                install_failure_index = Some(calls.len() - 1);
+                return Err(LinuxError::Command {
+                    program: format!("ip {}", args.join(" ")),
+                    status: "exit status 2".into(),
+                    stderr: "injected egress installation failure".into(),
+                });
+            }
+            if let Some(index) = install_failure_index {
+                let after_failure = &calls[index + 1..];
+                let socket_cleanup_started = after_failure.iter().any(|call| {
+                    call.get(1).is_some_and(|part| part == "rule")
+                        && call.get(2).is_some_and(|part| part == "del")
+                        && call.get(4).is_some_and(|priority| priority == "9000")
+                });
+                if socket_cleanup_started {
+                    return Err(LinuxError::Command {
+                        program: format!("ip {}", args.join(" ")),
+                        status: "exit status 2".into(),
+                        stderr: "injected socket rollback failure".into(),
+                    });
+                }
+            }
+            Ok(())
+        });
+
+        let failure_index = install_failure_index.expect("egress install failure injected");
+        let rollback_calls = &calls[failure_index + 1..];
+        let egress_cleanup = rollback_calls.iter().filter(|args| {
+            args.get(4).is_some_and(|priority| priority == "10000")
+                && args.get(2).is_some_and(|operation| operation == "del")
+        }).count();
+        let socket_cleanup = rollback_calls.iter().filter(|args| {
+            args.get(4).is_some_and(|priority| priority == "9000")
+                && args.get(2).is_some_and(|operation| operation == "del")
+        }).count();
+
+        assert_eq!(egress_cleanup, 4, "nested egress rollback must complete first");
+        assert_eq!(socket_cleanup, 4, "outer rollback must attempt every socket rule");
+        assert!(matches!(result, Err(LinuxError::Rollback { operation, rollback })
+            if operation.contains("injected egress installation failure")
+                && rollback.matches("injected socket rollback failure").count() == 4));
+    }
+
+    #[test]
     fn nested_policy_rollback_does_not_repeat_egress_cleanup() {
         let mut plan = cleanup_test_plan();
         plan.socket_marks = vec![0x1000_0001];
