@@ -55,6 +55,7 @@ pub struct Runtime {
     conntrack_mark_history: Vec<crate::routing::RoutingDecision>,
     stats_interval: Duration,
     forwarding_state: Option<ForwardingState>,
+    forwarding_state_path: PathBuf,
     control_socket: ControlSocket,
     fatal_error: Option<String>,
     /// Preserve the name-mismatch guards if the original TUN descriptor is lost.
@@ -88,6 +89,17 @@ impl InstanceLock {
     fn current_conntrack_mark_state_path() -> Result<PathBuf, RuntimeError> {
         let lock_path = Self::current_netns_path()?;
         Ok(lock_path.with_extension("marks"))
+    }
+
+    fn current_forwarding_state_path() -> Result<PathBuf, RuntimeError> {
+        let lock_path = Self::current_netns_path()?;
+        Ok(lock_path.with_extension("forwarding"))
+    }
+
+    fn current_netns_inode() -> Result<u64, RuntimeError> {
+        std::fs::metadata("/proc/self/ns/net")
+            .map(|metadata| metadata.ino())
+            .map_err(|error| RuntimeError::InstanceLock(error.to_string()))
     }
 
     fn acquire(path: &Path) -> Result<Self, RuntimeError> {
@@ -327,11 +339,20 @@ fn rollback_peer_replacements(
     failures
 }
 
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Eq, PartialEq)]
 struct ForwardingState {
     ipv4: String,
     ipv6: String,
     ipv4_changed: bool,
     ipv6_changed: bool,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ForwardingStateFile {
+    version: u32,
+    namespace_inode: u64,
+    state: ForwardingState,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Eq, PartialEq)]
@@ -475,6 +496,9 @@ impl Runtime {
             .map_err(|error| RuntimeError::Configuration(error.to_string()))?;
         let lock_path = InstanceLock::current_netns_path()?;
         let instance_lock = InstanceLock::acquire(&lock_path)?;
+            let forwarding_state_path = InstanceLock::current_forwarding_state_path()?;
+        let namespace_inode = InstanceLock::current_netns_inode()?;
+        recover_forwarding_state(&forwarding_state_path, namespace_inode)?;
         let control_socket = ControlSocket::bind(InstanceLock::current_control_path()?)?;
         let conntrack_mark_state_path = InstanceLock::current_conntrack_mark_state_path()?;
         let mut conntrack_mark_history = load_conntrack_mark_history(&conntrack_mark_state_path)?;
@@ -619,7 +643,7 @@ impl Runtime {
         }
 
         let forwarding_state = if config.daemon.manage_ip_forwarding {
-            match enable_forwarding() {
+            match enable_forwarding_durable(&forwarding_state_path, namespace_inode) {
                 Ok(state) => Some(state),
                 Err(error) => {
                     let route_cleanup = linux::remove_policy_routing(&routing);
@@ -667,6 +691,7 @@ impl Runtime {
             conntrack_mark_history,
             stats_interval,
             forwarding_state,
+            forwarding_state_path,
             control_socket,
             fatal_error: None,
             retain_firewall: false,
@@ -1104,8 +1129,13 @@ impl Drop for Runtime {
         self.devices.clear();
 
         if let Some(state) = &self.forwarding_state {
-            if let Err(error) = restore_forwarding(state) {
-                cleanup_failures.push(error.to_string());
+            match restore_forwarding(state) {
+                Ok(()) => {
+                    if let Err(error) = remove_forwarding_state_file(&self.forwarding_state_path) {
+                        cleanup_failures.push(error.to_string());
+                    }
+                }
+                Err(error) => cleanup_failures.push(error.to_string()),
             }
         }
 
@@ -1180,12 +1210,19 @@ fn enable_forwarding_with(
     mut read: impl FnMut(&str) -> Result<String, RuntimeError>,
     mut write: impl FnMut(&str, &str) -> Result<(), RuntimeError>,
 ) -> Result<ForwardingState, RuntimeError> {
-    let mut state = ForwardingState {
+    let state = ForwardingState {
         ipv4: read("net.ipv4.ip_forward")?,
         ipv6: read("net.ipv6.conf.all.forwarding")?,
         ipv4_changed: false,
         ipv6_changed: false,
     };
+    enable_forwarding_state_with(state, &mut write)
+}
+
+fn enable_forwarding_state_with(
+    mut state: ForwardingState,
+    mut write: impl FnMut(&str, &str) -> Result<(), RuntimeError>,
+) -> Result<ForwardingState, RuntimeError> {
     // Writing an already-enabled IPv4 ip_forward sysctl is not harmless:
     // changing this switch resets IPv4 configuration parameters to router
     // defaults. Avoid touching a family that is already enabled.
@@ -1218,6 +1255,218 @@ fn enable_forwarding_with(
 
 fn enable_forwarding() -> Result<ForwardingState, RuntimeError> {
     enable_forwarding_with(read_sysctl, write_sysctl)
+}
+
+fn validate_forwarding_state(state: &ForwardingState) -> Result<(), RuntimeError> {
+    if !matches!(state.ipv4.as_str(), "0" | "1")
+        || !matches!(state.ipv6.as_str(), "0" | "1")
+    {
+        return Err(RuntimeError::Forwarding(
+            "forwarding state contains an invalid sysctl value".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn load_forwarding_state(
+    path: &Path,
+    namespace_inode: u64,
+) -> Result<Option<ForwardingState>, RuntimeError> {
+    let file = match OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(path)
+    {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(RuntimeError::Forwarding(error.to_string())),
+    };
+    let metadata = file.metadata().map_err(|error| RuntimeError::Forwarding(error.to_string()))?;
+    if !metadata.file_type().is_file()
+        || metadata.uid() != unsafe { libc::geteuid() }
+        || metadata.permissions().mode() & 0o777 != 0o600
+        || metadata.nlink() != 1
+    {
+        return Err(RuntimeError::Forwarding(format!(
+            "refusing to use non-private forwarding state file {}",
+            path.display()
+        )));
+    }
+    const MAX_FORWARDING_STATE_SIZE: u64 = 4096;
+    if metadata.len() > MAX_FORWARDING_STATE_SIZE {
+        return Err(RuntimeError::Forwarding(
+            "forwarding state file exceeds 4 KiB".to_owned(),
+        ));
+    }
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    file.take(MAX_FORWARDING_STATE_SIZE + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| RuntimeError::Forwarding(error.to_string()))?;
+    if bytes.len() as u64 > MAX_FORWARDING_STATE_SIZE {
+        return Err(RuntimeError::Forwarding(
+            "forwarding state file exceeds 4 KiB".to_owned(),
+        ));
+    }
+    let saved: ForwardingStateFile = serde_json::from_slice(&bytes)
+        .map_err(|error| RuntimeError::Forwarding(error.to_string()))?;
+    if saved.version != 1 {
+        return Err(RuntimeError::Forwarding(format!(
+            "unsupported forwarding state version {}",
+            saved.version
+        )));
+    }
+    if saved.namespace_inode != namespace_inode {
+        return Err(RuntimeError::Forwarding(format!(
+            "forwarding state belongs to network namespace {}, current namespace is {}",
+            saved.namespace_inode, namespace_inode
+        )));
+    }
+    validate_forwarding_state(&saved.state)?;
+    Ok(Some(saved.state))
+}
+
+fn persist_forwarding_state(
+    path: &Path,
+    namespace_inode: u64,
+    state: &ForwardingState,
+) -> Result<(), RuntimeError> {
+    validate_forwarding_state(state)?;
+    if path.exists() {
+        let _ = load_forwarding_state(path, namespace_inode)?.ok_or_else(|| {
+            RuntimeError::Forwarding("forwarding state disappeared during validation".to_owned())
+        })?;
+    }
+    let temporary_path = path.with_extension(format!("forwarding.tmp-{}", std::process::id()));
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(&temporary_path)
+        .map_err(|error| RuntimeError::Forwarding(error.to_string()))?;
+    let saved = ForwardingStateFile {
+        version: 1,
+        namespace_inode,
+        state: state.clone(),
+    };
+    let result = serde_json::to_writer(&mut file, &saved)
+        .map_err(|error| RuntimeError::Forwarding(error.to_string()))
+        .and_then(|()| {
+            file.sync_all()
+                .map_err(|error| RuntimeError::Forwarding(error.to_string()))
+        });
+    drop(file);
+    if let Err(error) = result {
+        let _ = fs::remove_file(&temporary_path);
+        return Err(error);
+    }
+    if let Err(error) = fs::rename(&temporary_path, path) {
+        let _ = fs::remove_file(&temporary_path);
+        return Err(RuntimeError::Forwarding(error.to_string()));
+    }
+    let parent = path.parent().ok_or_else(|| {
+        RuntimeError::Forwarding("forwarding state path has no parent directory".to_owned())
+    })?;
+    File::open(parent)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|error| RuntimeError::Forwarding(error.to_string()))
+}
+
+fn remove_forwarding_state_file(path: &Path) -> Result<(), RuntimeError> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata)
+            if metadata.file_type().is_file()
+                && metadata.uid() == unsafe { libc::geteuid() }
+                && metadata.permissions().mode() & 0o777 == 0o600
+                && metadata.nlink() == 1 =>
+        {
+            fs::remove_file(path).map_err(|error| RuntimeError::Forwarding(error.to_string()))?;
+            let parent = path.parent().ok_or_else(|| {
+                RuntimeError::Forwarding("forwarding state path has no parent directory".to_owned())
+            })?;
+            File::open(parent)
+                .and_then(|directory| directory.sync_all())
+                .map_err(|error| RuntimeError::Forwarding(error.to_string()))
+        }
+        Ok(_) => Err(RuntimeError::Forwarding(format!(
+            "refusing to remove non-private forwarding state file {}",
+            path.display()
+        ))),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(RuntimeError::Forwarding(error.to_string())),
+    }
+}
+
+fn restore_forwarding_state_with(
+    state: &ForwardingState,
+    mut read: impl FnMut(&str) -> Result<String, RuntimeError>,
+    mut write: impl FnMut(&str, &str) -> Result<(), RuntimeError>,
+) -> Result<(), RuntimeError> {
+    let mut failures = Vec::new();
+    for (changed, key, original, family) in [
+        (state.ipv4_changed, "net.ipv4.ip_forward", state.ipv4.as_str(), "IPv4"),
+        (state.ipv6_changed, "net.ipv6.conf.all.forwarding", state.ipv6.as_str(), "IPv6"),
+    ] {
+        if !changed {
+            continue;
+        }
+        match read(key) {
+            Ok(current) if current == original => {}
+            Ok(_) => {
+                if let Err(error) = write(key, original) {
+                    failures.push(format!("{family}: {error}"));
+                }
+            }
+            Err(error) => failures.push(format!("{family} read: {error}")),
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(RuntimeError::FatalTransition(format!(
+            "failed to recover forwarding state: {}",
+            failures.join("; ")
+        )))
+    }
+}
+
+fn recover_forwarding_state(
+    path: &Path,
+    namespace_inode: u64,
+) -> Result<(), RuntimeError> {
+    let Some(state) = load_forwarding_state(path, namespace_inode)? else {
+        return Ok(());
+    };
+    restore_forwarding_state_with(&state, read_sysctl, write_sysctl)?;
+    remove_forwarding_state_file(path)
+}
+
+fn enable_forwarding_durable(
+    path: &Path,
+    namespace_inode: u64,
+) -> Result<ForwardingState, RuntimeError> {
+    let state = ForwardingState {
+        ipv4: read_sysctl("net.ipv4.ip_forward")?,
+        ipv6: read_sysctl("net.ipv6.conf.all.forwarding")?,
+        ipv4_changed: false,
+        ipv6_changed: false,
+    };
+    let mut state = state;
+    state.ipv4_changed = state.ipv4 != "1";
+    state.ipv6_changed = state.ipv6 != "1";
+    validate_forwarding_state(&state)?;
+    if state.ipv4_changed || state.ipv6_changed {
+        persist_forwarding_state(path, namespace_inode, &state)?;
+    }
+    match enable_forwarding_state_with(state, write_sysctl) {
+        Ok(state) => Ok(state),
+        Err(error) => {
+            if !matches!(error, RuntimeError::FatalTransition(_)) {
+                remove_forwarding_state_file(path)?;
+            }
+            Err(error)
+        }
+    }
 }
 
 fn restore_forwarding_with(
