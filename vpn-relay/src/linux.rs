@@ -958,11 +958,20 @@ mod tests {
                 !calls.iter().any(|args| {
                     args.get(1).is_some_and(|part| part == "rule")
                         && args.get(2).is_some_and(|part| part == "add")
+                        && args.get(3).is_some_and(|part| part == "priority")
                         && args.get(4).is_some_and(|part| part == "9000")
                         && args.get(5).is_some_and(|part| part == "fwmark")
-                        && args.get(6).is_some_and(|part| part.starts_with("0x1000"))
+                        && args.get(6).is_some_and(|value| {
+                            plan.socket_marks
+                                .iter()
+                                .any(|mark| value == &format!("0x{mark:x}"))
+                        })
+                        && args.get(7).is_some_and(|part| part == "lookup")
+                        && args.get(8).is_some_and(|part| part == "main")
+                        && args.get(9).is_some_and(|part| part == "protocol")
+                        && args.get(10).is_some_and(|part| part == ROUTING_PROTOCOL)
                 }),
-                "socket rules must not be installed after stale-rule cleanup fails"
+                "socket rules must not be installed after stale-rule cleanup fails; calls: {calls:?}"
             );
 
             let rollback = calls
@@ -1570,6 +1579,32 @@ mod tests {
             .is_some_and(|script| script.starts_with("delete table inet vpn_relay\n")));
         assert!(matches!(result, Err(LinuxError::Command { ref stderr, .. })
             if stderr.contains("injected transaction failure")));
+    }
+
+    #[test]
+    fn nft_remove_does_not_delete_when_inspection_fails() {
+        let plan = cleanup_test_plan();
+        let mut delete_calls = 0;
+        let result = remove_nft_with(
+            &plan,
+            &mut |_plan| {
+                Err(LinuxError::Command {
+                    program: "nft -j list table".into(),
+                    status: "exit status 1".into(),
+                    stderr: "permission denied".into(),
+                })
+            },
+            &mut |_program, _args| {
+                delete_calls += 1;
+                Ok(())
+            },
+        );
+
+        assert!(matches!(
+            result,
+            Err(LinuxError::Command { ref stderr, .. }) if stderr == "permission denied"
+        ));
+        assert_eq!(delete_calls, 0, "delete must not run after failed inspection");
     }
 
     #[test]
