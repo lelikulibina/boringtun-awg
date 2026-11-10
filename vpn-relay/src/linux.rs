@@ -154,11 +154,11 @@ pub fn apply_nft(plan: &RoutingPlan) -> Result<(), LinuxError> {
     })
 }
 
-pub fn remove_nft(plan: &RoutingPlan) {
-    if !matches!(inspect_nft_table(plan), Ok(true)) {
-        return;
+pub fn remove_nft(plan: &RoutingPlan) -> Result<(), LinuxError> {
+    if !inspect_nft_table(plan)? {
+        return Ok(());
     }
-    let _ = run(
+    run(
         "nft",
         &[
             "delete".into(),
@@ -166,7 +166,7 @@ pub fn remove_nft(plan: &RoutingPlan) {
             plan.nft_family.clone(),
             plan.nft_table.clone(),
         ],
-    );
+    )
 }
 
 fn rule_has_owned_identity(line: &str, mark: u32, table: &str) -> bool {
@@ -641,41 +641,59 @@ pub fn apply_policy_routing(plan: &RoutingPlan) -> Result<(), LinuxError> {
                 ROUTING_PROTOCOL.into(),
             ];
             if let Err(error) = run("ip", &args) {
-                remove_policy_routing(plan);
-                return Err(error);
+                return match remove_policy_routing(plan) {
+                    Ok(()) => Err(error),
+                    Err(rollback) => Err(LinuxError::Rollback {
+                        operation: error.to_string(),
+                        rollback: rollback.to_string(),
+                    }),
+                };
             }
         }
     }
 
     if let Err(error) = apply_egress_policy_routing(plan) {
-        remove_policy_routing(plan);
-        return Err(error);
+        return match remove_policy_routing(plan) {
+            Ok(()) => Err(error),
+            Err(rollback) => Err(LinuxError::Rollback {
+                operation: error.to_string(),
+                rollback: rollback.to_string(),
+            }),
+        };
     }
     Ok(())
 }
 
-pub fn remove_policy_routing(plan: &RoutingPlan) {
+pub fn remove_policy_routing(plan: &RoutingPlan) -> Result<(), LinuxError> {
+    let mut failures = Vec::new();
     for mark in &plan.socket_marks {
         for family in ["-4", "-6"] {
-            let _ = run(
-                "ip",
-                &[
-                    family.into(),
-                    "rule".into(),
-                    "del".into(),
-                    "priority".into(),
-                    "9000".into(),
-                    "fwmark".into(),
-                    format!("0x{:x}", mark),
-                    "lookup".into(),
-                    "main".into(),
-                    "protocol".into(),
-                    ROUTING_PROTOCOL.into(),
-                ],
-            );
+            let args = [
+                family.into(),
+                "rule".into(),
+                "del".into(),
+                "priority".into(),
+                "9000".into(),
+                "fwmark".into(),
+                format!("0x{:x}", mark),
+                "lookup".into(),
+                "main".into(),
+                "protocol".into(),
+                ROUTING_PROTOCOL.into(),
+            ];
+            if let Err(error) = run_ip_cleanup(&args) {
+                failures.push(error.to_string());
+            }
         }
     }
-    let _ = remove_egress_policy_routing(plan);
+    if let Err(error) = remove_egress_policy_routing(plan) {
+        failures.push(error.to_string());
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(LinuxError::Cleanup(failures.join("; ")))
+    }
 }
 
 pub fn configure_interface(name: &str, mtu: u16, addresses: &[String]) -> Result<(), LinuxError> {

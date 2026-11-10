@@ -665,3 +665,6 @@ Noise sessions для peer, чьи параметры не менялись; н�
 
 
 | 2026-11-10 | Исправлен rustfmt после fail-closed forwarding rollback | CI run 42795160585 выявил только форматирование двух match arms в failure-injection тесте; код и остальные обязательные jobs прошли, integration-tests ещё выполнялся на момент проверки. Исправлено форматирование без изменения логики; ожидается повторный CI | Исправлено, ожидает CI |
+
+
+| 2026-11-10 | Сделана fail-closed очистка при startup rollback и shutdown | Очистка policy-routing теперь возвращает ошибки вместо их игнорирования; если rollback добавленных правил/маршрутов не удался, startup сохраняет nftables policy и завершает запуск как fatal transition. При штатном Drop firewall снимается только после успешной очистки retired/active routes и восстановления исходных IPv4/IPv6 forwarding значений; при любой ошибке защиты nftables остаётся на месте. Удаление nftables также возвращает диагностируемую ошибку. Ожидает CI | Реализовано, ожидает CI |

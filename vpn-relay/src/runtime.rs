@@ -458,13 +458,25 @@ impl Runtime {
             // Dropping the handles stops and joins any workers created before
             // the failing interface; the firewall is removed only afterwards.
             drop(devices);
-            linux::remove_nft(&routing);
+            if let Err(cleanup) = linux::remove_nft(&routing) {
+                return Err(RuntimeError::FatalTransition(format!(
+                    "interface setup failed ({error}); nftables cleanup failed ({cleanup})"
+                )));
+            }
             return Err(error);
         }
 
         if let Err(error) = linux::apply_policy_routing(&routing) {
             drop(devices);
-            linux::remove_nft(&routing);
+            if matches!(&error, LinuxError::Rollback { .. } | LinuxError::Cleanup(_)) {
+                tracing::error!(%error, "startup policy-routing rollback failed; retaining nftables policy");
+                return Err(RuntimeError::FatalTransition(error.to_string()));
+            }
+            if let Err(cleanup) = linux::remove_nft(&routing) {
+                return Err(RuntimeError::FatalTransition(format!(
+                    "policy-routing setup failed ({error}); nftables cleanup failed ({cleanup})"
+                )));
+            }
             return Err(error.into());
         }
 
@@ -906,17 +918,32 @@ impl Drop for Runtime {
             device.wait();
         }
 
+        let mut cleanup_failures = Vec::new();
         for retired in &self.retired_routing {
             if let Err(error) = linux::remove_egress_policy_routing(retired) {
-                tracing::warn!(%error, "failed to remove retired policy-routing resources");
+                cleanup_failures.push(format!("retired policy routing: {error}"));
             }
         }
-        linux::remove_policy_routing(&self.routing);
+        if let Err(error) = linux::remove_policy_routing(&self.routing) {
+            cleanup_failures.push(format!("active policy routing: {error}"));
+        }
         self.devices.clear();
-        linux::remove_nft(&self.routing);
 
         if let Some(state) = &self.forwarding_state {
-            restore_forwarding(state);
+            if let Err(error) = restore_forwarding(state) {
+                cleanup_failures.push(error.to_string());
+            }
+        }
+
+        if cleanup_failures.is_empty() {
+            if let Err(error) = linux::remove_nft(&self.routing) {
+                tracing::error!(%error, "failed to remove vpn-relay nftables policy");
+            }
+        } else {
+            tracing::error!(
+                failures = %cleanup_failures.join("; "),
+                "shutdown cleanup incomplete; retaining fail-closed nftables policy"
+            );
         }
     }
 }
@@ -999,13 +1026,29 @@ fn enable_forwarding() -> Result<ForwardingState, RuntimeError> {
     enable_forwarding_with(read_sysctl, write_sysctl)
 }
 
-fn restore_forwarding(state: &ForwardingState) {
-    if let Err(error) = write_sysctl("net.ipv4.ip_forward", &state.ipv4) {
-        tracing::warn!(%error, "failed to restore IPv4 forwarding state");
+fn restore_forwarding_with(
+    state: &ForwardingState,
+    mut write: impl FnMut(&str, &str) -> Result<(), RuntimeError>,
+) -> Result<(), RuntimeError> {
+    let mut failures = Vec::new();
+    if let Err(error) = write("net.ipv4.ip_forward", &state.ipv4) {
+        failures.push(format!("IPv4: {error}"));
     }
-    if let Err(error) = write_sysctl("net.ipv6.conf.all.forwarding", &state.ipv6) {
-        tracing::warn!(%error, "failed to restore IPv6 forwarding state");
+    if let Err(error) = write("net.ipv6.conf.all.forwarding", &state.ipv6) {
+        failures.push(format!("IPv6: {error}"));
     }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(RuntimeError::FatalTransition(format!(
+            "failed to restore forwarding state: {}",
+            failures.join("; ")
+        )))
+    }
+}
+
+fn restore_forwarding(state: &ForwardingState) -> Result<(), RuntimeError> {
+    restore_forwarding_with(state, write_sysctl)
 }
 
 #[cfg(test)]
