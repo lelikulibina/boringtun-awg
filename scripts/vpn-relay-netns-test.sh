@@ -23,7 +23,7 @@ trap cleanup EXIT
 
 fail() {
     echo "vpn-relay namespace test: $*" >&2
-    for log in "$TMP/daemon.log" "$TMP/conflict.log" "$TMP/policy-conflict.log" "$TMP/route-conflict.log" "$TMP/policy-shadow-conflict.log" "$TMP/partial-setup-conflict.log" "$TMP/partial-policy-route.log" "$TMP/partial-forwarding.log" "$TMP/partial-ipv4-forwarding.log" "$TMP/partial-ipv4-forwarding-restore-failure.log" "$TMP/reload-failure.log" "$TMP/reload-route-failure.log" "$TMP/reload-immutable.log" "$TMP/shutdown-cleanup-failure.log" "$TMP/shutdown-forwarding-restore-failure.log" "$TMP/shutdown-ipv6-forwarding-restore-failure.log"; do
+    for log in "$TMP/daemon.log" "$TMP/conflict.log" "$TMP/policy-conflict.log" "$TMP/route-conflict.log" "$TMP/policy-shadow-conflict.log" "$TMP/partial-setup-conflict.log" "$TMP/partial-policy-route.log" "$TMP/partial-forwarding.log" "$TMP/partial-ipv4-forwarding.log" "$TMP/partial-ipv4-forwarding-restore-failure.log" "$TMP/reload-failure.log" "$TMP/reload-route-failure.log" "$TMP/reload-immutable.log" "$TMP/shutdown-cleanup-failure.log" "$TMP/shutdown-forwarding-restore-failure.log" "$TMP/shutdown-ipv6-forwarding-restore-failure.log" "$TMP/preexisting-forwarding.log"; do
         if [[ -f "$log" ]]; then
             cat "$log" >&2
         fi
@@ -804,5 +804,43 @@ grep -Fq "injected shutdown IPv6 forwarding restore failure" "$TMP/shutdown-ipv6
 grep -Fq "shutdown cleanup incomplete; retaining fail-closed nftables policy" "$TMP/shutdown-ipv6-forwarding-restore-failure.log" || fail "daemon did not retain fail-closed policy after IPv6 forwarding restore failure"
 ip netns exec "$NS" "$REAL_SYSCTL_SHUTDOWN" -w net.ipv6.conf.all.forwarding=0 >/dev/null
 ip netns exec "$NS" nft delete table inet vpn_relay_it
+
+# Forwarding may already be enabled by the host before vpn-relay starts.
+# The daemon must preserve that original state rather than unconditionally
+# disabling forwarding during graceful shutdown.
+ip netns exec "$NS" sysctl -qw net.ipv4.ip_forward=1
+ip netns exec "$NS" sysctl -qw net.ipv6.conf.all.forwarding=1
+ip netns exec "$NS" "$BIN" --config "$TMP/config.toml" >"$TMP/preexisting-forwarding.log" 2>&1 &
+DAEMON_PID=$!
+for _ in $(seq 1 30); do
+    ready=1
+    ip netns exec "$NS" nft list table inet vpn_relay_it >/dev/null 2>&1 || ready=0
+    for iface in wg-server awg-primary awg-secondary; do
+        ip netns exec "$NS" ip link show dev "$iface" >/dev/null 2>&1 || ready=0
+    done
+    [[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "1" ]] || ready=0
+    [[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "1" ]] || ready=0
+    [[ $ready -eq 1 ]] && break
+    if ! kill -0 "$DAEMON_PID" 2>/dev/null; then
+        fail "daemon exited before pre-existing forwarding state test became ready"
+    fi
+    sleep 1
+done
+[[ $ready -eq 1 ]] || fail "daemon did not become ready with pre-existing forwarding enabled"
+kill -TERM "$DAEMON_PID"
+wait "$DAEMON_PID" || fail "daemon failed while restoring pre-existing forwarding state"
+DAEMON_PID=""
+[[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "1" ]] || fail "daemon disabled pre-existing IPv4 forwarding during shutdown"
+[[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "1" ]] || fail "daemon disabled pre-existing IPv6 forwarding during shutdown"
+if ip netns exec "$NS" nft list table inet vpn_relay_it >/dev/null 2>&1; then
+    fail "daemon-owned nftables table survived shutdown with pre-existing forwarding"
+fi
+for iface in wg-server awg-primary awg-secondary; do
+    if ip netns exec "$NS" ip link show dev "$iface" >/dev/null 2>&1; then
+        fail "TUN interface $iface survived shutdown with pre-existing forwarding"
+    fi
+done
+ip netns exec "$NS" sysctl -qw net.ipv4.ip_forward=0
+ip netns exec "$NS" sysctl -qw net.ipv6.conf.all.forwarding=0
 
 echo "vpn-relay namespace integration test passed"
