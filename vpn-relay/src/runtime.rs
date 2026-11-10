@@ -1933,6 +1933,7 @@ mod tests {
             interfaces: vec![InterfaceForwardingState {
                 name: "eth0".to_owned(),
                 ifindex: 7,
+                daemon_owned: false,
                 ipv4: "0".to_owned(),
                 ipv6: "0".to_owned(),
                 ipv4_changed: true,
@@ -1941,7 +1942,7 @@ mod tests {
         };
         let values = std::cell::RefCell::new(std::collections::BTreeMap::from([
             ("net.ipv4.conf.eth0.forwarding".to_owned(), "0".to_owned()),
-            ("net.ipv6.conf.eth0.forwarding".to_owned(), "0".to_owned()),
+            ("net.ipv6.conf.eth0.force_forwarding".to_owned(), "0".to_owned()),
         ]));
         let result = enable_interface_forwarding_entries_with(
             &state,
@@ -1969,7 +1970,7 @@ mod tests {
         );
         assert!(matches!(result, Err(RuntimeError::Forwarding(_))));
         assert_eq!(values.borrow()["net.ipv4.conf.eth0.forwarding"], "0");
-        assert_eq!(values.borrow()["net.ipv6.conf.eth0.forwarding"], "0");
+        assert_eq!(values.borrow()["net.ipv6.conf.eth0.force_forwarding"], "0");
     }
 
     #[test]
@@ -1982,6 +1983,7 @@ mod tests {
             interfaces: vec![InterfaceForwardingState {
                 name: "eth0".to_owned(),
                 ifindex: 7,
+                daemon_owned: false,
                 ipv4: "0".to_owned(),
                 ipv6: "0".to_owned(),
                 ipv4_changed: true,
@@ -2049,6 +2051,7 @@ mod tests {
         let entry = InterfaceForwardingState {
             name: "eth0".to_owned(),
             ifindex: 7,
+                daemon_owned: false,
             ipv4: "0".to_owned(),
             ipv6: "0".to_owned(),
             ipv4_changed: true,
@@ -2076,6 +2079,7 @@ mod tests {
         let entry = InterfaceForwardingState {
             name: "eth0".to_owned(),
             ifindex: 7,
+                daemon_owned: false,
             ipv4: "0".to_owned(),
             ipv6: "0".to_owned(),
             ipv4_changed: true,
@@ -2112,6 +2116,7 @@ mod tests {
         state.interfaces.push(InterfaceForwardingState {
             name: "awg0".to_owned(),
             ifindex: 17,
+                daemon_owned: false,
             ipv4: "0".to_owned(),
             ipv6: "1".to_owned(),
             ipv4_changed: true,
@@ -2135,6 +2140,7 @@ mod tests {
         let entry = InterfaceForwardingState {
             name: "awg0".to_owned(),
             ifindex: 17,
+                daemon_owned: false,
             ipv4: "0".to_owned(),
             ipv6: "0".to_owned(),
             ipv4_changed: true,
