@@ -354,6 +354,9 @@ struct ForwardingState {
 struct InterfaceForwardingState {
     name: String,
     ifindex: u32,
+    /// True when this link is created and destroyed by vpn-relay's TUN backend.
+    #[serde(default)]
+    daemon_owned: bool,
     ipv4: String,
     ipv6: String,
     ipv4_changed: bool,
@@ -660,6 +663,7 @@ impl Runtime {
                 &forwarding_state_path,
                 namespace_inode,
                 &config.daemon.forwarding_interfaces,
+                &config.interfaces.keys().cloned().collect(),
             ) {
                 Ok(state) => Some(state),
                 Err(error) => {
@@ -1495,7 +1499,15 @@ fn restore_interface_forwarding_entry_with(
         return Ok(());
     }
     let key = interface_forwarding_sysctl_key(&entry.name, family)?;
-    verify(&entry.name, entry.ifindex)?;
+    if let Err(error) = verify(&entry.name, entry.ifindex) {
+        // A daemon-owned TUN is ephemeral. After SIGKILL its link and
+        // link-scoped sysctls disappear with the descriptor, so recovery must
+        // not write the saved value into a replacement link with the same name.
+        if entry.daemon_owned {
+            return Ok(());
+        }
+        return Err(error);
+    }
     let current = read(&key)?;
     if current == original {
         return Ok(());
@@ -1505,7 +1517,12 @@ fn restore_interface_forwarding_entry_with(
         // assuming that the daemon still owns the sysctl.
         return Ok(());
     }
-    verify(&entry.name, entry.ifindex)?;
+    if let Err(error) = verify(&entry.name, entry.ifindex) {
+        if entry.daemon_owned {
+            return Ok(());
+        }
+        return Err(error);
+    }
     write(&key, original)
 }
 
@@ -1601,6 +1618,7 @@ fn enable_interface_forwarding_durable(
     path: &Path,
     namespace_inode: u64,
     names: &[String],
+    daemon_owned_names: &std::collections::BTreeSet<String>,
 ) -> Result<ForwardingState, RuntimeError> {
     // IPv4 requires the namespace-wide switch, but toggling it resets
     // interface host/router defaults; require the runtime/operator to enable
@@ -1639,6 +1657,7 @@ fn enable_interface_forwarding_durable(
         entries.push(InterfaceForwardingState {
             name: name.clone(),
             ifindex,
+            daemon_owned: daemon_owned_names.contains(name),
             ipv4,
             ipv6,
             ipv4_changed: false,
@@ -1788,9 +1807,15 @@ fn enable_forwarding_durable(
     path: &Path,
     namespace_inode: u64,
     forwarding_interfaces: &[String],
+    daemon_owned_names: &std::collections::BTreeSet<String>,
 ) -> Result<ForwardingState, RuntimeError> {
     if !forwarding_interfaces.is_empty() {
-        return enable_interface_forwarding_durable(path, namespace_inode, forwarding_interfaces);
+        return enable_interface_forwarding_durable(
+            path,
+            namespace_inode,
+            forwarding_interfaces,
+            daemon_owned_names,
+        );
     }
     let state = ForwardingState {
         ipv4: read_sysctl("net.ipv4.ip_forward")?,
@@ -1982,6 +2007,7 @@ mod tests {
         let entry = InterfaceForwardingState {
             name: "eth0".to_owned(),
             ifindex: 7,
+            daemon_owned: false,
             ipv4: "0".to_owned(),
             ipv6: "0".to_owned(),
             ipv4_changed: true,
