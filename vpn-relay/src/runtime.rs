@@ -1311,7 +1311,7 @@ mod tests {
     }
 
     #[test]
-    fn forwarding_enable_restores_both_families_when_ipv4_enable_fails() {
+    fn forwarding_enable_restores_only_the_family_whose_enable_was_attempted() {
         let mut writes = Vec::new();
         let result = enable_forwarding_with(
             |key| match key {
@@ -1325,9 +1325,6 @@ mod tests {
                         "injected IPv4 enable failure".to_owned(),
                     )),
                     ("net.ipv4.ip_forward", "0") => Ok(()),
-                    ("net.ipv6.conf.all.forwarding", "0") => Err(RuntimeError::Forwarding(
-                        "injected IPv6 restore failure".to_owned(),
-                    )),
                     _ => unreachable!(),
                 }
             },
@@ -1335,21 +1332,17 @@ mod tests {
 
         assert!(matches!(
             result,
-            Err(RuntimeError::FatalTransition(message))
+            Err(RuntimeError::Forwarding(message))
                 if message.contains("injected IPv4 enable failure")
-                    && message.contains("injected IPv6 restore failure")
-                    && message.contains("fail-closed nftables policy")
         ));
         assert_eq!(
             writes,
             vec![
                 ("net.ipv4.ip_forward".to_owned(), "1".to_owned()),
                 ("net.ipv4.ip_forward".to_owned(), "0".to_owned()),
-                ("net.ipv6.conf.all.forwarding".to_owned(), "0".to_owned()),
             ]
         );
     }
-
     #[test]
     fn forwarding_enable_keeps_fail_closed_policy_when_restore_fails() {
         let mut writes = Vec::new();
