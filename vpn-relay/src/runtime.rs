@@ -1549,11 +1549,17 @@ fn enable_interface_forwarding_durable(
             .map_err(|error| RuntimeError::Forwarding(error.to_string()))?;
         let ipv4_key = interface_forwarding_sysctl_key(name, "ipv4")?;
         let ipv6_key = interface_forwarding_sysctl_key(name, "ipv6")?;
+        linux::verify_interface_identity(name, ifindex)
+            .map_err(|error| RuntimeError::Forwarding(error.to_string()))?;
+        let ipv4 = read_sysctl(&ipv4_key)?;
+        linux::verify_interface_identity(name, ifindex)
+            .map_err(|error| RuntimeError::Forwarding(error.to_string()))?;
+        let ipv6 = read_sysctl(&ipv6_key)?;
         entries.push(InterfaceForwardingState {
             name: name.clone(),
             ifindex,
-            ipv4: read_sysctl(&ipv4_key)?,
-            ipv6: read_sysctl(&ipv6_key)?,
+            ipv4,
+            ipv6,
             ipv4_changed: false,
             ipv6_changed: false,
         });

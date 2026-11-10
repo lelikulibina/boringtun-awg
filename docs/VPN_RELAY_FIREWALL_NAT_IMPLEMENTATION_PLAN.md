@@ -853,3 +853,12 @@ successful shutdown removes the firewall.
 | 2026-11-10 | Добавлена обратная проверка Linux interface identity для будущего forwarding journal | Реализован ifindex → interface name через `if_indextoname`; identity guard проверяет обе стороны отображения name/index. Проверки вынесены в функцию с внедряемыми lookup-операциями, чтобы тестировать сценарии повторного использования имени и индекса без изменения реального netns. CI предыдущего коммита выявил только rustfmt (исправлено в `34e3dde`); полный CI нового коммита `1cf4cd0` ожидает запуска. | Реализовано; CI ожидает завершения |
 
 | 2026-11-10 | Добавлены тесты обработки исчезнувшего forwarding-интерфейса | Проверки name → ifindex и ifindex → name теперь отдельно подтверждают передачу ошибки, если интерфейс исчез до lookup. Это гарантирует, что будущий recovery не сможет трактовать недоступную идентичность как успешное совпадение и должен оставить journal при невозможности безопасного восстановления. | Реализовано; CI ожидает завершения |
+
+
+### Per-interface forwarding — первый runtime проход
+
+- [x] Добавлен конфигурационный allowlist `daemon.forwarding_interfaces`; дубли, некорректные имена и изменение allowlist через reload отклоняются.
+- [x] Per-interface режим не переключает namespace-wide forwarding sysctls. Он требует, чтобы IPv4 и IPv6 global forwarding уже были включены контейнерным runtime/оператором: переключение IPv4 `ip_forward` меняет router/host defaults других интерфейсов в namespace.
+- [x] Включение и recovery используют `net.ipv4.conf.<if>.forwarding` и `net.ipv6.conf.<if>.forwarding`, сохраняют name/ifindex и проверяют identity до чтения/записи.
+- [x] Recovery пишет original value только если текущее значение ещё равно daemon enable value (`1`); внешнее изменение не перезаписывается.
+- [ ] IPv6 RA/force_forwarding semantics, packet-level namespace tests, partial-write rollback failure injection и full CI остаются обязательными до завершения этапа.

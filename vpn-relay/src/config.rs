@@ -1024,6 +1024,58 @@ egress = "awg-uplink"
     }
 
     #[test]
+    fn forwarding_interface_allowlist_requires_explicit_global_management() {
+        let text = valid_config().replace(
+            "manage_ip_forwarding = false",
+            "manage_ip_forwarding = false\nforwarding_interfaces = [\"eth0\"]",
+        );
+        assert!(Config::parse_toml(&text).is_err());
+    }
+
+    #[test]
+    fn forwarding_interface_allowlist_accepts_unique_valid_names() {
+        let text = valid_config().replace(
+            "manage_ip_forwarding = false",
+            "manage_ip_forwarding = true\nforwarding_interfaces = [\"eth0\", \"wg-server\"]",
+        );
+        let config = Config::parse_toml(&text).unwrap();
+        assert_eq!(
+            config.daemon.forwarding_interfaces,
+            vec!["eth0".to_owned(), "wg-server".to_owned()]
+        );
+    }
+
+    #[test]
+    fn forwarding_interface_allowlist_rejects_duplicates_and_invalid_names() {
+        let duplicate = valid_config().replace(
+            "manage_ip_forwarding = false",
+            "manage_ip_forwarding = true\nforwarding_interfaces = [\"eth0\", \"eth0\"]",
+        );
+        assert!(Config::parse_toml(&duplicate).is_err());
+
+        let invalid = valid_config().replace(
+            "manage_ip_forwarding = false",
+            "manage_ip_forwarding = true\nforwarding_interfaces = [\"../eth0\"]",
+        );
+        assert!(Config::parse_toml(&invalid).is_err());
+    }
+
+    #[test]
+    fn forwarding_interface_allowlist_is_immutable_during_reload() {
+        let current = Config::parse_toml(&valid_config().replace(
+            "manage_ip_forwarding = false",
+            "manage_ip_forwarding = true\nforwarding_interfaces = [\"eth0\"]",
+        ))
+        .unwrap();
+        let next = Config::parse_toml(&valid_config().replace(
+            "manage_ip_forwarding = false",
+            "manage_ip_forwarding = true\nforwarding_interfaces = [\"eth1\"]",
+        ))
+        .unwrap();
+        assert!(current.validate_reload_compatibility(&next).is_err());
+    }
+
+    #[test]
     fn numeric_interface_names_are_rejected_as_inherited_file_descriptors() {
         assert!(validate_interface_name("123").is_err());
         assert!(validate_interface_name("-1").is_err());
