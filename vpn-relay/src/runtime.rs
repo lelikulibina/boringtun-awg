@@ -1549,17 +1549,16 @@ fn verify_forwarding_interface(name: &str, index: u32) -> Result<(), RuntimeErro
 
 fn restore_interface_forwarding_entries_with(
     state: &ForwardingState,
-    skip_daemon_owned: bool,
     mut read: impl FnMut(&str) -> Result<String, RuntimeError>,
     mut write: impl FnMut(&str, &str) -> Result<(), RuntimeError>,
     mut verify: impl FnMut(&str, u32) -> Result<(), RuntimeError>,
 ) -> Result<(), RuntimeError> {
     let mut failures = Vec::new();
     for entry in &state.interfaces {
-        if skip_daemon_owned && entry.daemon_owned {
-            // On crash recovery the original TUN descriptor is gone. Never
-            // restore its saved values into a replacement, even if Linux
-            // happens to recycle both the name and ifindex.
+        if entry.daemon_owned {
+            // Link-scoped sysctls disappear with a non-persistent TUN. Never
+            // write a saved TUN value back by name: a replacement can reuse
+            // both the name and ifindex after the original descriptor closes.
             continue;
         }
         for (family, original, changed) in [
@@ -1782,7 +1781,7 @@ fn enable_interface_forwarding_entries_with(
         return Ok(());
     }
     if let Err(rollback_error) =
-        restore_interface_forwarding_entries_with(state, false, &mut read, &mut write, &mut verify)
+        restore_interface_forwarding_entries_with(state, &mut read, &mut write, &mut verify)
     {
         return Err(RuntimeError::FatalTransition(format!(
             "per-interface forwarding setup failed ({}); rollback failed ({rollback_error}); fail-closed nftables policy must remain installed",
@@ -1800,14 +1799,13 @@ fn restore_forwarding_state_with(
     read: impl FnMut(&str) -> Result<String, RuntimeError>,
     write: impl FnMut(&str, &str) -> Result<(), RuntimeError>,
 ) -> Result<(), RuntimeError> {
-    restore_forwarding_state_with_mode(state, read, write, false)
+    restore_forwarding_state_with_mode(state, read, write)
 }
 
 fn restore_forwarding_state_with_mode(
     state: &ForwardingState,
     mut read: impl FnMut(&str) -> Result<String, RuntimeError>,
     mut write: impl FnMut(&str, &str) -> Result<(), RuntimeError>,
-    skip_daemon_owned: bool,
 ) -> Result<(), RuntimeError> {
     let mut failures = Vec::new();
     for (changed, key, original, family) in [
@@ -1839,7 +1837,6 @@ fn restore_forwarding_state_with_mode(
     }
     if let Err(error) = restore_interface_forwarding_entries_with(
         state,
-        skip_daemon_owned,
         &mut read,
         &mut write,
         verify_forwarding_interface,
@@ -1869,7 +1866,7 @@ fn recover_forwarding_state_with(
     let Some(state) = load_forwarding_state(path, namespace_inode)? else {
         return Ok(());
     };
-    restore_forwarding_state_with_mode(&state, read, write, true)?;
+    restore_forwarding_state_with_mode(&state, read, write)?;
     remove_forwarding_state_file(path)
 }
 
@@ -2073,7 +2070,7 @@ mod tests {
     }
 
     #[test]
-    fn ephemeral_tun_recovery_skips_even_a_recycled_name_and_ifindex() {
+    fn daemon_owned_tun_sysctls_are_never_restored_by_saved_identity() {
         let state = ForwardingState {
             ipv4: "1".to_owned(),
             ipv6: "0".to_owned(),
@@ -2093,7 +2090,6 @@ mod tests {
         let mut writes = 0;
         restore_interface_forwarding_entries_with(
             &state,
-            true,
             |_| {
                 reads += 1;
                 Ok("1".to_owned())
