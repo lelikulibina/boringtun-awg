@@ -1201,6 +1201,7 @@ mod tests {
                 && args.get(1).is_some_and(|part| part == "rule")
                 && args.get(2).is_some_and(|part| part == "add")
                 && args.first().is_some_and(|family| family == "-4")
+                && args.get(4).is_some_and(|priority| priority == "10000")
             {
                 install_failure_index = Some(calls.len() - 1);
                 return Err(LinuxError::Command {
@@ -1230,8 +1231,9 @@ mod tests {
         let failure_index = install_failure_index.expect("egress install failure injected");
         let rollback_calls = &calls[failure_index + 1..];
         let egress_cleanup = rollback_calls.iter().filter(|args| {
-            args.get(4).is_some_and(|priority| priority == "10000")
-                && args.get(2).is_some_and(|operation| operation == "del")
+            args.get(2).is_some_and(|operation| operation == "del")
+                && (args.get(1).is_some_and(|kind| kind == "route")
+                    || args.get(4).is_some_and(|priority| priority == "10000"))
         }).count();
         let socket_cleanup = rollback_calls.iter().filter(|args| {
             args.get(4).is_some_and(|priority| priority == "9000")
