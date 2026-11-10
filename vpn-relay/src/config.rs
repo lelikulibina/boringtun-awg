@@ -558,7 +558,7 @@ impl Config {
                     for prefix in prefixes {
                         if !unique.insert(canonical_prefix(prefix, "routing.rules.source")?) {
                             return invalid(
-                                "routing.rules.source must not contain duplicate or equivalent CIDR networks",
+                                "routing.rules.source must not contain duplicate CIDR selectors (including equivalent CIDR networks)",
                             );
                         }
                     }
@@ -579,7 +579,7 @@ impl Config {
                     for prefix in prefixes {
                         if !unique.insert(canonical_prefix(prefix, "routing.rules.destination")?) {
                             return invalid(
-                                "routing.rules.destination must not contain duplicate or equivalent CIDR networks",
+                                "routing.rules.destination must not contain duplicate CIDR selectors (including equivalent CIDR networks)",
                             );
                         }
                     }
@@ -674,7 +674,7 @@ impl Config {
                         for prefix in prefixes {
                             if !unique.insert(canonical_prefix(prefix, &format!("{path}.{field}"))?) {
                                 return invalid(format!(
-                                    "{path}.{field} must not contain duplicate or equivalent CIDR networks"
+                                    "{path}.{field} must not contain duplicate CIDR selectors (including equivalent CIDR networks)"
                                 ));
                             }
                         }
@@ -1804,7 +1804,7 @@ egress = "awg-uplink"
         assert!(Config::parse_toml(&source)
             .unwrap_err()
             .to_string()
-            .contains("duplicate or equivalent CIDR networks"));
+            .contains("equivalent CIDR networks"));
 
         let destination = valid_config().replace(
             "destination = \"0.0.0.0/0\"",
@@ -1813,7 +1813,7 @@ egress = "awg-uplink"
         assert!(Config::parse_toml(&destination)
             .unwrap_err()
             .to_string()
-            .contains("duplicate or equivalent CIDR networks"));
+            .contains("equivalent CIDR networks"));
     }
 
     #[test]
