@@ -412,8 +412,14 @@ impl ControlSocket {
             remove_owned_socket_path(&path, device, inode);
             return Err(RuntimeError::Control(error.to_string()));
         }
-        let metadata = fs::symlink_metadata(&path)
-            .map_err(|error| RuntimeError::Control(error.to_string()))?;
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) => {
+                drop(listener);
+                remove_owned_socket_path(&path, device, inode);
+                return Err(RuntimeError::Control(error.to_string()));
+            }
+        };
         if !metadata.file_type().is_socket()
             || metadata.dev() != device
             || metadata.ino() != inode
