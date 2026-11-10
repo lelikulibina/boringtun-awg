@@ -1206,6 +1206,7 @@ fn write_sysctl(key: &str, value: &str) -> Result<(), RuntimeError> {
     Ok(())
 }
 
+#[cfg(test)]
 fn enable_forwarding_with(
     mut read: impl FnMut(&str) -> Result<String, RuntimeError>,
     mut write: impl FnMut(&str, &str) -> Result<(), RuntimeError>,
@@ -1251,10 +1252,6 @@ fn enable_forwarding_state_with(
         }
     }
     Ok(state)
-}
-
-fn enable_forwarding() -> Result<ForwardingState, RuntimeError> {
-    enable_forwarding_with(read_sysctl, write_sysctl)
 }
 
 fn validate_forwarding_state(state: &ForwardingState) -> Result<(), RuntimeError> {
@@ -1331,10 +1328,16 @@ fn persist_forwarding_state(
     state: &ForwardingState,
 ) -> Result<(), RuntimeError> {
     validate_forwarding_state(state)?;
-    if path.exists() {
-        let _ = load_forwarding_state(path, namespace_inode)?.ok_or_else(|| {
-            RuntimeError::Forwarding("forwarding state disappeared during validation".to_owned())
-        })?;
+    match fs::symlink_metadata(path) {
+        Ok(_) => {
+            let _ = load_forwarding_state(path, namespace_inode)?.ok_or_else(|| {
+                RuntimeError::Forwarding(
+                    "forwarding state disappeared during validation".to_owned(),
+                )
+            })?;
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(RuntimeError::Forwarding(error.to_string())),
     }
     let temporary_path = path.with_extension(format!("forwarding.tmp-{}", std::process::id()));
     let mut file = OpenOptions::new()
@@ -1441,10 +1444,19 @@ fn restore_forwarding_state_with(
 }
 
 fn recover_forwarding_state(path: &Path, namespace_inode: u64) -> Result<(), RuntimeError> {
+    recover_forwarding_state_with(path, namespace_inode, read_sysctl, write_sysctl)
+}
+
+fn recover_forwarding_state_with(
+    path: &Path,
+    namespace_inode: u64,
+    read: impl FnMut(&str) -> Result<String, RuntimeError>,
+    write: impl FnMut(&str, &str) -> Result<(), RuntimeError>,
+) -> Result<(), RuntimeError> {
     let Some(state) = load_forwarding_state(path, namespace_inode)? else {
         return Ok(());
     };
-    restore_forwarding_state_with(&state, read_sysctl, write_sysctl)?;
+    restore_forwarding_state_with(&state, read, write)?;
     remove_forwarding_state_file(path)
 }
 
@@ -1712,6 +1724,125 @@ mod tests {
                 ("net.ipv6.conf.all.forwarding".to_owned(), "0".to_owned()),
             ]
         );
+    }
+
+    fn forwarding_state_test_path(label: &str) -> PathBuf {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "vpn-relay-forwarding-{label}-{}-{nonce}.json",
+            std::process::id()
+        ))
+    }
+
+    fn sample_forwarding_state() -> ForwardingState {
+        ForwardingState {
+            ipv4: "0".to_owned(),
+            ipv6: "0".to_owned(),
+            ipv4_changed: true,
+            ipv6_changed: true,
+        }
+    }
+
+    #[test]
+    fn forwarding_state_file_round_trips_with_private_permissions() {
+        let path = forwarding_state_test_path("round-trip");
+        persist_forwarding_state(&path, 1234, &sample_forwarding_state()).unwrap();
+
+        let metadata = std::fs::symlink_metadata(&path).unwrap();
+        assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
+        assert_eq!(
+            load_forwarding_state(&path, 1234).unwrap(),
+            Some(sample_forwarding_state())
+        );
+
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn forwarding_state_file_rejects_a_different_network_namespace() {
+        let path = forwarding_state_test_path("namespace");
+        persist_forwarding_state(&path, 1234, &sample_forwarding_state()).unwrap();
+
+        assert!(matches!(
+            load_forwarding_state(&path, 5678),
+            Err(RuntimeError::Forwarding(message))
+                if message.contains("belongs to network namespace 1234")
+        ));
+
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn forwarding_state_file_rejects_corrupt_json() {
+        let path = forwarding_state_test_path("corrupt");
+        std::fs::write(&path, b"{").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+        assert!(matches!(
+            load_forwarding_state(&path, 1234),
+            Err(RuntimeError::Forwarding(_))
+        ));
+
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn forwarding_state_persistence_does_not_follow_a_dangling_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let path = forwarding_state_test_path("symlink");
+        let target = forwarding_state_test_path("missing-target");
+        symlink(&target, &path).unwrap();
+
+        assert!(matches!(
+            persist_forwarding_state(&path, 1234, &sample_forwarding_state()),
+            Err(RuntimeError::Forwarding(_))
+        ));
+        assert!(std::fs::symlink_metadata(&path).unwrap().file_type().is_symlink());
+        assert!(!target.exists());
+
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn forwarding_state_recovery_restores_and_is_idempotent() {
+        use std::cell::RefCell;
+        use std::collections::HashMap;
+
+        let path = forwarding_state_test_path("recovery");
+        persist_forwarding_state(&path, 1234, &sample_forwarding_state()).unwrap();
+        let values = RefCell::new(HashMap::from([
+            ("net.ipv4.ip_forward", "1".to_owned()),
+            ("net.ipv6.conf.all.forwarding", "1".to_owned()),
+        ]));
+        let writes = RefCell::new(Vec::new());
+
+        let recover = || {
+            recover_forwarding_state_with(
+                &path,
+                1234,
+                |key| Ok(values.borrow().get(key).unwrap().clone()),
+                |key, value| {
+                    writes.borrow_mut().push((key.to_owned(), value.to_owned()));
+                    values.borrow_mut().insert(key, value.to_owned());
+                    Ok(())
+                },
+            )
+        };
+
+        recover().unwrap();
+        assert_eq!(values.borrow()["net.ipv4.ip_forward"], "0");
+        assert_eq!(values.borrow()["net.ipv6.conf.all.forwarding"], "0");
+        assert_eq!(writes.borrow().len(), 2);
+        assert!(!path.exists());
+
+        recover().unwrap();
+        assert_eq!(writes.borrow().len(), 2);
+
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]
