@@ -701,40 +701,53 @@ run_iperf udp-client-to-server 1000 -c 10.77.0.1 -u -b 3M -t 3 -l 1200
 run_iperf udp-server-to-client 1000 -c 10.77.0.1 -u -b 3M -t 3 -l 1200 -R
 
 # Keep authenticated tunnel traffic flowing while the server atomically
-# switches its nftables policy. The added rule is intentionally unrelated to
-# the probe flow, so every echo reply must remain permitted across the switch.
+# switches its nftables policy repeatedly. Toggle an unrelated INPUT exception
+# to force a fresh nftables transaction without changing the probe's permission.
 cp "$TMP/server.toml" "$TMP/server-before-traffic-reload.toml"
-python3 - "$TMP/server.toml" <<'PY'
+toggle_reload_rule() {
+    python3 - "$TMP/server.toml" "$1" <<'PY'
 import sys
-path = sys.argv[1]
+path, action = sys.argv[1:]
 with open(path, encoding="utf-8") as stream:
     config = stream.read()
-anchor = "[firewall.output]\n"
-addition = """[[firewall.input.rules]]
+rule = """[[firewall.input.rules]]
 interface = "wg-peer-test"
 source = ["10.77.0.3/32"]
 protocol = "icmp"
 
 """
-if config.count(anchor) != 1:
-    raise SystemExit("could not locate unique firewall.output section for traffic reload")
-config = config.replace(anchor, addition + anchor, 1)
+if action == "add":
+    anchor = "[firewall.output]\n"
+    if config.count(anchor) != 1 or rule in config:
+        raise SystemExit("cannot safely add runtime-reload probe rule")
+    config = config.replace(anchor, rule + anchor, 1)
+elif action == "remove":
+    if config.count(rule) != 1:
+        raise SystemExit("cannot safely remove runtime-reload probe rule")
+    config = config.replace(rule, "", 1)
+else:
+    raise SystemExit(f"unknown action: {action}")
 with open(path, "w", encoding="utf-8") as stream:
     stream.write(config)
 PY
-ip netns exec "$CLIENT_NS" ping -n -i 0.05 -c 60 -W 2 10.77.0.1 >"$TMP/reload-continuous-ping.log" 2>&1 &
+}
+ip netns exec "$CLIENT_NS" ping -n -i 0.05 -c 100 -W 2 10.77.0.1 >"$TMP/reload-continuous-ping.log" 2>&1 &
 CONTINUOUS_PING_PID=$!
 sleep 0.2
-ip netns exec "$SERVER_NS" "$BIN" --config "$TMP/server.toml" --reload >"$TMP/reload-during-traffic.log" 2>&1 \
-    || fail "server runtime reload failed while tunnel packets were flowing"
+for action in add remove add; do
+    toggle_reload_rule "$action"
+    ip netns exec "$SERVER_NS" "$BIN" --config "$TMP/server.toml" --reload \
+        >>"$TMP/reload-during-traffic.log" 2>&1 \
+        || fail "server runtime reload ($action) failed while tunnel packets were flowing"
+done
 if ! wait "$CONTINUOUS_PING_PID"; then
-    fail "continuous authenticated tunnel traffic failed during runtime reload"
+    fail "continuous authenticated tunnel traffic failed during repeated runtime reload"
 fi
-grep -Eq '60 packets transmitted, 60 received, 0% packet loss' "$TMP/reload-continuous-ping.log" \
-    || fail "packet loss detected during runtime reload"
+grep -Eq '100 packets transmitted, 100 received, 0% packet loss' "$TMP/reload-continuous-ping.log" \
+    || fail "packet loss detected during repeated runtime reload"
 kill -0 "$SERVER_PID" 2>/dev/null || fail "server daemon exited after traffic reload"
 ip netns exec "$CLIENT_NS" ping -n -c 3 -W 2 10.77.0.1 \
-    || fail "tunnel traffic did not recover after runtime reload"
+    || fail "tunnel traffic did not recover after repeated runtime reload"
 
 sleep 2
 

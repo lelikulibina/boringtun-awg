@@ -544,9 +544,11 @@ Noise sessions для peer, чьи параметры не менялись; н�
   tables, priorities и чужие ip rules, ссылающиеся на candidate table IDs.
 - [x] Обновлять authoritative config/runtime plan только после успешного
   peer+nft commit; ошибки rollback и cleanup переводят daemon в fatal state.
-- [ ] Добавить failure-injection и packet-level tests для успешного reload,
+- [x] Добавить failure-injection и packet-level tests для успешного reload,
   ошибки nft transaction, ошибки route install, rollback firewall/routes,
-  multi-interface peer rollback и непрерывного трафика.
+  multi-interface peer rollback и непрерывного трафика. Проверки подтверждены
+  CI runs 42714141354 (route failure rollback), 42720463290 (multi-device peer
+  rollback) и 42724351018 (непрерывный WG/AWG traffic при runtime reload).
 - [x] Добавить control socket request и CLI для полного reload конфигурации;
   существующий `--replace-peers` оставить совместимым либо явно deprecated.
 - [x] Подтвердить текущий этап полным CI, включая network-namespace и packet
@@ -593,8 +595,9 @@ Noise sessions для peer, чьи параметры не менялись; н�
   последовательный peer commit → nftables transaction → authoritative Config
   snapshot update → cleanup старых routes. Ошибки peer/nft приводят к rollback
   peers и staged routes; неуспешный rollback переводит daemon в fatal shutdown.
-- Ещё не завершены failure-injection тест ошибки route install, тест rollback
-  нескольких peer devices и проверка непрерывного трафика во время reload.
+- Failure-injection ошибки route install, rollback нескольких peer devices и
+  непрерывный WG/AWG packet traffic во время runtime reload подтверждены CI:
+  runs 42714141354, 42720463290 и 42724351018 соответственно.
 - **Conntrack decision identity реализована:** история решений сохраняется
   атомарной заменой приватного файла `/run/vpn-relay-netns-{inode}.marks`
   с проверкой владельца, типа файла, hard-link count и прав `0600`.
@@ -620,7 +623,10 @@ Noise sessions для peer, чьи параметры не менялись; н�
 
 | 2026-11-10 | Стабилизирована идентичность conntrack decisions между reload и restart | История decision marks сохраняется на диск атомарно; старые `0x4...` marks остаются валидными, новые выделяются из отдельного `0x5...` namespace. Добавлены тесты на стабильность при перестановке правил, сохранение legacy marks, запрет повторного использования, повреждённые/небезопасные state files. CI run 42708944656 на commit 24b799a: rustfmt, clippy, check_features, tests, AWG 3.1, integration-tests и all-systems-go — success; Windows job skipped | Подтверждено CI |
 
-| 2026-11-10 | Добавлен failure-injection тест ошибки staging policy route при reload | Daemon запускается с ip wrapper; ошибка установки нового egress route должна оставить старый nft classifier и старый route активными, а частично созданные ресурсы candidate plan удалить. Изменение ожидает CI; отдельно остаются multi-device peer rollback и непрерывный packet traffic во время reload | Ожидает CI |
+| 2026-11-10 | Подтверждён failure-injection тест ошибки staging policy route при reload | Run 42714141354: ip wrapper действительно блокирует candidate route replace; reload завершается ошибкой, daemon остаётся жив, старый nft classifier/route сохраняются, candidate rule/table удаляются | Подтверждено CI |
 
 
-| 2026-11-10 | Добавлена проверка непрерывного WG/AWG packet traffic во время runtime reload | В peer traffic integration test добавлен непрерывный ICMP поток из клиентского namespace; сервер выполняет полный reload с атомарным изменением nftables policy, затем тест требует 60/60 ответов без потерь, живой daemon и успешный post-reload ping. Сценарий выполняется для WG и AWG. Ожидает CI | В работе |
+| 2026-11-10 | Подтверждена непрерывность WG/AWG packet traffic во время runtime reload | Run 42724351018: в обоих peer-traffic сценариях клиентский ICMP поток прошёл через полный server reload; проверены 60/60 ответов, живой daemon и post-reload ping. Все jobs и all-systems-go завершились success; Windows job skipped | Подтверждено CI |
+
+
+| 2026-11-10 | Усилен стресс-тест непрерывного трафика при повторных reload | Вместо одного переключения firewall peer-traffic test теперь выполняет три последовательных nftables reload (add/remove/add независимого INPUT exception) на фоне 100 ICMP echo через WG/AWG; проверяет 100/100 ответов, daemon liveness и post-reload traffic. Ожидает CI | В работе |
