@@ -623,6 +623,7 @@ impl Runtime {
     /// committed first; the nftables table is then replaced in one kernel
     /// transaction. Any later failure restores already committed peer sets.
     pub fn reload_config(&mut self, candidate: Config) -> Result<(), RuntimeError> {
+        self.verify_tunnel_identities()?;
         if let Some(error) = &self.fatal_error {
             return Err(RuntimeError::FatalTransition(error.clone()));
         }
@@ -783,6 +784,19 @@ impl Runtime {
         Err(RuntimeError::FatalTransition(details))
     }
 
+    fn verify_tunnel_identities(&mut self) -> Result<(), RuntimeError> {
+        for (index, device) in self.devices.iter().enumerate() {
+            if let Err(error) = device.verify_identity() {
+                let details = format!(
+                    "tunnel device at runtime index {index} lost its original interface identity: {error}"
+                );
+                self.fatal_error = Some(details.clone());
+                return Err(RuntimeError::FatalTransition(details));
+            }
+        }
+        Ok(())
+    }
+
     fn rollback_peer_replacements(&mut self, committed: &[usize]) -> Vec<String> {
         rollback_peer_replacements(
             &mut self.devices,
@@ -931,6 +945,7 @@ impl Runtime {
     pub fn run(mut self) -> Result<(), RuntimeError> {
         install_signal_handlers()?;
         while !SHUTDOWN_REQUESTED.load(Ordering::Relaxed) {
+            self.verify_tunnel_identities()?;
             self.accept_control_connections();
             if let Some(error) = &self.fatal_error {
                 return Err(RuntimeError::FatalTransition(error.clone()));
@@ -941,6 +956,7 @@ impl Runtime {
             {
                 std::thread::sleep(Duration::from_secs(1));
                 elapsed += 1;
+                self.verify_tunnel_identities()?;
                 self.accept_control_connections();
                 if let Some(error) = &self.fatal_error {
                     return Err(RuntimeError::FatalTransition(error.clone()));

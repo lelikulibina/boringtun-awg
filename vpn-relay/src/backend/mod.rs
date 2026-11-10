@@ -42,6 +42,13 @@ pub struct PreparedInterface {
 /// A running tunnel instance managed by vpn-relay.
 pub trait TunnelHandle: Send {
     fn snapshot(&self) -> Result<TunnelSnapshot, BackendError>;
+
+    /// Verify that the backend's original tunnel device is still attached.
+    /// Backends without a descriptor-based identity check may retain the
+    /// default, while Linux BoringTun uses TUNGETIFF.
+    fn verify_identity(&self) -> Result<(), BackendError> {
+        Ok(())
+    }
     /// Atomically replace this tunnel's complete peer set after preflight.
     fn replace_peers(
         &mut self,

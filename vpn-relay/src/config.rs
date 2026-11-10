@@ -873,6 +873,15 @@ fn parse_prefix(value: &str, field: &str) -> Result<(IpAddr, u8), ConfigError> {
 }
 
 fn validate_interface_name(name: &str) -> Result<(), ConfigError> {
+    // BoringTun interprets a numeric Linux interface name as an inherited
+    // file descriptor. vpn-relay owns its TUN descriptors and must not accept
+    // this alternate constructor mode from configuration.
+    if name.parse::<i32>().is_ok() {
+        return invalid(format!(
+            "interface name '{}' must not be a numeric file descriptor",
+            name
+        ));
+    }
     if name.is_empty()
         || name.len() > 15
         || !name
@@ -966,6 +975,13 @@ destination = "::/0"
 egress = "awg-uplink"
 "#
         )
+    }
+
+    #[test]
+    fn numeric_interface_names_are_rejected_as_inherited_file_descriptors() {
+        assert!(validate_interface_name("123").is_err());
+        assert!(validate_interface_name("-1").is_err());
+        assert!(validate_interface_name("wg123").is_ok());
     }
 
     #[test]

@@ -96,6 +96,13 @@ struct BoringTunHandle {
 }
 
 impl TunnelHandle for BoringTunHandle {
+    #[cfg(target_os = "linux")]
+    fn verify_identity(&self) -> Result<(), BackendError> {
+        self.device
+            .verify_interface_identity()
+            .map_err(|error| BackendError::new(error.to_string()))
+    }
+
     fn replace_peers(
         &mut self,
         interface: &InterfaceConfig,

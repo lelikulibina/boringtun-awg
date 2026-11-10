@@ -456,6 +456,14 @@ impl DeviceHandle {
         self.device.read().listen_port
     }
 
+    /// Verify that the original Linux TUN descriptor is still attached to
+    /// the interface created by this device. A same-name replacement is not
+    /// considered the same device.
+    #[cfg(target_os = "linux")]
+    pub fn verify_interface_identity(&self) -> Result<(), Error> {
+        self.device.read().iface.verify_identity()
+    }
+
     /// Return a consistent read-only snapshot of the interface and its peers.
     ///
     /// This reads the live Device/Noise state directly. It deliberately does
