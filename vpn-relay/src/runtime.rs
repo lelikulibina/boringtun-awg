@@ -1547,6 +1547,54 @@ fn restore_interface_forwarding_entries_with(
     }
 }
 
+fn validate_unmanaged_forwarding_with(
+    allowed: &std::collections::BTreeSet<String>,
+    ipv4_interfaces: &[String],
+    ipv6_interfaces: &[String],
+    mut read: impl FnMut(&str) -> Result<String, RuntimeError>,
+) -> Result<(), RuntimeError> {
+    for (family, interfaces, suffix) in [
+        ("IPv4", ipv4_interfaces, "net.ipv4.conf"),
+        ("IPv6", ipv6_interfaces, "net.ipv6.conf"),
+    ] {
+        for name in interfaces {
+            if allowed.contains(name) {
+                continue;
+            }
+            let key = if family == "IPv4" {
+                format!("{suffix}.{name}.forwarding")
+            } else {
+                format!("{suffix}.{name}.force_forwarding")
+            };
+            if read(&key)? == "1" {
+                return Err(RuntimeError::Forwarding(format!(
+                    "unmanaged interface '{name}' has {family} forwarding enabled; disable it or add the interface to daemon.forwarding_interfaces"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn interface_sysctl_names(directory: &str) -> Result<Vec<String>, RuntimeError> {
+    let entries = fs::read_dir(directory)
+        .map_err(|error| RuntimeError::Forwarding(error.to_string()))?;
+    let mut names = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|error| RuntimeError::Forwarding(error.to_string()))?;
+        let name = entry.file_name().into_string().map_err(|_| {
+            RuntimeError::Forwarding(format!(
+                "non-UTF-8 interface sysctl entry in {directory}"
+            ))
+        })?;
+        if name != "all" && name != "default" {
+            names.push(name);
+        }
+    }
+    names.sort();
+    Ok(names)
+}
+
 fn enable_interface_forwarding_durable(
     path: &Path,
     namespace_inode: u64,
@@ -1563,6 +1611,14 @@ fn enable_interface_forwarding_durable(
             "per-interface forwarding requires net.ipv4.ip_forward=1 and net.ipv6.conf.all.forwarding=0; configure these namespace-wide prerequisites externally".to_owned(),
         ));
     }
+
+    let allowed = names.iter().cloned().collect::<std::collections::BTreeSet<_>>();
+    validate_unmanaged_forwarding_with(
+        &allowed,
+        &interface_sysctl_names("/proc/sys/net/ipv4/conf")?,
+        &interface_sysctl_names("/proc/sys/net/ipv6/conf")?,
+        read_sysctl,
+    )?;
 
     let mut entries = Vec::with_capacity(names.len());
     for name in names {
@@ -1791,6 +1847,40 @@ fn restore_forwarding(state: &ForwardingState) -> Result<(), RuntimeError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unmanaged_forwarding_interfaces_must_remain_disabled() {
+        let allowed = std::collections::BTreeSet::from(["wg0".to_owned()]);
+        let ipv4 = vec!["eth0".to_owned(), "wg0".to_owned()];
+        let ipv6 = vec!["eth0".to_owned(), "wg0".to_owned()];
+        validate_unmanaged_forwarding_with(
+            &allowed,
+            &ipv4,
+            &ipv6,
+            |key| {
+                if key == "net.ipv4.conf.eth0.forwarding" {
+                    Ok("0".to_owned())
+                } else if key == "net.ipv6.conf.eth0.force_forwarding" {
+                    Ok("1".to_owned())
+                } else {
+                    Ok("0".to_owned())
+                }
+            },
+        )
+        .unwrap_err();
+    }
+
+    #[test]
+    fn unmanaged_forwarding_validation_ignores_allowlisted_links() {
+        let allowed = std::collections::BTreeSet::from(["wg0".to_owned()]);
+        validate_unmanaged_forwarding_with(
+            &allowed,
+            &["wg0".to_owned()],
+            &["wg0".to_owned()],
+            |_| Ok("1".to_owned()),
+        )
+        .unwrap();
+    }
 
     #[test]
     fn interface_forwarding_sysctl_keys_are_family_scoped_and_validated() {
