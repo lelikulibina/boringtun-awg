@@ -927,6 +927,24 @@ impl Runtime {
                 return Err(RuntimeError::FatalTransition(details));
             }
         }
+        if !self.config.daemon.forwarding_interfaces.is_empty() {
+            let state = self.forwarding_state.as_ref().ok_or_else(|| {
+                RuntimeError::FatalTransition(
+                    "per-interface forwarding state is missing while forwarding management is enabled".to_owned(),
+                )
+            })?;
+            if let Err(error) = verify_managed_forwarding_runtime(
+                &self.config.daemon.forwarding_interfaces,
+                state,
+            ) {
+                let details = format!(
+                    "per-interface forwarding invariants changed at runtime: {error}"
+                );
+                self.fatal_error = Some(details.clone());
+                self.retain_firewall = true;
+                return Err(RuntimeError::FatalTransition(details));
+            }
+        }
         Ok(())
     }
 
@@ -1571,6 +1589,39 @@ fn restore_interface_forwarding_entries_with(
             failures.join("; ")
         )))
     }
+}
+
+fn verify_managed_forwarding_runtime(
+    allowed_names: &[String],
+    state: &ForwardingState,
+) -> Result<(), RuntimeError> {
+    if read_sysctl("net.ipv4.ip_forward")? != "1"
+        || read_sysctl("net.ipv6.conf.all.forwarding")? != "0"
+    {
+        return Err(RuntimeError::Forwarding(
+            "namespace-wide forwarding prerequisites changed".to_owned(),
+        ));
+    }
+    let allowed = allowed_names.iter().cloned().collect::<std::collections::BTreeSet<_>>();
+    validate_unmanaged_forwarding_with(
+        &allowed,
+        &interface_sysctl_names("/proc/sys/net/ipv4/conf")?,
+        &interface_sysctl_names("/proc/sys/net/ipv6/conf")?,
+        read_sysctl,
+    )?;
+    for entry in &state.interfaces {
+        verify_forwarding_interface(&entry.name, entry.ifindex)?;
+        for family in ["ipv4", "ipv6"] {
+            let key = interface_forwarding_sysctl_key(&entry.name, family)?;
+            if read_sysctl(&key)? != "1" {
+                return Err(RuntimeError::Forwarding(format!(
+                    "managed interface '{}' lost its {family} forwarding enable value",
+                    entry.name
+                )));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn validate_unmanaged_forwarding_with(
