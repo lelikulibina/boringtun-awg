@@ -420,6 +420,12 @@ if [ -f "$TMP/fail-route" ] && [ "\$1" = "-4" ] && [ "\$2" = "route" ] \
     echo "injected reload policy-route failure" >&2
     exit 42
 fi
+if [ -f "$TMP/fail-stale-rule-cleanup" ] && [ "\$1" = "-4" ] \
+    && [ "\$2" = "rule" ] && [ "\$3" = "del" ] && [ "\$5" = "11001" ]; then
+    rm -f "$TMP/fail-stale-rule-cleanup"
+    echo "injected staged policy-rule stale cleanup failure" >&2
+    exit 42
+fi
 if [ -f "$TMP/fail-old-route-cleanup" ] && [ "\$1" = "-4" ] && [ "\$2" = "route" ] \
     && [ "\$3" = "del" ] && [ "\$8" = "11001" ]; then
     rm -f "$TMP/fail-old-route-cleanup"
@@ -581,6 +587,25 @@ if ip -n "$NS" -4 route show table 11001 | grep -q .; then
     fail "route failure left behind a staged policy-routing route"
 fi
 ip -n "$NS" -4 route show table 10000 | grep -Fq 'default dev awg-primary proto 242' || fail "route failure removed the previous active egress route"
+
+# Stale-resource cleanup is part of staging too. A failure there must unwind
+# the candidate egress transaction and leave the old active plan untouched.
+touch "$TMP/fail-stale-rule-cleanup"
+if ip netns exec "$NS" "$BIN" --config "$TMP/config.toml" --reload >"$TMP/reload-stale-rule-cleanup.log" 2>&1; then
+    fail "runtime reload succeeded despite injected stale policy-rule cleanup failure"
+fi
+rm -f "$TMP/fail-stale-rule-cleanup"
+grep -Fq "injected staged policy-rule stale cleanup failure" "$TMP/reload-stale-rule-cleanup.log" || fail "stale policy-rule cleanup failure was not observed"
+kill -0 "$DAEMON_PID" 2>/dev/null || fail "daemon exited after stale policy-rule cleanup failure"
+chain_after_stale_cleanup_failure="$(ip netns exec "$NS" nft list chain inet vpn_relay_it prerouting)"
+grep -Fq 'ip daddr 195.142.0.0/16' <<<"$chain_after_stale_cleanup_failure" || fail "stale cleanup failure changed the active nftables classifier"
+if ip -n "$NS" -4 rule show | grep -Fq 'fwmark 0x90000000 lookup 11001 proto 242'; then
+    fail "stale cleanup failure left behind a staged policy-routing rule"
+fi
+if ip -n "$NS" -4 route show table 11001 | grep -q .; then
+    fail "stale cleanup failure left behind a staged policy-routing route"
+fi
+ip -n "$NS" -4 route show table 10000 | grep -Fq 'default dev awg-primary proto 242' || fail "stale cleanup failure removed the previous active egress route"
 
 touch "$TMP/fail-nft"
 if ip netns exec "$NS" "$BIN" --config "$TMP/config.toml" --reload >"$TMP/reload-failure.log" 2>&1; then
