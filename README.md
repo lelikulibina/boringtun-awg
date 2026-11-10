@@ -124,6 +124,29 @@ A privileged network-namespace smoke/integration test is available at `scripts/v
 
 **Forwarding warning:** keep `daemon.manage_ip_forwarding = false` on a shared host unless you explicitly accept global host/router sysctl changes. Enabling it writes the namespace-wide IPv4 and IPv6 forwarding sysctls; Linux applies host/router-mode changes across interfaces (including IPv6 Router Advertisement behaviour). Prefer a dedicated network namespace, or enable forwarding externally and leave this option disabled.
 
+## Запуск в Podman
+
+Для полноценной маршрутизации используйте **rootful Podman с отдельным network namespace** (обычный `bridge` mode) и выдайте контейнеру только необходимые сетевые полномочия. Интерфейсы `eth0` и TUN-интерфейсы внутри контейнера принадлежат его network namespace; имя host-side veth-интерфейса не является именем интерфейса внутри контейнера.
+
+Минимальный пример запуска (подставьте имя своего образа и подготовленный конфиг):
+
+```sh
+podman run -d \
+  --name boringtun-awg \
+  --network bridge \
+  --cap-add NET_ADMIN \
+  --device /dev/net/tun:/dev/net/tun \
+  --sysctl net.ipv4.ip_forward=1 \
+  -v ./config.toml:/etc/vpn-relay/config.toml:ro,Z \
+  boringtun-awg:latest \
+  --config /etc/vpn-relay/config.toml
+```
+
+`NET_ADMIN` нужен для настройки TUN, маршрутов, nftables и сетевых sysctl; `/dev/net/tun` должен быть доступен контейнеру. Не используйте `--privileged` как замену точечной выдаче capability и устройства. IPv4 `net.ipv4.ip_forward=1` — namespace-wide переключатель ядра: per-interface IPv4 forwarding сам по себе не заменяет его. Пример предполагает, что контейнеру действительно разрешено управлять nftables и sysctl в его network namespace.
+
+Текущий параметр `daemon.manage_ip_forwarding` управляет **глобальными для network namespace** значениями IPv4/IPv6 forwarding. Поэтому `true` допустим только если вы осознанно принимаете изменение режима маршрутизатора для всех интерфейсов этого namespace. В частности, IPv6 forwarding влияет на обработку Router Advertisement. До завершения per-interface реализации безопасный вариант — выставить необходимые глобальные sysctl средствами Podman/оркестратора и оставить `manage_ip_forwarding = false`.
+
+Не запускайте контейнер с `--network host` вместе с `manage_ip_forwarding = true`: такой контейнер разделяет network namespace хоста, и sysctl могут изменить сетевое поведение самого хоста. Podman также ограничивает передачу `--sysctl` для host network mode. Rootless Podman не считается поддерживаемым режимом для полного VPN relay: доступность TUN, NET_ADMIN, маршрутизации, nftables и записи sysctl зависит от конфигурации user/network namespace. Демон должен завершаться с диагностикой при отсутствии полномочий, а не пытаться обходить ограничения.
 ## Supported platforms
 
 Target triple                 |Binary|Library|

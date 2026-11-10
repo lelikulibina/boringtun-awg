@@ -829,3 +829,23 @@ successful shutdown removes the firewall.
 
 
 | 2026-11-10 | Добавлены packet-level проверки peer AllowedIPs при runtime reload | WG/AWG network-namespace test добавляет и удаляет IPv4/IPv6 адреса у работающего peer через reload без перезапуска daemon; реальные ping probes подтверждают разрешение новых source addresses, блокировку удалённых и сохранение исходного peer traffic. | Ожидает CI |
+
+
+## Podman и границы network namespace
+
+Поддерживаемая базовая схема развёртывания — rootful Podman с private network namespace (`bridge`), `CAP_NET_ADMIN` и доступом к `/dev/net/tun`. Все имена интерфейсов и ifindex для будущего per-interface manager должны разрешаться внутри namespace процесса vpn-relay: контейнерный `eth0` — это veth endpoint контейнера, а не физический интерфейс хоста.
+
+До реализации per-interface sysctl manager параметр `daemon.manage_ip_forwarding` остаётся namespace-wide. Для контейнера предпочтительно задать требуемый IPv4 `net.ipv4.ip_forward=1` через Podman и оставить daemon ownership выключенным. Это не является per-interface изоляцией: IPv4 global switch обязателен для forwarding, а интерфейсные sysctl должны дополнительно ограничивать входящий forwarding. IPv6 `conf/all/forwarding`, `force_forwarding` и `accept_ra` требуют отдельной последовательной обработки и восстановления.
+
+`--network host` с включённым `manage_ip_forwarding` не рекомендован и потенциально меняет sysctl хоста. Rootless Podman не объявляется поддерживаемым для полного relay до проверки реальных прав на TUN, netlink, nftables и sysctl. Не использовать `--privileged` как обход этих проверок.
+
+### Следующие критерии per-interface реализации
+
+- явный allowlist интерфейсов, разрешённых для forwarding; имена и ifindex разрешаются только внутри текущего network namespace;
+- IPv4 global `ip_forward` рассматривается отдельно от интерфейсных `conf/<if>/forwarding`; отсутствие global enable не маскируется интерфейсными флагами;
+- IPv6 global forwarding, per-interface `forwarding`, `force_forwarding` и `accept_ra` изменяются и восстанавливаются в определённом порядке;
+- durable journal хранит namespace inode, interface name/ifindex, исходное и установленное daemon значение каждого sysctl; восстановление не должно писать в новый интерфейс, случайно получивший прежнее имя;
+- тесты проверяют private netns, исчезновение/переиспользование ifindex, частичный отказ записи и recovery после SIGKILL;
+- host network mode и rootless ограничения документируются как отдельные режимы, без неявного расширения полномочий.
+
+| 2026-11-10 | Зафиксирована модель развёртывания в Podman перед per-interface runtime | README описывает rootful bridge/private netns, NET_ADMIN, /dev/net/tun, IPv4 global switch и запрет считать host/rootless режимы безопасными по умолчанию. Следующий шаг — реализация интерфейсного allowlist и journal с identity guard; код per-interface sysctl ещё не реализован. | Документация обновлена; ожидает CI |
