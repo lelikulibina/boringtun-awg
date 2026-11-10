@@ -698,10 +698,11 @@ wait "$capture_pid" || fail "could not capture masqueraded IPv6 packet"
 grep -Eq 'fd20::1 > 2001:db8:1::1' "$TMP/nat-masquerade-v6-capture.log" \
     || fail "IPv6 masquerade did not replace the source with the primary TUN address"
 
-# Masquerade must resolve the egress address for each new flow. Replacing the
-# primary TUN address must not leave a stale source address in nftables rules.
-ip -n "$ROUTER_NS" addr del 10.20.0.1/24 dev awg-primary
+# Masquerade must resolve the egress address for each new flow. Replace
+# the address without leaving the TUN temporarily unnumbered: the kernel can
+# flush device routes when the last IPv4 address is removed.
 ip -n "$ROUTER_NS" addr add 10.20.0.99/24 dev awg-primary
+ip -n "$ROUTER_NS" addr del 10.20.0.1/24 dev awg-primary
 ip netns exec "$PRIMARY_NS" timeout 5 tcpdump -nn -i up-primary -c 1 \
     'icmp and src host 10.20.0.99 and dst host 203.0.113.1' \
     >"$TMP/nat-masquerade-address-change.log" 2>&1 &

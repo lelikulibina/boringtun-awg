@@ -734,8 +734,8 @@ Noise sessions для peer, чьи параметры не менялись; н�
 
 ### CI follow-up — 2026-11-10
 
-- Run `42818275020`: `rustfmt`, unit tests, `clippy`, feature checks and AWG 3.1 interoperability passed; integration failed in the multi-uplink masquerade address-change probe.
-- Root cause: the attempted switch to client `10.77.0.3` used destination `203.0.113.1`, but the fixture's matching routing decision for that destination is scoped to `10.77.0.2/32`. The packet therefore had no routing decision and correctly did not reach the uplink. Restore client `.2` and force a fresh ICMP conntrack tuple with identifier `4242`; keep packet capture asserting source `10.20.0.99`.
-- Address-change masquerade coverage remains pending a successful integration CI run.
+- Run `42818275020`: `rustfmt`, unit tests, `clippy`, feature checks and AWG 3.1 interoperability passed; integration failed in the multi-uplink masquerade address-change probe because the temporary client `.3` had no matching routing decision for `203.0.113.1`. The fixture's matching selector is scoped to client `10.77.0.2/32`; the probe was returned to `.2`.
+- Run `42819442900`: all non-integration jobs passed, but the address-change probe still failed. The diagnostic dump showed that the primary fwmark rule remained installed while its policy route table had lost the primary default route after the test removed the only IPv4 address before adding its replacement. This was a test-induced unnumbered-interface interval, not evidence of a NAT rule defect.
+- Fix: add `10.20.0.99/24` before deleting `10.20.0.1/24`, so the TUN remains IPv4-configured throughout the transition. Keep client `.2`, the distinct ICMP identifier `4243`, and the packet-level assertion that the emitted source is `10.20.0.99`. The address-change check remains pending a successful integration CI run.
 
 - Follow-up test isolation: the post-address-change ping also uses a distinct ICMP identifier (`4243`) so it cannot reuse conntrack NAT state established by the earlier masquerade probe. The preceding general masquerade probe uses identifier `4242`.
