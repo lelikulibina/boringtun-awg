@@ -496,7 +496,7 @@ impl Runtime {
             .map_err(|error| RuntimeError::Configuration(error.to_string()))?;
         let lock_path = InstanceLock::current_netns_path()?;
         let instance_lock = InstanceLock::acquire(&lock_path)?;
-            let forwarding_state_path = InstanceLock::current_forwarding_state_path()?;
+        let forwarding_state_path = InstanceLock::current_forwarding_state_path()?;
         let namespace_inode = InstanceLock::current_netns_inode()?;
         recover_forwarding_state(&forwarding_state_path, namespace_inode)?;
         let control_socket = ControlSocket::bind(InstanceLock::current_control_path()?)?;
@@ -1258,9 +1258,7 @@ fn enable_forwarding() -> Result<ForwardingState, RuntimeError> {
 }
 
 fn validate_forwarding_state(state: &ForwardingState) -> Result<(), RuntimeError> {
-    if !matches!(state.ipv4.as_str(), "0" | "1")
-        || !matches!(state.ipv6.as_str(), "0" | "1")
-    {
+    if !matches!(state.ipv4.as_str(), "0" | "1") || !matches!(state.ipv6.as_str(), "0" | "1") {
         return Err(RuntimeError::Forwarding(
             "forwarding state contains an invalid sysctl value".to_owned(),
         ));
@@ -1281,7 +1279,9 @@ fn load_forwarding_state(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(RuntimeError::Forwarding(error.to_string())),
     };
-    let metadata = file.metadata().map_err(|error| RuntimeError::Forwarding(error.to_string()))?;
+    let metadata = file
+        .metadata()
+        .map_err(|error| RuntimeError::Forwarding(error.to_string()))?;
     if !metadata.file_type().is_file()
         || metadata.uid() != unsafe { libc::geteuid() }
         || metadata.permissions().mode() & 0o777 != 0o600
@@ -1404,8 +1404,18 @@ fn restore_forwarding_state_with(
 ) -> Result<(), RuntimeError> {
     let mut failures = Vec::new();
     for (changed, key, original, family) in [
-        (state.ipv4_changed, "net.ipv4.ip_forward", state.ipv4.as_str(), "IPv4"),
-        (state.ipv6_changed, "net.ipv6.conf.all.forwarding", state.ipv6.as_str(), "IPv6"),
+        (
+            state.ipv4_changed,
+            "net.ipv4.ip_forward",
+            state.ipv4.as_str(),
+            "IPv4",
+        ),
+        (
+            state.ipv6_changed,
+            "net.ipv6.conf.all.forwarding",
+            state.ipv6.as_str(),
+            "IPv6",
+        ),
     ] {
         if !changed {
             continue;
@@ -1430,10 +1440,7 @@ fn restore_forwarding_state_with(
     }
 }
 
-fn recover_forwarding_state(
-    path: &Path,
-    namespace_inode: u64,
-) -> Result<(), RuntimeError> {
+fn recover_forwarding_state(path: &Path, namespace_inode: u64) -> Result<(), RuntimeError> {
     let Some(state) = load_forwarding_state(path, namespace_inode)? else {
         return Ok(());
     };
