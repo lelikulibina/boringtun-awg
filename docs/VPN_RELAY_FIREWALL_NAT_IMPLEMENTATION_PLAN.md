@@ -181,12 +181,13 @@
 - [x] Зафиксировать NAT как свойство выбранного routing rule. Отдельная
   `[[nat.rules]]` секция не вводится: это исключает второй независимый
   механизм выбора ingress/egress. Расширение добавит адрес SNAT к routing rule.
-- [~] Валидировать ссылки на интерфейсы, address family, пустые списки,
+- [x] Валидировать ссылки на интерфейсы, address family, пустые списки,
   дубликаты и неоднозначные совпадения: добавлен отказ на точные и
   семантически эквивалентные CIDR сети (с разными host bits). Пересекающиеся,
   но не эквивалентные CIDR разрешены намеренно; порядок first-match по
   priority и сохранение conntrack decision документированы и покрыты
-  routing tests. Остались дополнительные отрицательные parser cases.
+  routing tests. Дополнительно проверены пустые firewall/routing selectors,
+  неизвестные firewall interfaces, пустые/нулевые ports и ports для ICMP.
 - [x] Обновить пример TOML и CLI `--check` tests.
 - [x] Проверить `deny_unknown_fields` для корневой конфигурации, INPUT firewall rule и routing/NAT rule; добавлены регрессионные parser tests на неизвестные поля.
 
