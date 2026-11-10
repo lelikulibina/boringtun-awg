@@ -134,21 +134,43 @@ fn validate_private_state_file(path: &Path) -> Result<(), RuntimeError> {
 fn load_conntrack_mark_history(
     path: &Path,
 ) -> Result<Vec<crate::routing::RoutingDecision>, RuntimeError> {
-    let metadata = match fs::symlink_metadata(path) {
-        Ok(metadata) => metadata,
+    // Open the inode we validate and read. A separate symlink_metadata()+read()
+    // sequence permits a path swap between the security check and the read.
+    let file = match OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(path)
+    {
+        Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(error) => return Err(RuntimeError::ConntrackMarkState(error.to_string())),
     };
-    if metadata.len() > 4 * 1024 * 1024 {
+    let metadata = file
+        .metadata()
+        .map_err(|error| RuntimeError::ConntrackMarkState(error.to_string()))?;
+    if !metadata.file_type().is_file()
+        || metadata.uid() != unsafe { libc::geteuid() }
+        || metadata.permissions().mode() & 0o777 != 0o600
+        || metadata.nlink() != 1
+    {
+        return Err(RuntimeError::ConntrackMarkState(format!(
+            "refusing to use non-private state file {}",
+            path.display()
+        )));
+    }
+    const MAX_STATE_FILE_SIZE: u64 = 4 * 1024 * 1024;
+    if metadata.len() > MAX_STATE_FILE_SIZE {
         return Err(RuntimeError::ConntrackMarkState(
             "state file exceeds 4 MiB".to_owned(),
         ));
     }
-    validate_private_state_file(path)?;
 
-    let bytes =
-        fs::read(path).map_err(|error| RuntimeError::ConntrackMarkState(error.to_string()))?;
-    if bytes.len() > 4 * 1024 * 1024 {
+    // Bound the read as well: the file may grow after fstat().
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    file.take(MAX_STATE_FILE_SIZE + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| RuntimeError::ConntrackMarkState(error.to_string()))?;
+    if bytes.len() as u64 > MAX_STATE_FILE_SIZE {
         return Err(RuntimeError::ConntrackMarkState(
             "state file exceeds 4 MiB".to_owned(),
         ));
