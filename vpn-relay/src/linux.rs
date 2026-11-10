@@ -955,9 +955,13 @@ mod tests {
             assert!(matches!(result, Err(LinuxError::Command { ref stderr, .. })
                 if stderr.contains(&format!("step {failure_position}"))));
             assert!(
-                !calls
-                    .iter()
-                    .any(|args| args.get(2).is_some_and(|part| part == "add")),
+                !calls.iter().any(|args| {
+                    args.get(1).is_some_and(|part| part == "rule")
+                        && args.get(2).is_some_and(|part| part == "add")
+                        && args.get(4).is_some_and(|part| part == "9000")
+                        && args.get(5).is_some_and(|part| part == "fwmark")
+                        && args.get(6).is_some_and(|part| part.starts_with("0x1000_") || part.starts_with("0x1000"))
+                }),
                 "socket rules must not be installed after stale-rule cleanup fails"
             );
 
