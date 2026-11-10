@@ -574,6 +574,11 @@ if wait "$DAEMON_PID"; then
     fail "daemon exited successfully after fatal old-route cleanup failure"
 fi
 DAEMON_PID=""
+# The fatal daemon must have removed its control socket as part of shutdown;
+# a subsequent management request must not reach a stale listener.
+if ip netns exec "$NS" "$BIN" --config "$TMP/config.toml" --reload >"$TMP/reload-after-fatal.log" 2>&1; then
+    fail "control socket accepted a reload after fatal daemon shutdown"
+fi
 if ip netns exec "$NS" nft list table inet vpn_relay_it >/dev/null 2>&1; then
     fail "daemon-owned nftables table survived fatal cleanup shutdown"
 fi
