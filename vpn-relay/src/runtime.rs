@@ -1274,7 +1274,8 @@ fn validate_forwarding_state(state: &ForwardingState) -> Result<(), RuntimeError
             "forwarding state contains an invalid sysctl value".to_owned(),
         ));
     }
-    let mut identities = std::collections::BTreeSet::new();
+    let mut names = std::collections::BTreeSet::new();
+    let mut indices = std::collections::BTreeSet::new();
     for entry in &state.interfaces {
         if entry.name.is_empty()
             || entry.name.len() > 15
@@ -1296,9 +1297,9 @@ fn validate_forwarding_state(state: &ForwardingState) -> Result<(), RuntimeError
                 entry.name
             )));
         }
-        if !identities.insert((entry.name.as_str(), entry.ifindex)) {
+        if !names.insert(entry.name.as_str()) || !indices.insert(entry.ifindex) {
             return Err(RuntimeError::Forwarding(format!(
-                "forwarding journal contains duplicate interface identity '{}'/{}",
+                "forwarding journal contains a duplicate interface name or ifindex for '{}'/{}",
                 entry.name, entry.ifindex
             )));
         }
@@ -1512,6 +1513,7 @@ fn enable_forwarding_durable(
         ipv6: read_sysctl("net.ipv6.conf.all.forwarding")?,
         ipv4_changed: false,
         ipv6_changed: false,
+        interfaces: Vec::new(),
     };
     let mut state = state;
     state.ipv4_changed = state.ipv4 != "1";
@@ -1833,6 +1835,7 @@ mod tests {
             ipv6: "0".to_owned(),
             ipv4_changed: true,
             ipv6_changed: true,
+            interfaces: Vec::new(),
         }
     }
 
