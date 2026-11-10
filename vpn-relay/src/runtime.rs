@@ -1174,9 +1174,12 @@ mod tests {
         let failures = rollback_peer_replacements(&mut devices, &committed, &previous, &prepared);
         assert!(failures.is_empty(), "rollback failed: {failures:?}");
 
-        let restored = devices[0].snapshot().unwrap();
-        assert_eq!(restored.peers.len(), 1);
-        assert_eq!(restored.peers[0].public_key[0], b'o');
+        let restored_first = devices[0].snapshot().unwrap();
+        assert_eq!(restored_first.peers.len(), 1);
+        assert_eq!(restored_first.peers[0].public_key[0], b'o');
+        let unchanged_second = devices[1].snapshot().unwrap();
+        assert_eq!(unchanged_second.peers.len(), 1);
+        assert_eq!(unchanged_second.peers[0].public_key[0], b'o');
     }
 
     #[test]
@@ -1203,10 +1206,20 @@ mod tests {
         let (committed, _) =
             commit_peer_replacements(&mut devices, &changed, &candidate, &prepared)
                 .expect_err("second device must fail");
+        assert_eq!(committed, vec![0]);
         let failures = rollback_peer_replacements(&mut devices, &committed, &previous, &prepared);
         assert_eq!(failures.len(), 1);
         assert!(failures[0].contains("wg0"));
         assert!(failures[0].contains("injected peer replacement failure"));
+
+        // A failed rollback leaves a mixed live state. Runtime must therefore
+        // treat this as fatal rather than publish the candidate or keep serving.
+        let partially_committed = devices[0].snapshot().unwrap();
+        assert_eq!(partially_committed.peers.len(), 1);
+        assert_eq!(partially_committed.peers[0].public_key[0], b'n');
+        let never_committed = devices[1].snapshot().unwrap();
+        assert_eq!(never_committed.peers.len(), 1);
+        assert_eq!(never_committed.peers[0].public_key[0], b'o');
     }
 
     fn sample_conntrack_decision() -> crate::routing::RoutingDecision {

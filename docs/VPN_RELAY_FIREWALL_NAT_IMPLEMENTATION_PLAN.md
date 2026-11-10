@@ -633,3 +633,6 @@ Noise sessions для peer, чьи параметры не менялись; н�
 
 
 | 2026-11-10 | Добавлен failure-injection тест ошибки cleanup старых policy routes после nftables switch | Netns integration test принудительно ломает удаление старого IPv4 route после успешного переключения nftables; проверяет fatal response, завершение daemon и повторную очистку старого и нового routing plan при Drop, включая восстановление forwarding и удаление TUN. Ожидает CI | В работе |
+
+
+| 2026-11-10 | Усилены проверки multi-device peer rollback | Успешный rollback теперь проверяет восстановление обоих device snapshots; неуспешный rollback проверяет фактическое смешанное состояние (candidate peer на первом device, old peer на втором), которое требует fatal shutdown и запрещает публикацию candidate config. Ожидает CI | В работе |
