@@ -668,3 +668,6 @@ Noise sessions для peer, чьи параметры не менялись; н�
 
 
 | 2026-11-10 | Сделана fail-closed очистка при startup rollback и shutdown | Очистка policy-routing теперь возвращает ошибки вместо их игнорирования; если rollback добавленных правил/маршрутов не удался, startup сохраняет nftables policy и завершает запуск как fatal transition. При штатном Drop firewall снимается только после успешной очистки retired/active routes и восстановления исходных IPv4/IPv6 forwarding значений; при любой ошибке защиты nftables остаётся на месте. Удаление nftables также возвращает диагностируемую ошибку. Ожидает CI | Реализовано, ожидает CI |
+
+
+| 2026-11-10 | Закрыт startup forwarding rollback при ошибке очистки policy routes | Дополнительно обработан путь отказа включения forwarding: если удаление уже установленных policy rules/routes не удалось, daemon возвращает fatal transition и не снимает nftables policy; при ошибке удаления firewall также возвращается fatal transition. Добавлен тест, подтверждающий попытку восстановления обоих sysctl и агрегацию обеих ошибок | Реализовано, ожидает CI |

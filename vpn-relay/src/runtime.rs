@@ -484,17 +484,30 @@ impl Runtime {
             match enable_forwarding() {
                 Ok(state) => Some(state),
                 Err(error) => {
-                    linux::remove_policy_routing(&routing);
+                    let route_cleanup = linux::remove_policy_routing(&routing);
                     drop(devices);
+                    if let Err(cleanup) = route_cleanup {
+                        tracing::error!(
+                            %cleanup,
+                            "startup policy-routing cleanup failed; retaining nftables policy"
+                        );
+                        return Err(RuntimeError::FatalTransition(format!(
+                            "forwarding setup failed ({error}); policy-routing cleanup failed ({cleanup})"
+                        )));
+                    }
                     // If restoring the original forwarding value failed, the
                     // firewall is the remaining fail-closed protection.
-                    if !matches!(&error, RuntimeError::FatalTransition(_)) {
-                        linux::remove_nft(&routing);
-                    } else {
+                    if matches!(&error, RuntimeError::FatalTransition(_)) {
                         tracing::error!(
                             %error,
                             "startup aborted with forwarding state uncertain; retaining nftables policy"
                         );
+                        return Err(error);
+                    }
+                    if let Err(cleanup) = linux::remove_nft(&routing) {
+                        return Err(RuntimeError::FatalTransition(format!(
+                            "forwarding setup failed ({error}); nftables cleanup failed ({cleanup})"
+                        )));
                     }
                     return Err(error);
                 }
@@ -1092,6 +1105,34 @@ mod tests {
                 ("net.ipv4.ip_forward".to_owned(), "1".to_owned()),
                 ("net.ipv6.conf.all.forwarding".to_owned(), "1".to_owned()),
                 ("net.ipv4.ip_forward".to_owned(), "0".to_owned()),
+            ]
+        );
+    }
+
+    #[test]
+    fn restore_forwarding_reports_both_failures() {
+        let state = ForwardingState {
+            ipv4: "0".to_owned(),
+            ipv6: "0".to_owned(),
+        };
+        let mut writes = Vec::new();
+        let result = restore_forwarding_with(&state, |key, value| {
+            writes.push((key.to_owned(), value.to_owned()));
+            Err(RuntimeError::Forwarding(format!("injected {key} failure")))
+        });
+        assert!(matches!(
+            result,
+            Err(RuntimeError::FatalTransition(message))
+                if message.contains("IPv4")
+                    && message.contains("IPv6")
+                    && message.contains("net.ipv4.ip_forward")
+                    && message.contains("net.ipv6.conf.all.forwarding")
+        ));
+        assert_eq!(
+            writes,
+            vec![
+                ("net.ipv4.ip_forward".to_owned(), "0".to_owned()),
+                ("net.ipv6.conf.all.forwarding".to_owned(), "0".to_owned()),
             ]
         );
     }
