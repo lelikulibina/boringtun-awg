@@ -190,8 +190,20 @@ jobs:
           toolchain: stable
       - name: Install Linux networking tools
         run: |
-          sudo apt-get update
-          sudo apt-get install -y iproute2 nftables iputils-ping wireguard-tools iperf3 tcpdump
+          # Hosted runners occasionally lose DNS access to Ubuntu mirrors.
+          # Retry the complete update/install transaction instead of failing
+          # the packet-level suite before any repository test is executed.
+          for attempt in 1 2 3 4 5; do
+            sudo apt-get -o Acquire::Retries=3 update
+            if sudo apt-get -o Acquire::Retries=3 install -y iproute2 nftables iputils-ping wireguard-tools iperf3 tcpdump; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 5 ]; then
+              echo "Unable to install networking dependencies after 5 attempts" >&2
+              exit 1
+            fi
+            sleep "$((attempt * 5))"
+          done
       - name: Run ignored integration tests
         run: timeout --signal=TERM --kill-after=30s 15m cargo test -- --ignored
       - name: Build router daemon
