@@ -1734,66 +1734,33 @@ egress = "awg-uplink"
     }
 
     #[test]
-    fn ipv6_is_blocked_by_default_on_every_interface() {
-        let config = Config::parse_toml(&ipv4_config()).unwrap();
-        assert!(config.daemon.ipv6_enabled);
-        assert!(config
-            .interfaces
-            .values()
-            .all(|interface| !interface.ipv6_enabled));
-    }
+    fn vpn_relay_configuration_rejects_all_ipv6_features() {
+        let base = ipv4_config();
+        assert!(Config::parse_toml(&base).is_ok());
 
-    #[test]
-    fn ipv6_can_be_enabled_independently_per_interface() {
-        let input = ipv4_config()
-            .replace(
-                "socket_fwmark = 4097",
-                "socket_fwmark = 4097\nipv6_enabled = true",
-            )
-            .replace(
-                "socket_fwmark = 4098",
-                "socket_fwmark = 4098\nipv6_enabled = false",
-            );
-        let config = Config::parse_toml(&input).unwrap();
-        assert!(config.interfaces["wg-server"].ipv6_enabled);
-        assert!(!config.interfaces["awg-uplink"].ipv6_enabled);
-    }
-
-    #[test]
-    fn daemon_ipv4_only_mode_rejects_ipv6_configuration() {
-        let input = ipv4_config().replace(
+        let legacy_flag = base.replace(
             "manage_ip_forwarding = false",
             "manage_ip_forwarding = false\nipv6_enabled = false",
         );
-        let config = Config::parse_toml(&input).unwrap();
-        assert!(!config.daemon.ipv6_enabled);
+        assert!(Config::parse_toml(&legacy_flag).is_err());
 
-        let enabled_interface = input.replace(
-            "socket_fwmark = 4097",
-            "socket_fwmark = 4097\nipv6_enabled = true",
-        );
-        assert!(Config::parse_toml(&enabled_interface)
-            .unwrap_err()
-            .to_string()
-            .contains("daemon.ipv6_enabled = false"));
-
-        let ipv6_address = input.replace("10.10.0.1/24", "2001:db8::1/64");
+        let ipv6_address = base.replace("10.10.0.1/24", "2001:db8::1/64");
         assert!(Config::parse_toml(&ipv6_address).is_err());
 
-        let ipv6_endpoint = input.replace(
-            "allowed_ips = [\"10.10.0.2/32\"]",
-            "allowed_ips = [\"10.10.0.2/32\"]\nendpoint = \"[2001:db8::2]:51820\"",
+        let ipv6_endpoint = base.replace(
+            "endpoint = \"198.51.100.10:51820\"",
+            "endpoint = \"[2001:db8::10]:51820\"",
         );
         assert!(Config::parse_toml(&ipv6_endpoint).is_err());
 
-        let ipv6_allowed_ip = input.replace("10.10.0.2/32", "2001:db8::2/128");
+        let ipv6_allowed_ip = base.replace("10.10.0.2/32", "2001:db8::2/128");
         assert!(Config::parse_toml(&ipv6_allowed_ip).is_err());
 
-        let ipv6_route_selector = input.replace(
+        let ipv6_route = base.replace(
             "destination = \"0.0.0.0/0\"",
             "destination = \"2001:db8::/32\"",
         );
-        assert!(Config::parse_toml(&ipv6_route_selector).is_err());
+        assert!(Config::parse_toml(&ipv6_route).is_err());
     }
 
     #[test]
