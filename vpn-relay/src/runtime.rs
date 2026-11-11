@@ -3081,6 +3081,7 @@ mod tests {
                 endpoint: None,
                 allowed_ips: vec!["10.0.0.2/32".to_owned()],
                 persistent_keepalive_secs: None,
+                persistent_keepalive_range: None,
             }],
             awg: None,
         }
