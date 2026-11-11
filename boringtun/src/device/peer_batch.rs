@@ -333,9 +333,9 @@ mod tests {
             Arc::ptr_eq(&retained_peer, &retained_after_reload),
             "unchanged peer must retain its Peer/Tunn allocation across replacement"
         );
+        let retained_index = retained_peer.lock().index();
         assert_eq!(
-            retained_peer.lock().index(),
-            retained_after_reload.lock().index(),
+            retained_index, original_index,
             "unchanged peer index must remain stable"
         );
 
