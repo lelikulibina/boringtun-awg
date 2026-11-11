@@ -96,9 +96,8 @@ CIDR selectors. NAT поддерживает `none`, `masquerade` и стати�
 с обязательным `nat_to` для последнего.
 
 Один интерфейс может участвовать в разных правилах и в разных направлениях.
-Списки `source` и `destination` могут содержать IPv4 и IPv6 CIDR
-одновременно. Сопоставление выполняется только внутри одного семейства:
-IPv4 source не образует пару с IPv6 destination и наоборот. Точные
+Списки `source` и `destination` принимают только IPv4 CIDR. IPv6 selectors
+отклоняются при загрузке конфигурации. Точные
 повторяющиеся CIDR в одном списке отклоняются при загрузке конфигурации,
 включая семантически одинаковые сети, записанные с разными host bits
 (например, `10.10.0.0/24` и `10.10.0.99/24`). Пересекающиеся, но не
@@ -111,7 +110,7 @@ ingress. Первое совпавшее правило классифициру
 правила для него уже не рассматриваются.
 
 Firewall INPUT rules используют source CIDR, OUTPUT rules — destination CIDR.
-Они могут ограничивать протокол (TCP, UDP, ICMP, ICMPv6); порты допустимы
+Они могут ограничивать протокол (TCP, UDP, ICMP); порты допустимы
 только для TCP/UDP. Эти allow rules относятся к host INPUT/OUTPUT, а не
 заменяют routing rules для FORWARD.
 
@@ -209,8 +208,7 @@ ingress/egress и decision id из conntrack:
 NAT не классифицирует flow повторно и не открывает доступ сам по себе.
 Запрещённый FORWARD не получает разрешение из-за NAT. DNAT, REDIRECT и
 port-forwarding этой моделью не предоставляются. Валидация проверяет
-совместимость семейства SNAT target с доступными семействами selectors и
-IPv6-enabled состоянием интерфейсов.
+IPv4 тип `nat_to`; IPv6 SNAT не поддерживается.
 
 ## IPv4-only datapath и IPv6 isolation
 
@@ -238,8 +236,8 @@ IPv6 sysctl. `boringtun/` остаётся неизменённым; IPv4-only �
 Поэтому source CIDR в routing/firewall rule — это фильтр адреса, а не
 самостоятельная проверка идентичности peer.
 
-BoringTun проверяет source IP после декапсуляции: перед записью IPv4/IPv6
-пакета в TUN он проверяет, что адрес принадлежит именно расшифровавшему
+BoringTun проверяет source IP после декапсуляции: перед записью пакета в TUN
+он проверяет, что адрес принадлежит именно расшифровавшему
 пакет peer в едином `peers_by_ip` индексе. Это защищает от подмены source IP
 между peers, в том числе после переноса prefix от одного peer к другому.
 Проверка выполняется backend, а не nftables.
@@ -300,4 +298,4 @@ source/destination selectors и NAT. CI остаётся обязательны�
 Не следует считать peer-level isolation завершённой только на основании
 interface-level selectors. Также необходимо продолжать проверять rollback
 при конфликтующих nftables/iproute2 ресурсах, поведение с чужими base chains,
-IPv6/ICMPv6 и отказами sysctl.
+IPv4 routing/firewall/NAT и отказами IPv4 sysctl.
