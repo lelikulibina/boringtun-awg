@@ -214,15 +214,30 @@ IPv6-enabled состоянием интерфейсов.
 
 ## IPv6
 
-Если IPv6 выключен на managed интерфейсе, inner IPv6 блокируется на
-соответствующем TUN ingress/egress. IPv6 transport socket marks для внешнего
-WG/AWG UDP остаются доступны через main table. IPv6 gating не распространяется
-на физические интерфейсы хоста.
+Есть два уровня настройки:
+
+- `[daemon].ipv6_enabled = true` (значение по умолчанию) сохраняет
+  dual-stack поведение. IPv6 можно включать отдельно на каждом managed TUN
+  через `[interfaces.<name>].ipv6_enabled`.
+- `[daemon].ipv6_enabled = false` включает строгий IPv4-only режим. В нём
+  запрещены IPv6-адреса TUN, IPv6 AllowedIPs, IPv6 endpoint literals,
+  IPv6 routing/firewall selectors и IPv6 SNAT. Конфигурация с такими
+  параметрами отклоняется до создания системных ресурсов.
+
+В IPv4-only режиме vpn-relay не создаёт IPv6 policy routes, не генерирует
+IPv6 NAT rules и не читает/изменяет IPv6 forwarding sysctl, включая
+восстановление старого forwarding journal. IPv6 пакеты блокируются на
+managed TUN ingress/egress, а дополнительные socket-mark правила nftables
+блокируют IPv6 transport packets на входе и выходе BoringTun UDP sockets.
+Сам BoringTun остаётся без изменений и использует штатную реализацию
+dual-stack socket; IPv6 transport не может быть использован через datapath
+vpn-relay. Обычный dual-stack режим при `daemon.ipv6_enabled = true`
+сохраняется.
 
 TUN — L3 интерфейс, поэтому neighbour discovery на нём не является обычной
-Ethernet ND задачей. При этом ICMPv6/PMTU для включённого inner IPv6 должен
-быть явно разрешён подходящими firewall/routing rules; нельзя считать, что
-любой ICMPv6 автоматически разрешён политикой.
+Ethernet ND задачей. В dual-stack режиме ICMPv6/PMTU для включённого inner IPv6
+должен быть явно разрешён подходящими firewall/routing rules; нельзя считать,
+что любой ICMPv6 автоматически разрешён политикой.
 
 ## Peer identity и anti-spoofing
 
