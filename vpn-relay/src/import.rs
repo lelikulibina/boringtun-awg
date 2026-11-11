@@ -588,7 +588,10 @@ PersistentKeepalive = 25
     #[test]
     fn rejects_invalid_persistent_keepalive_ranges() {
         for value in ["35-25", "0-25", "25-0", "1-2-3", "4294967296-4294967297"] {
-            let input = CLIENT.replace("PersistentKeepalive = 25", &format!("PersistentKeepalive = {value}"));
+            let input = CLIENT.replace(
+                "PersistentKeepalive = 25",
+                &format!("PersistentKeepalive = {value}"),
+            );
             assert!(
                 parse_interface(&input).is_err(),
                 "accepted invalid range {value}"
