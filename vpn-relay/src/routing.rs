@@ -944,7 +944,9 @@ egress = "awg-primary"
         assert!(script.contains("socket_fwmarks { type mark;"));
         assert!(script.contains("input meta nfproto ipv6 socket mark @socket_fwmarks drop"));
         assert!(script.contains("output meta nfproto ipv6 meta mark @socket_fwmarks drop"));
-        assert!(script.contains("prerouting iifname @ipv6_blocked_interfaces meta nfproto ipv6 drop"));
+        assert!(
+            script.contains("prerouting iifname @ipv6_blocked_interfaces meta nfproto ipv6 drop")
+        );
         assert!(!script.contains("snat ip6"));
     }
 
