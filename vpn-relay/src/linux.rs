@@ -1351,6 +1351,10 @@ mod tests {
         plan.egresses[0].ipv6_enabled = true;
         plan.socket_marks = vec![0x1000_0001];
         assert_eq!(plan.ip_policy_families(), &["-4"]);
+        assert!(plan
+            .ip_commands()
+            .iter()
+            .all(|command| command.first().is_some_and(|family| family == "-4")));
 
         let mut calls = Vec::new();
         apply_policy_routing_with(&plan, &mut |_program, args| {
