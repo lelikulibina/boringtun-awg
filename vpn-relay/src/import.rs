@@ -1,7 +1,5 @@
 //! Import standard WireGuard and AmneziaWG INI configurations.
-use crate::config::{
-    Config, InterfaceConfig, PeerConfig, PersistentKeepaliveConfig, TunnelType,
-};
+use crate::config::{Config, InterfaceConfig, PeerConfig, PersistentKeepaliveConfig, TunnelType};
 use boringtun::noise::amnezia::AmneziaWgConfig;
 use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
@@ -564,16 +562,25 @@ PersistentKeepalive = 25
         assert_eq!(cfg.address, vec!["10.0.0.2/32", "fd00::2/128"]);
         assert_eq!(cfg.listen_port, None);
         assert!(cfg.ipv6_enabled);
-        assert_eq!(cfg.peers[0].persistent_keepalive_secs, Some(PersistentKeepaliveConfig::Seconds(25)));
+        assert_eq!(
+            cfg.peers[0].persistent_keepalive_secs,
+            Some(PersistentKeepaliveConfig::Seconds(25))
+        );
         assert_eq!(cfg.peers[0].persistent_keepalive_range, None);
         assert!(warnings.iter().any(|w| w.contains("DNS")));
     }
 
     #[test]
     fn imports_amnezia_persistent_keepalive_ranges_and_disable_values() {
-        let range = CLIENT.replace("PersistentKeepalive = 25", "PersistentKeepalive = 25-35");
+        let range = CLIENT.replace(
+            "PersistentKeepalive = 25",
+            "PersistentKeepalive = 25-35",
+        );
         let (cfg, _) = parse_interface(&range).unwrap();
-        assert_eq!(cfg.peers[0].persistent_keepalive_secs, Some(PersistentKeepaliveConfig::Range("25-35".to_owned())));
+        assert_eq!(
+            cfg.peers[0].persistent_keepalive_secs,
+            Some(PersistentKeepaliveConfig::Range("25-35".to_owned()))
+        );
         assert_eq!(cfg.peers[0].persistent_keepalive_range, None);
 
         for value in ["off", "0", "0-0"] {
