@@ -109,3 +109,19 @@ BoringTun следует исправленному upstream поведению 
 ## 9. Управление IPv6 в btrouted
 
 В секции [daemon] параметр `ipv6_enabled` по умолчанию равен `true`. При `false` демон блокирует IPv6-пакеты, входящие в маршрутизацию через managed TUN-интерфейсы или направляемые в них, и не устанавливает IPv6 policy routes для uplink. Внешний UDP-транспорт BoringTun не фильтруется: VPN endpoint может оставаться IPv6-адресом. Настройка не отключает IPv6 в ОС и не меняет глобальный sysctl.
+
+## PersistentKeepalive
+
+Для совместимости фиксированное значение по-прежнему задаётся как
+`persistent_keepalive_secs = 25`. Диапазон AmneziaWG задаётся отдельно:
+
+```toml
+[[interfaces.awg-uplink.peers]]
+public_key = "..."
+persistent_keepalive_range = [25, 35]
+```
+
+Границы включительные; допустимо `1 <= min <= max`. Одновременно указывать
+`persistent_keepalive_secs` и `persistent_keepalive_range` нельзя. Импорт
+WireGuard/AmneziaWG принимает `PersistentKeepalive = 25` и диапазон
+`PersistentKeepalive = 25-35`; `off`, `0` и `0-0` означают отключение.
