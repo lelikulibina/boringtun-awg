@@ -9,7 +9,9 @@ use boringtun::device::{AllowedIP, DeviceConfig, DeviceHandle, PeerConfig};
 use boringtun::noise::amnezia::AmneziaConfig;
 use boringtun::noise::handshake::ObfuscationRanges;
 use boringtun::x25519;
-use std::net::{SocketAddr, ToSocketAddrs};
+use std::ffi::{CStr, CString};
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+use std::ptr;
 use std::str::FromStr;
 
 #[derive(Default)]
@@ -278,25 +280,49 @@ mod tests {
     }
 }
 
+fn resolve_ipv4_domain(host: &str, port: u16) -> Result<SocketAddr, String> {
+    let host = CString::new(host).map_err(|_| "DNS name contains a NUL byte".to_owned())?;
+    let service = CString::new(port.to_string()).expect("decimal port contains no NUL");
+    let mut hints: libc::addrinfo = unsafe { std::mem::zeroed() };
+    hints.ai_family = libc::AF_INET;
+    hints.ai_socktype = libc::SOCK_DGRAM;
+    let mut result = ptr::null_mut();
+    let status = unsafe {
+        libc::getaddrinfo(host.as_ptr(), service.as_ptr(), &hints, &mut result)
+    };
+    if status != 0 {
+        let message = unsafe { CStr::from_ptr(libc::gai_strerror(status)) }
+            .to_string_lossy()
+            .into_owned();
+        return Err(message);
+    }
+
+    struct AddrInfoGuard(*mut libc::addrinfo);
+    impl Drop for AddrInfoGuard {
+        fn drop(&mut self) {
+            unsafe { libc::freeaddrinfo(self.0) };
+        }
+    }
+    let _guard = AddrInfoGuard(result);
+    let mut current = result;
+    while !current.is_null() {
+        let entry = unsafe { &*current };
+        if entry.ai_family == libc::AF_INET && !entry.ai_addr.is_null() {
+            let address = unsafe { &*(entry.ai_addr as *const libc::sockaddr_in) };
+            let ip = Ipv4Addr::from(u32::from_be(address.sin_addr.s_addr));
+            return Ok(SocketAddr::V4(SocketAddrV4::new(ip, port)));
+        }
+        current = entry.ai_next;
+    }
+    Err("DNS returned no IPv4 A records".to_owned())
+}
+
 fn resolve_endpoint(value: &str) -> Result<SocketAddr, BackendError> {
     let parsed = PeerEndpoint::parse(value)
         .map_err(|reason| BackendError::new(format!("invalid endpoint {value}: {reason}")))?;
     match parsed.host {
         EndpointHost::Ip(ip) => Ok(SocketAddr::new(ip.into(), parsed.port)),
-        EndpointHost::Dns(host) => {
-            let addresses = (host.as_str(), parsed.port)
-                .to_socket_addrs()
-                .map_err(|error| {
-                    BackendError::new(format!("failed to resolve endpoint {value}: {error}"))
-                })?;
-            addresses
-                .into_iter()
-                .find(SocketAddr::is_ipv4)
-                .ok_or_else(|| {
-                    BackendError::new(format!(
-                        "DNS returned no IPv4 addresses for endpoint {value}"
-                    ))
-                })
-        }
+        EndpointHost::Dns(host) => resolve_ipv4_domain(&host, parsed.port)
+            .map_err(|error| BackendError::new(format!("failed to resolve IPv4 endpoint {value}: {error}"))),
     }
 }
