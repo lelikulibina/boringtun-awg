@@ -10,8 +10,9 @@ nft_table = "vpn_relay"
 ipv6_enabled = false
 # false: демон не меняет sysctl пересылки пакетов. В текущем IPv4-only режиме
 # заранее включите только IPv4 forwarding. Для dual-stack отдельно настройте IPv6.
-# true используйте только в изолированном сетевом пространстве имён: режим меняется
-# повлиять на пересылку пакетов и Router Advertisement на всех интерфейсах.
+# true используйте только в изолированном сетевом пространстве имён:
+# демон меняет forwarding для всего пространства и может повлиять на пересылку
+# пакетов и Router Advertisement на всех интерфейсах.
 manage_ip_forwarding = false
 
 [interfaces.wg-server]
@@ -28,7 +29,6 @@ persistent_keepalive_secs = 25
 
 [interfaces.awg-primary]
 type = "awg"
-ipv6_enabled = true
 address = ["10.20.0.2/32"]
 mtu = 1380
 listen_port = 51821
@@ -73,12 +73,11 @@ random_trailers = false
 [[interfaces.awg-primary.peers]]
 public_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 endpoint = "vpn-primary.example.net:51820"
-allowed_ips = ["0.0.0.0/0", "::/0"]
+allowed_ips = ["0.0.0.0/0"]
 persistent_keepalive_secs = "25-35"
 
 [interfaces.awg-secondary]
 type = "awg"
-ipv6_enabled = true
 address = ["10.30.0.2/32"]
 mtu = 1380
 listen_port = 51822
@@ -99,7 +98,7 @@ h4 = "4"
 [[interfaces.awg-secondary.peers]]
 public_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 endpoint = "vpn-secondary.example.net:51820"
-allowed_ips = ["0.0.0.0/0", "::/0"]
+allowed_ips = ["0.0.0.0/0"]
 persistent_keepalive_secs = 25
 
 [[routing.rules]]
