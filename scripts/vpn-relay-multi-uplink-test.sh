@@ -52,6 +52,8 @@ dump_namespace() {
     ip -n "$ns" address show >&2 || true
     ip -n "$ns" -4 rule show >&2 || true
     ip -n "$ns" -4 route show table all >&2 || true
+    ip -n "$ns" -6 rule show >&2 || true
+    ip -n "$ns" -6 route show table all >&2 || true
     ip netns exec "$ns" nft -a list ruleset >&2 || true
 }
 
@@ -617,6 +619,16 @@ ip -6 -n "$CLIENT_NS" route replace 2001:db8:102::2/128 dev wg-client
 # Change a live routing decision and its NAT action without restarting the
 # router. The same destination exists behind both uplinks, so packet capture
 # proves the selected egress; the translated source proves the new NAT action.
+# Verify the original IPv6 primary route before testing a live egress
+# transition. This distinguishes baseline forwarding failures from reload bugs.
+ip netns exec "$PRIMARY_NS" timeout 5 tcpdump -nn -i up-primary -c 1 \
+    'icmp6 and dst host 2001:db8:1::1' >"$TMP/ipv6-baseline-primary.log" 2>&1 &
+ipv6_baseline_capture=$!
+sleep 0.25
+ip netns exec "$CLIENT_NS" ping -6 -n -I fd77::2 -c 1 -W 3 2001:db8:1::1 \
+    || fail "baseline IPv6 traffic did not traverse awg-primary before reload"
+wait "$ipv6_baseline_capture" || fail "baseline IPv6 packet did not reach primary uplink"
+
 python3 - "$TMP/router.toml" <<'PY'
 import sys
 path = sys.argv[1]
@@ -697,15 +709,21 @@ set -e
 ip netns exec "$PRIMARY_NS" timeout 3 tcpdump -nn -i up-primary -c 1 \
     'icmp6 and dst host 2001:db8:102::2' >"$TMP/runtime-reload-primary-v6-capture.log" 2>&1 &
 primary_v6_reload_capture=$!
+ip netns exec "$ROUTER_NS" timeout 5 tcpdump -nn -i awg-secondary -c 1 \
+    'icmp6 and dst host 2001:db8:102::2' \
+    >"$TMP/runtime-reload-router-secondary-v6-capture.log" 2>&1 &
+router_v6_reload_capture=$!
 ip netns exec "$SECONDARY_NS" timeout 5 tcpdump -nn -i up-secondary -c 1 \
-    'icmp6 and src host fd30::1 and dst host 2001:db8:102::2' \
+    'icmp6 and dst host 2001:db8:102::2' \
     >"$TMP/runtime-reload-secondary-v6-capture.log" 2>&1 &
 secondary_v6_reload_capture=$!
 sleep 0.25
 ip netns exec "$CLIENT_NS" ping -6 -n -I fd77::2 -c 1 -W 3 2001:db8:102::2 \
     || fail "packet did not traverse the new secondary IPv6 masquerade decision after reload"
+wait "$router_v6_reload_capture" \
+    || fail "reloaded IPv6 decision did not reach the router secondary TUN"
 wait "$secondary_v6_reload_capture" \
-    || fail "reloaded IPv6 routing decision did not send translated traffic through secondary uplink"
+    || fail "reloaded IPv6 decision did not reach the remote secondary TUN"
 grep -Fq 'fd30::1 > 2001:db8:102::2' "$TMP/runtime-reload-secondary-v6-capture.log" \
     || fail "runtime reload did not apply the secondary IPv6 masquerade source address"
 set +e
