@@ -130,7 +130,7 @@ jobs:
       - name: Install Linux networking and Python dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y iproute2 iputils-ping tcpdump iperf3 python3-cryptography
+          sudo apt-get install -y iproute2 iputils-ping tcpdump python3-cryptography
       - name: Build BoringTun userspace device
         run: cargo build -p boringtun-cli --release
       - name: Fetch official AmneziaWG Go reference
@@ -194,7 +194,7 @@ jobs:
           # GitHub-hosted Ubuntu images already include most networking tools.
           # Avoid contacting Ubuntu mirrors when the complete toolset is present:
           # runner mirror DNS can be unavailable even while other network access works.
-          packages=(iproute2 nftables iputils-ping tcpdump iperf3)
+          packages=(iproute2 nftables iputils-ping tcpdump)
           missing=()
           for package in "${packages[@]}"; do
             status=$(dpkg-query -W -f='${db:Status-Status}' "$package" 2>/dev/null || true)
@@ -202,10 +202,34 @@ jobs:
               missing+=("$package")
             fi
           done
-          if [ "${#missing[@]}" -eq 0 ]; then
-            echo "All Linux networking dependencies are already installed"
-            exit 0
+          if [ "${#missing[@]}" -gt 0 ]; then
+            apt_options=(-o Acquire::Retries=1 -o Acquire::http::Timeout=10 -o Acquire::https::Timeout=10)
+            if ! timeout 60s sudo apt-get "${apt_options[@]}" install -y "${missing[@]}"; then
+              echo "Unable to install missing Linux networking dependencies: ${missing[*]}" >&2
+              exit 1
+            fi
           fi
+
+          if ! command -v iperf3 >/dev/null 2>&1; then
+            # iperf3 is not part of every hosted Ubuntu image. Build a pinned,
+            # checksum-verified upstream release instead of relying on Ubuntu mirrors.
+            iperf_version=3.22
+            iperf_sha256=1c0d0fb02c52626111d6e132db80edfbf27bbaff8bd9245df2a371dcb0b35a92
+            iperf_archive="$RUNNER_TEMP/iperf-${iperf_version}.tar.gz"
+            curl --fail --location --retry 2 --connect-timeout 10 --max-time 90 \
+              "https://downloads.es.net/pub/iperf/iperf-${iperf_version}.tar.gz" \
+              --output "$iperf_archive"
+            echo "${iperf_sha256}  ${iperf_archive}" | sha256sum --check -
+            tar -xzf "$iperf_archive" -C "$RUNNER_TEMP"
+            (
+              cd "$RUNNER_TEMP/iperf-${iperf_version}"
+              ./configure --disable-shared
+              make -j2
+              sudo make install
+            )
+            sudo ldconfig
+          fi
+          iperf3 --version
 
           apt_options=(-o Acquire::Retries=1 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15)
           # First try the runner's existing package indexes; updating them is
