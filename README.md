@@ -110,7 +110,7 @@ after nftables switches to the new marks. Old and new mark ranges must not
 overlap. A failed nftables transaction leaves the old classifier active and
 removes staged routes; cleanup or peer rollback failure puts the daemon into
 fatal shutdown. Tunnel identity/lifecycle parameters (interface set/type,
-addresses, MTU, IPv6 setting, listen port, private key, socket mark and AWG
+IPv4 addresses, MTU, listen port, private key, socket mark and AWG
 parameters), `daemon.nft_table`, `daemon.manage_ip_forwarding` and
 `daemon.log_level` still require a restart. The statistics interval may change.
 
@@ -120,9 +120,18 @@ file changes.
 
 The daemon requires Linux TUN support, `iproute2`, and `nftables`. It installs policy routes and an nftables table named in `[daemon].nft_table`; the table is tagged as daemon-owned and conflicting unowned tables or policy-routing slots are rejected. SIGINT/SIGTERM triggers worker shutdown and cleanup.
 
-A privileged network-namespace smoke/integration test is available at `scripts/vpn-relay-netns-test.sh`. It exercises WG/AWG device creation, IPv4/IPv6 fwmark routing, nftables rule installation, collision rollback, and graceful cleanup. The daemon is experimental; run it in an isolated test environment before production use.
+A privileged network-namespace smoke/integration test is available at `scripts/vpn-relay-netns-test.sh`. It exercises WG/AWG device creation, IPv4 fwmark routing, nftables rule installation (including IPv6 drops on every managed TUN), collision rollback, and graceful cleanup. The daemon is experimental; run it in an isolated test environment before production use.
 
-**Управление forwarding.** По умолчанию оставляйте `daemon.manage_ip_forwarding = false`. При `true` и пустом `forwarding_interfaces` сохраняется legacy-режим: daemon переключает namespace-wide IPv4/IPv6 forwarding. На общем host namespace так делать не следует.
+**Поддержка IP.** `vpn-relay` полностью IPv4-only: конфигурация IPv6-адресов,
+AllowedIPs, endpoint, routing/firewall selectors и NAT отклоняется. На каждом
+созданном TUN nftables безусловно блокирует IPv6 в обоих направлениях. Другие
+интерфейсы и UDP-сокеты BoringTun не фильтруются; каталог `boringtun/`
+не изменяется.
+
+**Управление forwarding.** По умолчанию оставляйте
+`daemon.manage_ip_forwarding = false`. При `true` и пустом
+`forwarding_interfaces` daemon управляет только namespace-wide
+`net.ipv4.ip_forward`. На общем host namespace так делать не следует.
 
 Для ограниченного per-interface режима задайте явный allowlist, например:
 
@@ -132,11 +141,20 @@ manage_ip_forwarding = true
 forwarding_interfaces = ["eth0", "wg-server", "awg-uplink"]
 ```
 
-В этом режиме vpn-relay не меняет global sysctl: заранее установите внутри того же network namespace `net.ipv4.ip_forward=1` и оставьте `net.ipv6.conf.all.forwarding=0`. IPv4 разрешается только на перечисленных links через `net.ipv4.conf.<if>.forwarding`; IPv6 — через `net.ipv6.conf.<if>.force_forwarding`. Перед включением daemon проверяет, что на всех неперечисленных интерфейсах эти forwarding-флаги выключены, иначе отказывается запускаться. В allowlist включайте все ingress-интерфейсы, через которые должны маршрутизироваться пакеты, включая daemon-owned TUN, если они используются как ingress.
+В этом режиме vpn-relay не меняет global sysctl: заранее установите внутри
+того же network namespace `net.ipv4.ip_forward=1`. IPv4 разрешается
+только на перечисленных links через `net.ipv4.conf.<if>.forwarding`.
+Перед включением daemon проверяет, что на всех неперечисленных интерфейсах
+этот forwarding-флаг выключен, иначе отказывается запускаться. IPv6 sysctl
+не читаются и не изменяются ни при запуске, ни при восстановлении.
 
-Journal сохраняет исходные значения, namespace inode, имя и ifindex. При штатном shutdown link-scoped sysctls восстанавливаются до удаления TUN. При crash recovery записи daemon-owned TUN пропускаются: сам TUN и его sysctl исчезают вместе с закрытием descriptor, а запись нельзя применять к новому link, даже если ядро повторно использовало то же имя и ifindex. Внешние интерфейсы восстанавливаются только при совпадении identity и пока значение равно установленному daemon значению.
-
-IPv6 `force_forwarding` включает forwarding на конкретном интерфейсе независимо от global `conf/all/forwarding`; он не заменяет настройку Router Advertisement. `accept_ra` daemon не меняет: проверьте требуемое поведение RA на uplink отдельно. Этот режим требует ядра с поддержкой `force_forwarding` и rootful/private network namespace с необходимыми сетевыми полномочиями.
+Journal сохраняет исходные IPv4 значения, namespace inode, имя и ifindex.
+При штатном shutdown link-scoped sysctls восстанавливаются до удаления TUN.
+Записи daemon-owned TUN не восстанавливаются: сам TUN и его sysctl исчезают
+вместе с закрытием descriptor, а запись нельзя применять к новому link, даже
+если ядро повторно использовало то же имя и ifindex. Внешние интерфейсы
+восстанавливаются только при совпадении identity и пока значение равно
+установленному daemon значению.
 
 ## Запуск в Podman
 
