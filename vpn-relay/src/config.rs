@@ -147,18 +147,18 @@ impl PersistentKeepaliveConfig {
         match self {
             Self::Seconds(seconds) => Ok((u32::from(*seconds), u32::from(*seconds))),
             Self::Range(value) => {
-                let (min, max) = value.split_once('-').ok_or_else(|| {
-                    format!("invalid PersistentKeepalive range '{value}'")
-                })?;
+                let (min, max) = value
+                    .split_once('-')
+                    .ok_or_else(|| format!("invalid PersistentKeepalive range '{value}'"))?;
                 if max.contains('-') {
                     return Err(format!("invalid PersistentKeepalive range '{value}'"));
                 }
-                let min = min.parse::<u32>().map_err(|_| {
-                    format!("invalid PersistentKeepalive range '{value}'")
-                })?;
-                let max = max.parse::<u32>().map_err(|_| {
-                    format!("invalid PersistentKeepalive range '{value}'")
-                })?;
+                let min = min
+                    .parse::<u32>()
+                    .map_err(|_| format!("invalid PersistentKeepalive range '{value}'"))?;
+                let max = max
+                    .parse::<u32>()
+                    .map_err(|_| format!("invalid PersistentKeepalive range '{value}'"))?;
                 if min == 0 || max == 0 || min > max {
                     return Err(format!(
                         "invalid PersistentKeepalive range '{value}': expected 1 <= min <= max"
@@ -1575,7 +1575,10 @@ egress = "awg-uplink"
                 "persistent_keepalive_secs = 25",
                 &format!("persistent_keepalive_secs = \"{range}\""),
             );
-            assert!(Config::parse_toml(&input).is_err(), "accepted range {range}");
+            assert!(
+                Config::parse_toml(&input).is_err(),
+                "accepted range {range}"
+            );
         }
 
         let fixed = Config::parse_toml(&valid_config()).unwrap();
@@ -1620,21 +1623,24 @@ egress = "awg-uplink"
             .replace("s2 = 0", "s2 = 12")
             .replace("s3 = 0", "s3 = 12")
             .replace("s4 = 0", "s4 = 12")
-            .replace("h4 = \"301-400\"", concat!(
-            "h4 = \"301-400\"\n",
-            "i1 = \"<b 0x4142><r 8>\"\n",
-            "i2 = \"<t>\"\n",
-            "i3 = \"<rc 4>\"\n",
-            "i4 = \"<rd 4>\"\n",
-            "i5 = \"<dz 2>\"\n",
-            "header_protection_key = \"QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI=\"\n",
-            "content_padding_addition = \"10-100\"\n",
-            "rekey_after_time = \"100-120\"\n",
-            "rekey_timeout = \"3-8\"\n",
-            "reject_after_time = \"150-180\"\n",
-            "keepalive_timeout = \"7-13\"\n",
-            "max_handshake_attempts = \"15-20\""
-        ));
+            .replace(
+                "h4 = \"301-400\"",
+                concat!(
+                    "h4 = \"301-400\"\n",
+                    "i1 = \"<b 0x4142><r 8>\"\n",
+                    "i2 = \"<t>\"\n",
+                    "i3 = \"<rc 4>\"\n",
+                    "i4 = \"<rd 4>\"\n",
+                    "i5 = \"<dz 2>\"\n",
+                    "header_protection_key = \"QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI=\"\n",
+                    "content_padding_addition = \"10-100\"\n",
+                    "rekey_after_time = \"100-120\"\n",
+                    "rekey_timeout = \"3-8\"\n",
+                    "reject_after_time = \"150-180\"\n",
+                    "keepalive_timeout = \"7-13\"\n",
+                    "max_handshake_attempts = \"15-20\""
+                ),
+            );
         let config = Config::parse_toml(&input).unwrap();
         crate::backend::BackendRegistry::default()
             .validate_config(&config)
