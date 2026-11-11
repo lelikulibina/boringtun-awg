@@ -1379,7 +1379,8 @@ egress = "awg-uplink"
             .interfaces
             .get_mut("wg-server")
             .unwrap()
-            .ipv6_enabled = true;
+            .ipv6_enabled = false;
+        changed_ipv6.routing.rules.pop();
         changed_ipv6.validate().unwrap();
         assert!(current
             .validate_reload_compatibility(&changed_ipv6)
