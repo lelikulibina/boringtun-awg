@@ -947,6 +947,46 @@ egress = "awg-primary"
     }
 
     #[test]
+    fn ipv4_only_selector_free_routing_firewall_and_masquerade_are_family_limited() {
+        let mut config = sample_config();
+        config.daemon.ipv6_enabled = false;
+        for interface in config.interfaces.values_mut() {
+            interface.ipv6_enabled = false;
+        }
+        config.routing.rules[0].source = None;
+        config.routing.rules[0].destination = None;
+        config.routing.rules[0].nat = NatMode::Masquerade;
+        config.firewall.input.rules.push(FirewallRule {
+            interface: "wg-server".to_owned(),
+            source: None,
+            destination: None,
+            protocol: Some(FirewallProtocol::Tcp),
+            ports: Some(vec![22]),
+        });
+        config.firewall.output.rules.push(FirewallRule {
+            interface: "awg-secondary".to_owned(),
+            source: None,
+            destination: None,
+            protocol: Some(FirewallProtocol::Udp),
+            ports: Some(vec![53]),
+        });
+
+        let script = RoutingPlan::from_config(&config).nft_script();
+        assert!(script.contains(
+            "prerouting iifname \\"wg-server\\" ct state new meta nfproto ipv4 meta mark"
+        ));
+        assert!(script.contains(
+            "input iifname \\"wg-server\\" meta nfproto ipv4 tcp dport { 22 }"
+        ));
+        assert!(script.contains(
+            "output oifname \\"awg-secondary\\" meta nfproto ipv4 udp dport { 53 }"
+        ));
+        assert!(script.contains("postrouting iifname \\"wg-server\\" oifname \\"awg-secondary\\""));
+        assert!(script.contains("meta nfproto ipv4 masquerade"));
+        assert!(!script.contains("meta nfproto ipv6 masquerade"));
+    }
+
+    #[test]
     fn managed_input_and_output_default_to_deny_with_explicit_allow_exceptions() {
         let mut config = sample_config();
         config.firewall.input.rules.push(FirewallRule {
