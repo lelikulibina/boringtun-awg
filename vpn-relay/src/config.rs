@@ -160,7 +160,9 @@ impl PersistentKeepaliveConfig {
                     format!("invalid PersistentKeepalive range '{value}'")
                 })?;
                 if min == 0 || max == 0 || min > max {
-                    return Err(format!("invalid PersistentKeepalive range '{value}': expected 1 <= min <= max"));
+                    return Err(format!(
+                        "invalid PersistentKeepalive range '{value}': expected 1 <= min <= max"
+                    ));
                 }
                 Ok((min, max))
             }
@@ -179,7 +181,7 @@ pub struct PeerConfig {
     pub allowed_ips: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub persistent_keepalive_secs: Option<PersistentKeepaliveConfig>,
-    /// Inclusive AmneziaWG keepalive interval range in seconds. Mutually exclusive with the legacy fixed interval.
+    /// Inclusive AmneziaWG keepalive interval range in seconds. Mutually exclusive with the legacy field.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub persistent_keepalive_range: Option<(u32, u32)>,
 }
