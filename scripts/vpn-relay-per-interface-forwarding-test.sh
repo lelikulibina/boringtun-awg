@@ -46,6 +46,7 @@ forwarding_interfaces = ["uplink0", "wg0"]
 
 [interfaces.wg0]
 type = "wg"
+ipv6_enabled = true
 address = ["10.200.0.1/24"]
 mtu = 1380
 listen_port = 52000
