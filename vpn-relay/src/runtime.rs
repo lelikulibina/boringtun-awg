@@ -522,7 +522,11 @@ impl Runtime {
         let instance_lock = InstanceLock::acquire(&lock_path)?;
         let forwarding_state_path = InstanceLock::current_forwarding_state_path()?;
         let namespace_inode = InstanceLock::current_netns_inode()?;
-        recover_forwarding_state(&forwarding_state_path, namespace_inode)?;
+        recover_forwarding_state(
+            &forwarding_state_path,
+            namespace_inode,
+            config.daemon.ipv6_enabled,
+        )?;
         let control_socket = ControlSocket::bind(InstanceLock::current_control_path()?)?;
         let conntrack_mark_state_path = InstanceLock::current_conntrack_mark_state_path()?;
         let mut conntrack_mark_history = load_conntrack_mark_history(&conntrack_mark_state_path)?;
@@ -1994,14 +1998,29 @@ fn restore_forwarding_state_with_mode(
     }
 }
 
-fn recover_forwarding_state(path: &Path, namespace_inode: u64) -> Result<(), RuntimeError> {
+fn recover_forwarding_state(
+    path: &Path,
+    namespace_inode: u64,
+    ipv6_enabled: bool,
+) -> Result<(), RuntimeError> {
     let Some(state) = load_forwarding_state(path, namespace_inode)? else {
         return Ok(());
     };
+    // An IPv4-only daemon must not inspect or restore IPv6 sysctls, including
+    // entries written by an older dual-stack version. Restore only the IPv4
+    // portion of a legacy journal and keep the datapath fail-closed for IPv6.
+    let mut recovery_state = state.clone();
+    if !ipv6_enabled {
+        recovery_state.ipv6_changed = false;
+        for entry in &mut recovery_state.interfaces {
+            entry.ipv6_changed = false;
+            entry.ipv6_enabled = false;
+        }
+    }
     restore_forwarding_state_with_mode(
-        &state,
-        |key| read_forwarding_state_value(&state, key),
-        |key, value| write_forwarding_state_value(&state, key, value),
+        &recovery_state,
+        |key| read_forwarding_state_value(&recovery_state, key),
+        |key, value| write_forwarding_state_value(&recovery_state, key, value),
     )?;
     remove_forwarding_state_file(path)
 }
