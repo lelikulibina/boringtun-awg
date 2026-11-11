@@ -1817,7 +1817,7 @@ mod tests {
     #[test]
     fn unmanaged_forwarding_treats_any_nonzero_value_as_enabled() {
         let allowed = std::collections::BTreeSet::new();
-        validate_unmanaged_forwarding_with(&allowed, &["eth0".to_owned()], &[], |_| {
+        validate_unmanaged_forwarding_with(&allowed, &["eth0".to_owned()], |_| {
             Ok(Some("2".to_owned()))
         })
         .unwrap_err();
