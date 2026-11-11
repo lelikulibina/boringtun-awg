@@ -90,7 +90,7 @@ with open(sys.argv[1],"w",encoding="ascii") as out:
         key=X25519PrivateKey.generate()
         private=base64.b64encode(key.private_bytes(Encoding.Raw,PrivateFormat.Raw,NoEncryption())).decode()
         public=base64.b64encode(key.public_key().public_bytes(Encoding.Raw,PublicFormat.Raw)).decode()
-        out.write(f"{name}_PRIVATE={private}\\n{name}_PUBLIC={public}\\n")
+        out.write(f"{name}_PRIVATE={private}\n{name}_PUBLIC={public}\n")
 PY
 source "$TMP/keys.env"
 
