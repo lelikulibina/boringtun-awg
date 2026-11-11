@@ -46,9 +46,9 @@ pub struct DaemonConfig {
     pub stats_interval_secs: u64,
     #[serde(default = "default_nft_table")]
     pub nft_table: String,
-    /// Enable IPv6 datapath support. When false, IPv6 is rejected in tunnel
-    /// configuration and blocked on every managed interface.
-    #[serde(default = "default_ipv6_enabled")]
+    /// Retained internally only for compatibility with the routing planner.
+    /// It is never configurable and IPv6 is not a supported datapath.
+    #[serde(skip)]
     pub ipv6_enabled: bool,
     #[serde(default)]
     pub manage_ip_forwarding: bool,
@@ -65,7 +65,7 @@ impl Default for DaemonConfig {
             log_level: default_log_level(),
             stats_interval_secs: default_stats_interval(),
             nft_table: default_nft_table(),
-            ipv6_enabled: default_ipv6_enabled(),
+            ipv6_enabled: false,
             manage_ip_forwarding: false,
             forwarding_interfaces: Vec::new(),
         }
@@ -82,10 +82,6 @@ fn default_stats_interval() -> u64 {
 
 fn default_nft_table() -> String {
     "vpn_relay".to_owned()
-}
-
-fn default_ipv6_enabled() -> bool {
-    true
 }
 
 fn default_mtu() -> u16 {
@@ -129,8 +125,9 @@ pub struct InterfaceConfig {
     pub address: Vec<String>,
     #[serde(default = "default_mtu")]
     pub mtu: u16,
-    /// Permit IPv6 packets entering or leaving this tunnel. Disabled by default.
-    #[serde(default)]
+    /// Retained internally only while the datapath migration is completed.
+    /// It is never configurable; IPv6 is rejected during validation.
+    #[serde(skip)]
     pub ipv6_enabled: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub listen_port: Option<u16>,
