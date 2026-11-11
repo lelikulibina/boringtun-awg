@@ -130,7 +130,7 @@ jobs:
       - name: Install Linux networking and Python dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y iproute2 iputils-ping tcpdump python3-cryptography
+          sudo apt-get install -y iproute2 iputils-ping tcpdump iperf3 python3-cryptography
       - name: Build BoringTun userspace device
         run: cargo build -p boringtun-cli --release
       - name: Fetch official AmneziaWG Go reference
@@ -194,7 +194,7 @@ jobs:
           # GitHub-hosted Ubuntu images already include most networking tools.
           # Avoid contacting Ubuntu mirrors when the complete toolset is present:
           # runner mirror DNS can be unavailable even while other network access works.
-          packages=(iproute2 nftables iputils-ping tcpdump)
+          packages=(iproute2 nftables iputils-ping tcpdump iperf3)
           missing=()
           for package in "${packages[@]}"; do
             status=$(dpkg-query -W -f='${db:Status-Status}' "$package" 2>/dev/null || true)
