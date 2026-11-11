@@ -884,6 +884,8 @@ const IFLA_AF_SPEC: u16 = 26;
 const IFLA_INET_CONF: u16 = 1;
 const IPV4_DEVCONF_FORWARDING: u16 = 1;
 const NLA_F_NESTED: u16 = 1 << 15;
+const NLA_F_NET_BYTEORDER: u16 = 1 << 14;
+const NLA_TYPE_MASK: u16 = !(NLA_F_NESTED | NLA_F_NET_BYTEORDER);
 const AF_INET_ATTR: u16 = libc::AF_INET as u16;
 #[cfg(test)]
 const IPV4_DEVCONF_MAX: usize = 33;
@@ -972,7 +974,7 @@ fn netlink_extended_ack(response: &[u8], offset: usize, length: usize) -> Option
             return None;
         }
         let attribute_length = u16::from_ne_bytes(attributes[0..2].try_into().ok()?) as usize;
-        let kind = u16::from_ne_bytes(attributes[2..4].try_into().ok()?) & !NLA_F_NESTED;
+        let kind = u16::from_ne_bytes(attributes[2..4].try_into().ok()?) & NLA_TYPE_MASK;
         if attribute_length < 4 || attribute_length > attributes.len() {
             return None;
         }
@@ -2163,7 +2165,7 @@ mod tests {
         let message = b"invalid forwarding attribute\0";
         let attribute_length = 4 + message.len();
         response.extend_from_slice(&(attribute_length as u16).to_ne_bytes());
-        response.extend_from_slice(&NLMSGERR_ATTR_MSG.to_ne_bytes());
+        response.extend_from_slice(&(NLMSGERR_ATTR_MSG | NLA_F_NET_BYTEORDER).to_ne_bytes());
         response.extend_from_slice(message);
         response.resize(align_netlink(response.len()), 0);
         let length = response.len();
