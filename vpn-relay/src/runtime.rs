@@ -1498,6 +1498,43 @@ fn interface_forwarding_sysctl_key(name: &str, family: &str) -> Result<String, R
     Ok(key)
 }
 
+fn read_forwarding_state_value(state: &ForwardingState, key: &str) -> Result<String, RuntimeError> {
+    for entry in &state.interfaces {
+        if key == interface_forwarding_sysctl_key(&entry.name, "ipv4")? {
+            let enabled = linux::ipv4_interface_forwarding(entry.ifindex)
+                .map_err(|error| RuntimeError::Forwarding(error.to_string()))?;
+            return Ok(if enabled { "1" } else { "0" }.to_owned());
+        }
+        if key == interface_forwarding_sysctl_key(&entry.name, "ipv6")? {
+            verify_forwarding_interface(&entry.name, entry.ifindex)?;
+            return read_sysctl(key);
+        }
+    }
+    read_sysctl(key)
+}
+
+fn write_forwarding_state_value(state: &ForwardingState, key: &str, value: &str) -> Result<(), RuntimeError> {
+    for entry in &state.interfaces {
+        if key == interface_forwarding_sysctl_key(&entry.name, "ipv4")? {
+            let enabled = match value {
+                "0" => false,
+                "1" => true,
+                _ => return Err(RuntimeError::Forwarding("IPv4 forwarding must be 0 or 1".to_owned())),
+            };
+            verify_forwarding_interface(&entry.name, entry.ifindex)?;
+            linux::set_ipv4_interface_forwarding(entry.ifindex, enabled)
+                .map_err(|error| RuntimeError::Forwarding(error.to_string()))?;
+            verify_forwarding_interface(&entry.name, entry.ifindex)?;
+            return Ok(());
+        }
+        if key == interface_forwarding_sysctl_key(&entry.name, "ipv6")? {
+            verify_forwarding_interface(&entry.name, entry.ifindex)?;
+            return write_sysctl(key, value);
+        }
+    }
+    write_sysctl(key, value)
+}
+
 /// Restore one link-scoped sysctl only while the saved name/ifindex identity
 /// still matches and the value is still the daemon's enable value. This avoids
 /// writing an old value into a replacement link or overwriting an operator's
@@ -1611,14 +1648,20 @@ fn verify_managed_forwarding_runtime(
     )?;
     for entry in &state.interfaces {
         verify_forwarding_interface(&entry.name, entry.ifindex)?;
-        for family in ["ipv4", "ipv6"] {
-            let key = interface_forwarding_sysctl_key(&entry.name, family)?;
-            if read_sysctl(&key)? != "1" {
-                return Err(RuntimeError::Forwarding(format!(
-                    "managed interface '{}' lost its {family} forwarding enable value",
-                    entry.name
-                )));
-            }
+        if !linux::ipv4_interface_forwarding(entry.ifindex)
+            .map_err(|error| RuntimeError::Forwarding(error.to_string()))?
+        {
+            return Err(RuntimeError::Forwarding(format!(
+                "managed interface '{}' lost its IPv4 forwarding enable value",
+                entry.name
+            )));
+        }
+        let ipv6_key = interface_forwarding_sysctl_key(&entry.name, "ipv6")?;
+        if read_sysctl(&ipv6_key)? != "1" {
+            return Err(RuntimeError::Forwarding(format!(
+                "managed interface '{}' lost its IPv6 forwarding enable value",
+                entry.name
+            )));
         }
     }
     Ok(())
@@ -1709,9 +1752,11 @@ fn enable_interface_forwarding_durable(
         let ipv6_key = interface_forwarding_sysctl_key(name, "ipv6")?;
         linux::verify_interface_identity(name, ifindex)
             .map_err(|error| RuntimeError::Forwarding(error.to_string()))?;
-        let ipv4 = read_sysctl(&ipv4_key)?;
+        let ipv4 = linux::ipv4_interface_forwarding(ifindex)
+            .map_err(|error| RuntimeError::Forwarding(error.to_string()))?;
         linux::verify_interface_identity(name, ifindex)
             .map_err(|error| RuntimeError::Forwarding(error.to_string()))?;
+        let ipv4 = if ipv4 { "1" } else { "0" }.to_owned();
         let ipv6 = read_sysctl(&ipv6_key)?;
         entries.push(InterfaceForwardingState {
             name: name.clone(),
@@ -1745,8 +1790,8 @@ fn enable_interface_forwarding_durable(
 
     if let Err(error) = enable_interface_forwarding_entries_with(
         &state,
-        read_sysctl,
-        write_sysctl,
+        |key| read_forwarding_state_value(&state, key),
+        |key, value| write_forwarding_state_value(&state, key, value),
         verify_forwarding_interface,
     ) {
         if matches!(error, RuntimeError::FatalTransition(_)) {
@@ -1854,7 +1899,15 @@ fn restore_forwarding_state_with_mode(
 }
 
 fn recover_forwarding_state(path: &Path, namespace_inode: u64) -> Result<(), RuntimeError> {
-    recover_forwarding_state_with(path, namespace_inode, read_sysctl, write_sysctl)
+    let Some(state) = load_forwarding_state(path, namespace_inode)? else {
+        return Ok(());
+    };
+    restore_forwarding_state_with_mode(
+        &state,
+        |key| read_forwarding_state_value(&state, key),
+        |key, value| write_forwarding_state_value(&state, key, value),
+    )?;
+    remove_forwarding_state_file(path)
 }
 
 fn recover_forwarding_state_with(
@@ -1935,7 +1988,11 @@ fn restore_forwarding_with(
 }
 
 fn restore_forwarding(state: &ForwardingState) -> Result<(), RuntimeError> {
-    restore_forwarding_state_with(state, read_sysctl, write_sysctl)
+    restore_forwarding_state_with(
+        state,
+        |key| read_forwarding_state_value(state, key),
+        |key, value| write_forwarding_state_value(state, key, value),
+    )
 }
 
 #[cfg(test)]
