@@ -70,7 +70,7 @@ fail() {
     echo "vpn-relay peer traffic test ($PROTO): $*" >&2
     dump_namespace_diagnostics "$CLIENT_NS"
     dump_namespace_diagnostics "$SERVER_NS"
-    for log in "$TMP/server.log" "$TMP/client.log" "$TMP/server-iperf.log" "$TMP/client-iperf.log" "$TMP/forged-reply-client.log" "$TMP/forged-reply-tun.log" "$TMP/unmanaged-input-server.log" "$TMP/unmanaged-input-reply-tun.log" "$TMP/icmpv6-input-deny.log" "$TMP/icmpv6-output-deny.log"; do
+    for log in "$TMP/server.log" "$TMP/client.log" "$TMP/server-iperf.log" "$TMP/client-iperf.log" "$TMP/peer-update-continuous-ping.log" "$TMP/peer-update-continuous-reverse-ping.log" "$TMP/reload-peer-add.log" "$TMP/reload-peer-remove.log" "$TMP/reload-dns-failure.log" "$TMP/forged-reply-client.log" "$TMP/forged-reply-tun.log" "$TMP/unmanaged-input-server.log" "$TMP/unmanaged-input-reply-tun.log" "$TMP/icmpv6-input-deny.log" "$TMP/icmpv6-output-deny.log";
         if [[ -f "$log" ]]; then
             echo "--- $log ---" >&2
             cat "$log" >&2
