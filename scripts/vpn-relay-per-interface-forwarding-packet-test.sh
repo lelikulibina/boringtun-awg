@@ -107,6 +107,37 @@ for iface in lo r-in0 r-out0 r-bad0; do
 done
 ip netns exec "$ROUTER" sysctl -qw net.ipv6.conf.r-in0.accept_ra=2
 
+# A procfs descriptor must remain tied to the original IPv6 sysctl entry.
+# Reusing the interface name must not redirect a stale descriptor to the
+# replacement interface.
+command -v python3 >/dev/null || fail "python3 is required for the sysctl identity race test"
+ip netns exec "$ROUTER" python3 - <<'PY'
+import os
+import subprocess
+
+path = "/proc/sys/net/ipv6/conf/race0/force_forwarding"
+subprocess.run(["ip", "link", "add", "race0", "type", "dummy"], check=True)
+fd = os.open(path, os.O_RDWR)
+try:
+    os.write(fd, b"0\\n")
+    subprocess.run(["ip", "link", "del", "race0"], check=True)
+    subprocess.run(["ip", "link", "add", "race0", "type", "dummy"], check=True)
+    try:
+        os.lseek(fd, 0, os.SEEK_SET)
+        os.write(fd, b"1\\n")
+    except OSError:
+        pass
+    else:
+        raise SystemExit("stale force_forwarding descriptor unexpectedly accepted a write")
+    with open(path, "r", encoding="ascii") as current:
+        value = current.read().strip()
+    if value != "0":
+        raise SystemExit(f"replacement interface was modified through stale descriptor: {value}")
+finally:
+    os.close(fd)
+    subprocess.run(["ip", "link", "del", "race0"], check=False)
+PY
+
 cat >"$TMP/router.toml" <<TOML
 [daemon]
 log_level = "debug"
