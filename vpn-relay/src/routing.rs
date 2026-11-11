@@ -707,7 +707,7 @@ impl RoutingPlan {
             }
         }
         for egress in &self.egresses {
-            for &family in Self::ip_families(egress) {
+            for &family in self.ip_families_for_egress(egress) {
                 commands.push(vec![
                     family.into(),
                     "route".into(),
