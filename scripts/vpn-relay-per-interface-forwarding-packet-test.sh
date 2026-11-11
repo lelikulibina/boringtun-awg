@@ -85,8 +85,8 @@ ip -n "$CLIENT_A" route add 10.10.2.0/24 via 10.10.1.1
 ip -n "$CLIENT_B" route add 10.10.1.0/24 via 10.10.2.1
 ip -n "$CLIENT_BAD" route add 10.10.1.0/24 via 10.10.3.1
 
-# Let vpn-relay own the per-interface switches. IPv4's namespace-wide
-# prerequisite remains externally managed; IPv6 global forwarding stays off.
+# Let vpn-relay own the per-interface IPv4 switches. The IPv4 namespace-wide
+# prerequisite remains externally managed; vpn-relay does not touch IPv6 sysctls.
 INODE="$(ip netns exec "$ROUTER" stat -Lc '%i' /proc/self/ns/net)"
 ip netns exec "$ROUTER" sysctl -qw net.ipv4.ip_forward=1
 ip netns exec "$ROUTER" sysctl -qw net.ipv4.conf.all.rp_filter=0
