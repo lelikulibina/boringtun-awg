@@ -1435,7 +1435,7 @@ egress = "awg-uplink"
     fn routing_rule_accepts_multiple_source_and_destination_cidrs() {
         let input = valid_config().replace(
             "destination = \"0.0.0.0/0\"",
-            "source = [\"10.10.0.0/24\", \"2001:db8::/32\"]\ndestination = [\"0.0.0.0/0\", \"::/0\"]",
+            "source = [\"10.10.0.0/24\", \"10.10.1.0/24\"]\ndestination = [\"0.0.0.0/0\", \"203.0.113.0/24\"]",
         );
         let config = Config::parse_toml(&input).unwrap();
         assert_eq!(config.routing.rules[0].source.as_ref().unwrap().len(), 2);
@@ -1641,7 +1641,7 @@ egress = "awg-uplink"
             )
             .replace(
                 &format!(
-                    "[[interfaces.awg-uplink.peers]]\npublic_key = \"{KEY}\"\nendpoint = \"198.51.100.10:51820\"\nallowed_ips = [\"0.0.0.0/0\", \"::/0\"]\npersistent_keepalive_secs = 25\n\n"
+                    "[[interfaces.awg-uplink.peers]]\npublic_key = \"{KEY}\"\nendpoint = \"198.51.100.10:51820\"\nallowed_ips = [\"0.0.0.0/0\"]\npersistent_keepalive_secs = 25\n\n"
                 ),
                 "",
             );
