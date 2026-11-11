@@ -1739,9 +1739,7 @@ fn validate_unmanaged_forwarding_with(
     Ok(())
 }
 
-fn read_unmanaged_forwarding_sysctl(
-    key: &str,
-) -> Result<Option<String>, RuntimeError> {
+fn read_unmanaged_forwarding_sysctl(key: &str) -> Result<Option<String>, RuntimeError> {
     if let Some(name) = key
         .strip_prefix("net.ipv6.conf.")
         .and_then(|key| key.strip_suffix(".force_forwarding"))
@@ -2078,13 +2076,8 @@ mod tests {
     #[test]
     fn unmanaged_ipv6_without_force_forwarding_sysctl_is_not_forwarding() {
         let allowed = std::collections::BTreeSet::new();
-        validate_unmanaged_forwarding_with(
-            &allowed,
-            &[],
-            &["eth0".to_owned()],
-            |_| Ok(None),
-        )
-        .unwrap();
+        validate_unmanaged_forwarding_with(&allowed, &[], &["eth0".to_owned()], |_| Ok(None))
+            .unwrap();
     }
 
     #[test]
