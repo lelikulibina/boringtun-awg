@@ -25,7 +25,6 @@ pub struct EgressPlan {
     pub mark: u32,
     pub table_id: u32,
     pub ip_rule_priority: u32,
-    pub ipv6_enabled: bool,
 }
 
 #[derive(Clone, Debug, serde::Deserialize, Eq, PartialEq, serde::Serialize)]
@@ -41,8 +40,6 @@ pub struct RoutingDecision {
     pub conntrack_mark: u32,
     pub nat: NatMode,
     pub nat_to: Option<std::net::IpAddr>,
-    /// IPv6 selectors are emitted only when both ends permit IPv6.
-    pub ipv6_enabled: bool,
 }
 
 impl RoutingDecision {
@@ -82,10 +79,8 @@ pub struct RoutingPlan {
     pub output_rules: Vec<NftFirewallRule>,
     /// Socket marks that force outer encrypted UDP through the main table.
     pub socket_marks: Vec<u32>,
-    /// Block IPv6 on BoringTun's outer UDP sockets when daemon IPv6 is disabled.
-    pub ipv6_transport_blocked: bool,
     /// TUN interfaces on which inner IPv6 traffic is blocked.
-    pub ipv6_blocked_interfaces: Vec<String>,
+    pub ipv6_drop_interfaces: Vec<String>,
     /// Kernel interface indices captured from the original TUN descriptors.
     pub interface_indices: Option<BTreeMap<String, u32>>,
 }
@@ -194,11 +189,7 @@ impl RoutingPlan {
                 mark: routing_marks[index],
                 table_id: FIRST_ROUTING_TABLE + index as u32,
                 ip_rule_priority: FIRST_IP_RULE_PRIORITY + index as u32,
-                ipv6_enabled: config
-                    .interfaces
-                    .get(*name)
-                    .is_some_and(|interface| interface.ipv6_enabled),
-            })
+                })
             .collect();
 
         let egress_marks: BTreeMap<_, _> = egresses
@@ -220,14 +211,6 @@ impl RoutingPlan {
                 conntrack_mark: 0,
                 nat: rule.nat,
                 nat_to: rule.nat_to,
-                ipv6_enabled: config
-                    .interfaces
-                    .get(rule.ingress.as_str())
-                    .is_some_and(|interface| interface.ipv6_enabled)
-                    && config
-                        .interfaces
-                        .get(rule.egress.as_str())
-                        .is_some_and(|interface| interface.ipv6_enabled),
             })
             .collect();
         decisions.sort_by(|left, right| {
@@ -249,7 +232,6 @@ impl RoutingPlan {
             destination: rule.destination.clone(),
             protocol: rule.protocol,
             ports: rule.ports.clone(),
-            ipv6_enabled: config.interfaces[&rule.interface].ipv6_enabled,
         };
         let input_rules = config
             .firewall
@@ -274,7 +256,7 @@ impl RoutingPlan {
         let managed_interfaces: Vec<_> = config.interfaces.keys().cloned().collect();
         // IPv6 is unsupported by vpn-relay. Keep only a per-TUN drop guard;
         // do not apply IPv6 policy to BoringTun's outer UDP sockets.
-        let ipv6_blocked_interfaces: Vec<_> = config.interfaces.keys().cloned().collect();
+        let ipv6_drop_interfaces: Vec<_> = config.interfaces.keys().cloned().collect();
 
         Self {
             nft_family: "inet".to_owned(),
@@ -285,8 +267,7 @@ impl RoutingPlan {
             input_rules,
             output_rules,
             socket_marks,
-            ipv6_transport_blocked: true,
-            ipv6_blocked_interfaces,
+            ipv6_drop_interfaces,
             interface_indices: None,
         }
     }
@@ -361,7 +342,7 @@ impl RoutingPlan {
             self.nft_family, self.nft_table
         );
 
-        if !self.ipv6_blocked_interfaces.is_empty() {
+        if !self.ipv6_drop_interfaces.is_empty() {
             let elements = self
                 .ipv6_blocked_interfaces
                 .iter()
@@ -548,11 +529,7 @@ impl RoutingPlan {
         // NAT consumes the selected decision id from conntrack instead of
         // repeating selector matching and risking a different overlapping rule.
         for rule in &self.decisions {
-            let family_guard = if self.ipv6_transport_blocked {
-                " meta nfproto ipv4"
-            } else {
-                ""
-            };
+            let family_guard = " meta nfproto ipv4";
             let selector = format!(
                 "iifname \"{}\" oifname \"{}\" ct mark & 0x{:08x} == 0x{:08x}{}",
                 rule.ingress, rule.egress, CONNTRACK_MARK_MASK, rule.conntrack_mark, family_guard
@@ -567,8 +544,8 @@ impl RoutingPlan {
                     self.nft_family, self.nft_table, selector
                 )),
                 NatAction::Snat(address) => {
-                    let family = if address.is_ipv4() { "ip" } else { "ip6" };
-                    let nfproto = if address.is_ipv4() { "ipv4" } else { "ipv6" };
+                    let family = "ip";
+                    let nfproto = "ipv4";
                     output.push_str(&format!(
                         "add rule {} {} postrouting {} meta nfproto {} snat {} to {}\n",
                         self.nft_family, self.nft_table, selector, nfproto, family, address
@@ -643,14 +620,7 @@ impl RoutingPlan {
         let mut commands =
             Vec::with_capacity(self.egresses.len() * 4 + self.socket_marks.len() * 2);
         for mark in &self.socket_marks {
-            // IPv6 socket routing is needed only when a managed egress supports IPv6.
-            let families: &[&str] = if !self.ipv6_transport_blocked
-                && self.egresses.iter().any(|egress| egress.ipv6_enabled)
-            {
-                &["-4", "-6"]
-            } else {
-                &["-4"]
-            };
+            let families: &[&str] = &["-4"];
             for &family in families {
                 commands.push(vec![
                     family.into(),
@@ -704,18 +674,13 @@ fn firewall_rule_family_variants(
         rule.destination.as_ref()
     };
     let Some(prefixes) = prefixes else {
-        return if rule.ipv6_enabled {
-            vec![(None, Vec::new(), Vec::new())]
-        } else {
-            vec![(Some("ip"), Vec::new(), Vec::new())]
-        };
+        return vec![(Some("ip"), Vec::new(), Vec::new())];
     };
     prefixes
         .iter()
         .map(|prefix| nft_family_match(prefix))
         .collect::<std::collections::BTreeSet<_>>()
         .into_iter()
-        .filter(|family| *family != "ip6" || rule.ipv6_enabled)
         .map(|family| {
             let selected = prefixes
                 .iter()
@@ -739,7 +704,6 @@ fn append_firewall_protocol_selector(selectors: &mut String, rule: &NftFirewallR
             FirewallProtocol::Udp if rule.ports.is_some() => " udp",
             FirewallProtocol::Udp => " meta l4proto udp",
             FirewallProtocol::Icmp => " meta l4proto icmp",
-            FirewallProtocol::Icmpv6 => " meta l4proto ipv6-icmp",
         });
     }
     if let Some(ports) = &rule.ports {
@@ -753,11 +717,8 @@ fn append_firewall_protocol_selector(selectors: &mut String, rule: &NftFirewallR
 }
 
 fn nft_family_match(prefix: &str) -> &'static str {
-    if prefix.contains(':') {
-        "ip6"
-    } else {
-        "ip"
-    }
+    let _ = prefix;
+    "ip"
 }
 
 fn rule_family_variants(
