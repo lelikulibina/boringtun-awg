@@ -271,7 +271,7 @@ fn route_has_owned_identity(line: &str, interface: &str) -> bool {
         return false;
     }
 
-    // iproute2 may display kernel-default IPv6 metric/preference attributes.
+    // iproute2 may display kernel-default metric/preference attributes.
     // Accept only those metadata fields; a gateway or other route mutation is
     // not part of the daemon-owned default route identity.
     let mut index = 5;
@@ -506,36 +506,6 @@ where
     // runner injectable so every partial-apply and rollback boundary is tested.
     let install_result = (|| -> Result<(), LinuxError> {
         for egress in &plan.egresses {
-            if !egress.ipv6_enabled && !plan.ipv6_transport_blocked {
-                let stale_rule = [
-                    "-6".into(),
-                    "rule".into(),
-                    "del".into(),
-                    "priority".into(),
-                    egress.ip_rule_priority.to_string(),
-                    "fwmark".into(),
-                    format!("0x{:x}", egress.mark),
-                    "lookup".into(),
-                    egress.table_id.to_string(),
-                    "protocol".into(),
-                    ROUTING_PROTOCOL.into(),
-                ];
-                let stale_route = [
-                    "-6".into(),
-                    "route".into(),
-                    "del".into(),
-                    "default".into(),
-                    "dev".into(),
-                    egress.interface.clone(),
-                    "table".into(),
-                    egress.table_id.to_string(),
-                    "proto".into(),
-                    ROUTING_PROTOCOL.into(),
-                ];
-                run_ip_cleanup_with(&stale_rule, run_command)?;
-                run_ip_cleanup_with(&stale_route, run_command)?;
-            }
-
             for &family in plan.ip_families_for_egress(egress) {
                 let priority = egress.ip_rule_priority.to_string();
                 let mark = format!("0x{:x}", egress.mark);
@@ -712,7 +682,7 @@ where
                 run_ip_cleanup_with(&args, run_command)?;
             }
         }
-        // Keep encrypted outer IPv6 transport on the main table even when inner IPv6 is disabled.
+        // Keep marked encrypted UDP transport on the main table.
         for mark in &plan.socket_marks {
             for &family in plan.ip_policy_families() {
                 let args = vec![
