@@ -287,9 +287,7 @@ fn resolve_ipv4_domain(host: &str, port: u16) -> Result<SocketAddr, String> {
     hints.ai_family = libc::AF_INET;
     hints.ai_socktype = libc::SOCK_DGRAM;
     let mut result = ptr::null_mut();
-    let status = unsafe {
-        libc::getaddrinfo(host.as_ptr(), service.as_ptr(), &hints, &mut result)
-    };
+    let status = unsafe { libc::getaddrinfo(host.as_ptr(), service.as_ptr(), &hints, &mut result) };
     if status != 0 {
         let message = unsafe { CStr::from_ptr(libc::gai_strerror(status)) }
             .to_string_lossy()
@@ -322,7 +320,8 @@ fn resolve_endpoint(value: &str) -> Result<SocketAddr, BackendError> {
         .map_err(|reason| BackendError::new(format!("invalid endpoint {value}: {reason}")))?;
     match parsed.host {
         EndpointHost::Ip(ip) => Ok(SocketAddr::new(ip.into(), parsed.port)),
-        EndpointHost::Dns(host) => resolve_ipv4_domain(&host, parsed.port)
-            .map_err(|error| BackendError::new(format!("failed to resolve IPv4 endpoint {value}: {error}"))),
+        EndpointHost::Dns(host) => resolve_ipv4_domain(&host, parsed.port).map_err(|error| {
+            BackendError::new(format!("failed to resolve IPv4 endpoint {value}: {error}"))
+        }),
     }
 }
