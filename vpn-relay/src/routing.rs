@@ -612,8 +612,13 @@ impl RoutingPlan {
         let mut commands =
             Vec::with_capacity(self.egresses.len() * 4 + self.socket_marks.len() * 2);
         for mark in &self.socket_marks {
-            // Preserve the main-table escape for encrypted outer UDP, including IPv6 endpoints.
-            for family in ["-4", "-6"] {
+            // IPv6 socket routing is needed only when a managed egress supports IPv6.
+            let families: &[&str] = if self.egresses.iter().any(|egress| egress.ipv6_enabled) {
+                &["-4", "-6"]
+            } else {
+                &["-4"]
+            };
+            for &family in families {
                 commands.push(vec![
                     family.into(),
                     "rule".into(),
