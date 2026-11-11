@@ -1498,6 +1498,28 @@ fn interface_forwarding_sysctl_key(name: &str, family: &str) -> Result<String, R
     Ok(key)
 }
 
+fn open_ipv6_force_forwarding_sysctl(
+    entry: &InterfaceForwardingState,
+    write: bool,
+) -> Result<File, RuntimeError> {
+    let path = format!(
+        "/proc/sys/net/ipv6/conf/{}/force_forwarding",
+        entry.name
+    );
+    let file = OpenOptions::new()
+        .read(!write)
+        .write(write)
+        .open(&path)
+        .map_err(|error| RuntimeError::Forwarding(error.to_string()))?;
+
+    // Keep the procfs inode for this exact sysctl entry open across the
+    // identity check and the operation. If the link is unregistered after
+    // this point, proc_sys_call_handler rejects operations on its stale
+    // sysctl table instead of resolving the interface name again.
+    verify_forwarding_interface(&entry.name, entry.ifindex)?;
+    Ok(file)
+}
+
 fn read_forwarding_state_value(state: &ForwardingState, key: &str) -> Result<String, RuntimeError> {
     for entry in &state.interfaces {
         if key == interface_forwarding_sysctl_key(&entry.name, "ipv4")? {
@@ -1506,8 +1528,11 @@ fn read_forwarding_state_value(state: &ForwardingState, key: &str) -> Result<Str
             return Ok(if enabled { "1" } else { "0" }.to_owned());
         }
         if key == interface_forwarding_sysctl_key(&entry.name, "ipv6")? {
-            verify_forwarding_interface(&entry.name, entry.ifindex)?;
-            return read_sysctl(key);
+            let mut file = open_ipv6_force_forwarding_sysctl(entry, false)?;
+            let mut value = String::new();
+            file.read_to_string(&mut value)
+                .map_err(|error| RuntimeError::Forwarding(error.to_string()))?;
+            return Ok(value.trim().to_owned());
         }
     }
     read_sysctl(key)
@@ -1536,8 +1561,10 @@ fn write_forwarding_state_value(
             return Ok(());
         }
         if key == interface_forwarding_sysctl_key(&entry.name, "ipv6")? {
-            verify_forwarding_interface(&entry.name, entry.ifindex)?;
-            return write_sysctl(key, value);
+            let mut file = open_ipv6_force_forwarding_sysctl(entry, true)?;
+            file.write_all(value.as_bytes())
+                .map_err(|error| RuntimeError::Forwarding(error.to_string()))?;
+            return Ok(());
         }
     }
     write_sysctl(key, value)
