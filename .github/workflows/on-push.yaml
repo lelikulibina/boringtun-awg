@@ -189,21 +189,38 @@ jobs:
         with:
           toolchain: stable
       - name: Install Linux networking tools
-        timeout-minutes: 8
+        timeout-minutes: 5
         run: |
-          # Bound DNS/mirror failures: apt retries alone can otherwise leave
-          # this job waiting for a long time on an unreachable Ubuntu mirror.
-          apt_options=(-o Acquire::Retries=1 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15)
-          for attempt in 1 2 3; do
-            if timeout 120s sudo apt-get "${apt_options[@]}" update &&
-               timeout 120s sudo apt-get "${apt_options[@]}" install -y iproute2 nftables iputils-ping wireguard-tools iperf3 tcpdump; then
-              exit 0
-            fi
-            if [ "$attempt" -lt 3 ]; then
-              sleep 10
+          # GitHub-hosted Ubuntu images already include most networking tools.
+          # Avoid contacting Ubuntu mirrors when the complete toolset is present:
+          # runner mirror DNS can be unavailable even while other network access works.
+          packages=(iproute2 nftables iputils-ping wireguard-tools iperf3 tcpdump)
+          missing=()
+          for package in "${packages[@]}"; do
+            status=$(dpkg-query -W -f='${db:Status-Status}' "$package" 2>/dev/null || true)
+            if [ "$status" != "installed" ]; then
+              missing+=("$package")
             fi
           done
-          echo "Unable to install Linux networking dependencies after 3 bounded attempts" >&2
+          if [ "${#missing[@]}" -eq 0 ]; then
+            echo "All Linux networking dependencies are already installed"
+            exit 0
+          fi
+
+          apt_options=(-o Acquire::Retries=1 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15)
+          # First try the runner's existing package indexes; updating them is
+          # unnecessary when the image already has usable cached metadata.
+          if timeout 120s sudo apt-get "${apt_options[@]}" install -y "${missing[@]}"; then
+            exit 0
+          fi
+
+          # Refresh indexes only as a fallback, with a hard upper bound.
+          timeout 90s sudo apt-get "${apt_options[@]}" update || true
+          if timeout 120s sudo apt-get "${apt_options[@]}" install -y "${missing[@]}"; then
+            exit 0
+          fi
+
+          echo "Unable to install missing Linux networking dependencies: ${missing[*]}" >&2
           exit 1
       - name: Run ignored integration tests
         run: timeout --signal=TERM --kill-after=30s 15m cargo test -- --ignored
