@@ -728,7 +728,7 @@ protocol = "icmp"
     ):
         if config.count(block) != 1:
             raise SystemExit("cannot find unique temporary peer firewall rule")
-        config = config.replace(block, 1)
+        config = config.replace(block, "", 1)
 else:
     raise SystemExit(f"unknown peer update action: {action}")
 with open(path, "w", encoding="utf-8") as stream:
@@ -750,7 +750,6 @@ ip netns exec "$SERVER_NS" "$BIN" --config "$TMP/server.toml" --reload \
     >"$TMP/reload-peer-add.log" 2>&1 || fail "server peer AllowedIPs addition failed"
 ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.22 -c 4 -W 2 10.77.0.1 \
     || fail "IPv4 packet from newly allowed peer address did not pass after reload"
-    || fail "IPv6 packet from newly allowed peer address did not pass after reload"
 
 python3 - "$TMP/server.toml" remove <<'PY'
 import sys
@@ -777,7 +776,7 @@ protocol = "icmp"
 ):
     if config.count(block) != 1:
         raise SystemExit("cannot find unique temporary peer firewall rule")
-    config = config.replace(block, 1)
+    config = config.replace(block, "", 1)
 with open(path, "w", encoding="utf-8") as stream:
     stream.write(config)
 PY
