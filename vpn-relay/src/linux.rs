@@ -1364,7 +1364,9 @@ mod tests {
         })
         .unwrap();
         assert!(!calls.is_empty());
-        assert!(calls.iter().all(|args| args.first().is_some_and(|family| family == "-4")));
+        assert!(calls
+            .iter()
+            .all(|args| args.first().is_some_and(|family| family == "-4")));
     }
 
     #[test]
