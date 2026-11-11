@@ -318,13 +318,6 @@ destination = "203.0.113.0/24"
 egress = "awg-primary"
 nat = "masquerade"
 
-[[routing.rules]]
-priority = 30
-ingress = "wg-ingress"
-source = ["fd77::2/128"]
-destination = "2001:db8:195::/48"
-egress = "awg-secondary"
-
 TOML
 
 cat >"$TMP/primary.toml" <<TOML
@@ -468,6 +461,11 @@ forward_chain="$(ip netns exec "$ROUTER_NS" nft list chain inet "vpn_relay_mu_ro
 nat_chain="$(ip netns exec "$ROUTER_NS" nft list chain inet "vpn_relay_mu_router_$SUFFIX" postrouting)"
 grep -Fq 'iif @managed_interfaces drop' <<<"$forward_chain" || fail "managed ingress isolation drop is missing"
 grep -Fq 'oif @managed_interfaces drop' <<<"$forward_chain" || fail "managed egress isolation drop is missing"
+drop_set="$(ip netns exec "$ROUTER_NS" nft list set inet "vpn_relay_mu_router_$SUFFIX" ipv6_drop_interfaces)"
+grep -Fq 'type iface_index' <<<"$drop_set" || fail "IPv6 drop set is not bound to TUN ifindex identities"
+grep -Fq 'iif @ipv6_drop_interfaces meta nfproto ipv6 drop' <<<"$chain" || fail "IPv6 ingress drop on managed TUNs is missing"
+grep -Fq 'oif @ipv6_drop_interfaces meta nfproto ipv6 drop' <<<"$forward_chain" || fail "IPv6 forwarded egress drop on managed TUNs is missing"
+grep -Fq 'oif @ipv6_drop_interfaces meta nfproto ipv6 drop' <<<"$output_chain" || fail "IPv6 locally generated egress drop on managed TUNs is missing"
 grep -Fq 'iifname "wg-ingress" iif !=' <<<"$chain" || fail "same-name replacement guard is missing"
 grep -Eq 'iif "?wg-ingress"? oif "?awg-primary"?' <<<"$nat_chain" && grep -Eq 'ct mark & 0xffff0000 == 0x50070000 masquerade' <<<"$nat_chain" || fail "primary IPv4 masquerade rule is missing"
 grep -Eq 'iif "?wg-ingress"? oif "?awg-primary"?' <<<"$nat_chain" && grep -Eq 'ct mark & 0xffff0000 == 0x50080000 masquerade' <<<"$nat_chain" || fail "primary IPv6 masquerade rule is missing"
@@ -904,6 +902,4 @@ overlap_v4_status=$?
 set -e
 [[ "$overlap_v4_status" -eq 124 ]] || fail "IPv4 source spoofing reached router TUN despite more-specific AllowedIPs ownership (tcpdump status $overlap_v4_status)"
 
-ip netns exec "$ROUTER_NS" timeout 3 tcpdump -nn -i wg-ingress -c 1 \
-    'icmp6 and src host fd77::3 and dst host fd77::1' \
 echo "vpn-relay multi-uplink test passed: IPv4 routing/NAT, bidirectional ICMP/TCP/UDP, continuous traffic during routing/NAT reload, outer UDP underlay isolation, independent uplink handshake recovery"
