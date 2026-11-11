@@ -120,7 +120,7 @@ impl RoutingPlan {
                 continue;
             }
 
-            let (id, mark) = (1..=0x0fff)
+            let (_id, mark) = (1..=0x0fff)
                 .map(|id| (id, FIRST_CONNTRACK_MARK | (id << 16)))
                 .find(|(_, mark)| !used_marks.contains(mark))
                 .ok_or_else(|| {
