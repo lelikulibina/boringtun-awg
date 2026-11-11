@@ -602,6 +602,11 @@ impl Config {
                 for prefix in &peer.allowed_ips {
                     let parsed = parse_prefix(prefix, &format!("{peer_path}.allowed_ips"))?;
                     has_ipv6 |= parsed.0.is_ipv6();
+                    if parsed.0.is_ipv6() && !interface.ipv6_enabled {
+                        return invalid(format!(
+                            "{peer_path}.allowed_ips contains IPv6 CIDR {prefix}, but interface '{interface_name}' has IPv6 disabled"
+                        ));
+                    }
                     if !owned_prefixes.insert(parsed) {
                         return invalid(format!(
                             "interfaces.{} assigns AllowedIP {} to more than one peer",
