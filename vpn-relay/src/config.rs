@@ -1627,7 +1627,7 @@ egress = "awg-uplink"
             "i3 = \"<rc 4>\"\n",
             "i4 = \"<rd 4>\"\n",
             "i5 = \"<dz 2>\"\n",
-            "header_protection_key = \"4242424242424242424242424242424242424242424242424242424242424242\"\n",
+            "header_protection_key = \"QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI=\"\n",
             "content_padding_addition = \"10-100\"\n",
             "rekey_after_time = \"100-120\"\n",
             "rekey_timeout = \"3-8\"\n",
