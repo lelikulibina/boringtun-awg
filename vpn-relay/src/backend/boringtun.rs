@@ -218,7 +218,7 @@ mod tests {
         for (setting, expected) in [
             ("persistent_keepalive_range = [25, 35]", Some((25, 35))),
             ("persistent_keepalive_secs = 25", Some((25, 25))),
-            ("persistent_keepalive_secs = \\\"25-35\\\"", Some((25, 35))),
+            ("persistent_keepalive_secs = \"25-35\"", Some((25, 35))),
         ] {
             let source = format!(
                 r#"
