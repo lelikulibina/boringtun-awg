@@ -356,9 +356,7 @@ struct InterfaceForwardingState {
     #[serde(default)]
     daemon_owned: bool,
     ipv4: String,
-    ipv6: String,
     ipv4_changed: bool,
-    ipv6_changed: bool,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -1510,8 +1508,6 @@ fn restore_interface_forwarding_entry_with(
     mut write: impl FnMut(&str, &str) -> Result<(), RuntimeError>,
     mut verify: impl FnMut(&str, u32) -> Result<(), RuntimeError>,
 ) -> Result<(), RuntimeError> {
-    // Legacy IPv6 journal fields are intentionally ignored. vpn-relay never
-    // reads or restores IPv6 sysctls.
     if family != "ipv4" || !changed { return Ok(()); }
     let key = interface_forwarding_sysctl_key(&entry.name, "ipv4")?;
     if let Err(error) = verify(&entry.name, entry.ifindex) {
@@ -1744,7 +1740,6 @@ fn recover_forwarding_state(
     namespace_inode: u64,
 ) -> Result<(), RuntimeError> {
     let Some(state) = load_forwarding_state(path, namespace_inode)? else { return Ok(()); };
-    // Old journal IPv6 fields are ignored; recovery is strictly IPv4-only.
     restore_forwarding_state_with_mode(
         &state,
         |key| read_forwarding_state_value(&state, key),
@@ -1771,7 +1766,6 @@ fn enable_forwarding_durable(
     namespace_inode: u64,
     forwarding_interfaces: &[String],
     daemon_owned_names: &std::collections::BTreeSet<String>,
-    _legacy_ipv6_enabled: bool,
 ) -> Result<ForwardingState, RuntimeError> {
     if !forwarding_interfaces.is_empty() {
         return enable_interface_forwarding_durable(
