@@ -2159,7 +2159,7 @@ mod tests {
         let mut original = [0u8; 16];
         original[0..4].copy_from_slice(&16u32.to_ne_bytes());
         response.extend_from_slice(&original);
-        let message = b"invalid forwarding attribute\\0";
+        let message = b"invalid forwarding attribute\0";
         let attribute_length = 4 + message.len();
         response.extend_from_slice(&(attribute_length as u16).to_ne_bytes());
         response.extend_from_slice(&NLMSGERR_ATTR_MSG.to_ne_bytes());
