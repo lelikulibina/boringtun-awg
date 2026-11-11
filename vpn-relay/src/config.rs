@@ -1315,7 +1315,7 @@ egress = "awg-uplink"
     }
 
     #[test]
-    fn static_snat_requires_an_address_and_matching_enabled_family() {
+    fn static_snat_requires_an_ipv4_address() {
         let missing_address = valid_config().replacen(
             "egress = \"awg-uplink\"",
             "egress = \"awg-uplink\"\nnat = \"snat\"",
@@ -1365,7 +1365,8 @@ egress = "awg-uplink"
             Some(&["10.10.0.0/24".to_owned()][..])
         );
         assert_eq!(config.routing.rules[0].nat, NatMode::Masquerade);
-        assert_eq!(config.routing.rules[1].nat, NatMode::None);
+        let default_config = Config::parse_toml(&valid_config()).unwrap();
+        assert_eq!(default_config.routing.rules[0].nat, NatMode::None);
     }
 
     #[test]
@@ -1382,9 +1383,7 @@ egress = "awg-uplink"
 
     #[test]
     fn routing_rule_allows_both_ip_selectors_to_be_omitted() {
-        let input = valid_config()
-            .replace("destination = \"0.0.0.0/0\"\n", "")
-            .replace("destination = \"203.0.113.0/24\"\n", "");
+        let input = valid_config().replace("destination = \"0.0.0.0/0\"\n", "");
         let config = Config::parse_toml(&input).unwrap();
         assert!(config.routing.rules[0].source.is_none());
         assert!(config.routing.rules[0].destination.is_none());
