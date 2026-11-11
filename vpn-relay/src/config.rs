@@ -1793,10 +1793,7 @@ egress = "awg-uplink"
             .to_string()
             .contains("daemon.ipv6_enabled = false"));
 
-        let ipv6_address = input.replace(
-            "10.10.0.1/24",
-            "2001:db8::1/64",
-        );
+        let ipv6_address = input.replace("10.10.0.1/24", "2001:db8::1/64");
         assert!(Config::parse_toml(&ipv6_address).is_err());
 
         let ipv6_endpoint = input.replace(
