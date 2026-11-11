@@ -286,7 +286,7 @@ destination = ["10.77.0.2/32", "10.77.0.3/32", "fd77::2/128", "fd77::3/128"]
 priority = 5
 ingress = "wg-ingress"
 source = "10.77.0.2/32"
-destination = "198.51.102.2/32"
+destination = "198.51.100.2/32"
 egress = "awg-secondary"
 
 [[routing.rules]]
