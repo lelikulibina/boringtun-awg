@@ -23,11 +23,12 @@ SECOND_CLIENT_PID=""
 ROUTER_PID=""
 PRIMARY_PID=""
 SECONDARY_PID=""
+ROUTE_RELOAD_PING_PID=""
 IPERF_PIDS=()
 NETNS_INODES=()
 
 cleanup() {
-    for pid in "${IPERF_PIDS[@]}" "$CLIENT_PID" "$SECOND_CLIENT_PID" "$ROUTER_PID" "$PRIMARY_PID" "$SECONDARY_PID"; do
+    for pid in "${IPERF_PIDS[@]}" "$CLIENT_PID" "$SECOND_CLIENT_PID" "$ROUTER_PID" "$PRIMARY_PID" "$SECONDARY_PID" "$ROUTE_RELOAD_PING_PID"; do
         if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
             kill -TERM "$pid" 2>/dev/null || true
             wait "$pid" 2>/dev/null || true
@@ -618,6 +619,8 @@ ip -6 -n "$CLIENT_NS" route replace 2001:db8:102::2/128 dev wg-client
 # Change a live routing decision and its NAT action without restarting the
 # router. The same destination exists behind both uplinks, so packet capture
 # proves the selected egress; the translated source proves the new NAT action.
+# Keep an established bidirectional flow on an unchanged decision active while
+# the router stages candidate routes and atomically switches nftables policy.
 # Verify the original IPv6 primary route before testing a live egress
 # transition. This distinguishes baseline forwarding failures from reload bugs.
 ip netns exec "$PRIMARY_NS" timeout 5 tcpdump -nn -i up-primary -c 1 \
@@ -688,6 +691,10 @@ ip netns exec "$SECONDARY_NS" timeout 3 tcpdump -nn -i up-secondary -c 1 \
     >"$TMP/runtime-reload-secondary-capture.log" 2>&1 &
 secondary_reload_capture=$!
 sleep 0.25
+ip netns exec "$CLIENT_NS" ping -n -i 0.05 -c 100 -W 2 203.0.113.1 \
+    >"$TMP/runtime-reload-continuous-ping.log" 2>&1 &
+ROUTE_RELOAD_PING_PID=$!
+sleep 0.2
 ip netns exec "$ROUTER_NS" "$BIN" --config "$TMP/router.toml" --reload \
     >"$TMP/runtime-routing-nat-reload.log" 2>&1 \
     || fail "runtime routing/NAT reload failed while both uplinks were active"
@@ -703,6 +710,12 @@ secondary_reload_status=$?
 set -e
 [[ "$secondary_reload_status" -eq 124 ]] \
     || fail "old secondary routing decision remained active after runtime reload"
+if ! wait "$ROUTE_RELOAD_PING_PID"; then
+    fail "bidirectional traffic on the unchanged primary route failed during routing/NAT reload"
+fi
+ROUTE_RELOAD_PING_PID=""
+grep -Eq '100 packets transmitted, 100 received, 0% packet loss' "$TMP/runtime-reload-continuous-ping.log" \
+    || fail "packet loss detected on the unchanged primary route during routing/NAT reload"
 
 # Repeat the live routing/NAT transition for IPv6. The destination exists on
 # both remote uplinks; the translated source identifies the newly selected
