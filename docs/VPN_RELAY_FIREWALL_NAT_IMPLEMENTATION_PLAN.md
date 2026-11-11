@@ -880,7 +880,11 @@ successful shutdown removes the firewall.
 2. IPv6 сохраняет `force_forwarding` через procfs sysctl: подтверждённого
    поддерживаемого kernel API записи этого параметра по ifindex пока нет.
    Перед чтением/записью проверяется пара name/ifindex; RA policy остаётся
-   ответственностью оператора.
+   ответственностью оператора. В upstream добавлен UAPI `NETCONFA_FORCE_FORWARDING`
+   для netconf notifications/dump, однако изученный kernel patch добавляет
+   заполнение и отправку атрибута, а не обработчик записи `RTM_NEWNETCONF`.
+   Поэтому этот атрибут нельзя считать заменой sysctl write API; реализацию
+   нельзя переключать на него без подтверждённого kernel-side setter.
 3. Переход IPv4 на ifindex снижает TOCTOU, но не устраняет его полностью:
    ifindex не является постоянным идентификатором после удаления интерфейса.
    Между userspace identity guard и обработкой netlink-запроса теоретически
@@ -913,3 +917,6 @@ IPv4/IPv6 forwarding и lifecycle/recovery suites уже существуют и
 net.ipv4.ip_forward=1 и net.ipv6.conf.all.forwarding=0 должны быть выставлены до запуска daemon и оставаться неизменными на протяжении его работы. Если global IPv6 forwarding включить, ядро переключит Host/Router setting всех интерфейсов и сбросит force_forwarding; runtime monitor завершит daemon и сохранит fail-closed firewall. Внешние интерфейсы, на которых forwarding уже включён, должны быть включены в allowlist; иначе startup отклоняется.
 
 | 2026-11-11 | IPv4 per-interface forwarding переведён на rtnetlink и проверен packet-level | Добавлена запись `RTM_NEWLINK` по ifindex с nested IPv4 devconf forwarding attribute, kernel ACK и `RTM_GETLINK` readback того же ifindex. Runtime startup, rollback, recovery и drift verification используют netlink для IPv4; IPv6 `force_forwarding` остаётся на sysctl. Daemon-driven network-namespace тест подтверждает IPv4/IPv6 forwarding, запрет на неразрешённом интерфейсе, реальную двустороннюю передачу пакетов и восстановление исходных значений при graceful shutdown. CI run `42992213621`, HEAD `c34c836251f9230aab9b9822b77f442f636893fb`: все обязательные jobs и `all-systems-go` — success; Windows skipped. TOCTOU из-за возможного повторного использования ifindex явно сохранён как остаточный риск. | Проверено |
+
+
+| 2026-11-11 | Исследован IPv6 `force_forwarding` netconf UAPI | Подтверждено, что `force_forwarding` — отдельная per-interface настройка IPv6 и не эквивалентна `conf/<if>/forwarding`. Найден upstream UAPI `NETCONFA_FORCE_FORWARDING`, но патчи netconf добавляют уведомления/чтение атрибута в dump, а не setter через `RTM_NEWNETCONF`. Следовательно, переход на такой netlink write был бы необоснован; IPv6 пока остаётся на sysctl с identity guard. | Исследование; безопасного setter API не найдено |
