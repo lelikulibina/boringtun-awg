@@ -871,7 +871,7 @@ start_iperf_listener() {
     ip netns exec "$ns" iperf3 -s -B "$bind" -p "$port" --forceflush >"$TMP/$label.log" 2>&1 &
     IPERF_PIDS+=("$!")
 }
-for spec in "PRIMARY_NS 5201 4 p-tcp" "PRIMARY_NS 5201 4 p-udp" "SECONDARY_NS 5202 4 s16" "SECONDARY_NS 5203 4 s24" "PRIMARY_NS 5204 6 p6" "SECONDARY_NS 5205 6 s6"; do
+for spec in "PRIMARY_NS 5201 4 p-tcp" "SECONDARY_NS 5202 4 s16" "SECONDARY_NS 5203 4 s24" "PRIMARY_NS 5204 6 p6" "SECONDARY_NS 5205 6 s6"; do
     read -r ns port family label <<<"$spec"
     start_iperf_listener "${!ns}" "$port" "$family" "$label"
 done
@@ -894,7 +894,7 @@ run_iperf() {
         logfile="$TMP/iperf-$label-$proto-$direction.json"
         timeout 20s ip netns exec "$CLIENT_NS" iperf3 "${args[@]}" >"$logfile" 2>&1 \
             || fail "$label $direction $proto iperf3 stream failed"
-        python3 - "$logfile" "$proto" <<'PY'
+        if ! python3 - "$logfile" "$proto" <<'PY'
 import json, sys
 with open(sys.argv[1], encoding="utf-8") as stream:
     report = json.load(stream)
@@ -914,7 +914,9 @@ else:
         raise SystemExit(f"UDP receiver got {received} bytes with {lost:.2f}% loss")
     print(f"UDP receiver: {received} bytes, {lost:.2f}% loss")
 PY
-        [[ "$?" -eq 0 ]] || fail "$label $direction $proto iperf3 receiver statistics invalid"
+        then
+            fail "$label $direction $proto iperf3 receiver statistics invalid"
+        fi
     done
 }
 run_iperf tcp primary-default 203.0.113.1 5201 4
