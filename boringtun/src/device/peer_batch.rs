@@ -304,8 +304,7 @@ mod tests {
         let retained_peer = device.with_device_mut(|inner| {
             Arc::clone(inner.peers.get(&public_key).expect("retained peer"))
         });
-        let second_public_key =
-            x25519::PublicKey::from(&x25519::StaticSecret::from([4u8; 32]));
+        let second_public_key = x25519::PublicKey::from(&x25519::StaticSecret::from([4u8; 32]));
         let third_prefix = AllowedIP {
             addr: "10.30.0.0".parse().unwrap(),
             cidr: 24,
@@ -323,7 +322,12 @@ mod tests {
             ])
             .expect("add another peer without replacing the unchanged peer");
         let retained_after_reload = device.with_device_mut(|inner| {
-            Arc::clone(inner.peers.get(&public_key).expect("retained peer after reload"))
+            Arc::clone(
+                inner
+                    .peers
+                    .get(&public_key)
+                    .expect("retained peer after reload"),
+            )
         });
         assert!(
             Arc::ptr_eq(&retained_peer, &retained_after_reload),
