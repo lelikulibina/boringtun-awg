@@ -835,6 +835,42 @@ successful shutdown removes the firewall.
 
 Поддерживаемая базовая схема развёртывания — rootful Podman с private network namespace (bridge), CAP_NET_ADMIN и доступом к /dev/net/tun. Имена интерфейсов и ifindex разрешаются внутри namespace процесса vpn-relay. --network host не рекомендуется; rootless Podman не объявляется поддерживаемым режимом полного relay до проверки TUN, netlink, nftables и sysctl capabilities.
 
+### Netlink и устранение TOCTOU — проверка ABI
+
+Проверка Linux kernel UAPI и обработчиков rtnetlink показала, что IPv4 и IPv6 нельзя
+безопасно перевести на один и тот же механизм:
+
+- IPv4: `IFLA_AF_SPEC / AF_INET / IFLA_INET_CONF` принимается обработчиком
+  `inet_set_link_af()`; вложенные элементы devconf применяются к конкретному
+  `net_device`. Атрибут `IPV4_DEVCONF_FORWARDING` поддерживает запись 0/1.
+  Это позволяет адресовать настройку через `RTM_NEWLINK` по ifindex.
+- IPv6: `IFLA_INET6_CONF` присутствует в dump-ответе, но
+  `inet6_set_link_af()` не принимает этот атрибут для записи. В частности,
+  наличие `DEVCONF_FORWARDING` или `DEVCONF_FORCE_FORWARDING` в массиве
+  конфигурации не означает, что их можно изменить через `RTM_NEWLINK`.
+  Поэтому миграция IPv6 `force_forwarding` на такой rtnetlink запрос была бы
+  фиктивной и завершалась бы без изменения нужного параметра.
+
+Следующий шаг реализации должен быть гибридным и проверяемым:
+
+1. IPv4 forwarding перевести на `RTM_NEWLINK` с `ifi_index`, nested
+   `IFLA_AF_SPEC/AF_INET/IFLA_INET_CONF`, ACK и проверкой результата чтением
+   состояния для того же ifindex.
+2. Для IPv6 сохранить семантику `force_forwarding`, пока не найден и не
+   подтверждён поддерживаемый kernel API записи по ifindex. Отдельно исследовать
+   безопасную работу через открытый procfs sysctl file descriptor, чтобы путь
+   интерфейса разрешался один раз, а не повторно в момент записи.
+3. Не считать TOCTOU устранённым, пока оба семейства не имеют операции записи,
+   адресующей исходный объект интерфейса, и пока race-тест с удалением/созданием
+   интерфейса под тем же именем не подтверждает отсутствие записи в замену.
+
+Acceptance criteria: проверка ACK/error/extack; отсутствие частичной записи при
+ошибочном атрибуте; сохранение исходных значений при rollback; корректное
+поведение при исчезновении интерфейса между resolve/open/write; IPv4 и IPv6
+packet-level forwarding в отдельном network namespace. До выполнения этих
+критериев текущая sysctl-реализация остаётся действующей, а TOCTOU — открытым
+ограничением.
+
 ### Per-interface forwarding — реализация
 
 - [x] Добавлен конфигурационный allowlist daemon.forwarding_interfaces; имена валидируются, дубликаты отклоняются, изменение списка через reload запрещено.
