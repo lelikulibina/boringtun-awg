@@ -414,7 +414,7 @@ impl RoutingPlan {
                 self.nft_family, self.nft_table
             ));
             output.push_str(&format!(
-                "add rule {} {} output meta nfproto ipv6 meta mark @socket_fwmarks drop\n",
+                "add rule {} {} output meta nfproto ipv6 socket mark @socket_fwmarks drop\n",
                 self.nft_family, self.nft_table
             ));
         }
@@ -939,7 +939,7 @@ egress = "awg-primary"
         let script = plan.nft_script();
         assert!(script.contains("socket_fwmarks { type mark;"));
         assert!(script.contains("input meta nfproto ipv6 socket mark @socket_fwmarks drop"));
-        assert!(script.contains("output meta nfproto ipv6 meta mark @socket_fwmarks drop"));
+        assert!(script.contains("output meta nfproto ipv6 socket mark @socket_fwmarks drop"));
         assert!(script.contains("prerouting iifname @ipv6_blocked_interfaces meta nfproto ipv6 drop"));
         assert!(!script.contains("snat ip6"));
     }
