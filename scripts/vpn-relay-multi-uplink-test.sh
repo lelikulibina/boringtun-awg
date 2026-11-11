@@ -605,6 +605,65 @@ ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -c 4 -W 2 195.142.1.1 \
 ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -c 4 -W 2 79.100.22.1 \
     || fail "79.100.22.0/24 traffic did not traverse awg-secondary"
 
+# Change a live routing decision and its NAT action without restarting the
+# router. The same destination exists behind both uplinks, so packet capture
+# proves the selected egress; the translated source proves the new NAT action.
+python3 - "$TMP/router.toml" <<'PY'
+import sys
+path = sys.argv[1]
+with open(path, encoding="utf-8") as stream:
+    config = stream.read()
+old = '''[[routing.rules]]
+priority = 5
+ingress = "wg-ingress"
+source = "10.77.0.2/32"
+destination = "198.51.100.2/32"
+egress = "awg-secondary"
+'''
+new = '''[routing]
+mark_base = 0x90000000
+
+[[routing.rules]]
+priority = 5
+ingress = "wg-ingress"
+source = "10.77.0.2/32"
+destination = "198.51.100.2/32"
+egress = "awg-primary"
+nat = "masquerade"
+'''
+if config.count(old) != 1:
+    raise SystemExit("cannot find unique priority-5 routing rule for reload")
+config = config.replace(old, new, 1)
+with open(path, "w", encoding="utf-8") as stream:
+    stream.write(config)
+PY
+"$BIN" --config "$TMP/router.toml" --check >/dev/null \
+    || fail "runtime routing/NAT reload candidate did not validate"
+ip netns exec "$PRIMARY_NS" timeout 5 tcpdump -nn -i up-primary -c 1 \
+    'icmp and src host 10.20.0.1 and dst host 198.51.100.2' \
+    >"$TMP/runtime-reload-primary-capture.log" 2>&1 &
+primary_reload_capture=$!
+ip netns exec "$SECONDARY_NS" timeout 3 tcpdump -nn -i up-secondary -c 1 \
+    'icmp and dst host 198.51.100.2' \
+    >"$TMP/runtime-reload-secondary-capture.log" 2>&1 &
+secondary_reload_capture=$!
+sleep 0.25
+ip netns exec "$ROUTER_NS" "$BIN" --config "$TMP/router.toml" --reload \
+    >"$TMP/runtime-routing-nat-reload.log" 2>&1 \
+    || fail "runtime routing/NAT reload failed while both uplinks were active"
+ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -e 5150 -c 1 -W 3 198.51.100.2 \
+    || fail "packet did not traverse the new primary masquerade decision after reload"
+wait "$primary_reload_capture" \
+    || fail "reloaded routing decision did not send translated traffic through primary uplink"
+grep -Fq '10.20.0.1 > 198.51.100.2' "$TMP/runtime-reload-primary-capture.log" \
+    || fail "runtime reload did not apply the new primary masquerade source address"
+set +e
+wait "$secondary_reload_capture"
+secondary_reload_status=$?
+set -e
+[[ "$secondary_reload_status" -eq 124 ]] \
+    || fail "old secondary routing decision remained active after runtime reload"
+
 # The second WG peer is included in the secondary source CIDR array but not in
 # the primary rule. Verify both IPv4 and IPv6 membership at packet level.
 ip netns exec "$SECOND_CLIENT_NS" ping -n -I 10.77.0.3 -c 4 -W 2 195.142.1.1 \
