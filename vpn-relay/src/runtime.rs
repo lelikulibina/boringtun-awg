@@ -1787,7 +1787,6 @@ fn restore_forwarding_state_with_mode(
     }
 }
 
-
 fn recover_forwarding_state(path: &Path, namespace_inode: u64) -> Result<(), RuntimeError> {
     let Some(state) = load_forwarding_state(path, namespace_inode)? else {
         return Ok(());
@@ -1886,11 +1885,9 @@ mod tests {
     #[test]
     fn unmanaged_forwarding_validation_ignores_allowlisted_links() {
         let allowed = std::collections::BTreeSet::from(["wg0".to_owned()]);
-        validate_unmanaged_forwarding_with(
-            &allowed,
-            &["wg0".to_owned()],
-            |_| Ok(Some("1".to_owned())),
-        )
+        validate_unmanaged_forwarding_with(&allowed, &["wg0".to_owned()], |_| {
+            Ok(Some("1".to_owned()))
+        })
         .unwrap();
     }
 
