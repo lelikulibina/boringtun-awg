@@ -381,7 +381,7 @@ impl DeviceHandle {
     fn new_with_ipv6(name: &str, config: DeviceConfig, ipv6_enabled: bool) -> Result<DeviceHandle, Error> {
         let n_threads = config.n_threads;
         let listen_port = config.listen_port.unwrap_or(0);
-        let mut wg_interface = Device::new(name, config, ipv6_enabled)?;
+        let mut wg_interface = Device::new_with_ipv6(name, config, ipv6_enabled)?;
         // Port 0 retains the historical behaviour: let the OS choose one.
         wg_interface.open_listen_socket(listen_port)?;
 
@@ -841,7 +841,11 @@ impl Device {
         Ok(())
     }
 
-    pub fn new(name: &str, config: DeviceConfig, ipv6_enabled: bool) -> Result<Device, Error> {
+    pub fn new(name: &str, config: DeviceConfig) -> Result<Device, Error> {
+        Self::new_with_ipv6(name, config, true)
+    }
+
+    fn new_with_ipv6(name: &str, config: DeviceConfig, ipv6_enabled: bool) -> Result<Device, Error> {
         let poll = EventPoll::<Handler>::new()?;
 
         // Create a tunnel device
