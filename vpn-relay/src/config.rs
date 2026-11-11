@@ -1086,6 +1086,7 @@ mtu = 1380
 listen_port = 51820
 private_key = "{KEY}"
 socket_fwmark = 4097
+ipv6_enabled = true
 
 [[interfaces.wg-server.peers]]
 public_key = "{KEY}"
@@ -1098,6 +1099,7 @@ mtu = 1380
 listen_port = 51821
 private_key = "{KEY}"
 socket_fwmark = 4098
+ipv6_enabled = true
 
 [[interfaces.awg-uplink.peers]]
 public_key = "{KEY}"
@@ -1131,6 +1133,16 @@ destination = "::/0"
 egress = "awg-uplink"
 "#
         )
+    }
+
+    fn ipv4_config() -> String {
+        valid_config()
+            .replace("ipv6_enabled = true\n", "")
+            .replace(", \"::/0\"", "")
+            .replace(
+                "[[routing.rules]]\npriority = 110\ningress = \"wg-server\"\ndestination = \"::/0\"\negress = \"awg-uplink\"\n",
+                "",
+            )
     }
 
     #[test]
@@ -1451,7 +1463,7 @@ egress = "awg-uplink"
     fn firewall_icmp_protocol_must_match_selector_address_family() {
         let icmp_v6_selector = format!(
             "{}\n[[firewall.input.rules]]\ninterface = \"wg-server\"\nsource = [\"2001:db8::2/128\"]\nprotocol = \"icmp\"\n",
-            valid_config().replace(
+            ipv4_config().replace(
                 "socket_fwmark = 4097",
                 "socket_fwmark = 4097\nipv6_enabled = true",
             )
@@ -1463,7 +1475,7 @@ egress = "awg-uplink"
 
         let icmp_v4_selector = format!(
             "{}\n[[firewall.output.rules]]\ninterface = \"awg-uplink\"\ndestination = [\"10.0.0.0/24\"]\nprotocol = \"icmpv6\"\n",
-            valid_config().replace(
+            ipv4_config().replace(
                 "socket_fwmark = 4098",
                 "socket_fwmark = 4098\nipv6_enabled = true",
             )
@@ -1475,7 +1487,7 @@ egress = "awg-uplink"
 
         let disabled_icmpv6 = format!(
             "{}\n[[firewall.input.rules]]\ninterface = \"wg-server\"\nprotocol = \"icmpv6\"\n",
-            valid_config()
+            ipv4_config()
         );
         assert!(Config::parse_toml(&disabled_icmpv6)
             .unwrap_err()
@@ -1527,7 +1539,7 @@ egress = "awg-uplink"
             Some("203.0.113.9".parse().unwrap())
         );
 
-        let disabled_ipv6 = valid_config().replacen(
+        let disabled_ipv6 = ipv4_config().replacen(
             "egress = \"awg-uplink\"",
             "egress = \"awg-uplink\"\nnat = \"snat\"\nnat_to = \"2001:db8::1\"",
             1,
@@ -1537,7 +1549,7 @@ egress = "awg-uplink"
 
     #[test]
     fn static_snat_family_must_match_the_intersection_of_both_selectors() {
-        let input = valid_config()
+        let input = ipv4_config()
             .replace(
                 "[interfaces.wg-server]",
                 "[interfaces.wg-server]\nipv6_enabled = true",
@@ -1728,7 +1740,7 @@ egress = "awg-uplink"
 
     #[test]
     fn ipv6_is_blocked_by_default_on_every_interface() {
-        let config = Config::parse_toml(&valid_config()).unwrap();
+        let config = Config::parse_toml(&ipv4_config()).unwrap();
         assert!(config.daemon.ipv6_enabled);
         assert!(config
             .interfaces
@@ -1738,7 +1750,7 @@ egress = "awg-uplink"
 
     #[test]
     fn ipv6_can_be_enabled_independently_per_interface() {
-        let input = valid_config()
+        let input = ipv4_config()
             .replace(
                 "socket_fwmark = 4097",
                 "socket_fwmark = 4097\nipv6_enabled = true",
@@ -1754,7 +1766,7 @@ egress = "awg-uplink"
 
     #[test]
     fn daemon_ipv4_only_mode_rejects_ipv6_configuration() {
-        let input = valid_config().replace(
+        let input = ipv4_config().replace(
             "manage_ip_forwarding = false",
             "manage_ip_forwarding = false\nipv6_enabled = false",
         );
