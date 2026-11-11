@@ -231,7 +231,9 @@ mod tests {
                 "#
             );
             let interface: InterfaceConfig = toml::from_str(&source).unwrap();
-            let prepared = PreparedInterface { peer_endpoints: vec![None] };
+            let prepared = PreparedInterface {
+                peer_endpoints: vec![None],
+            };
             let peers = build_peer_configs("wg-test", &interface, &prepared).unwrap();
             assert_eq!(peers[0].persistent_keepalive, expected);
         }
