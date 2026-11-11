@@ -1,5 +1,7 @@
 //! Import standard WireGuard and AmneziaWG INI configurations.
-use crate::config::{Config, InterfaceConfig, PeerConfig, PeerEndpoint, PersistentKeepaliveConfig, TunnelType};
+use crate::config::{
+    Config, InterfaceConfig, PeerConfig, PeerEndpoint, PersistentKeepaliveConfig, TunnelType,
+};
 use boringtun::noise::amnezia::AmneziaWgConfig;
 use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
@@ -272,7 +274,9 @@ fn parse_interface(source: &str) -> Result<(InterfaceConfig, Vec<String>), Impor
 
     let mut parsed_peers = Vec::new();
     if address.iter().any(|a| a.contains(':')) {
-        return Err(ImportError::Parse("IPv6 interface addresses are not supported by vpn-relay".into()));
+        return Err(ImportError::Parse(
+            "IPv6 interface addresses are not supported by vpn-relay".into(),
+        ));
     }
     for (index, values) in peers.iter().enumerate() {
         let public_key = required(
@@ -284,7 +288,8 @@ fn parse_interface(source: &str) -> Result<(InterfaceConfig, Vec<String>), Impor
         let allowed_ips = list_optional(values, "allowedips");
         if allowed_ips.iter().any(|a| a.contains(':')) {
             return Err(ImportError::Parse(format!(
-                "[Peer {}] IPv6 AllowedIPs are not supported by vpn-relay", index + 1
+                "[Peer {}] IPv6 AllowedIPs are not supported by vpn-relay",
+                index + 1
             )));
         }
         let endpoint = values.get("endpoint").cloned();
@@ -572,7 +577,10 @@ PersistentKeepalive = 25
         for source in [
             CLIENT.replace("Address = 10.0.0.2/32", "Address = fd00::2/128"),
             CLIENT.replace("AllowedIPs = 0.0.0.0/0", "AllowedIPs = ::/0"),
-            CLIENT.replace("Endpoint = vpn.example.com:51820", "Endpoint = [2001:db8::1]:51820"),
+            CLIENT.replace(
+                "Endpoint = vpn.example.com:51820",
+                "Endpoint = [2001:db8::1]:51820",
+            ),
         ] {
             assert!(parse_interface(&source).is_err());
         }
@@ -654,10 +662,7 @@ PersistentKeepalive = 25
         assert!(report.replaced);
         let config = Config::load(&config_path).unwrap();
         assert_eq!(config.interfaces.len(), 2);
-        assert_eq!(
-            config.interfaces["wg-client"].address,
-            vec!["10.0.0.2/32"]
-        );
+        assert_eq!(config.interfaces["wg-client"].address, vec!["10.0.0.2/32"]);
         assert_eq!(config.interfaces["wg-client"].listen_port, None);
         assert_eq!(config.interfaces["wg-backup"].listen_port, None);
 
