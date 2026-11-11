@@ -3,11 +3,11 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BIN="${VPN_RELAY_BIN:-$ROOT/target/debug/vpn-relay}"
-ROUTER="vpn-relay-fwd-r-$"
-CLIENT_A="vpn-relay-fwd-a-$"
-CLIENT_B="vpn-relay-fwd-b-$"
-CLIENT_BAD="vpn-relay-fwd-x-$"
-TABLE="vpn_relay_fwd_packet_$"
+ROUTER="vpn-relay-fwd-r-$$"
+CLIENT_A="vpn-relay-fwd-a-$$"
+CLIENT_B="vpn-relay-fwd-b-$$"
+CLIENT_BAD="vpn-relay-fwd-x-$$"
+TABLE="vpn_relay_fwd_packet_$$"
 TMP="$(mktemp -d)"
 PID=""
 INODE=""
@@ -128,11 +128,7 @@ for _ in $(seq 1 40); do
         PID=""
         fail "vpn-relay exited before forwarding became ready"
     fi
-    if ip netns exec "$ROUTER" nft list table inet "$TABLE" >/dev/null 2>&1 \\
-        && [[ "$(ip netns exec "$ROUTER" sysctl -n net.ipv4.conf.r-in0.forwarding)" == "1" ]] \\
-        && [[ "$(ip netns exec "$ROUTER" sysctl -n net.ipv4.conf.r-out0.forwarding)" == "1" ]] \\
-        && [[ "$(ip netns exec "$ROUTER" sysctl -n net.ipv6.conf.r-in0.force_forwarding)" == "1" ]] \\
-        && [[ "$(ip netns exec "$ROUTER" sysctl -n net.ipv6.conf.r-out0.force_forwarding)" == "1" ]]; then
+    if ip netns exec "$ROUTER" nft list table inet "$TABLE" >/dev/null 2>&1 && [[ "$(ip netns exec "$ROUTER" sysctl -n net.ipv4.conf.r-in0.forwarding)" == "1" ]] && [[ "$(ip netns exec "$ROUTER" sysctl -n net.ipv4.conf.r-out0.forwarding)" == "1" ]] && [[ "$(ip netns exec "$ROUTER" sysctl -n net.ipv6.conf.r-in0.force_forwarding)" == "1" ]] && [[ "$(ip netns exec "$ROUTER" sysctl -n net.ipv6.conf.r-out0.force_forwarding)" == "1" ]]; then
         ready=true
         break
     fi
