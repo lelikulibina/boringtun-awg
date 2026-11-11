@@ -46,10 +46,6 @@ pub struct DaemonConfig {
     pub stats_interval_secs: u64,
     #[serde(default = "default_nft_table")]
     pub nft_table: String,
-    /// Retained internally only for compatibility with the routing planner.
-    /// It is never configurable and IPv6 is not a supported datapath.
-    #[serde(skip)]
-    pub ipv6_enabled: bool,
     #[serde(default)]
     pub manage_ip_forwarding: bool,
     /// Interfaces whose link-scoped forwarding sysctls vpn-relay manages.
@@ -65,7 +61,6 @@ impl Default for DaemonConfig {
             log_level: default_log_level(),
             stats_interval_secs: default_stats_interval(),
             nft_table: default_nft_table(),
-            ipv6_enabled: false,
             manage_ip_forwarding: false,
             forwarding_interfaces: Vec::new(),
         }
@@ -125,10 +120,6 @@ pub struct InterfaceConfig {
     pub address: Vec<String>,
     #[serde(default = "default_mtu")]
     pub mtu: u16,
-    /// Retained internally only while the datapath migration is completed.
-    /// It is never configurable; IPv6 is rejected during validation.
-    #[serde(skip)]
-    pub ipv6_enabled: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub listen_port: Option<u16>,
     pub private_key: String,
@@ -214,7 +205,6 @@ pub enum FirewallProtocol {
     Tcp,
     Udp,
     Icmp,
-    Icmpv6,
 }
 
 /// An allow exception scoped to one managed interface. INPUT rules may use
@@ -344,7 +334,6 @@ impl Config {
             if current.tunnel_type != candidate.tunnel_type
                 || current.address != candidate.address
                 || current.mtu != candidate.mtu
-                || current.ipv6_enabled != candidate.ipv6_enabled
                 || current.listen_port != candidate.listen_port
                 || current.private_key != candidate.private_key
                 || current.socket_fwmark != candidate.socket_fwmark
@@ -387,9 +376,6 @@ impl Config {
 
         if self.daemon.nft_table != next.daemon.nft_table {
             return invalid("reload cannot change daemon.nft_table while the daemon is running");
-        }
-        if self.daemon.ipv6_enabled != next.daemon.ipv6_enabled {
-            return invalid("reload cannot change daemon.ipv6_enabled while the daemon is running");
         }
         if self.daemon.manage_ip_forwarding != next.daemon.manage_ip_forwarding
             || self.daemon.forwarding_interfaces != next.daemon.forwarding_interfaces
@@ -517,14 +503,6 @@ impl Config {
             return invalid("[daemon].log_level must be trace, debug, info, warn, or error");
         }
 
-        for (name, interface) in &self.interfaces {
-            if !self.daemon.ipv6_enabled && interface.ipv6_enabled {
-                return invalid(format!(
-                    "interfaces.{name}.ipv6_enabled cannot be true when daemon.ipv6_enabled = false"
-                ));
-            }
-        }
-
         let mut listen_ports = HashSet::new();
 
         for (interface_name, interface) in &self.interfaces {
@@ -554,22 +532,8 @@ impl Config {
                 &format!("interfaces.{}.private_key", interface_name),
             )?;
 
-            let mut has_ipv6 = false;
             for address in &interface.address {
-                let parsed =
-                    parse_prefix(address, &format!("interfaces.{}.address", interface_name))?;
-                has_ipv6 |= parsed.0.is_ipv6();
-            }
-            if has_ipv6 && !interface.ipv6_enabled {
-                return invalid(format!(
-                    "interfaces.{interface_name}.address contains IPv6, but IPv6 is disabled on that interface"
-                ));
-            }
-            if has_ipv6 && interface.mtu < 1280 {
-                return invalid(format!(
-                    "interfaces.{}.mtu must be at least 1280 when IPv6 addresses are configured",
-                    interface_name
-                ));
+                parse_prefix(address, &format!("interfaces.{}.address", interface_name))?;
             }
 
             if interface.tunnel_type == TunnelType::WireGuard && interface.awg.is_some() {
@@ -620,22 +584,9 @@ impl Config {
                             error
                         ))
                     })?;
-                    if matches!(parsed.host, EndpointHost::Ip(ip) if ip.is_ipv6())
-                        && !interface.ipv6_enabled
-                    {
-                        return invalid(format!(
-                            "{peer_path}.endpoint uses an IPv6 literal, but IPv6 is disabled on interface '{interface_name}'"
-                        ));
-                    }
                 }
                 for prefix in &peer.allowed_ips {
                     let parsed = parse_prefix(prefix, &format!("{peer_path}.allowed_ips"))?;
-                    has_ipv6 |= parsed.0.is_ipv6();
-                    if parsed.0.is_ipv6() && !interface.ipv6_enabled {
-                        return invalid(format!(
-                            "{peer_path}.allowed_ips contains IPv6 CIDR {prefix}, but interface '{interface_name}' has IPv6 disabled"
-                        ));
-                    }
                     if !owned_prefixes.insert(parsed) {
                         return invalid(format!(
                             "interfaces.{} assigns AllowedIP {} to more than one peer",
@@ -643,12 +594,6 @@ impl Config {
                         ));
                     }
                 }
-            }
-            if has_ipv6 && interface.mtu < 1280 {
-                return invalid(format!(
-                    "interfaces.{}.mtu must be at least 1280 when IPv6 AllowedIPs are configured",
-                    interface_name
-                ));
             }
         }
 
@@ -726,39 +671,17 @@ impl Config {
                 })
                 .transpose()?;
 
-            let ingress_ipv6 = self.interfaces[&rule.ingress].ipv6_enabled;
-            let egress_ipv6 = self.interfaces[&rule.egress].ipv6_enabled;
-            if source_prefixes
-                .iter()
-                .flatten()
-                .chain(destination_prefixes.iter().flatten())
-                .any(|(address, _)| address.is_ipv6())
-                && !(ingress_ipv6 && egress_ipv6)
-            {
-                return invalid(format!(
-                    "routing rule {} -> {} contains IPv6 selectors but IPv6 is disabled on ingress or egress",
-                    rule.ingress, rule.egress
-                ));
-            }
 
             match rule.nat {
                 NatMode::Snat => {
                     let Some(address) = rule.nat_to else {
                         return invalid("routing.rules.nat_to is required when nat = \"snat\"");
                     };
-                    let ingress_ipv6 = self.interfaces[&rule.ingress].ipv6_enabled;
-                    let egress_ipv6 = self.interfaces[&rule.egress].ipv6_enabled;
-                    if address.is_ipv6() && !(ingress_ipv6 && egress_ipv6) {
-                        return invalid(format!(
-                            "routing rule {} -> {} uses IPv6 SNAT but IPv6 is disabled on ingress or egress",
-                            rule.ingress, rule.egress
-                        ));
-                    }
                     let family_matches = match (&source_prefixes, &destination_prefixes) {
                         (Some(sources), Some(destinations)) => sources.iter().any(|(source, _)| {
-                            source.is_ipv4() == address.is_ipv4()
+                            source.is_ipv4()
                                 && destinations.iter().any(|(destination, _)| {
-                                    destination.is_ipv4() == address.is_ipv4()
+                                    destination.is_ipv4()
                                 })
                         }),
                         (Some(sources), None) => sources
@@ -799,12 +722,12 @@ impl Config {
         ] {
             for (index, rule) in rules.iter().enumerate() {
                 let path = format!("{direction}.rules[{index}]");
-                let Some(interface) = self.interfaces.get(&rule.interface) else {
+                if !self.interfaces.contains_key(&rule.interface) {
                     return invalid(format!(
                         "{path} references unknown interface '{}'",
                         rule.interface
                     ));
-                };
+                }
                 if is_input && rule.destination.is_some() {
                     return invalid(format!("{path}.destination is not valid for INPUT rules"));
                 }
@@ -812,7 +735,6 @@ impl Config {
                     return invalid(format!("{path}.source is not valid for OUTPUT rules"));
                 }
                 let mut has_ipv4_selector = false;
-                let mut has_ipv6_selector = false;
                 for (field, prefixes) in [
                     ("source", rule.source.as_ref()),
                     ("destination", rule.destination.as_ref()),
@@ -832,35 +754,9 @@ impl Config {
                         }
                         for prefix in prefixes {
                             let (address, _) = parse_prefix(prefix, &format!("{path}.{field}"))?;
-                            has_ipv6_selector |= address.is_ipv6();
                             has_ipv4_selector |= address.is_ipv4();
-                            if address.is_ipv6() && !interface.ipv6_enabled {
-                                return invalid(format!(
-                                    "{path}.{field} contains IPv6 CIDR {prefix}, but interface '{}' has IPv6 disabled",
-                                    rule.interface
-                                ));
-                            }
                         }
                     }
-                }
-                match rule.protocol {
-                    Some(FirewallProtocol::Icmp) if has_ipv6_selector => {
-                        return invalid(format!(
-                            "{path}.protocol = \"icmp\" cannot be combined with IPv6 CIDR selectors"
-                        ));
-                    }
-                    Some(FirewallProtocol::Icmpv6) if has_ipv4_selector => {
-                        return invalid(format!(
-                            "{path}.protocol = \"icmpv6\" cannot be combined with IPv4 CIDR selectors"
-                        ));
-                    }
-                    Some(FirewallProtocol::Icmpv6) if !interface.ipv6_enabled => {
-                        return invalid(format!(
-                            "{path}.protocol = \"icmpv6\" requires IPv6 to be enabled on interface '{}'",
-                            rule.interface
-                        ));
-                    }
-                    _ => {}
                 }
                 if let Some(ports) = &rule.ports {
                     if ports.is_empty() || ports.contains(&0) {
@@ -901,6 +797,9 @@ pub enum EndpointHost {
 impl PeerEndpoint {
     pub fn parse(value: &str) -> Result<Self, String> {
         if let Ok(address) = SocketAddr::from_str(value) {
+            if !address.is_ipv4() {
+                return Err("IPv6 endpoints are not supported by vpn-relay".to_owned());
+            }
             return Ok(Self {
                 host: EndpointHost::Ip(address.ip()),
                 port: address.port(),
@@ -909,7 +808,7 @@ impl PeerEndpoint {
 
         let (host, port) = value
             .rsplit_once(':')
-            .ok_or_else(|| "expected host:port (IPv6 literals must be bracketed)".to_owned())?;
+            .ok_or_else(|| "expected IPv4 host:port".to_owned())?;
         let port = port
             .parse::<u16>()
             .map_err(|_| "port must be an integer in 1..=65535".to_owned())?;
@@ -917,14 +816,14 @@ impl PeerEndpoint {
             return Err("port must be in 1..=65535".to_owned());
         }
         if host.is_empty() || host.starts_with('[') || host.ends_with(']') || host.contains(':') {
-            return Err("invalid host; IPv6 literals must use [address]:port syntax".to_owned());
+            return Err("invalid host; IPv4 literals or DNS names are supported".to_owned());
         }
 
         if let Ok(address) = host.parse::<std::net::IpAddr>() {
-            return Ok(Self {
-                host: EndpointHost::Ip(address),
-                port,
-            });
+            if !address.is_ipv4() {
+                return Err("IPv6 endpoints are not supported by vpn-relay".to_owned());
+            }
+            return Ok(Self { host: EndpointHost::Ip(address), port });
         }
         if !valid_ascii_dns_name(host) {
             return Err(
@@ -971,26 +870,12 @@ pub fn decode_key(value: &str, field: &str) -> Result<[u8; 32], ConfigError> {
 
 fn canonical_prefix(value: &str, field: &str) -> Result<(IpAddr, u8), ConfigError> {
     let (address, prefix) = parse_prefix(value, field)?;
-    let network = match address {
-        IpAddr::V4(address) => {
-            let bits = u32::from(address);
-            let mask = if prefix == 0 {
-                0
-            } else {
-                u32::MAX << (32 - prefix)
-            };
-            IpAddr::V4(std::net::Ipv4Addr::from(bits & mask))
-        }
-        IpAddr::V6(address) => {
-            let bits = u128::from(address);
-            let mask = if prefix == 0 {
-                0
-            } else {
-                u128::MAX << (128 - prefix)
-            };
-            IpAddr::V6(std::net::Ipv6Addr::from(bits & mask))
-        }
+    let IpAddr::V4(address) = address else {
+        return invalid(format!("{field} must contain IPv4 CIDRs only"));
     };
+    let bits = u32::from(address);
+    let mask = if prefix == 0 { 0 } else { u32::MAX << (32 - prefix) };
+    let network = IpAddr::V4(std::net::Ipv4Addr::from(bits & mask));
     Ok((network, prefix))
 }
 
@@ -1002,11 +887,11 @@ fn parse_prefix(value: &str, field: &str) -> Result<(IpAddr, u8), ConfigError> {
         ))
     })?;
     let address = address.parse::<IpAddr>().map_err(|error| {
-        ConfigError::Validation(format!(
-            "{} contains invalid CIDR '{}': {}",
-            field, value, error
-        ))
+        ConfigError::Validation(format!("{} contains invalid CIDR '{}': {}", field, value, error))
     })?;
+    if !address.is_ipv4() {
+        return invalid(format!("{field} supports IPv4 CIDRs only"));
+    }
     let prefix = prefix.parse::<u8>().map_err(|error| {
         ConfigError::Validation(format!(
             "{} contains invalid CIDR '{}': {}",
