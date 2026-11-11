@@ -1898,7 +1898,11 @@ mod tests {
 
     #[test]
     fn recovery_rejects_legacy_ipv6_journal_without_accessing_sysctls() {
-        let path = temporary_forwarding_state_path("legacy-ipv6-pending");
+        let path = std::env::temp_dir().join(format!(
+            "vpn-relay-legacy-ipv6-pending-{}.json",
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&path);
         let document = serde_json::json!({
             "version": 2,
             "namespace_inode": 4242,
