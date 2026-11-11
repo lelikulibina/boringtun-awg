@@ -461,12 +461,17 @@ if ip -n "$NS" -4 rule show | grep -q 'proto 242'; then
 fi
 ip -n "$NS" -4 route show table 10000 >"$TMP/startup-route-rollback-route-after.txt" 2>&1
 ip -n "$NS" -4 route show table all >"$TMP/startup-route-rollback-routes-all.txt" 2>&1
-grep -Fq 'default dev awg-primary proto 242' "$TMP/startup-route-rollback-route-after.txt" || fail "expected first-egress route was not retained after injected cleanup failure"
+# Startup rollback destroys the TUN links even when route deletion itself
+# fails. The kernel consequently removes routes bound to those links; the
+# fail-closed nftables table, not an unusable route to a deleted device, is
+# the resource that must remain retained.
+if grep -Eq 'default dev awg-primary proto 242' "$TMP/startup-route-rollback-route-after.txt"; then
+    fail "policy route survived after its TUN interface was destroyed"
+fi
 [[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "0" ]] || fail "IPv4 forwarding changed after policy-route rollback failure"
 [[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "0" ]] || fail "IPv6 forwarding changed after policy-route rollback failure"
-# The first-egress route is deliberately retained. Remove only this test-owned
-# route and firewall with the real ip/nft commands before continuing.
-ip -n "$NS" -4 route del default dev awg-primary table 10000 proto 242
+# The TUN teardown has already removed its bound route. Remove the
+# retained fail-closed firewall before continuing.
 ip netns exec "$NS" nft delete table inet vpn_relay_it
 
 # Force a known initial state: forwarding may already be enabled by the
