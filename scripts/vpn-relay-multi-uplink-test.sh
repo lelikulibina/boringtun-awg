@@ -76,7 +76,7 @@ fail() {
 [[ $EUID -eq 0 ]] || fail "must run as root"
 [[ -x "$BIN" ]] || fail "vpn-relay binary not found at $BIN"
 [[ -c /dev/net/tun ]] || fail "/dev/net/tun is unavailable"
-for command in ip nft ping python3 tcpdump timeout; do
+for command in ip nft ping python3 tcpdump timeout iperf3; do
     command -v "$command" >/dev/null || fail "$command is required"
 done
 
@@ -863,134 +863,70 @@ if ip netns exec "$SECONDARY_NS" ping -n -I 10.30.0.2 -c 2 -W 1 10.77.0.2 >/dev/
     fail "AWG-secondary initiated traffic reached a WG client without a routing rule"
 fi
 
-# Bidirectional TCP/UDP probes use Python's standard library, not iperf3.
-cat >"$TMP/throughput.py" <<'PY'
-import argparse, socket, struct, sys, time
-CHUNK=b"v"*65536
-COUNT=900
-SIZE=1200
-INTERVAL=SIZE*8/3_000_000
-def sock(family,kind):
-    return socket.socket(socket.AF_INET6 if family==6 else socket.AF_INET,kind)
-def addr(family,port):
-    return ("::",port) if family==6 else ("0.0.0.0",port)
-def exact(s,n):
-    b=bytearray()
-    while len(b)<n:
-        x=s.recv(min(65536,n-len(b)))
-        if not x: raise RuntimeError("short TCP stream")
-        b.extend(x)
-    return bytes(b)
-def tcp_server(port,fam):
-    s=sock(fam,socket.SOCK_STREAM); s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1); s.bind(addr(fam,port)); s.listen(8)
-    while True:
-        conn,_=s.accept()
-        with conn:
-            conn.settimeout(15); mode,size=struct.unpack("!cQ",exact(conn,9))
-            if mode==b"S":
-                got=0
-                while got<size:
-                    x=conn.recv(min(65536,size-got))
-                    if not x: break
-                    got+=len(x)
-                conn.sendall(struct.pack("!Q",got))
-                if got!=size: raise RuntimeError("short TCP receive")
-            elif mode==b"R":
-                sent=0
-                while sent<size:
-                    x=CHUNK[:min(len(CHUNK),size-sent)]; conn.sendall(x); sent+=len(x)
-            else: raise RuntimeError("bad TCP mode")
-def tcp_client(target,port,fam,direction):
-    size=8*1024*1024
-    with sock(fam,socket.SOCK_STREAM) as s:
-        s.settimeout(15); s.connect((target,port)); mode=b"S" if direction=="forward" else b"R"
-        s.sendall(struct.pack("!cQ",mode,size))
-        if mode==b"S":
-            sent=0
-            while sent<size:
-                x=CHUNK[:min(len(CHUNK),size-sent)]; s.sendall(x); sent+=len(x)
-            got=struct.unpack("!Q",exact(s,8))[0]
-        else: got=len(exact(s,size))
-    if got!=size: raise RuntimeError(f"TCP {direction}: {got}/{size}")
-    print(f"TCP {direction}: {got} bytes")
-def udp_server(port,fam):
-    s=sock(fam,socket.SOCK_DGRAM); s.bind(addr(fam,port))
-    while True:
-        header,peer=s.recvfrom(128)
-        if len(header)!=9 or header[:4]!=b"VRTP": continue
-        mode,count=header[4:5],struct.unpack("!I",header[5:])[0]
-        if mode==b"S":
-            seen=set(); deadline=time.monotonic()+6
-            while len(seen)<count and time.monotonic()<deadline:
-                s.settimeout(max(.1,deadline-time.monotonic()))
-                try: packet,source=s.recvfrom(2048)
-                except socket.timeout: break
-                if source==peer and len(packet)==SIZE: seen.add(struct.unpack("!I",packet[:4])[0])
-            s.sendto(struct.pack("!I",len(seen)),peer)
-        elif mode==b"R":
-            payload=b"x"*(SIZE-4); start=time.monotonic()
-            for i in range(count):
-                s.sendto(struct.pack("!I",i)+payload,peer)
-                delay=start+(i+1)*INTERVAL-time.monotonic()
-                if delay>0: time.sleep(delay)
-def udp_client(target,port,fam,direction):
-    # Use an ephemeral source port. Reusing the service port as the client
-    # source port creates a symmetric UDP tuple and makes NAT/reply-path
-    # diagnostics ambiguous; real clients use an independent local port.
-    s=sock(fam,socket.SOCK_DGRAM); s.bind(addr(fam,0)); s.settimeout(8); peer=(target,port)
-    mode=b"S" if direction=="forward" else b"R"; s.sendto(b"VRTP"+mode+struct.pack("!I",COUNT),peer)
-    if mode==b"S":
-        payload=b"x"*(SIZE-4); start=time.monotonic()
-        for i in range(COUNT):
-            s.sendto(struct.pack("!I",i)+payload,peer)
-            delay=start+(i+1)*INTERVAL-time.monotonic()
-            if delay>0: time.sleep(delay)
-        got=struct.unpack("!I",s.recvfrom(32)[0])[0]
-    else:
-        seen=set(); deadline=time.monotonic()+6
-        while len(seen)<COUNT and time.monotonic()<deadline:
-            try: packet,_=s.recvfrom(2048)
-            except socket.timeout: break
-            if len(packet)==SIZE: seen.add(struct.unpack("!I",packet[:4])[0])
-        got=len(seen)
-    s.close(); loss=(COUNT-got)*100/COUNT
-    if got*SIZE<100000 or loss>2: raise RuntimeError(f"UDP {direction}: {got}/{COUNT}, loss {loss:.2f}%")
-    print(f"UDP {direction}: {got*SIZE} bytes, loss {loss:.2f}%")
-p=argparse.ArgumentParser(); p.add_argument("role",choices=("server","client")); p.add_argument("--protocol",choices=("tcp","udp"),required=True); p.add_argument("--port",type=int,required=True); p.add_argument("--family",type=int,choices=(4,6),required=True); p.add_argument("--target"); p.add_argument("--direction",choices=("forward","reverse")); a=p.parse_args()
-try:
-    if a.role=="server": (tcp_server if a.protocol=="tcp" else udp_server)(a.port,a.family)
-    elif not a.target or not a.direction: p.error("client needs target and direction")
-    elif a.protocol=="tcp": tcp_client(a.target,a.port,a.family,a.direction)
-    else: udp_client(a.target,a.port,a.family,a.direction)
-except Exception as e: print(e,file=sys.stderr); raise SystemExit(1)
-PY
-start_listener() {
-    local ns="$1" proto="$2" port="$3" family="$4" label="$5"
-    ip netns exec "$ns" python3 "$TMP/throughput.py" server --protocol "$proto" --port "$port" --family "$family" >"$TMP/$label.log" 2>&1 &
+# Run real iperf3 servers on each isolated uplink. Separate ports keep the
+# IPv4/IPv6 and primary/secondary destinations independently observable.
+start_iperf_listener() {
+    local ns="$1" port="$2" family="$3" label="$4" bind
+    if [[ "$family" == "6" ]]; then bind="::"; else bind="0.0.0.0"; fi
+    ip netns exec "$ns" iperf3 -s -B "$bind" -p "$port" --forceflush >"$TMP/$label.log" 2>&1 &
     IPERF_PIDS+=("$!")
 }
-for spec in "PRIMARY_NS tcp 5201 4 p-tcp" "PRIMARY_NS udp 5201 4 p-udp" "SECONDARY_NS tcp 5202 4 s16-tcp" "SECONDARY_NS udp 5202 4 s16-udp" "SECONDARY_NS tcp 5203 4 s24-tcp" "SECONDARY_NS udp 5203 4 s24-udp" "PRIMARY_NS tcp 5204 6 p6-tcp" "PRIMARY_NS udp 5204 6 p6-udp" "SECONDARY_NS tcp 5205 6 s6-tcp" "SECONDARY_NS udp 5205 6 s6-udp"; do
-    read -r ns proto port family label <<<"$spec"
-    start_listener "${!ns}" "$proto" "$port" "$family" "$label"
+for spec in "PRIMARY_NS 5201 4 p-tcp" "PRIMARY_NS 5201 4 p-udp" "SECONDARY_NS 5202 4 s16" "SECONDARY_NS 5203 4 s24" "PRIMARY_NS 5204 6 p6" "SECONDARY_NS 5205 6 s6"; do
+    read -r ns port family label <<<"$spec"
+    start_iperf_listener "${!ns}" "$port" "$family" "$label"
 done
 sleep 0.5
-for pid in "${IPERF_PIDS[@]}"; do kill -0 "$pid" 2>/dev/null || fail "throughput listener failed to start"; done
-run_stream() {
+for pid in "${IPERF_PIDS[@]}"; do
+    kill -0 "$pid" 2>/dev/null || fail "iperf3 listener failed to start"
+done
+
+run_iperf() {
     local proto="$1" label="$2" target="$3" port="$4" family="$5"
+    local direction args=() logfile
     for direction in forward reverse; do
-        timeout 15s ip netns exec "$CLIENT_NS" python3 "$TMP/throughput.py" client --protocol "$proto" --target "$target" --port "$port" --family "$family" --direction "$direction" || fail "$label $direction $proto stream failed"
+        args=(-c "$target" -p "$port" -J)
+        if [[ "$proto" == "tcp" ]]; then
+            args+=(-n 8M)
+        else
+            args+=(-u -b 3M -t 3 -l 1200)
+        fi
+        [[ "$direction" == "reverse" ]] && args+=(-R)
+        logfile="$TMP/iperf-$label-$proto-$direction.json"
+        timeout 20s ip netns exec "$CLIENT_NS" iperf3 "${args[@]}" >"$logfile" 2>&1 \
+            || fail "$label $direction $proto iperf3 stream failed"
+        python3 - "$logfile" "$proto" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding="utf-8") as stream:
+    report = json.load(stream)
+end = report.get("end", {})
+candidates = [end.get("sum_received"), end.get("sum")]
+candidates += [item.get("receiver") for item in end.get("streams", [])]
+stats = next((item for item in candidates if isinstance(item, dict) and "bytes" in item), None)
+if stats is None:
+    raise SystemExit("iperf3 JSON has no receiver statistics")
+received = int(stats.get("bytes", 0))
+if sys.argv[2] == "tcp":
+    if received < 8 * 1024 * 1024:
+        raise SystemExit(f"TCP receiver got only {received} bytes")
+else:
+    lost = float(stats.get("lost_percent", 100.0))
+    if received < 100_000 or lost > 2.0:
+        raise SystemExit(f"UDP receiver got {received} bytes with {lost:.2f}% loss")
+    print(f"UDP receiver: {received} bytes, {lost:.2f}% loss")
+PY
+        [[ "$?" -eq 0 ]] || fail "$label $direction $proto iperf3 receiver statistics invalid"
     done
 }
-run_stream tcp primary-default 203.0.113.1 5201 4
-run_stream udp primary-default 203.0.113.1 5201 4
-run_stream tcp secondary-16 195.142.1.1 5202 4
-run_stream udp secondary-16 195.142.1.1 5202 4
-run_stream tcp secondary-24 79.100.22.1 5203 4
-run_stream udp secondary-24 79.100.22.1 5203 4
-run_stream tcp primary-v6 2001:db8:1::1 5204 6
-run_stream udp primary-v6 2001:db8:1::1 5204 6
-run_stream tcp secondary-v6 2001:db8:195:1::1 5205 6
-run_stream udp secondary-v6 2001:db8:195:1::1 5205 6
+run_iperf tcp primary-default 203.0.113.1 5201 4
+run_iperf udp primary-default 203.0.113.1 5201 4
+run_iperf tcp secondary-16 195.142.1.1 5202 4
+run_iperf udp secondary-16 195.142.1.1 5202 4
+run_iperf tcp secondary-24 79.100.22.1 5203 4
+run_iperf udp secondary-24 79.100.22.1 5203 4
+run_iperf tcp primary-v6 2001:db8:1::1 5204 6
+run_iperf udp primary-v6 2001:db8:1::1 5204 6
+run_iperf tcp secondary-v6 2001:db8:195:1::1 5205 6
+run_iperf udp secondary-v6 2001:db8:195:1::1 5205 6
 
 # Encrypted outer UDP must use each underlay veth and must never appear on
 # either AWG TUN. Keepalives and the traffic above keep the sockets active.
