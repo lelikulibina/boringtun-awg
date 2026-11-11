@@ -285,7 +285,7 @@ impl RoutingPlan {
             input_rules,
             output_rules,
             socket_marks,
-            ipv6_transport_blocked: false,
+            ipv6_transport_blocked: true,
             ipv6_blocked_interfaces,
             interface_indices: None,
         }
@@ -395,31 +395,6 @@ impl RoutingPlan {
             ));
             output.push_str(&format!(
                 "add rule {} {} output oifname @ipv6_blocked_interfaces meta nfproto ipv6 drop\n",
-                self.nft_family, self.nft_table
-            ));
-        }
-
-        if self.ipv6_transport_blocked && !self.socket_marks.is_empty() {
-            let marks = self
-                .socket_marks
-                .iter()
-                .map(|mark| format!("0x{mark:x}"))
-                .collect::<Vec<_>>()
-                .join(", ");
-            output.push_str(&format!(
-                "add set {} {} socket_fwmarks {{ type mark; elements = {{ {} }}; }}\n",
-                self.nft_family, self.nft_table, marks
-            ));
-            // BoringTun keeps its regular dual-stack socket implementation.
-            // Socket-mark matching prevents IPv6 packets from reaching those
-            // sockets on ingress or leaving them on the underlay, including
-            // dynamically learned IPv6 peer endpoints.
-            output.push_str(&format!(
-                "add rule {} {} input meta nfproto ipv6 socket mark @socket_fwmarks drop\n",
-                self.nft_family, self.nft_table
-            ));
-            output.push_str(&format!(
-                "add rule {} {} output meta nfproto ipv6 meta mark @socket_fwmarks drop\n",
                 self.nft_family, self.nft_table
             ));
         }
@@ -945,7 +920,7 @@ egress = "awg-primary"
             .any(|command| command.first().is_some_and(|family| family == "-6")));
 
         let script = plan.nft_script();
-        assert!(script.contains("socket_fwmarks { type mark;"));
+        assert!(!script.contains("socket_fwmarks"));
         assert!(!script.contains("socket mark @socket_fwmarks drop"));
         assert!(!script.contains("meta mark @socket_fwmarks drop"));
         assert!(
