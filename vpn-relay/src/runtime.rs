@@ -1813,6 +1813,24 @@ fn recover_forwarding_state(path: &Path, namespace_inode: u64) -> Result<(), Run
     remove_forwarding_state_file(path)
 }
 
+fn enable_forwarding_state_with(
+    mut state: ForwardingState,
+    mut write: impl FnMut(&str, &str) -> Result<(), RuntimeError>,
+) -> Result<ForwardingState, RuntimeError> {
+    if state.ipv4 != "1" {
+        state.ipv4_changed = true;
+        if let Err(enable_error) = write("net.ipv4.ip_forward", "1") {
+            if let Err(restore_error) = restore_forwarding_with(&state, &mut write) {
+                return Err(RuntimeError::FatalTransition(format!(
+                    "IPv4 forwarding enable failed ({enable_error}); restoring original forwarding state also failed ({restore_error}); fail-closed nftables policy must remain installed"
+                )));
+            }
+            return Err(enable_error);
+        }
+    }
+    Ok(state)
+}
+
 fn enable_forwarding_durable(
     path: &Path,
     namespace_inode: u64,
