@@ -1634,7 +1634,6 @@ fn enable_interface_forwarding_durable(
     validate_unmanaged_forwarding_with(
         &allowed,
         &interface_sysctl_names("/proc/sys/net/ipv4/conf")?,
-        &[],
         read_unmanaged_forwarding_sysctl,
     )?;
     let mut entries = Vec::with_capacity(names.len());
@@ -1829,7 +1828,6 @@ mod tests {
         let allowed = std::collections::BTreeSet::from(["wg0".to_owned()]);
         validate_unmanaged_forwarding_with(
             &allowed,
-            &["wg0".to_owned()],
             &["wg0".to_owned()],
             |_| Ok(Some("1".to_owned())),
         )
