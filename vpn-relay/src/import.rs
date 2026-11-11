@@ -1,7 +1,5 @@
 //! Import standard WireGuard and AmneziaWG INI configurations.
-use crate::config::{
-    Config, InterfaceConfig, PeerConfig, PersistentKeepaliveConfig, TunnelType,
-};
+use crate::config::{Config, InterfaceConfig, PeerConfig, PersistentKeepaliveConfig, TunnelType};
 use boringtun::noise::amnezia::AmneziaWgConfig;
 use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
@@ -576,10 +574,7 @@ PersistentKeepalive = 25
 
     #[test]
     fn imports_amnezia_persistent_keepalive_ranges_and_disable_values() {
-        let range = CLIENT.replace(
-            "PersistentKeepalive = 25",
-            "PersistentKeepalive = 25-35",
-        );
+        let range = CLIENT.replace("PersistentKeepalive = 25", "PersistentKeepalive = 25-35");
         let (cfg, _) = parse_interface(&range).unwrap();
         assert_eq!(
             cfg.peers[0].persistent_keepalive_secs,
