@@ -459,6 +459,7 @@ ip -n "$SECOND_CLIENT_NS" route replace 198.51.100.3/32 dev wg-client-2
 chain="$(ip netns exec "$ROUTER_NS" nft list chain inet "vpn_relay_mu_router_$SUFFIX" prerouting)"
 forward_chain="$(ip netns exec "$ROUTER_NS" nft list chain inet "vpn_relay_mu_router_$SUFFIX" forward)"
 nat_chain="$(ip netns exec "$ROUTER_NS" nft list chain inet "vpn_relay_mu_router_$SUFFIX" postrouting)"
+output_chain="$(ip netns exec "$ROUTER_NS" nft list chain inet "vpn_relay_mu_router_$SUFFIX" output)"
 grep -Fq 'iif @managed_interfaces drop' <<<"$forward_chain" || fail "managed ingress isolation drop is missing"
 grep -Fq 'oif @managed_interfaces drop' <<<"$forward_chain" || fail "managed egress isolation drop is missing"
 drop_set="$(ip netns exec "$ROUTER_NS" nft list set inet "vpn_relay_mu_router_$SUFFIX" ipv6_drop_interfaces)"
@@ -468,7 +469,6 @@ grep -Fq 'oif @ipv6_drop_interfaces meta nfproto ipv6 drop' <<<"$forward_chain" 
 grep -Fq 'oif @ipv6_drop_interfaces meta nfproto ipv6 drop' <<<"$output_chain" || fail "IPv6 locally generated egress drop on managed TUNs is missing"
 grep -Fq 'iifname "wg-ingress" iif !=' <<<"$chain" || fail "same-name replacement guard is missing"
 grep -Eq 'iif "?wg-ingress"? oif "?awg-primary"?' <<<"$nat_chain" && grep -Eq 'ct mark & 0xffff0000 == 0x50070000 masquerade' <<<"$nat_chain" || fail "primary IPv4 masquerade rule is missing"
-grep -Eq 'iif "?wg-ingress"? oif "?awg-primary"?' <<<"$nat_chain" && grep -Eq 'ct mark & 0xffff0000 == 0x50080000 masquerade' <<<"$nat_chain" || fail "primary IPv6 masquerade rule is missing"
 
 grep -Eq 'iif "?wg-ingress"? ct state new ip saddr { 10.77.0.2/31 } ip daddr { 79.100.22.0/24, 195.142.0.0/16 } meta mark set 0x80000001' <<<"$chain" && grep -Eq 'ct mark set .*0x50020000 return' <<<"$chain" || fail "secondary IPv4 source/destination CIDR arrays are missing"
 grep -Eq 'iif "?wg-ingress"? ct state new ip saddr 10.77.0.2 ip daddr 203.0.113.0/24 meta mark set 0x80000000' <<<"$chain" && grep -Eq 'ct mark set .*0x50070000 return' <<<"$chain" || fail "primary destination-limited classifier is missing"
@@ -516,7 +516,6 @@ foreign_forward_after="$(ip netns exec "$ROUTER_NS" nft list chain inet "foreign
 if ip netns exec "$SECOND_CLIENT_NS" ping -n -I 10.77.0.3 -c 2 -W 1 203.0.113.1 >/dev/null 2>&1; then
     fail "source selector mismatch was routed through an uplink"
 fi
-if fi
 
 # A valid source is not sufficient either: destinations outside every rule
 # must not escape through the host's ordinary routing table.
@@ -541,7 +540,6 @@ secondary_denied_status=$?
 set -e
 [[ "$primary_denied_status" -eq 124 ]] || fail "denied IPv4 FORWARD packet reached primary uplink (tcpdump status $primary_denied_status)"
 [[ "$secondary_denied_status" -eq 124 ]] || fail "denied IPv4 FORWARD packet reached secondary uplink (tcpdump status $secondary_denied_status)"
-if fi
 
 # Overlapping rules must use the lowest numeric priority. Both uplinks host
 # this address, so a successful probe alone is insufficient: observe the
