@@ -978,7 +978,10 @@ fn netlink_request(
             stderr: std::io::Error::last_os_error().to_string(),
         });
     }
-    let timeout = libc::timeval { tv_sec: 5, tv_usec: 0 };
+    let timeout = libc::timeval {
+        tv_sec: 5,
+        tv_usec: 0,
+    };
     let timeout_result = unsafe {
         libc::setsockopt(
             socket.as_raw_fd(),
@@ -1170,7 +1173,10 @@ pub fn ipv4_interface_forwarding(ifindex: u32) -> Result<bool, LinuxError> {
 /// Set IPv4 forwarding by ifindex using RTM_NEWLINK and verify it with RTM_GETLINK.
 pub fn set_ipv4_interface_forwarding(ifindex: u32, enabled: bool) -> Result<(), LinuxError> {
     if ifindex == 0 {
-        return Err(LinuxError::Conflict { resource: "IPv4 forwarding interface".into(), details: "ifindex 0 is not valid".into() });
+        return Err(LinuxError::Conflict {
+            resource: "IPv4 forwarding interface".into(),
+            details: "ifindex 0 is not valid".into(),
+        });
     }
     let value = u32::from(enabled);
     let mut conf = Vec::new();
