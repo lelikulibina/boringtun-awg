@@ -882,18 +882,45 @@ done
 
 run_iperf() {
     local proto="$1" label="$2" target="$3" port="$4" family="$5"
-    local direction args=() logfile
+    local direction args=() logfile uplink_ns uplink_iface router_iface
+    local -a capture_pids=()
+    case "$label" in
+        primary*) uplink_ns="$PRIMARY_NS"; uplink_iface="up-primary"; router_iface="awg-primary" ;;
+        secondary*) uplink_ns="$SECONDARY_NS"; uplink_iface="up-secondary"; router_iface="awg-secondary" ;;
+        *) fail "unknown iperf3 uplink label: $label" ;;
+    esac
     for direction in forward reverse; do
         args=(-c "$target" -p "$port" -J)
         if [[ "$proto" == "tcp" ]]; then
             args+=(-n 8M)
         else
             args+=(-u -b 3M -t 3 -l 1200)
+            # Keep packet-level evidence at each hop if an UDP stream stalls.
+            ip netns exec "$CLIENT_NS" timeout 20 tcpdump -nn -i wg-client \
+                "udp and host $target and port $port" >"$TMP/iperf-$label-$direction-client.log" 2>&1 &
+            capture_pids+=("$!")
+            IPERF_PIDS+=("$!")
+            ip netns exec "$ROUTER_NS" timeout 20 tcpdump -nn -i "$router_iface" \
+                "udp and host $target and port $port" >"$TMP/iperf-$label-$direction-router.log" 2>&1 &
+            capture_pids+=("$!")
+            IPERF_PIDS+=("$!")
+            ip netns exec "$uplink_ns" timeout 20 tcpdump -nn -i "$uplink_iface" \
+                "udp and host $target and port $port" >"$TMP/iperf-$label-$direction-server.log" 2>&1 &
+            capture_pids+=("$!")
+            IPERF_PIDS+=("$!")
+            sleep 0.2
         fi
         [[ "$direction" == "reverse" ]] && args+=(-R)
-        logfile="$TMP/iperf-$label-$proto-$direction.json"
+        # .log is included in fail() diagnostics so iperf3's partial JSON/error
+        # output is retained when a client reaches its timeout.
+        logfile="$TMP/iperf-$label-$proto-$direction.log"
         timeout 20s ip netns exec "$CLIENT_NS" iperf3 "${args[@]}" >"$logfile" 2>&1 \
             || fail "$label $direction $proto iperf3 stream failed"
+        for capture_pid in "${capture_pids[@]}"; do
+            kill -INT "$capture_pid" 2>/dev/null || true
+            wait "$capture_pid" 2>/dev/null || true
+        done
+        capture_pids=()
         if ! python3 - "$logfile" "$proto" <<'PY'
 import json, sys
 with open(sys.argv[1], encoding="utf-8") as stream:
