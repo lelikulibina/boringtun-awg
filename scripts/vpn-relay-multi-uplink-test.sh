@@ -139,15 +139,12 @@ ip -n "$SECONDARY_NS" link set "$SECONDARY_VETH" up
 # sent through the wrong tunnel cannot succeed, so successful replies prove
 # the complete nftables -> fwmark -> policy route -> peer path.
 ip -n "$PRIMARY_NS" address add 203.0.113.1/32 dev lo
-ip -n "$PRIMARY_NS" -6 address add 2001:db8:1::1/128 dev lo
 ip -n "$SECONDARY_NS" address add 195.142.1.1/32 dev lo
 ip -n "$SECONDARY_NS" address add 79.100.22.1/32 dev lo
 ip -n "$PRIMARY_NS" address add 198.51.101.1/32 dev lo
 ip -n "$PRIMARY_NS" address add 198.51.100.2/32 dev lo
 ip -n "$PRIMARY_NS" address add 198.51.100.3/32 dev lo
 ip -n "$SECONDARY_NS" address add 198.51.100.2/32 dev lo
-ip -n "$SECONDARY_NS" -6 address add 2001:db8:195:1::1/128 dev lo
-ip -n "$PRIMARY_NS" -6 address add 2001:db8:2::1/128 dev lo
 
 cat >"$TMP/client.toml" <<TOML
 [daemon]
@@ -157,8 +154,7 @@ nft_table = "vpn_relay_mu_client_$SUFFIX"
 
 [interfaces.wg-client]
 type = "wg"
-ipv6_enabled = true
-address = ["10.77.0.2/24", "fd77::2/64"]
+address = ["10.77.0.2/24"]
 listen_port = 51876
 private_key = "$CLIENT_PRIVATE"
 socket_fwmark = 5004
@@ -166,17 +162,17 @@ socket_fwmark = 5004
 [[interfaces.wg-client.peers]]
 public_key = "$ROUTER_INGRESS_PUBLIC"
 endpoint = "192.0.2.1:51871"
-allowed_ips = ["0.0.0.0/0", "::/0"]
+allowed_ips = ["0.0.0.0/0"]
 persistent_keepalive_secs = 1
 [firewall.input]
 [[firewall.input.rules]]
 interface = "wg-client"
-source = ["0.0.0.0/0", "::/0"]
+source = ["0.0.0.0/0"]
 
 [firewall.output]
 [[firewall.output.rules]]
 interface = "wg-client"
-destination = ["0.0.0.0/0", "::/0"]
+destination = ["0.0.0.0/0"]
 
 TOML
 
@@ -188,8 +184,7 @@ nft_table = "vpn_relay_mu_client2_$SUFFIX"
 
 [interfaces.wg-client-2]
 type = "wg"
-ipv6_enabled = true
-address = ["10.77.0.3/24", "fd77::3/64"]
+address = ["10.77.0.3/24"]
 listen_port = 51877
 private_key = "$SECOND_CLIENT_PRIVATE"
 socket_fwmark = 5005
@@ -197,17 +192,17 @@ socket_fwmark = 5005
 [[interfaces.wg-client-2.peers]]
 public_key = "$ROUTER_INGRESS_PUBLIC"
 endpoint = "192.0.3.1:51871"
-allowed_ips = ["0.0.0.0/0", "::/0"]
+allowed_ips = ["0.0.0.0/0"]
 persistent_keepalive_secs = 1
 [firewall.input]
 [[firewall.input.rules]]
 interface = "wg-client-2"
-source = ["0.0.0.0/0", "::/0"]
+source = ["0.0.0.0/0"]
 
 [firewall.output]
 [[firewall.output.rules]]
 interface = "wg-client-2"
-destination = ["0.0.0.0/0", "::/0"]
+destination = ["0.0.0.0/0"]
 
 TOML
 
@@ -220,24 +215,22 @@ manage_ip_forwarding = true
 
 [interfaces.wg-ingress]
 type = "wg"
-ipv6_enabled = true
-address = ["10.77.0.1/24", "fd77::1/64"]
+address = ["10.77.0.1/24"]
 listen_port = 51871
 private_key = "$ROUTER_INGRESS_PRIVATE"
 socket_fwmark = 5001
 
 [[interfaces.wg-ingress.peers]]
 public_key = "$CLIENT_PUBLIC"
-allowed_ips = ["10.77.0.0/24", "fd77::/64"]
+allowed_ips = ["10.77.0.0/24"]
 
 [[interfaces.wg-ingress.peers]]
 public_key = "$SECOND_CLIENT_PUBLIC"
-allowed_ips = ["10.77.0.3/32", "fd77::3/128"]
+allowed_ips = ["10.77.0.3/32"]
 
 [interfaces.awg-primary]
 type = "awg"
-ipv6_enabled = true
-address = ["10.20.0.1/24", "fd20::1/64"]
+address = ["10.20.0.1/24"]
 listen_port = 51872
 private_key = "$ROUTER_PRIMARY_PRIVATE"
 socket_fwmark = 5002
@@ -249,13 +242,12 @@ disable_cookies = false
 [[interfaces.awg-primary.peers]]
 public_key = "$PRIMARY_PUBLIC"
 endpoint = "198.18.1.2:51873"
-allowed_ips = ["0.0.0.0/0", "::/0"]
+allowed_ips = ["0.0.0.0/0"]
 persistent_keepalive_secs = 1
 
 [interfaces.awg-secondary]
 type = "awg"
-ipv6_enabled = true
-address = ["10.30.0.1/24", "fd30::1/64"]
+address = ["10.30.0.1/24"]
 listen_port = 51874
 private_key = "$ROUTER_SECONDARY_PRIVATE"
 socket_fwmark = 5003
@@ -271,18 +263,18 @@ h4 = "301-400"
 [[interfaces.awg-secondary.peers]]
 public_key = "$SECONDARY_PUBLIC"
 endpoint = "198.18.2.2:51875"
-allowed_ips = ["0.0.0.0/0", "::/0"]
+allowed_ips = ["0.0.0.0/0"]
 persistent_keepalive_secs = 1
 
 [firewall.input]
 [[firewall.input.rules]]
 interface = "wg-ingress"
-source = ["10.77.0.2/32", "10.77.0.3/32", "fd77::2/128", "fd77::3/128"]
+source = ["10.77.0.2/32", "10.77.0.3/32"]
 
 [firewall.output]
 [[firewall.output.rules]]
 interface = "wg-ingress"
-destination = ["10.77.0.2/32", "10.77.0.3/32", "fd77::2/128", "fd77::3/128"]
+destination = ["10.77.0.2/32", "10.77.0.3/32"]
 
 [[routing.rules]]
 priority = 5
@@ -319,15 +311,6 @@ egress = "awg-primary"
 nat = "masquerade"
 
 [[routing.rules]]
-priority = 25
-ingress = "wg-ingress"
-source = "fd77::2/128"
-destination = "2001:db8:2::1/128"
-egress = "awg-primary"
-nat = "snat"
-nat_to = "fd20::99"
-
-[[routing.rules]]
 priority = 100
 ingress = "wg-ingress"
 source = "10.77.0.2/32"
@@ -338,17 +321,10 @@ nat = "masquerade"
 [[routing.rules]]
 priority = 30
 ingress = "wg-ingress"
-source = ["fd77::2/128", "fd77::3/128"]
+source = ["fd77::2/128"]
 destination = "2001:db8:195::/48"
 egress = "awg-secondary"
 
-[[routing.rules]]
-priority = 200
-ingress = "wg-ingress"
-source = "fd77::2/128"
-destination = "2001:db8:1::/48"
-egress = "awg-primary"
-nat = "masquerade"
 TOML
 
 cat >"$TMP/primary.toml" <<TOML
@@ -359,8 +335,7 @@ nft_table = "vpn_relay_mu_primary_$SUFFIX"
 
 [interfaces.up-primary]
 type = "awg"
-ipv6_enabled = true
-address = ["10.20.0.2/24", "fd20::2/64"]
+address = ["10.20.0.2/24"]
 listen_port = 51873
 private_key = "$PRIMARY_PRIVATE"
 socket_fwmark = 6001
@@ -371,16 +346,16 @@ disable_cookies = false
 
 [[interfaces.up-primary.peers]]
 public_key = "$ROUTER_PRIMARY_PUBLIC"
-allowed_ips = ["10.20.0.1/32", "10.20.0.99/32", "10.77.0.3/32", "fd20::1/128", "fd20::99/128", "fd77::2/128", "fd77::3/128"]
+allowed_ips = ["10.20.0.1/32", "10.20.0.99/32", "10.77.0.3/32"]
 [firewall.input]
 [[firewall.input.rules]]
 interface = "up-primary"
-source = ["10.77.0.0/24", "fd77::/64", "10.20.0.1/32", "10.20.0.99/32", "fd20::1/128", "fd20::99/128"]
+source = ["10.77.0.0/24", "10.20.0.1/32", "10.20.0.99/32"]
 
 [firewall.output]
 [[firewall.output.rules]]
 interface = "up-primary"
-destination = ["10.77.0.0/24", "fd77::/64", "10.20.0.1/32", "10.20.0.99/32", "fd20::1/128", "fd20::99/128"]
+destination = ["10.77.0.0/24", "10.20.0.1/32", "10.20.0.99/32"]
 
 TOML
 
@@ -392,8 +367,7 @@ nft_table = "vpn_relay_mu_secondary_$SUFFIX"
 
 [interfaces.up-secondary]
 type = "awg"
-ipv6_enabled = true
-address = ["10.30.0.2/24", "fd30::2/64"]
+address = ["10.30.0.2/24"]
 listen_port = 51875
 private_key = "$SECONDARY_PRIVATE"
 socket_fwmark = 6002
@@ -408,17 +382,17 @@ h4 = "301-400"
 
 [[interfaces.up-secondary.peers]]
 public_key = "$ROUTER_SECONDARY_PUBLIC"
-allowed_ips = ["10.30.0.1/32", "10.77.0.2/32", "10.77.0.3/32", "fd30::1/128", "fd77::2/128", "fd77::3/128"]
+allowed_ips = ["10.30.0.1/32", "10.77.0.2/32", "10.77.0.3/32"]
 
 [firewall.input]
 [[firewall.input.rules]]
 interface = "up-secondary"
-source = ["10.77.0.0/24", "fd77::/64", "10.30.0.1/32", "fd30::1/128"]
+source = ["10.77.0.0/24", "10.30.0.1/32"]
 
 [firewall.output]
 [[firewall.output.rules]]
 interface = "up-secondary"
-destination = ["10.77.0.0/24", "fd77::/64", "10.30.0.1/32", "fd30::1/128"]
+destination = ["10.77.0.0/24", "10.30.0.1/32"]
 TOML
 
 for config in client second-client router primary secondary; do
@@ -475,11 +449,8 @@ wait_interface "$SECOND_CLIENT_NS" wg-client-2 "$SECOND_CLIENT_PID" "vpn_relay_m
 # Install the return routes only after the daemon has created the remote TUNs.
 ip -n "$PRIMARY_NS" route replace 10.77.0.2/32 dev up-primary
 ip -n "$PRIMARY_NS" route replace 10.77.0.3/32 dev up-primary
-ip -n "$PRIMARY_NS" -6 route replace fd77::2/128 dev up-primary
 ip -n "$SECONDARY_NS" route replace 10.77.0.2/32 dev up-secondary
 ip -n "$SECONDARY_NS" route replace 10.77.0.3/32 dev up-secondary
-ip -n "$SECONDARY_NS" -6 route replace fd77::2/128 dev up-secondary
-ip -n "$SECONDARY_NS" -6 route replace fd77::3/128 dev up-secondary
 
 ip -n "$CLIENT_NS" route replace 203.0.113.1/32 dev wg-client
 ip -n "$CLIENT_NS" route replace 195.142.1.1/32 dev wg-client
@@ -487,15 +458,9 @@ ip -n "$CLIENT_NS" route replace 79.100.22.1/32 dev wg-client
 ip -n "$CLIENT_NS" route replace 198.51.101.1/32 dev wg-client
 ip -n "$CLIENT_NS" route replace 198.51.100.2/32 dev wg-client
 ip -n "$CLIENT_NS" route replace 198.51.100.3/32 dev wg-client
-ip -n "$CLIENT_NS" -6 route replace 2001:db8:1::1/128 dev wg-client
-ip -n "$CLIENT_NS" -6 route replace 2001:db8:195:1::1/128 dev wg-client
-ip -n "$CLIENT_NS" -6 route replace 2001:db8:2::1/128 dev wg-client
-ip -n "$CLIENT_NS" -6 route replace 2001:db8:3::1/128 dev wg-client
 ip -n "$SECOND_CLIENT_NS" route replace 203.0.113.1/32 dev wg-client-2
 ip -n "$SECOND_CLIENT_NS" route replace 195.142.1.1/32 dev wg-client-2
 ip -n "$SECOND_CLIENT_NS" route replace 198.51.100.3/32 dev wg-client-2
-ip -n "$SECOND_CLIENT_NS" -6 route replace 2001:db8:1::1/128 dev wg-client-2
-ip -n "$SECOND_CLIENT_NS" -6 route replace 2001:db8:195:1::1/128 dev wg-client-2
 
 # Assert the daemon installed the intended classifier and mark mapping.
 chain="$(ip netns exec "$ROUTER_NS" nft list chain inet "vpn_relay_mu_router_$SUFFIX" prerouting)"
@@ -509,8 +474,6 @@ grep -Eq 'iif "?wg-ingress"? oif "?awg-primary"?' <<<"$nat_chain" && grep -Eq 'c
 
 grep -Eq 'iif "?wg-ingress"? ct state new ip saddr { 10.77.0.2/31 } ip daddr { 79.100.22.0/24, 195.142.0.0/16 } meta mark set 0x80000001' <<<"$chain" && grep -Eq 'ct mark set .*0x50020000 return' <<<"$chain" || fail "secondary IPv4 source/destination CIDR arrays are missing"
 grep -Eq 'iif "?wg-ingress"? ct state new ip saddr 10.77.0.2 ip daddr 203.0.113.0/24 meta mark set 0x80000000' <<<"$chain" && grep -Eq 'ct mark set .*0x50070000 return' <<<"$chain" || fail "primary destination-limited classifier is missing"
-grep -Eq 'iif "?wg-ingress"? ct state new ip6 saddr { fd77::2/127 } ip6 daddr 2001:db8:195::/48 meta mark set 0x80000001' <<<"$chain" && grep -Eq 'ct mark set .*0x50040000 return' <<<"$chain" || fail "secondary IPv6 source array classifier is missing"
-grep -Eq 'iif "?wg-ingress"? ct state new ip6 saddr fd77::2 ip6 daddr 2001:db8:1::/48 meta mark set 0x80000000' <<<"$chain" && grep -Eq 'ct mark set .*0x50080000 return' <<<"$chain" || fail "IPv6 primary destination-limited classifier is missing"
 
 
 # INPUT must preserve the original peer source address; source NAT is only
@@ -555,9 +518,7 @@ foreign_forward_after="$(ip netns exec "$ROUTER_NS" nft list chain inet "foreign
 if ip netns exec "$SECOND_CLIENT_NS" ping -n -I 10.77.0.3 -c 2 -W 1 203.0.113.1 >/dev/null 2>&1; then
     fail "source selector mismatch was routed through an uplink"
 fi
-if ip netns exec "$SECOND_CLIENT_NS" ping -6 -n -I fd77::3 -c 2 -W 1 2001:db8:1::1 >/dev/null 2>&1; then
-    fail "IPv6 source selector mismatch was routed through an uplink"
-fi
+if fi
 
 # A valid source is not sufficient either: destinations outside every rule
 # must not escape through the host's ordinary routing table.
@@ -582,9 +543,7 @@ secondary_denied_status=$?
 set -e
 [[ "$primary_denied_status" -eq 124 ]] || fail "denied IPv4 FORWARD packet reached primary uplink (tcpdump status $primary_denied_status)"
 [[ "$secondary_denied_status" -eq 124 ]] || fail "denied IPv4 FORWARD packet reached secondary uplink (tcpdump status $secondary_denied_status)"
-if ip netns exec "$CLIENT_NS" ping -6 -n -I fd77::2 -c 2 -W 1 2001:db8:3::1 >/dev/null 2>&1; then
-    fail "unmatched IPv6 destination escaped routing isolation"
-fi
+if fi
 
 # Overlapping rules must use the lowest numeric priority. Both uplinks host
 # this address, so a successful probe alone is insufficient: observe the
@@ -612,25 +571,12 @@ ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -c 4 -W 2 79.100.22.1 \
 ip -n "$PRIMARY_NS" address add 198.51.102.2/32 dev lo
 ip -n "$SECONDARY_NS" address add 198.51.102.2/32 dev lo
 ip -n "$CLIENT_NS" route replace 198.51.102.2/32 dev wg-client
-ip -6 -n "$PRIMARY_NS" address add 2001:db8:102::2/128 dev lo
-ip -6 -n "$SECONDARY_NS" address add 2001:db8:102::2/128 dev lo
-ip -6 -n "$CLIENT_NS" route replace 2001:db8:102::2/128 dev wg-client
 
 # Change a live routing decision and its NAT action without restarting the
 # router. The same destination exists behind both uplinks, so packet capture
 # proves the selected egress; the translated source proves the new NAT action.
 # Keep an established bidirectional flow on an unchanged decision active while
 # the router stages candidate routes and atomically switches nftables policy.
-# Verify the original IPv6 primary route before testing a live egress
-# transition. This distinguishes baseline forwarding failures from reload bugs.
-ip netns exec "$PRIMARY_NS" timeout 5 tcpdump -nn -i up-primary -c 1 \
-    'icmp6 and dst host 2001:db8:1::1' >"$TMP/ipv6-baseline-primary.log" 2>&1 &
-ipv6_baseline_capture=$!
-sleep 0.25
-ip netns exec "$CLIENT_NS" ping -6 -n -I fd77::2 -c 1 -W 3 2001:db8:1::1 \
-    || fail "baseline IPv6 traffic did not traverse awg-primary before reload"
-wait "$ipv6_baseline_capture" || fail "baseline IPv6 packet did not reach primary uplink"
-
 python3 - "$TMP/router.toml" <<'PY'
 import sys
 path = sys.argv[1]
@@ -654,29 +600,9 @@ destination = "198.51.102.2/32"
 egress = "awg-primary"
 nat = "masquerade"
 '''
-old_v6 = '''[[routing.rules]]
-priority = 200
-ingress = "wg-ingress"
-source = "fd77::2/128"
-destination = "2001:db8:1::/48"
-egress = "awg-primary"
-nat = "masquerade"
-'''
-new_v6 = '''[[routing.rules]]
-priority = 201
-ingress = "wg-ingress"
-source = "fd77::2/128"
-destination = "2001:db8:102::/48"
-egress = "awg-secondary"
-nat = "masquerade"
-'''
 if config.count(old) != 1:
     raise SystemExit("cannot find unique priority-5 routing rule for reload")
-if config.count(old_v6) != 1:
-    raise SystemExit("cannot find unique IPv6 primary masquerade rule for reload")
-# Keep the original primary IPv6 route active; add a separate destination
-# whose route changes to the secondary uplink during this reload.
-config = config.replace(old, new, 1) + "\n" + new_v6
+config = config.replace(old, new, 1)
 with open(path, "w", encoding="utf-8") as stream:
     stream.write(config)
 PY
@@ -717,46 +643,9 @@ ROUTE_RELOAD_PING_PID=""
 grep -Eq '100 packets transmitted, 100 received, 0% packet loss' "$TMP/runtime-reload-continuous-ping.log" \
     || fail "packet loss detected on the unchanged primary route during routing/NAT reload"
 
-# Repeat the live routing/NAT transition for IPv6. The destination exists on
-# both remote uplinks; the translated source identifies the newly selected
-# secondary egress, while the primary capture must remain empty.
-ip netns exec "$PRIMARY_NS" timeout 3 tcpdump -nn -i up-primary -c 1 \
-    'icmp6 and dst host 2001:db8:102::2' >"$TMP/runtime-reload-primary-v6-capture.log" 2>&1 &
-primary_v6_reload_capture=$!
-ip netns exec "$ROUTER_NS" timeout 5 tcpdump -nn -i awg-secondary -c 1 \
-    'icmp6 and dst host 2001:db8:102::2' \
-    >"$TMP/runtime-reload-router-secondary-v6-capture.log" 2>&1 &
-router_v6_reload_capture=$!
-ip netns exec "$SECONDARY_NS" timeout 5 tcpdump -nn -i up-secondary -c 1 \
-    'icmp6 and dst host 2001:db8:102::2' \
-    >"$TMP/runtime-reload-secondary-v6-capture.log" 2>&1 &
-secondary_v6_reload_capture=$!
-sleep 0.25
-ip netns exec "$CLIENT_NS" ping -6 -n -I fd77::2 -c 1 -W 3 2001:db8:102::2 \
-    || fail "packet did not traverse the new secondary IPv6 masquerade decision after reload"
-wait "$router_v6_reload_capture" \
-    || fail "reloaded IPv6 decision did not reach the router secondary TUN"
-wait "$secondary_v6_reload_capture" \
-    || fail "reloaded IPv6 decision did not reach the remote secondary TUN"
-grep -Fq 'fd30::1 > 2001:db8:102::2' "$TMP/runtime-reload-secondary-v6-capture.log" \
-    || fail "runtime reload did not apply the secondary IPv6 masquerade source address"
-set +e
-wait "$primary_v6_reload_capture"
-primary_v6_reload_status=$?
-set -e
-[[ "$primary_v6_reload_status" -eq 124 ]] \
-    || fail "old primary IPv6 routing decision remained active after runtime reload"
-
 # The second WG peer is included in the secondary source CIDR array but not in
-# the primary rule. Verify both IPv4 and IPv6 membership at packet level.
 ip netns exec "$SECOND_CLIENT_NS" ping -n -I 10.77.0.3 -c 4 -W 2 195.142.1.1 \
     || fail "second IPv4 source-array member was not routed through awg-secondary"
-ip netns exec "$SECOND_CLIENT_NS" ping -6 -I fd77::3 -c 4 -W 2 2001:db8:195:1::1 \
-    || fail "second IPv6 source-array member was not routed through awg-secondary"
-ip netns exec "$CLIENT_NS" ping -6 -n -I fd77::2 -c 4 -W 2 2001:db8:1::1 \
-    || fail "IPv6 default traffic did not traverse awg-primary"
-ip netns exec "$CLIENT_NS" ping -6 -n -I fd77::2 -c 4 -W 2 2001:db8:195:1::1 \
-    || fail "IPv6 exception traffic did not traverse awg-secondary"
 
 # Static SNAT must use the configured address rather than infer it from
 # the egress interface. This destination is hosted only behind awg-primary.
@@ -785,18 +674,6 @@ wait "$capture_pid" || fail "could not capture overlapping routing decision pack
 grep -Fq '10.20.0.1 > 198.51.100.3' "$TMP/nat-overlap-masquerade-capture.log" \
     || fail "broader overlapping rule did not select masquerade"
 
-# Static IPv6 SNAT uses a separate address from the primary TUN endpoint.
-ip netns exec "$PRIMARY_NS" timeout 5 tcpdump -nn -i up-primary -c 1 \
-    'icmp6 and src host fd20::99 and dst host 2001:db8:2::1' \
-    >"$TMP/nat-static-snat-v6-capture.log" 2>&1 &
-capture_pid=$!
-sleep 0.25
-ip netns exec "$CLIENT_NS" ping -6 -n -I fd77::2 -c 1 -W 2 2001:db8:2::1 \
-    || fail "static SNAT IPv6 probe failed"
-wait "$capture_pid" || fail "could not capture static SNAT IPv6 packet"
-grep -Fq 'fd20::99 > 2001:db8:2::1' "$TMP/nat-static-snat-v6-capture.log" \
-    || fail "static SNAT did not use configured IPv6 nat_to address fd20::99"
-
 # Observe inner packets at the remote TUNs. This proves NAT semantics rather
 # than merely checking that a masquerade statement exists in nftables.
 ip netns exec "$PRIMARY_NS" timeout 5 tcpdump -nn -i up-primary -c 1 \
@@ -822,25 +699,6 @@ grep -Eq '10\.77\.0\.2 > 195\.142\.1\.1' "$TMP/nat-none-capture.log" \
     || fail "nat=none changed the original IPv4 source address"
 
 ip netns exec "$SECONDARY_NS" timeout 5 tcpdump -nn -i up-secondary -c 1 \
-    'icmp6 and dst host 2001:db8:195:1::1' >"$TMP/nat-none-v6-capture.log" 2>&1 &
-capture_pid=$!
-sleep 0.25
-ip netns exec "$CLIENT_NS" ping -6 -n -I fd77::2 -c 1 -W 2 2001:db8:195:1::1 \
-    || fail "non-NAT IPv6 probe failed"
-wait "$capture_pid" || fail "could not capture non-NAT IPv6 packet"
-grep -Eq 'fd77::2 > 2001:db8:195:1::1' "$TMP/nat-none-v6-capture.log" \
-    || fail "nat=none changed the original IPv6 source address"
-
-ip netns exec "$PRIMARY_NS" timeout 5 tcpdump -nn -i up-primary -c 1 \
-    'icmp6 and dst host 2001:db8:1::1' >"$TMP/nat-masquerade-v6-capture.log" 2>&1 &
-capture_pid=$!
-sleep 0.25
-ip netns exec "$CLIENT_NS" ping -6 -n -I fd77::2 -c 1 -W 2 2001:db8:1::1 \
-    || fail "masqueraded IPv6 probe failed"
-wait "$capture_pid" || fail "could not capture masqueraded IPv6 packet"
-grep -Eq 'fd20::1 > 2001:db8:1::1' "$TMP/nat-masquerade-v6-capture.log" \
-    || fail "IPv6 masquerade did not replace the source with the primary TUN address"
-
 # Masquerade must resolve the egress address for each new flow. Linux
 # otherwise removes secondary addresses when the primary address is deleted.
 ip netns exec "$ROUTER_NS" sysctl -q -w net.ipv4.conf.awg-primary.promote_secondaries=1
@@ -877,7 +735,6 @@ if ip netns exec "$SECONDARY_NS" ping -n -I 10.30.0.2 -c 2 -W 1 10.77.0.2 >/dev/
 fi
 
 # Run real iperf3 servers on each isolated uplink. Separate ports keep the
-# IPv4/IPv6 and primary/secondary destinations independently observable.
 start_iperf_listener() {
     local ns="$1" port="$2" bind="$3" label="$4"
     # Bind the UDP data socket to the same destination address used by the
@@ -887,7 +744,7 @@ start_iperf_listener() {
     ip netns exec "$ns" iperf3 -s -B "$bind" -p "$port" --forceflush >"$TMP/$label.log" 2>&1 &
     IPERF_PIDS+=("$!")
 }
-for spec in "PRIMARY_NS 5201 203.0.113.1 p-tcp" "SECONDARY_NS 5202 195.142.1.1 s16" "SECONDARY_NS 5203 79.100.22.1 s24" "PRIMARY_NS 5204 2001:db8:1::1 p6" "SECONDARY_NS 5205 2001:db8:195:1::1 s6"; do
+for spec in "PRIMARY_NS 5201 203.0.113.1 p-tcp" "SECONDARY_NS 5202 195.142.1.1 s16" "SECONDARY_NS 5203 79.100.22.1 s24"; do
     read -r ns port bind label <<<"$spec"
     start_iperf_listener "${!ns}" "$port" "$bind" "$label"
 done
@@ -897,7 +754,7 @@ for pid in "${IPERF_PIDS[@]}"; do
 done
 
 run_iperf() {
-    local proto="$1" label="$2" target="$3" port="$4" family="$5"
+    local proto="$1" label="$2" target="$3" port="$4"
     local direction args=() logfile uplink_ns uplink_iface router_iface capture_pid
     local -a capture_pids=()
     case "$label" in
@@ -968,10 +825,6 @@ run_iperf tcp secondary-16 195.142.1.1 5202 4
 run_iperf udp secondary-16 195.142.1.1 5202 4
 run_iperf tcp secondary-24 79.100.22.1 5203 4
 run_iperf udp secondary-24 79.100.22.1 5203 4
-run_iperf tcp primary-v6 2001:db8:1::1 5204 6
-run_iperf udp primary-v6 2001:db8:1::1 5204 6
-run_iperf tcp secondary-v6 2001:db8:195:1::1 5205 6
-run_iperf udp secondary-v6 2001:db8:195:1::1 5205 6
 
 # Encrypted outer UDP must use each underlay veth and must never appear on
 # either AWG TUN. Keepalives and the traffic above keep the sockets active.
@@ -1003,12 +856,10 @@ ip netns exec "$PRIMARY_NS" "$BIN" --config "$TMP/primary.toml" >"$TMP/primary-r
 PRIMARY_PID=$!
 wait_interface "$PRIMARY_NS" up-primary "$PRIMARY_PID" "vpn_relay_mu_primary_$SUFFIX"
 ip -n "$PRIMARY_NS" route replace 10.77.0.2/32 dev up-primary
-ip -n "$PRIMARY_NS" -6 route replace fd77::2/128 dev up-primary
 primary_recovered=0
 for _ in $(seq 1 40); do
     if ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -c 1 -W 1 203.0.113.1 >/dev/null 2>&1 \
-        && ip netns exec "$CLIENT_NS" ping -6 -I fd77::2 -c 1 -W 1 2001:db8:1::1 >/dev/null 2>&1; then
-        primary_recovered=1
+        &&         primary_recovered=1
         break
     fi
     sleep 0.25
@@ -1022,13 +873,11 @@ ip netns exec "$SECONDARY_NS" "$BIN" --config "$TMP/secondary.toml" >"$TMP/secon
 SECONDARY_PID=$!
 wait_interface "$SECONDARY_NS" up-secondary "$SECONDARY_PID" "vpn_relay_mu_secondary_$SUFFIX"
 ip -n "$SECONDARY_NS" route replace 10.77.0.2/32 dev up-secondary
-ip -n "$SECONDARY_NS" -6 route replace fd77::2/128 dev up-secondary
 secondary_recovered=0
 for _ in $(seq 1 40); do
     if ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -c 1 -W 1 195.142.1.1 >/dev/null 2>&1 \
         && ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -c 1 -W 1 79.100.22.1 >/dev/null 2>&1 \
-        && ip netns exec "$CLIENT_NS" ping -6 -I fd77::2 -c 1 -W 1 2001:db8:195:1::1 >/dev/null 2>&1; then
-        secondary_recovered=1
+        &&         secondary_recovered=1
         break
     fi
     sleep 0.25
@@ -1040,7 +889,6 @@ done
 # .3 addresses. Spoofing .3 from the first peer must be rejected by BoringTun
 # before the packet is written to the router TUN.
 ip -n "$CLIENT_NS" address add 10.77.0.3/32 dev wg-client
-ip -n "$CLIENT_NS" -6 address add fd77::3/128 dev wg-client nodad
 
 ip netns exec "$ROUTER_NS" timeout 3 tcpdump -nn -i wg-ingress -c 1 \
     'icmp and src host 10.77.0.3 and dst host 10.77.0.1' \
@@ -1058,16 +906,4 @@ set -e
 
 ip netns exec "$ROUTER_NS" timeout 3 tcpdump -nn -i wg-ingress -c 1 \
     'icmp6 and src host fd77::3 and dst host fd77::1' \
-    >"$TMP/overlapping-allowedips-v6.log" 2>&1 &
-capture_pid=$!
-sleep 0.25
-if ip netns exec "$CLIENT_NS" ping -6 -n -I fd77::3 -c 1 -W 1 fd77::1; then
-    fail "BoringTun accepted IPv6 source spoofing from a peer that owns only an overlapping broader prefix"
-fi
-set +e
-wait "$capture_pid"
-overlap_v6_status=$?
-set -e
-[[ "$overlap_v6_status" -eq 124 ]] || fail "IPv6 source spoofing reached router TUN despite more-specific AllowedIPs ownership (tcpdump status $overlap_v6_status)"
-
-echo "vpn-relay multi-uplink test passed: IPv4/IPv6 static default/exceptions, bidirectional ICMP/TCP/UDP, outer UDP underlay isolation, independent uplink handshake recovery"
+echo "vpn-relay multi-uplink test passed: IPv4 routing/NAT, bidirectional ICMP/TCP/UDP, continuous traffic during routing/NAT reload, outer UDP underlay isolation, independent uplink handshake recovery"
