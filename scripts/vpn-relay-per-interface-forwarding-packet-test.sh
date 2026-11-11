@@ -116,12 +116,12 @@ import os
 import subprocess
 
 path = "/proc/sys/net/ipv6/conf/race0/force_forwarding"
-subprocess.run(["ip", "link", "add", "race0", "type", "dummy"], check=True)
+subprocess.run(["ip", "link", "add", "race0", "type", "veth", "peer", "name", "race-peer"], check=True)
 fd = os.open(path, os.O_RDWR)
 try:
     os.write(fd, b"0\n")
     subprocess.run(["ip", "link", "del", "race0"], check=True)
-    subprocess.run(["ip", "link", "add", "race0", "type", "dummy"], check=True)
+    subprocess.run(["ip", "link", "add", "race0", "type", "veth", "peer", "name", "race-peer"], check=True)
     try:
         os.lseek(fd, 0, os.SEEK_SET)
         os.write(fd, b"1\n")
