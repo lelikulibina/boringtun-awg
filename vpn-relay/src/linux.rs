@@ -1157,7 +1157,7 @@ fn netlink_request(
     }
 }
 
-fn parse_link_ipv4_forwarding(response: &[u8]) -> Result<bool, LinuxError> {
+fn parse_link_ipv4_forwarding(response: &[u8], expected_ifindex: u32) -> Result<bool, LinuxError> {
     fn attributes(mut bytes: &[u8]) -> Result<Vec<(u16, &[u8])>, LinuxError> {
         let mut result = Vec::new();
         while !bytes.is_empty() {
@@ -1194,6 +1194,13 @@ fn parse_link_ipv4_forwarding(response: &[u8]) -> Result<bool, LinuxError> {
         return Err(LinuxError::Conflict {
             resource: "rtnetlink link response".into(),
             details: "truncated RTM_NEWLINK response".into(),
+        });
+    }
+    let response_ifindex = i32::from_ne_bytes(response[20..24].try_into().unwrap());
+    if response_ifindex <= 0 || response_ifindex as u32 != expected_ifindex {
+        return Err(LinuxError::Conflict {
+            resource: format!("IPv4 forwarding interface index {expected_ifindex}"),
+            details: format!("RTM_GETLINK response identifies ifindex {response_ifindex}"),
         });
     }
     let link_attributes = attributes(&response[32..])?;
@@ -1245,7 +1252,7 @@ pub fn ipv4_interface_forwarding(ifindex: u32) -> Result<bool, LinuxError> {
         });
     }
     let response = netlink_request(ifindex, RTM_GETLINK, NLM_F_REQUEST, &[])?;
-    parse_link_ipv4_forwarding(&response)
+    parse_link_ipv4_forwarding(&response, ifindex)
 }
 
 /// Set IPv4 forwarding by ifindex using RTM_NEWLINK and verify it with RTM_GETLINK.
@@ -2223,11 +2230,21 @@ mod tests {
 
     #[test]
     fn rtnetlink_ipv4_forwarding_readback_parses_kernel_devconf() {
-        assert!(parse_link_ipv4_forwarding(&ipv4_link_response(1)).unwrap());
-        assert!(!parse_link_ipv4_forwarding(&ipv4_link_response(0)).unwrap());
+        assert!(parse_link_ipv4_forwarding(&ipv4_link_response(1), 9).unwrap());
+        assert!(!parse_link_ipv4_forwarding(&ipv4_link_response(0), 9).unwrap());
         assert!(matches!(
-            parse_link_ipv4_forwarding(&ipv4_link_response(2)),
+            parse_link_ipv4_forwarding(&ipv4_link_response(2), 9),
             Err(LinuxError::Conflict { .. })
+        ));
+    }
+
+    #[test]
+    fn rtnetlink_ipv4_forwarding_rejects_response_for_different_ifindex() {
+        let response = ipv4_link_response(1);
+        assert!(matches!(
+            parse_link_ipv4_forwarding(&response, 10),
+            Err(LinuxError::Conflict { details, .. })
+                if details.contains("ifindex 9")
         ));
     }
 
@@ -2241,7 +2258,7 @@ mod tests {
         append_netlink_attribute(&mut attributes, IFLA_AF_SPEC | NLA_F_NESTED, &af_spec);
         let response = build_link_message(RTM_NEWLINK, 0, 9, 1, &attributes).unwrap();
         assert!(matches!(
-            parse_link_ipv4_forwarding(&response),
+            parse_link_ipv4_forwarding(&response, 9),
             Err(LinuxError::Conflict { details, .. }) if details.contains("omitted")
         ));
     }
