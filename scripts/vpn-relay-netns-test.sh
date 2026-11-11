@@ -321,7 +321,16 @@ fi
 exec "$REAL_NFT_CLEANUP" "\$@"
 EOF
 chmod +x "$TMP/fail-interface-and-nft-cleanup/ip" "$TMP/fail-interface-and-nft-cleanup/nft"
-if ip netns exec "$NS" env PATH="$TMP/fail-interface-and-nft-cleanup:$PATH" "$BIN" --config "$TMP/config.toml" >"$TMP/startup-nft-cleanup-failure.log" 2>&1; then
+echo "[vpn-relay-netns-test] starting startup nftables-cleanup failure scenario" >&2
+set +e
+timeout --signal=TERM --kill-after=5s 30s ip netns exec "$NS" env PATH="$TMP/fail-interface-and-nft-cleanup:$PATH" "$BIN" --config "$TMP/config.toml" >"$TMP/startup-nft-cleanup-failure.log" 2>&1
+startup_nft_cleanup_status=$?
+set -e
+echo "[vpn-relay-netns-test] startup nftables-cleanup scenario exited with status $startup_nft_cleanup_status" >&2
+if [[ $startup_nft_cleanup_status -eq 124 || $startup_nft_cleanup_status -eq 137 ]]; then
+    fail "daemon hung during startup rollback after injected nftables deletion failure"
+fi
+if [[ $startup_nft_cleanup_status -eq 0 ]]; then
     fail "daemon accepted startup rollback after nftables deletion failure"
 fi
 grep -Fq "injected TUN address failure before nft cleanup" "$TMP/startup-nft-cleanup-failure.log" || fail "partial interface setup failure was not observed in nft cleanup scenario"
