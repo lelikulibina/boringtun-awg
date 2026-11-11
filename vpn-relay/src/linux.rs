@@ -941,7 +941,10 @@ fn build_link_message(
 }
 
 fn netlink_extended_ack(response: &[u8], offset: usize, length: usize) -> Option<String> {
-    if length < 20 {
+    // NLMSG_ERROR contains the outer header, errno, and the original
+    // nlmsghdr before any optional extended-ACK attributes.
+    let end = offset.checked_add(length)?;
+    if length < 36 || end > response.len() {
         return None;
     }
     let flags = u16::from_ne_bytes(response[offset + 6..offset + 8].try_into().ok()?);
@@ -2194,6 +2197,12 @@ mod tests {
             netlink_extended_ack(&response, 0, length).as_deref(),
             Some("invalid uncapped attribute")
         );
+    }
+
+    #[test]
+    fn rtnetlink_extended_ack_ignores_truncated_error_header() {
+        let response = vec![0u8; 35];
+        assert_eq!(netlink_extended_ack(&response, 0, response.len()), None);
     }
 
     #[test]
