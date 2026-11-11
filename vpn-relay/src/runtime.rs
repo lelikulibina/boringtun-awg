@@ -2165,6 +2165,70 @@ mod tests {
     }
 
     #[test]
+    fn disabled_ipv6_never_reads_or_writes_interface_forwarding_sysctls() {
+        let state = ForwardingState {
+            ipv4: "1".to_owned(),
+            ipv6: "0".to_owned(),
+            ipv4_changed: false,
+            ipv6_changed: false,
+            interfaces: vec![InterfaceForwardingState {
+                name: "wg0".to_owned(),
+                ifindex: 7,
+                daemon_owned: false,
+                ipv4: "0".to_owned(),
+                ipv6: "0".to_owned(),
+                ipv4_changed: true,
+                // Even a stale/inconsistent journal flag must not make us
+                // touch IPv6 when the interface is configured IPv4-only.
+                ipv6_changed: true,
+                ipv6_enabled: false,
+            }],
+        };
+        let mut writes = Vec::new();
+        enable_interface_forwarding_entries_with(
+            &state,
+            |key| panic!("unexpected sysctl read: {key}"),
+            |key, value| {
+                writes.push((key.to_owned(), value.to_owned()));
+                Ok(())
+            },
+            |name, index| {
+                assert_eq!(name, "wg0");
+                assert_eq!(index, 7);
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            writes,
+            vec![("net.ipv4.conf.wg0.forwarding".to_owned(), "1".to_owned())]
+        );
+
+        writes.clear();
+        restore_interface_forwarding_entries_with(
+            &state,
+            |key| {
+                assert_eq!(key, "net.ipv4.conf.wg0.forwarding");
+                Ok("1".to_owned())
+            },
+            |key, value| {
+                writes.push((key.to_owned(), value.to_owned()));
+                Ok(())
+            },
+            |name, index| {
+                assert_eq!(name, "wg0");
+                assert_eq!(index, 7);
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            writes,
+            vec![("net.ipv4.conf.wg0.forwarding".to_owned(), "0".to_owned())]
+        );
+    }
+
+    #[test]
     fn interface_forwarding_enable_rolls_back_partial_writes() {
         let state = ForwardingState {
             ipv4: "1".to_owned(),
