@@ -1300,14 +1300,12 @@ mod tests {
                 mark: 0x8000_0001,
                 table_id: 10001,
                 ip_rule_priority: 10001,
-                ipv6_enabled: true,
             }],
             decisions: Vec::new(),
             input_rules: Vec::new(),
             output_rules: Vec::new(),
             socket_marks: Vec::new(),
-            ipv6_transport_blocked: false,
-            ipv6_blocked_interfaces: Vec::new(),
+            ipv6_drop_interfaces: Vec::new(),
             interface_indices: None,
         }
     }
@@ -1315,10 +1313,6 @@ mod tests {
     #[test]
     fn ipv4_only_policy_apply_and_cleanup_never_call_ip6() {
         let mut plan = cleanup_test_plan();
-        plan.ipv6_transport_blocked = true;
-        // The global IPv4-only switch must override even an inconsistent
-        // per-egress flag in a manually constructed plan.
-        plan.egresses[0].ipv6_enabled = true;
         plan.socket_marks = vec![0x1000_0001];
         assert_eq!(plan.ip_policy_families(), &["-4"]);
         assert!(plan
@@ -1485,15 +1479,14 @@ mod tests {
             Ok(())
         });
 
-        assert_eq!(cleanup_attempts, 4);
+        assert_eq!(cleanup_attempts, 2);
         assert!(matches!(result, Err(LinuxError::Cleanup(message))
-            if message.matches("injected socket cleanup failure").count() == 4));
+            if message.matches("injected socket cleanup failure").count() == 2));
     }
 
     #[test]
     fn egress_stale_rule_cleanup_failure_aborts_install_and_rolls_back() {
         let mut plan = cleanup_test_plan();
-        plan.egresses[0].ipv6_enabled = false;
 
         for failure_position in 1..=3 {
             let mut calls = Vec::new();
@@ -1775,7 +1768,6 @@ mod tests {
             mark: 0x8000_0002,
             table_id: 10002,
             ip_rule_priority: 10002,
-            ipv6_enabled: true,
         });
         let mut calls = Vec::new();
         let result = remove_egress_policy_routing_with(&plan, &mut |_program, args| {
