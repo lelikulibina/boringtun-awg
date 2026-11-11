@@ -353,15 +353,15 @@ impl RoutingPlan {
                 self.nft_family, self.nft_table, elements
             ));
             output.push_str(&format!(
-                "add rule {} {} prerouting iifname @ipv6_blocked_interfaces meta nfproto ipv6 drop\n",
+                "add rule {} {} prerouting iifname @ipv6_drop_interfaces meta nfproto ipv6 drop\n",
                 self.nft_family, self.nft_table
             ));
             output.push_str(&format!(
-                "add rule {} {} forward oifname @ipv6_blocked_interfaces meta nfproto ipv6 drop\n",
+                "add rule {} {} forward oifname @ipv6_drop_interfaces meta nfproto ipv6 drop\n",
                 self.nft_family, self.nft_table
             ));
             output.push_str(&format!(
-                "add rule {} {} output oifname @ipv6_blocked_interfaces meta nfproto ipv6 drop\n",
+                "add rule {} {} output oifname @ipv6_drop_interfaces meta nfproto ipv6 drop\n",
                 self.nft_family, self.nft_table
             ));
         }
@@ -564,12 +564,12 @@ impl RoutingPlan {
                 .replace("iifname @managed_interfaces", "iif @managed_interfaces")
                 .replace("oifname @managed_interfaces", "oif @managed_interfaces")
                 .replace(
-                    "iifname @ipv6_blocked_interfaces",
-                    "iif @ipv6_blocked_interfaces",
+                    "iifname @ipv6_drop_interfaces",
+                    "iif @ipv6_drop_interfaces",
                 )
                 .replace(
-                    "oifname @ipv6_blocked_interfaces",
-                    "oif @ipv6_blocked_interfaces",
+                    "oifname @ipv6_drop_interfaces",
+                    "oif @ipv6_drop_interfaces",
                 )
                 .replace("iifname", "iif")
                 .replace("oifname", "oif");
@@ -818,7 +818,7 @@ egress = "awg-primary"
         assert!(!script.contains("socket mark @socket_fwmarks drop"));
         assert!(!script.contains("meta mark @socket_fwmarks drop"));
         assert!(
-            script.contains("prerouting iifname @ipv6_blocked_interfaces meta nfproto ipv6 drop")
+            script.contains("prerouting iifname @ipv6_drop_interfaces meta nfproto ipv6 drop")
         );
         assert!(!script.contains("snat ip6"));
     }
@@ -997,9 +997,10 @@ egress = "awg-primary"
         .unwrap();
 
         let script = plan.nft_script();
-        assert!(script.contains("ipv6_blocked_interfaces { type iface_index; elements = { 19 }"));
-        assert!(script.contains("prerouting iif @ipv6_blocked_interfaces meta nfproto ipv6 drop"));
-        assert!(script.contains("forward oif @ipv6_blocked_interfaces meta nfproto ipv6 drop"));
+        assert!(script.contains("ipv6_drop_interfaces { type iface_index; elements = { 17, 18, 19 }"));
+        assert!(script.contains("prerouting iif @ipv6_drop_interfaces meta nfproto ipv6 drop"));
+        assert!(script.contains("forward oif @ipv6_drop_interfaces meta nfproto ipv6 drop"));
+        assert!(script.contains("output oif @ipv6_drop_interfaces meta nfproto ipv6 drop"));
     }
 
     #[test]
@@ -1008,7 +1009,7 @@ egress = "awg-primary"
         let script = plan.nft_script();
         assert!(script.contains("elements = { \"awg-primary\", \"awg-secondary\", \"wg-server\" }"));
         assert!(script.contains("forward iifname @managed_interfaces drop"));
-        assert!(!script.contains("ipv6_blocked_interfaces"));
+        assert!(script.contains("ipv6_drop_interfaces { type ifname;"));
         assert!(script.contains("add chain inet vpn_relay output { type filter hook output priority filter; policy accept; }"));
         assert!(script.contains("forward oifname @managed_interfaces drop"));
         assert!(script.contains("iifname @managed_interfaces meta mark set 0"));
