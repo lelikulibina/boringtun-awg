@@ -1776,8 +1776,8 @@ egress = "awg-uplink"
         assert!(Config::parse_toml(&ipv6_address).is_err());
 
         let ipv6_endpoint = input.replace(
-            "allowed_ips = [\\"10.10.0.2/32\\"]",
-            "allowed_ips = [\\"10.10.0.2/32\\"]\nendpoint = \\"[2001:db8::2]:51820\\"",
+            "allowed_ips = [\"10.10.0.2/32\"]",
+            "allowed_ips = [\"10.10.0.2/32\"]\nendpoint = \"[2001:db8::2]:51820\"",
         );
         assert!(Config::parse_toml(&ipv6_endpoint).is_err());
     }
