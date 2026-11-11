@@ -82,6 +82,8 @@ pub struct RoutingPlan {
     pub output_rules: Vec<NftFirewallRule>,
     /// Socket marks that force outer encrypted UDP through the main table.
     pub socket_marks: Vec<u32>,
+    /// Block IPv6 on BoringTun's outer UDP sockets when daemon IPv6 is disabled.
+    pub ipv6_transport_blocked: bool,
     /// TUN interfaces on which inner IPv6 traffic is blocked.
     pub ipv6_blocked_interfaces: Vec<String>,
     /// Kernel interface indices captured from the original TUN descriptors.
@@ -286,6 +288,7 @@ impl RoutingPlan {
             input_rules,
             output_rules,
             socket_marks,
+            ipv6_transport_blocked: !config.daemon.ipv6_enabled,
             ipv6_blocked_interfaces,
             interface_indices: None,
         }
@@ -377,6 +380,31 @@ impl RoutingPlan {
             ));
             output.push_str(&format!(
                 "add rule {} {} output oifname @ipv6_blocked_interfaces meta nfproto ipv6 drop\n",
+                self.nft_family, self.nft_table
+            ));
+        }
+
+        if self.ipv6_transport_blocked && !self.socket_marks.is_empty() {
+            let marks = self
+                .socket_marks
+                .iter()
+                .map(|mark| format!("0x{mark:x}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            output.push_str(&format!(
+                "add set {} {} socket_fwmarks {{ type mark; elements = {{ {} }}; }}\\n",
+                self.nft_family, self.nft_table, marks
+            ));
+            // BoringTun keeps its regular dual-stack socket implementation.
+            // Socket-mark matching prevents IPv6 packets from reaching those
+            // sockets on ingress or leaving them on the underlay, including
+            // dynamically learned IPv6 peer endpoints.
+            output.push_str(&format!(
+                "add rule {} {} input meta nfproto ipv6 socket mark @socket_fwmarks drop\\n",
+                self.nft_family, self.nft_table
+            ));
+            output.push_str(&format!(
+                "add rule {} {} output meta nfproto ipv6 meta mark @socket_fwmarks drop\\n",
                 self.nft_family, self.nft_table
             ));
         }
@@ -848,6 +876,26 @@ egress = "awg-primary"
 "#
         );
         Config::parse_toml(&toml).unwrap()
+    }
+
+    #[test]
+    fn daemon_ipv4_only_mode_omits_ipv6_policy_and_blocks_outer_udp_sockets() {
+        let mut config = sample_config();
+        config.daemon.ipv6_enabled = false;
+        for interface in config.interfaces.values_mut() {
+            interface.ipv6_enabled = false;
+        }
+        let plan = RoutingPlan::from_config(&config);
+        let commands = plan.ip_commands();
+        assert!(commands.iter().all(|command| command.first().is_some_and(|family| family == "-4")));
+        assert!(!commands.iter().any(|command| command.first().is_some_and(|family| family == "-6")));
+
+        let script = plan.nft_script();
+        assert!(script.contains("socket_fwmarks { type mark;"));
+        assert!(script.contains("input meta nfproto ipv6 socket mark @socket_fwmarks drop"));
+        assert!(script.contains("output meta nfproto ipv6 meta mark @socket_fwmarks drop"));
+        assert!(script.contains("prerouting iifname @ipv6_blocked_interfaces meta nfproto ipv6 drop"));
+        assert!(!script.contains("snat ip6"));
     }
 
     #[test]
