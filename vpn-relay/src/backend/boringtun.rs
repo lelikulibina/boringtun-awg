@@ -6,7 +6,7 @@ use super::{
 };
 use crate::config::{decode_key, EndpointHost, InterfaceConfig, PeerEndpoint, TunnelType};
 use boringtun::device::{AllowedIP, DeviceConfig, DeviceHandle, PeerConfig};
-use boringtun::noise::amnezia::{AmneziaConfig, AmneziaWgConfig};
+use boringtun::noise::amnezia::AmneziaConfig;
 use boringtun::noise::handshake::ObfuscationRanges;
 use boringtun::x25519;
 use std::net::{SocketAddr, ToSocketAddrs};
