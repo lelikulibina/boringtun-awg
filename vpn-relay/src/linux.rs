@@ -880,6 +880,7 @@ const IFLA_INET_CONF: u16 = 1;
 const IPV4_DEVCONF_FORWARDING: u16 = 1;
 const NLA_F_NESTED: u16 = 1 << 15;
 const AF_INET_ATTR: u16 = libc::AF_INET as u16;
+#[cfg(test)]
 const IPV4_DEVCONF_MAX: usize = 33;
 
 #[repr(C)]
