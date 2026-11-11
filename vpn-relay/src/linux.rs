@@ -1336,9 +1336,35 @@ mod tests {
             input_rules: Vec::new(),
             output_rules: Vec::new(),
             socket_marks: Vec::new(),
+            ipv6_transport_blocked: false,
             ipv6_blocked_interfaces: Vec::new(),
             interface_indices: None,
         }
+    }
+
+    #[test]
+    fn ipv4_only_policy_apply_and_cleanup_never_call_ip6() {
+        let mut plan = cleanup_test_plan();
+        plan.ipv6_transport_blocked = true;
+        plan.egresses[0].ipv6_enabled = false;
+        plan.socket_marks = vec![0x1000_0001];
+        assert_eq!(plan.ip_policy_families(), &["-4"]);
+
+        let mut calls = Vec::new();
+        apply_policy_routing_with(&plan, &mut |_program, args| {
+            calls.push(args.to_vec());
+            assert_ne!(args.first().map(String::as_str), Some("-6"));
+            Ok(())
+        })
+        .unwrap();
+        remove_policy_routing_with(&plan, &mut |_program, args| {
+            calls.push(args.to_vec());
+            assert_ne!(args.first().map(String::as_str), Some("-6"));
+            Ok(())
+        })
+        .unwrap();
+        assert!(!calls.is_empty());
+        assert!(calls.iter().all(|args| args.first().is_some_and(|family| family == "-4")));
     }
 
     #[test]
