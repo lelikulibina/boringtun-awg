@@ -766,7 +766,7 @@ ip -n "$ROUTER_NS" addr del 10.20.0.1/24 dev awg-primary
 ip -n "$ROUTER_NS" -4 addr show dev awg-primary | grep -Fq "inet 10.20.0.99/24" \
     || fail "replacement IPv4 address was removed with the former primary address"
 primary_table="$(ip -n "$ROUTER_NS" -4 rule show | awk '
-    $4 == "fwmark" && $5 == "0x80000000" {
+    $4 == "fwmark" && $5 == "0x90000000" {
         for (i = 1; i <= NF; i++) if ($i == "lookup") { print $(i + 1); exit }
     }')"
 [[ -n "$primary_table" ]] || fail "primary policy-routing table could not be identified"
