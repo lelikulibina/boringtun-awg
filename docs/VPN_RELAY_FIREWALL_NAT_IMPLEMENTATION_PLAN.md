@@ -322,7 +322,9 @@ unmanaged output остаётся неизменным.
 Критерий приёмки: гарантии подтверждены тестами на реальном BoringTun traffic;
 неподтверждённые свойства не заявляются.
 
-| 2026-11-11 | Добавлена проверка отказа nftables delete при startup rollback | Failure injection сначала прерывает настройку адреса TUN, затем блокирует удаление принадлежащей демону nftables table. Проверяется fatal error с обеими причинами, отсутствие TUN, восстановление forwarding sysctl и сохранение fail-closed table; тест удаляет оставленную таблицу только после проверки. | Реализовано, ожидает CI |\n\n## 11. Этап 8 — runtime, rollback, ownership
+| 2026-11-11 | Добавлена проверка отказа nftables delete при startup rollback | Failure injection сначала прерывает настройку адреса TUN, затем блокирует удаление принадлежащей демону nftables table. Проверяется fatal error с обеими причинами, отсутствие TUN, восстановление forwarding sysctl и сохранение fail-closed table; тест удаляет оставленную таблицу только после проверки. | Реализовано, ожидает CI |
+
+## 11. Этап 8 — runtime, rollback, ownership
 
 - [x] Сформировать и валидировать Config, socket marks, RoutingPlan и backend
   config до изменения системного состояния.
@@ -763,7 +765,9 @@ forwarding.
 | 2026-11-10 | Добавлена проверка идентичности исходного Linux TUN descriptor | `TUNGETIFF` проверяет привязку именно исходного FD, а не существование интерфейса с совпадающим именем. Runtime проверяет идентичность каждую секунду и перед reload; потеря/переименование исходного интерфейса переводит daemon в fatal shutdown. Числовые interface names отклоняются, поскольку BoringTun трактует их как переданные FD. Добавлен root-only ignored kernel integration test: удалить TUN и создать новый с тем же именем, после чего старый FD обязан остаться detached. | Ожидает CI |
 
 
-| 2026-11-11 | Добавлена netns-проверка двойного отказа startup policy-routing rollback | Failure injection сначала отклоняет IPv6 route install, затем отдельно ломает удаление уже установленного IPv4 route. Проверяется, что startup сообщает обе причины, удаляет TUN и rules, восстанавливает исходные forwarding sysctl, но сохраняет nftables fail-closed policy и остаточный маршрут для диагностики; тест сам удаляет только намеренно оставленный ресурс перед следующим сценарием. | Реализовано, ожидает CI |\n\n## Привязка nftables к ifindex
+| 2026-11-11 | Добавлена netns-проверка двойного отказа startup policy-routing rollback | Failure injection сначала отклоняет IPv6 route install, затем отдельно ломает удаление уже установленного IPv4 route. Проверяется, что startup сообщает обе причины, удаляет TUN и rules, восстанавливает исходные forwarding sysctl, но сохраняет nftables fail-closed policy и остаточный маршрут для диагностики; тест сам удаляет только намеренно оставленный ресурс перед следующим сценарием. | Реализовано, ожидает CI |
+
+## Привязка nftables к ifindex
 
 При старте сначала применяется bootstrap policy по именам, пока TUN ещё не
 созданы. После создания и настройки TUN runtime проверяет исходные дескрипторы
@@ -837,19 +841,27 @@ successful shutdown removes the firewall.
 
 ### Netlink и устранение TOCTOU — проверка ABI
 
-Проверка Linux kernel UAPI и обработчиков rtnetlink показала, что IPv4 и IPv6 нельзя
-безопасно перевести на один и тот же механизм:
+Проверка выполнена по upstream Linux snapshot
+`cdb3033e191fd03da2d7da23b9cd448dfa180a8e` (исходники:
+[net/ipv4/devinet.c](https://github.com/torvalds/linux/blob/cdb3033e191fd03da2d7da23b9cd448dfa180a8e/net/ipv4/devinet.c#L1960-L2022)
+и
+[net/ipv6/addrconf.c](https://github.com/torvalds/linux/blob/cdb3033e191fd03da2d7da23b9cd448dfa180a8e/net/ipv6/addrconf.c#L5734-L5983)).
+Выводы ниже относятся к этому snapshot; перед реализацией их необходимо
+повторно сверить с минимальной поддерживаемой версией ядра и используемыми
+дистрибутивными backport-патчами.
 
-- IPv4: `IFLA_AF_SPEC / AF_INET / IFLA_INET_CONF` принимается обработчиком
-  `inet_set_link_af()`; вложенные элементы devconf применяются к конкретному
-  `net_device`. Атрибут `IPV4_DEVCONF_FORWARDING` поддерживает запись 0/1.
-  Это позволяет адресовать настройку через `RTM_NEWLINK` по ifindex.
-- IPv6: `IFLA_INET6_CONF` присутствует в dump-ответе, но
-  `inet6_set_link_af()` не принимает этот атрибут для записи. В частности,
-  наличие `DEVCONF_FORWARDING` или `DEVCONF_FORCE_FORWARDING` в массиве
-  конфигурации не означает, что их можно изменить через `RTM_NEWLINK`.
-  Поэтому миграция IPv6 `force_forwarding` на такой rtnetlink запрос была бы
-  фиктивной и завершалась бы без изменения нужного параметра.
+- IPv4: обработчик `inet_set_link_af()` принимает вложенный
+  `IFLA_INET_CONF` в `IFLA_AF_SPEC / AF_INET` и записывает значения
+  devconf в структуру конкретного `in_device`, связанного с `net_device`.
+  `IPV4_DEVCONF_FORWARDING` можно задавать как 0 или 1. Это даёт возможность
+  менять per-interface IPv4 forwarding через `RTM_NEWLINK`, указывая
+  `ifi_index`.
+- IPv6: `IFLA_INET6_CONF` действительно присутствует в dump-ответе внутри
+  `IFLA_PROTINFO`, однако это атрибут только чтения в данном интерфейсе.
+  `inet6_validate_link_af()` допускает для записи token или address-generation
+  mode, а `inet6_set_link_af()` обрабатывает только эти два атрибута.
+  `DEVCONF_FORWARDING` и `DEVCONF_FORCE_FORWARDING` из массива конфигурации
+  нельзя записать через этот путь `RTM_NEWLINK`.
 
 Следующий шаг реализации должен быть гибридным и проверяемым:
 
@@ -858,18 +870,23 @@ successful shutdown removes the firewall.
    состояния для того же ifindex.
 2. Для IPv6 сохранить семантику `force_forwarding`, пока не найден и не
    подтверждён поддерживаемый kernel API записи по ifindex. Отдельно исследовать
-   безопасную работу через открытый procfs sysctl file descriptor, чтобы путь
-   интерфейса разрешался один раз, а не повторно в момент записи.
-3. Не считать TOCTOU устранённым, пока оба семейства не имеют операции записи,
-   адресующей исходный объект интерфейса, и пока race-тест с удалением/созданием
-   интерфейса под тем же именем не подтверждает отсутствие записи в замену.
+   безопасную работу через открытый procfs sysctl file descriptor; само
+   открытие FD ещё не считается доказательством защиты от удаления интерфейса.
+3. Не считать переход на ifindex полным устранением TOCTOU: он убирает повторное
+   разрешение имени, но ifindex не является постоянным идентификатором объекта
+   после удаления интерфейса. Нужно проверить гонку между разрешением ifindex
+   в userspace и обработкой `RTM_NEWLINK`, включая удаление и повторное создание
+   интерфейса с тем же именем и возможное повторное использование ifindex.
+   Если нельзя гарантировать привязку операции к исходному объекту, остаточный
+   риск должен быть явно сохранён в документации.
 
 Acceptance criteria: проверка ACK/error/extack; отсутствие частичной записи при
 ошибочном атрибуте; сохранение исходных значений при rollback; корректное
-поведение при исчезновении интерфейса между resolve/open/write; IPv4 и IPv6
-packet-level forwarding в отдельном network namespace. До выполнения этих
-критериев текущая sysctl-реализация остаётся действующей, а TOCTOU — открытым
-ограничением.
+поведение при исчезновении интерфейса между resolve/open/write; отсутствие
+записи в новый интерфейс после rename/delete/recreate и проверки повторного
+использования ifindex; IPv4 и IPv6 packet-level forwarding в отдельном network
+namespace. До выполнения этих критериев текущая sysctl-реализация остаётся
+действующей, а TOCTOU — открытым ограничением.
 
 ### Per-interface forwarding — реализация
 
