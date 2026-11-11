@@ -628,56 +628,11 @@ impl Config {
                     rule.ingress
                 ));
             }
-            let source_prefixes = rule
-                .source
-                .as_ref()
-                .map(|prefixes| {
-                    if prefixes.is_empty() {
-                        return invalid("routing.rules.source must not be an empty list");
-                    }
-                    let mut unique = HashSet::new();
-                    for prefix in prefixes {
-                        if !unique.insert(canonical_prefix(prefix, "routing.rules.source")?) {
-                            return invalid(
-                                "routing.rules.source must not contain duplicate CIDR selectors (including equivalent CIDR networks)",
-                            );
-                        }
-                    }
-                    prefixes
-                        .iter()
-                        .map(|prefix| parse_prefix(prefix, "routing.rules.source"))
-                        .collect::<Result<Vec<_>, _>>()
-                })
-                .transpose()?;
-            let destination_prefixes = rule
-                .destination
-                .as_ref()
-                .map(|prefixes| {
-                    if prefixes.is_empty() {
-                        return invalid("routing.rules.destination must not be an empty list");
-                    }
-                    let mut unique = HashSet::new();
-                    for prefix in prefixes {
-                        if !unique.insert(canonical_prefix(prefix, "routing.rules.destination")?) {
-                            return invalid(
-                                "routing.rules.destination must not contain duplicate CIDR selectors (including equivalent CIDR networks)",
-                            );
-                        }
-                    }
-                    prefixes
-                        .iter()
-                        .map(|prefix| parse_prefix(prefix, "routing.rules.destination"))
-                        .collect::<Result<Vec<_>, _>>()
-                })
-                .transpose()?;
-
-
             match rule.nat {
                 NatMode::Snat => {
-                    let Some(address) = rule.nat_to else {
+                    if rule.nat_to.is_none() {
                         return invalid("routing.rules.nat_to is required when nat = \"snat\"");
-                    };
-
+                    }
                 }
                 NatMode::None | NatMode::Masquerade if rule.nat_to.is_some() => {
                     return invalid("routing.rules.nat_to is valid only when nat = \"snat\"");
