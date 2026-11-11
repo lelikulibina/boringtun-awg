@@ -675,9 +675,7 @@ impl Runtime {
                 &config
                     .interfaces
                     .iter()
-                    .filter_map(|(name, interface)| {
-                        interface.ipv6_enabled.then_some(name.clone())
-                    })
+                    .filter_map(|(name, interface)| interface.ipv6_enabled.then_some(name.clone()))
                     .collect(),
             ) {
                 Ok(state) => Some(state),
@@ -1810,8 +1808,7 @@ fn enable_interface_forwarding_durable(
     // it before vpn-relay starts. IPv6 uses force_forwarding per link and must
     // keep conf/all/forwarding disabled, otherwise every link can forward.
     if read_sysctl("net.ipv4.ip_forward")? != "1"
-        || (!ipv6_enabled_names.is_empty()
-            && read_sysctl("net.ipv6.conf.all.forwarding")? != "0")
+        || (!ipv6_enabled_names.is_empty() && read_sysctl("net.ipv6.conf.all.forwarding")? != "0")
     {
         return Err(RuntimeError::Forwarding(
             "per-interface forwarding requires net.ipv4.ip_forward=1 and net.ipv6.conf.all.forwarding=0; configure these namespace-wide prerequisites externally".to_owned(),
