@@ -220,7 +220,15 @@ mod tests {
             ("persistent_keepalive_secs = 25", Some((25, 25))),
         ] {
             let source = format!(
-                "type = \\\"wg\\\"\\naddress = [\\\"10.0.0.1/24\\\"]\\nprivate_key = \\\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\\\"\\n[[peers]]\\npublic_key = \\\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\\\"\\nallowed_ips = [\\\"10.0.0.2/32\\\"]\\n{setting}\\n"
+                r#"
+                    type = "wg"
+                    address = ["10.0.0.1/24"]
+                    private_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+                    [[peers]]
+                    public_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+                    allowed_ips = ["10.0.0.2/32"]
+                    {setting}
+                "#
             );
             let interface: InterfaceConfig = toml::from_str(&source).unwrap();
             let prepared = PreparedInterface { peer_endpoints: vec![None] };
