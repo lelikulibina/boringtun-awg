@@ -2100,6 +2100,17 @@ mod tests {
     }
 
     #[test]
+    fn rtnetlink_reads_loopback_ipv4_forwarding_by_ifindex() {
+        let index = interface_index("lo").expect("loopback interface exists");
+        let netlink_value = ipv4_interface_forwarding(index).unwrap();
+        let sysctl_value = std::fs::read_to_string("/proc/sys/net/ipv4/conf/lo/forwarding")
+            .unwrap()
+            .trim()
+            == "1";
+        assert_eq!(netlink_value, sysctl_value);
+    }
+
+    #[test]
     fn interface_name_round_trips_current_network_namespace_identity() {
         let index = interface_index("lo").expect("loopback interface exists");
         assert_eq!(interface_name(index).unwrap(), "lo");
