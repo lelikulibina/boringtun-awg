@@ -890,7 +890,6 @@ mod tests {
             r#"
 [interfaces.wg-server]
 type = "wg"
-ipv6_enabled = true
 address = ["10.0.0.1/24"]
 listen_port = 51820
 private_key = "{KEY}"
@@ -898,7 +897,6 @@ socket_fwmark = 4097
 
 [interfaces.awg-primary]
 type = "awg"
-ipv6_enabled = true
 address = ["10.1.0.2/32"]
 listen_port = 51821
 private_key = "{KEY}"
@@ -906,7 +904,6 @@ socket_fwmark = 4098
 
 [interfaces.awg-secondary]
 type = "awg"
-ipv6_enabled = true
 address = ["10.2.0.2/32"]
 listen_port = 51822
 private_key = "{KEY}"
