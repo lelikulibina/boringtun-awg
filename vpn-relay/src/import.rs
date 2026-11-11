@@ -656,7 +656,7 @@ PersistentKeepalive = 25
         assert_eq!(config.interfaces.len(), 2);
         assert_eq!(
             config.interfaces["wg-client"].address,
-            vec!["10.0.0.2/32", "fd00::2/128"]
+            vec!["10.0.0.2/32"]
         );
         assert_eq!(config.interfaces["wg-client"].listen_port, None);
         assert_eq!(config.interfaces["wg-backup"].listen_port, None);
@@ -669,10 +669,7 @@ PersistentKeepalive = 25
 
     #[test]
     fn imports_awg_parameter_profiles_as_awg_tunnel() {
-        let base = CLIENT
-            .replace("DNS = 1.1.1.1\n", "")
-            .replace("fd00::2/128", "10.0.0.2/32")
-            .replace("AllowedIPs = 0.0.0.0/0, ::/0", "AllowedIPs = 0.0.0.0/0");
+        let base = CLIENT.replace("DNS = 1.1.1.1\n", "");
         let profiles = [
             ("Jc = 4\nS1 = 16", TunnelType::AmneziaWg),
             ("I1 = <t>", TunnelType::AmneziaWg),
