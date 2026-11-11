@@ -292,11 +292,14 @@ fn resolve_endpoint(value: &str) -> Result<SocketAddr, BackendError> {
                 .map_err(|error| {
                     BackendError::new(format!("failed to resolve endpoint {value}: {error}"))
                 })?;
-            addresses.into_iter().find(SocketAddr::is_ipv4).ok_or_else(|| {
-                BackendError::new(format!(
-                    "DNS returned no IPv4 addresses for endpoint {value}"
-                ))
-            })
+            addresses
+                .into_iter()
+                .find(SocketAddr::is_ipv4)
+                .ok_or_else(|| {
+                    BackendError::new(format!(
+                        "DNS returned no IPv4 addresses for endpoint {value}"
+                    ))
+                })
         }
     }
 }
