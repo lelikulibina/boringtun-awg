@@ -1166,16 +1166,6 @@ egress = "awg-uplink"
             .to_string()
             .contains("daemon.log_level"));
 
-        let ipv4_current = Config::parse_toml(&ipv4_config()).unwrap();
-        let mut changed_ipv6_mode = ipv4_current.clone();
-        changed_ipv6_mode.daemon.ipv6_enabled = false;
-        changed_ipv6_mode.validate().unwrap();
-        assert!(ipv4_current
-            .validate_reload_compatibility(&changed_ipv6_mode)
-            .unwrap_err()
-            .to_string()
-            .contains("daemon.ipv6_enabled"));
-
         let mut changed_stats_interval = current.clone();
         changed_stats_interval.daemon.stats_interval_secs += 1;
         changed_stats_interval.validate().unwrap();
@@ -1228,7 +1218,7 @@ egress = "awg-uplink"
     }
 
     #[test]
-    fn reload_compatibility_rejects_interface_address_mtu_ipv6_and_listen_port_changes() {
+    fn reload_compatibility_rejects_interface_address_mtu_and_listen_port_changes() {
         let current = Config::parse_toml(&valid_config()).unwrap();
 
         let mut changed_address = current.clone();
@@ -1249,20 +1239,6 @@ egress = "awg-uplink"
         changed_mtu.validate().unwrap();
         assert!(current
             .validate_reload_compatibility(&changed_mtu)
-            .unwrap_err()
-            .to_string()
-            .contains("immutable tunnel parameters"));
-
-        let mut changed_ipv6 = current.clone();
-        changed_ipv6
-            .interfaces
-            .get_mut("wg-server")
-            .unwrap()
-            .ipv6_enabled = false;
-        changed_ipv6.routing.rules.pop();
-        changed_ipv6.validate().unwrap();
-        assert!(current
-            .validate_reload_compatibility(&changed_ipv6)
             .unwrap_err()
             .to_string()
             .contains("immutable tunnel parameters"));
@@ -1708,12 +1684,10 @@ egress = "awg-uplink"
     }
 
     #[test]
-    fn parses_ipv4_and_bracketed_ipv6_peer_endpoints() {
+    fn parses_ipv4_and_rejects_ipv6_peer_endpoints() {
         assert_eq!(PeerEndpoint::parse("192.0.2.1:51820").unwrap().port, 51820);
-        assert_eq!(
-            PeerEndpoint::parse("[2001:db8::1]:51820").unwrap().port,
-            51820
-        );
+        assert!(PeerEndpoint::parse("[2001:db8::1]:51820").is_err());
+        assert!(PeerEndpoint::parse("2001:db8::1:51820").is_err());
     }
 
     #[test]
@@ -1848,8 +1822,8 @@ egress = "awg-uplink"
         // server interface before parsing.
         let input = input.replace(
             "[interfaces.awg-uplink]",
-            "[interfaces.wg-backup]\ntype = \"wg\"\nipv6_enabled = true\naddress = [\"10.11.0.1/24\"]\nlisten_port = 51823\nprivate_key = \"{KEY}\"\nsocket_fwmark = 4100\n\n[interfaces.awg-uplink]",
-        ).replace("priority = 100\ningress = \"wg-server\"\ndestination = \"::/0\"", "priority = 100\ningress = \"wg-backup\"\ndestination = \"::/0\" ")
+            "[interfaces.wg-backup]\ntype = \"wg\"\naddress = [\"10.11.0.1/24\"]\nlisten_port = 51823\nprivate_key = \"{KEY}\"\nsocket_fwmark = 4100\n\n[interfaces.awg-uplink]",
+        ).replace("priority = 100\ningress = \"wg-server\"\ndestination = \"0.0.0.0/0\"", "priority = 100\ningress = \"wg-backup\"\ndestination = \"0.0.0.0/0\" ")
         .replace("{KEY}", KEY);
         assert!(Config::parse_toml(&input).is_ok());
     }
@@ -1883,8 +1857,8 @@ egress = "awg-uplink"
     #[test]
     fn interfaces_can_be_used_in_both_routing_directions() {
         let input = valid_config().replace(
-            "priority = 110\ningress = \"wg-server\"\ndestination = \"::/0\"\negress = \"awg-uplink\"",
-            "priority = 110\ningress = \"wg-server\"\ndestination = \"::/0\"\negress = \"awg-uplink\"\n\n[[routing.rules]]\npriority = 120\ningress = \"awg-uplink\"\ndestination = \"10.0.0.0/24\"\negress = \"wg-server\""
+            "priority = 110\ningress = \"wg-server\"\ndestination = \"0.0.0.0/0\"\negress = \"awg-uplink\"",
+            "priority = 110\ningress = \"wg-server\"\ndestination = \"0.0.0.0/0\"\negress = \"awg-uplink\"\n\n[[routing.rules]]\npriority = 120\ningress = \"awg-uplink\"\ndestination = \"10.0.0.0/24\"\negress = \"wg-server\""
         );
         let config = Config::parse_toml(&input).unwrap();
         assert_eq!(config.resolved_routing_fwmarks().unwrap().len(), 2);
@@ -1964,7 +1938,7 @@ egress = "awg-uplink"
 
         let destination = valid_config().replace(
             "destination = \"0.0.0.0/0\"",
-            "destination = [\"2001:db8::/32\", \"2001:db8:abcd::1/32\"]",
+            "destination = [\"10.10.0.0/24\", \"10.10.0.99/24\"]",
         );
         assert!(Config::parse_toml(&destination)
             .unwrap_err()
