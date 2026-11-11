@@ -694,7 +694,6 @@ wait "$capture_pid" || fail "could not capture non-NAT IPv4 packet"
 grep -Eq '10\.77\.0\.2 > 195\.142\.1\.1' "$TMP/nat-none-capture.log" \
     || fail "nat=none changed the original IPv4 source address"
 
-ip netns exec "$SECONDARY_NS" timeout 5 tcpdump -nn -i up-secondary -c 1 \
 # Masquerade must resolve the egress address for each new flow. Linux
 # otherwise removes secondary addresses when the primary address is deleted.
 ip netns exec "$ROUTER_NS" sysctl -q -w net.ipv4.conf.awg-primary.promote_secondaries=1
@@ -815,12 +814,12 @@ PY
         fi
     done
 }
-run_iperf tcp primary-default 203.0.113.1 5201 4
-run_iperf udp primary-default 203.0.113.1 5201 4
-run_iperf tcp secondary-16 195.142.1.1 5202 4
-run_iperf udp secondary-16 195.142.1.1 5202 4
-run_iperf tcp secondary-24 79.100.22.1 5203 4
-run_iperf udp secondary-24 79.100.22.1 5203 4
+run_iperf tcp primary-default 203.0.113.1 5201
+run_iperf udp primary-default 203.0.113.1 5201
+run_iperf tcp secondary-16 195.142.1.1 5202
+run_iperf udp secondary-16 195.142.1.1 5202
+run_iperf tcp secondary-24 79.100.22.1 5203
+run_iperf udp secondary-24 79.100.22.1 5203
 
 # Encrypted outer UDP must use each underlay veth and must never appear on
 # either AWG TUN. Keepalives and the traffic above keep the sockets active.
