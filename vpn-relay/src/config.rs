@@ -1729,6 +1729,7 @@ egress = "awg-uplink"
     #[test]
     fn ipv6_is_blocked_by_default_on_every_interface() {
         let config = Config::parse_toml(&valid_config()).unwrap();
+        assert!(config.daemon.ipv6_enabled);
         assert!(config
             .interfaces
             .values()
@@ -1780,6 +1781,18 @@ egress = "awg-uplink"
             "allowed_ips = [\"10.10.0.2/32\"]\nendpoint = \"[2001:db8::2]:51820\"",
         );
         assert!(Config::parse_toml(&ipv6_endpoint).is_err());
+
+        let ipv6_allowed_ip = input.replace(
+            "10.10.0.2/32",
+            "2001:db8::2/128",
+        );
+        assert!(Config::parse_toml(&ipv6_allowed_ip).is_err());
+
+        let ipv6_route_selector = input.replace(
+            "destination = \\"0.0.0.0/0\\"",
+            "destination = \\"2001:db8::/32\\"",
+        );
+        assert!(Config::parse_toml(&ipv6_route_selector).is_err());
     }
 
     #[test]
