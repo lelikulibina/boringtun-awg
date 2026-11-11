@@ -1241,19 +1241,6 @@ fn write_sysctl(key: &str, value: &str) -> Result<(), RuntimeError> {
 }
 
 #[cfg(test)]
-#[cfg(test)]
-fn enable_forwarding_with(
-    mut read: impl FnMut(&str) -> Result<String, RuntimeError>,
-    mut write: impl FnMut(&str, &str) -> Result<(), RuntimeError>,
-) -> Result<ForwardingState, RuntimeError> {
-    let state = ForwardingState {
-        ipv4: read("net.ipv4.ip_forward")?,
-        ipv4_changed: false,
-        interfaces: Vec::new(),
-    };
-    enable_forwarding_state_with(state, &mut write)
-}
-
 fn enable_forwarding_state_with(
     mut state: ForwardingState,
     mut write: impl FnMut(&str, &str) -> Result<(), RuntimeError>,
