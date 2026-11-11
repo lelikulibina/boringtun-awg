@@ -1029,6 +1029,15 @@ fn parse_link_ipv4_forwarding(response: &[u8]) -> Result<bool, LinuxError> {
     }
 }
 
+/// Read IPv4 forwarding by ifindex using RTM_GETLINK (no name-based sysctl lookup).
+pub fn ipv4_interface_forwarding(ifindex: u32) -> Result<bool, LinuxError> {
+    if ifindex == 0 {
+        return Err(LinuxError::Conflict { resource: "IPv4 forwarding interface".into(), details: "ifindex 0 is not valid".into() });
+    }
+    let response = netlink_request(ifindex, RTM_GETLINK, NLM_F_REQUEST, &[])?;
+    parse_link_ipv4_forwarding(&response)
+}
+
 /// Set IPv4 forwarding by ifindex using RTM_NEWLINK and verify it with RTM_GETLINK.
 pub fn set_ipv4_interface_forwarding(ifindex: u32, enabled: bool) -> Result<(), LinuxError> {
     if ifindex == 0 {
@@ -1044,8 +1053,7 @@ pub fn set_ipv4_interface_forwarding(ifindex: u32, enabled: bool) -> Result<(), 
     let mut attributes = Vec::new();
     append_netlink_attribute(&mut attributes, IFLA_AF_SPEC | NLA_F_NESTED, &af_spec);
     netlink_request(ifindex, RTM_NEWLINK, NLM_F_REQUEST | NLM_F_ACK, &attributes)?;
-    let response = netlink_request(ifindex, RTM_GETLINK, NLM_F_REQUEST, &[])?;
-    let actual = parse_link_ipv4_forwarding(&response)?;
+    let actual = ipv4_interface_forwarding(ifindex)?;
     if actual != enabled {
         return Err(LinuxError::Conflict { resource: format!("IPv4 forwarding on ifindex {ifindex}"), details: format!("kernel acknowledged update but reports forwarding={}", u8::from(actual)) });
     }
