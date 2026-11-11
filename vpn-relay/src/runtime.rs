@@ -676,11 +676,7 @@ impl Runtime {
                 namespace_inode,
                 &config.daemon.forwarding_interfaces,
                 &config.interfaces.keys().cloned().collect(),
-                config.daemon.ipv6_enabled
-                    && config
-                        .interfaces
-                        .values()
-                        .any(|interface| interface.ipv6_enabled),
+                config.daemon.ipv6_enabled,
             ) {
                 Ok(state) => Some(state),
                 Err(error) => {
