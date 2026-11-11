@@ -250,6 +250,13 @@ mod tests {
     }
 
     #[test]
+    fn dns_resolution_requests_only_ipv4_addresses() {
+        let address = resolve_ipv4_domain("localhost", 51820).unwrap();
+        assert!(address.is_ipv4());
+        assert_eq!(address.port(), 51820);
+    }
+
+    #[test]
     fn backend_preflight_resolves_peer_endpoints_before_runtime_setup() {
         let mut interface: InterfaceConfig = toml::from_str(
             r#"
@@ -300,6 +307,9 @@ fn resolve_ipv4_domain(host: &str, port: u16) -> Result<SocketAddr, String> {
         fn drop(&mut self) {
             unsafe { libc::freeaddrinfo(self.0) };
         }
+    }
+    if result.is_null() {
+        return Err("DNS returned no IPv4 A records".to_owned());
     }
     let _guard = AddrInfoGuard(result);
     let mut current = result;
