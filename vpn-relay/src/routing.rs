@@ -581,26 +581,24 @@ impl RoutingPlan {
         // NAT consumes the selected decision id from conntrack instead of
         // repeating selector matching and risking a different overlapping rule.
         for rule in &self.decisions {
+            let family_guard = if self.ipv6_transport_blocked {
+                " meta nfproto ipv4"
+            } else {
+                ""
+            };
             let selector = format!(
-                "iifname \"{}\" oifname \"{}\" ct mark & 0x{:08x} == 0x{:08x}",
-                rule.ingress, rule.egress, CONNTRACK_MARK_MASK, rule.conntrack_mark
+                "iifname \"{}\" oifname \"{}\" ct mark & 0x{:08x} == 0x{:08x}{}",
+                rule.ingress, rule.egress, CONNTRACK_MARK_MASK, rule.conntrack_mark, family_guard
             );
             match rule.nat_action() {
                 NatAction::None => output.push_str(&format!(
                     "add rule {} {} postrouting {} return\n",
                     self.nft_family, self.nft_table, selector
                 )),
-                NatAction::Masquerade => {
-                    let family = if self.ipv6_transport_blocked {
-                        " meta nfproto ipv4 "
-                    } else {
-                        " "
-                    };
-                    output.push_str(&format!(
-                        "add rule {} {} postrouting {}{}masquerade\n",
-                        self.nft_family, self.nft_table, selector, family
-                    ));
-                }
+                NatAction::Masquerade => output.push_str(&format!(
+                    "add rule {} {} postrouting {} masquerade\n",
+                    self.nft_family, self.nft_table, selector
+                )),
                 NatAction::Snat(address) => {
                     let family = if address.is_ipv4() { "ip" } else { "ip6" };
                     let nfproto = if address.is_ipv4() { "ipv4" } else { "ipv6" };
