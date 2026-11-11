@@ -19,12 +19,16 @@ SERVER_PID=""
 CLIENT_PID=""
 SERVER_IPERF_PID=""
 CLIENT_IPERF_PID=""
+CONTINUOUS_PING_PID=""
+CONTINUOUS_REVERSE_PING_PID=""
+PEER_UPDATE_PING_PID=""
+PEER_UPDATE_REVERSE_PING_PID=""
 TCP_PIDS=()
 SERVER_NS_INODE=""
 CLIENT_NS_INODE=""
 
 cleanup() {
-    for pid in "${TCP_PIDS[@]}" "$CLIENT_IPERF_PID" "$SERVER_IPERF_PID" "$CLIENT_PID" "$SERVER_PID"; do
+    for pid in "${TCP_PIDS[@]}" "$PEER_UPDATE_REVERSE_PING_PID" "$PEER_UPDATE_PING_PID" "$CONTINUOUS_REVERSE_PING_PID" "$CONTINUOUS_PING_PID" "$CLIENT_IPERF_PID" "$SERVER_IPERF_PID" "$CLIENT_PID" "$SERVER_PID"; do
         if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
             kill -TERM "$pid" 2>/dev/null || true
             wait "$pid" 2>/dev/null || true
@@ -765,6 +769,8 @@ PY
 }
 ip netns exec "$CLIENT_NS" ping -n -i 0.05 -c 100 -W 2 10.77.0.1 >"$TMP/reload-continuous-ping.log" 2>&1 &
 CONTINUOUS_PING_PID=$!
+ip netns exec "$SERVER_NS" ping -n -i 0.05 -c 100 -W 2 10.77.0.2 >"$TMP/reload-continuous-reverse-ping.log" 2>&1 &
+CONTINUOUS_REVERSE_PING_PID=$!
 sleep 0.2
 for action in add remove add; do
     toggle_reload_rule "$action"
@@ -773,10 +779,15 @@ for action in add remove add; do
         || fail "server runtime reload ($action) failed while tunnel packets were flowing"
 done
 if ! wait "$CONTINUOUS_PING_PID"; then
-    fail "continuous authenticated tunnel traffic failed during repeated runtime reload"
+    fail "client-to-server authenticated traffic failed during repeated runtime reload"
+fi
+if ! wait "$CONTINUOUS_REVERSE_PING_PID"; then
+    fail "server-to-client authenticated traffic failed during repeated runtime reload"
 fi
 grep -Eq '100 packets transmitted, 100 received, 0% packet loss' "$TMP/reload-continuous-ping.log" \
-    || fail "packet loss detected during repeated runtime reload"
+    || fail "client-to-server packet loss detected during repeated runtime reload"
+grep -Eq '100 packets transmitted, 100 received, 0% packet loss' "$TMP/reload-continuous-reverse-ping.log" \
+    || fail "server-to-client packet loss detected during repeated runtime reload"
 kill -0 "$SERVER_PID" 2>/dev/null || fail "server daemon exited after traffic reload"
 ip netns exec "$CLIENT_NS" ping -n -c 3 -W 2 10.77.0.1 \
     || fail "tunnel traffic did not recover after repeated runtime reload"
@@ -856,6 +867,15 @@ else:
 with open(path, "w", encoding="utf-8") as stream:
     stream.write(config)
 PY
+# Keep both traffic directions active across the peer-set commit and rollback
+# to the original AllowedIPs set. This detects one-way datapath interruption.
+timeout 20s ip netns exec "$CLIENT_NS" ping -n -i 0.05 -c 100 -W 2 10.77.0.1 \
+    >"$TMP/peer-update-continuous-ping.log" 2>&1 &
+PEER_UPDATE_PING_PID=$!
+timeout 20s ip netns exec "$SERVER_NS" ping -n -i 0.05 -c 100 -W 2 10.77.0.2 \
+    >"$TMP/peer-update-continuous-reverse-ping.log" 2>&1 &
+PEER_UPDATE_REVERSE_PING_PID=$!
+sleep 0.2
 ip netns exec "$SERVER_NS" "$BIN" --config "$TMP/server.toml" --reload \
     >"$TMP/reload-peer-add.log" 2>&1 || fail "server peer AllowedIPs addition failed"
 ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.22 -c 4 -W 2 10.77.0.1 \
@@ -916,6 +936,16 @@ if ip netns exec "$CLIENT_NS" ping -6 -I fd77::22 -c 2 -W 1 fd77::1 \
 fi
 ip netns exec "$CLIENT_NS" ping -n -c 3 -W 2 10.77.0.1 \
     || fail "existing peer traffic stopped after AllowedIPs removal"
+if ! wait "$PEER_UPDATE_PING_PID"; then
+    fail "client-to-server traffic failed during peer AllowedIPs updates"
+fi
+if ! wait "$PEER_UPDATE_REVERSE_PING_PID"; then
+    fail "server-to-client traffic failed during peer AllowedIPs updates"
+fi
+grep -Eq '100 packets transmitted, 100 received, 0% packet loss' "$TMP/peer-update-continuous-ping.log" \
+    || fail "client-to-server packet loss detected during peer AllowedIPs updates"
+grep -Eq '100 packets transmitted, 100 received, 0% packet loss' "$TMP/peer-update-continuous-reverse-ping.log" \
+    || fail "server-to-client packet loss detected during peer AllowedIPs updates"
 kill -0 "$SERVER_PID" 2>/dev/null || fail "server daemon exited after peer AllowedIPs reload"
 
 sleep 2
