@@ -66,7 +66,7 @@ fail() {
     echo "vpn-relay peer traffic test ($PROTO): $*" >&2
     dump_namespace_diagnostics "$CLIENT_NS"
     dump_namespace_diagnostics "$SERVER_NS"
-    for log in "$TMP/server.log" "$TMP/client.log" "$TMP/server-iperf.log" "$TMP/client-iperf.log" "$TMP/forged-reply-client.log" "$TMP/forged-reply-tun.log" "$TMP/unmanaged-input-server.log" "$TMP/unmanaged-input-reply-tun.log"; do
+    for log in "$TMP/server.log" "$TMP/client.log" "$TMP/server-iperf.log" "$TMP/client-iperf.log" "$TMP/forged-reply-client.log" "$TMP/forged-reply-tun.log" "$TMP/unmanaged-input-server.log" "$TMP/unmanaged-input-reply-tun.log" "$TMP/icmpv6-input-deny.log" "$TMP/icmpv6-output-deny.log"; do
         if [[ -f "$log" ]]; then
             echo "--- $log ---" >&2
             cat "$log" >&2
@@ -491,7 +491,7 @@ ip -n "$CLIENT_NS" -6 address add fd77::3/128 dev wg-peer-test
 # authenticated client address is deliberately absent from the server INPUT
 # source selector: the echo request must reach the TUN but receive no reply.
 ip netns exec "$SERVER_NS" timeout 5 tcpdump -nn -i wg-peer-test -c 1 \
-    'icmp6 and src host fd77::3 and dst host fd77::1 and icmp6[0] == 128' \
+    'ip6 and src host fd77::3 and dst host fd77::1' \
     >"$TMP/icmpv6-input-deny.log" 2>&1 &
 capture_pid=$!
 TCP_PIDS+=("$capture_pid")
@@ -504,7 +504,7 @@ wait "$capture_pid" || fail "ICMPv6 INPUT deny probe did not reach the server TU
 # The server OUTPUT allow rule names only fd77::2. Sending to the other
 # authenticated client address must be denied before a packet reaches its TUN.
 ip netns exec "$CLIENT_NS" timeout 3 tcpdump -nn -i wg-peer-test -c 1 \
-    'icmp6 and src host fd77::1 and dst host fd77::3 and icmp6[0] == 128' \
+    'ip6 and src host fd77::1 and dst host fd77::3' \
     >"$TMP/icmpv6-output-deny.log" 2>&1 &
 capture_pid=$!
 TCP_PIDS+=("$capture_pid")
