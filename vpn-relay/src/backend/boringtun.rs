@@ -179,9 +179,10 @@ fn build_peer_configs(
                     })
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            let persistent_keepalive = peer
-                .persistent_keepalive_secs
-                .map(|seconds| (u32::from(seconds), u32::from(seconds)));
+            let persistent_keepalive = peer.persistent_keepalive_range.or_else(|| {
+                peer.persistent_keepalive_secs
+                    .map(|seconds| (u32::from(seconds), u32::from(seconds)))
+            });
             Ok(PeerConfig {
                 public_key,
                 endpoint: *endpoint,
