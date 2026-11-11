@@ -62,7 +62,6 @@ ip -n "$NS" link set untrusted0 up
 
 # IPv4's namespace switch is a prerequisite, not owned by vpn-relay.
 ip netns exec "$NS" sysctl -qw net.ipv4.ip_forward=1
-ip netns exec "$NS" sysctl -qw net.ipv6.conf.all.forwarding=0
 for iface in lo uplink0 untrusted0; do
     ip netns exec "$NS" sysctl -qw "net.ipv4.conf.$iface.forwarding=0"
 done
