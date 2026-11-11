@@ -282,9 +282,9 @@ fn resolve_endpoint(value: &str, ipv6_enabled: bool) -> Result<SocketAddr, Backe
     let parsed = PeerEndpoint::parse(value)
         .map_err(|reason| BackendError::new(format!("invalid endpoint {value}: {reason}")))?;
     match parsed.host {
-        EndpointHost::Ip(ip) if !ipv6_enabled && ip.is_ipv6() => Err(BackendError::new(
-            format!("IPv6 endpoint {value} is not allowed when IPv6 is disabled"),
-        )),
+        EndpointHost::Ip(ip) if !ipv6_enabled && ip.is_ipv6() => Err(BackendError::new(format!(
+            "IPv6 endpoint {value} is not allowed when IPv6 is disabled"
+        ))),
         EndpointHost::Ip(ip) => Ok(SocketAddr::new(ip, parsed.port)),
         EndpointHost::Dns(host) => {
             let addresses = (host.as_str(), parsed.port)
