@@ -448,17 +448,18 @@ forwarding на allowlisted links, отсутствие forwarding на unmanage
 
 Остаётся:
 
-- [ ] Выполнить stale IPv6 procfs FD race test: удалить интерфейс и создать
-  новый с тем же именем, подтвердить отказ записи через старый FD и отсутствие
-  изменений replacement link. Тест добавлен, выполнение не подтверждено.
+- [x] Выполнить stale IPv6 procfs FD race test: удалить интерфейс и создать
+  новый с тем же именем; CI подтвердил отказ записи через старый FD и отсутствие
+  изменений replacement link (run `43007873964`, job `integration-tests`).
 - [ ] Закрыть/документировать остаточный IPv4 ifindex reuse TOCTOU между
   identity guard и rtnetlink обработкой; ACK/readback не являются generation
   token.
 - [ ] Выполнить kernel compatibility matrix для минимально поддерживаемого и
   актуальных ядер, включая дистрибутивные backport `force_forwarding`.
-- [ ] Завершить failure-injection для каждого read/write/persist/fsync/restore
-  шага; в том числе новый тест агрегации четырёх per-interface restore failures
-  ожидает исполнения.
+- [~] Failure-injection частично подтверждён: CI `43007873964` выполнил
+  `per_interface_restore_attempts_every_family_after_failures` и
+  `per_interface_restore_continues_after_identity_mismatch`. Полная матрица
+  отказов каждого read/write/persist/fsync/restore boundary ещё не закрыта.
 - [ ] Проверить Podman rootful/private-network-namespace deployment на целевой
   матрице: `CAP_NET_ADMIN`, `/dev/net/tun`, netlink и sysctl доступ.
 
@@ -935,7 +936,7 @@ IPv4/IPv6 forwarding и lifecycle/recovery suites уже существуют и
 - [x] Runtime проверяет global prerequisites, состояние unmanaged links и allowlisted links; при drift выполняется fatal shutdown с сохранением firewall.
 - [x] Добавлены unit tests для валидации allowlist, identity mismatch, внешних изменений sysctl, partial-write rollback и TUN recovery.
 - [x] Добавлены root-only network namespace suites: daemon lifecycle/recovery, unmanaged interface rejection, runtime drift, а также реальные IPv4/IPv6 packet probes для allowlisted и blocked ingress interfaces.
-- [ ] Остаточный риск TOCTOU не закрыт полностью. IPv4 sysctl write заменён на RTM_NEWLINK по ifindex с ACK и RTM_GETLINK readback, но повторное использование ifindex между userspace guard и обработкой запроса теоретически возможно. IPv6 force_forwarding записывается через заранее открытый procfs FD после проверки name/ifindex; это предотвращает повторное разрешение имени при write и позволяет ядру отклонить устаревший inode после unregister. Добавлен namespace race test с удалением и повторным созданием интерфейса под тем же именем; его выполнение и CI ещё требуется подтвердить.
+- [ ] Остаточный риск TOCTOU не закрыт полностью. IPv4 sysctl write заменён на RTM_NEWLINK по ifindex с ACK и RTM_GETLINK readback, но повторное использование ifindex между userspace guard и обработкой запроса теоретически возможно. IPv6 force_forwarding записывается через заранее открытый procfs FD после проверки name/ifindex; это предотвращает повторное разрешение имени при write и позволяет ядру отклонить устаревший inode после unregister. Stale-FD race test выполнен и прошёл в CI `43007873964`; это подтверждает конкретный сценарий unregister/recreate, но не является общей generation token и не доказывает устранение всех TOCTOU.
 
 net.ipv4.ip_forward=1 и net.ipv6.conf.all.forwarding=0 должны быть выставлены до запуска daemon и оставаться неизменными на протяжении его работы. Если global IPv6 forwarding включить, ядро переключит Host/Router setting всех интерфейсов и сбросит force_forwarding; runtime monitor завершит daemon и сохранит fail-closed firewall. Внешние интерфейсы, на которых forwarding уже включён, должны быть включены в allowlist; иначе startup отклоняется.
 
@@ -950,3 +951,6 @@ net.ipv4.ip_forward=1 и net.ipv6.conf.all.forwarding=0 должны быть в
 | 2026-11-11 | Добавлен IPv6 sysctl stale-descriptor race test | В per-interface forwarding packet test добавлен сценарий в отдельном network namespace: открыть `force_forwarding` FD для veth-интерфейса, удалить link, создать новый link с тем же именем, проверить отказ записи через старый FD и неизменность нового sysctl. Это проверяет kernel-side поведение, на которое опирается pinned-FD реализация. Сам скрипт и сценарий пока не запускались в этой среде; CI run для новых commit SHA не обнаружен. | Добавлен; ожидает исполнения в CI |
 
 | 2026-11-11 | Проверена идентичность IPv4 RTM_GETLINK readback | Парсер `RTM_GETLINK` теперь сверяет `ifi_index` из ответа с ifindex исходного запроса и отклоняет несовпадающий/нулевой/отрицательный индекс до чтения `IFLA_INET_CONF`. Добавлен unit test на ответ другого интерфейса. Это защищает целостность readback, но не устраняет гонку повторного использования ifindex между userspace guard и `RTM_NEWLINK`. Unit test и CI для commit SHA ещё не подтверждены. | Реализовано; ожидает CI |
+
+
+| 2026-11-11 | Подтверждены per-interface stale-FD race и новые recovery tests | CI run `43007873964`, HEAD `51add82544928cf903f75fa26aee351c4b465447`: integration job успешно выполнил `scripts/vpn-relay-per-interface-forwarding-packet-test.sh`, включая удаление интерфейса и создание replacement под тем же именем с проверкой stale procfs FD. Unit tests подтвердили `per_interface_restore_attempts_every_family_after_failures`, `per_interface_restore_continues_after_identity_mismatch` и `rtnetlink_ipv4_forwarding_rejects_response_for_different_ifindex`. Остаточный IPv4 ifindex reuse TOCTOU, kernel matrix, Podman deployment и полная failure-injection matrix остаются открытыми. | Подтверждено CI; частично завершено |
