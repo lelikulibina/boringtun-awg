@@ -879,8 +879,14 @@ successful shutdown removes the firewall.
    имени через procfs sysctl path.
 2. IPv6 сохраняет `force_forwarding` через procfs sysctl: подтверждённого
    поддерживаемого kernel API записи этого параметра по ifindex пока нет.
-   Перед чтением/записью проверяется пара name/ifindex; RA policy остаётся
-   ответственностью оператора. В upstream добавлен UAPI `NETCONFA_FORCE_FORWARDING`
+   Для операций daemon открывает конкретный `/proc/sys/net/ipv6/conf/<if>/force_forwarding`
+   и только затем проверяет name/ifindex; read/write выполняются через этот
+   дескриптор, не повторно разрешая имя. При unregister старой sysctl table
+   procfs отклоняет операцию по устаревшему inode; обработчик `force_forwarding`
+   дополнительно сериализует изменение через RTNL trylock. Это сужает гонку
+   удаления/переименования интерфейса, но не является generation token и не
+   устраняет теоретическое повторное использование ifindex до проверки.
+   RA policy остаётся ответственностью оператора. В upstream добавлен UAPI `NETCONFA_FORCE_FORWARDING`
    для netconf notifications/dump, однако изученный kernel patch добавляет
    заполнение и отправку атрибута, а не обработчик записи `RTM_NEWNETCONF`.
    Дополнительно проверен текущий upstream `net/core/rtnetlink.c`: зарегистрирован
@@ -922,3 +928,6 @@ net.ipv4.ip_forward=1 и net.ipv6.conf.all.forwarding=0 должны быть в
 
 
 | 2026-11-11 | Исследован IPv6 `force_forwarding` netconf UAPI | Подтверждено, что `force_forwarding` — отдельная per-interface настройка IPv6 и не эквивалентна `conf/<if>/forwarding`. Найден upstream UAPI `NETCONFA_FORCE_FORWARDING`, но патчи netconf добавляют уведомления/чтение атрибута в dump, а не setter через `RTM_NEWNETCONF`. Следовательно, переход на такой netlink write был бы необоснован; IPv6 пока остаётся на sysctl с identity guard. | Исследование; безопасного setter API не найдено |
+
+
+| 2026-11-11 | IPv6 force_forwarding операции привязаны к открытому procfs sysctl inode | Runtime больше не вызывает `sysctl -n/-w` для allowlisted IPv6 force_forwarding. Он открывает конкретный procfs entry, проверяет name/ifindex после открытия и читает/пишет через тот же FD. Это предотвращает повторное разрешение пути на этапе записи и позволяет ядру отклонить FD после unregister старой sysctl table; handler использует RTNL trylock. Это сужение TOCTOU, не абсолютное устранение повторного использования ifindex. Ожидаются compile/CI и race validation. | Реализовано; ожидает CI |
