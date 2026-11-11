@@ -2089,7 +2089,7 @@ mod tests {
         let response = build_link_message(RTM_NEWLINK, 0, 9, 1, &attributes).unwrap();
         assert!(matches!(
             parse_link_ipv4_forwarding(&response),
-            Err(LinuxError::Conflict { details, .. }) if details.contains("truncated")
+            Err(LinuxError::Conflict { details, .. }) if details.contains("omitted")
         ));
     }
 
