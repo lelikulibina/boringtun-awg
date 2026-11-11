@@ -677,7 +677,7 @@ impl Config {
                             }
                         }
                         for prefix in prefixes {
-                            let (address, _) = parse_prefix(prefix, &format!("{path}.{field}"))?;
+                            parse_prefix(prefix, &format!("{path}.{field}"))?;
                         }
                     }
                 }
