@@ -150,6 +150,9 @@ forwarding_interfaces = ["eth0", "wg-server", "awg-uplink"]
 
 Journal сохраняет исходные IPv4 значения, namespace inode, имя и ifindex.
 При штатном shutdown link-scoped sysctls восстанавливаются до удаления TUN.
+Если найден старый journal с незавершённым IPv6 sysctl recovery, запуск
+останавливается без обращения к IPv6 sysctl; прежние значения нужно вернуть
+вручную, а journal сохранить до устранения причины.
 Записи daemon-owned TUN не восстанавливаются: сам TUN и его sysctl исчезают
 вместе с закрытием descriptor, а запись нельзя применять к новому link, даже
 если ядро повторно использовало то же имя и ifindex. Внешние интерфейсы
