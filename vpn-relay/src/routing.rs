@@ -685,7 +685,9 @@ impl RoutingPlan {
             Vec::with_capacity(self.egresses.len() * 4 + self.socket_marks.len() * 2);
         for mark in &self.socket_marks {
             // IPv6 socket routing is needed only when a managed egress supports IPv6.
-            let families: &[&str] = if self.egresses.iter().any(|egress| egress.ipv6_enabled) {
+            let families: &[&str] = if !self.ipv6_transport_blocked
+                && self.egresses.iter().any(|egress| egress.ipv6_enabled)
+            {
                 &["-4", "-6"]
             } else {
                 &["-4"]
