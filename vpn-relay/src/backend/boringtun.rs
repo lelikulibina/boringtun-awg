@@ -32,7 +32,7 @@ impl TunnelBackend for BoringTunBackend {
             .map(|(index, peer)| {
                 peer.endpoint
                     .as_deref()
-                    .map(resolve_endpoint)
+                    .map(|endpoint| resolve_endpoint(endpoint, interface.ipv6_enabled))
                     .transpose()
                     .map_err(|error| {
                         BackendError::new(format!(
@@ -282,19 +282,31 @@ mod tests {
     }
 }
 
-fn resolve_endpoint(value: &str) -> Result<SocketAddr, BackendError> {
+fn resolve_endpoint(value: &str, ipv6_enabled: bool) -> Result<SocketAddr, BackendError> {
     let parsed = PeerEndpoint::parse(value)
         .map_err(|reason| BackendError::new(format!("invalid endpoint {value}: {reason}")))?;
     match parsed.host {
+        EndpointHost::Ip(ip) if !ipv6_enabled && ip.is_ipv6() => Err(BackendError::new(
+            format!("IPv6 endpoint {value} is not allowed when IPv6 is disabled"),
+        )),
         EndpointHost::Ip(ip) => Ok(SocketAddr::new(ip, parsed.port)),
-        EndpointHost::Dns(host) => (host.as_str(), parsed.port)
-            .to_socket_addrs()
-            .map_err(|error| {
-                BackendError::new(format!("failed to resolve endpoint {value}: {error}"))
-            })?
-            .next()
-            .ok_or_else(|| {
-                BackendError::new(format!("DNS returned no addresses for endpoint {value}"))
-            }),
+        EndpointHost::Dns(host) => {
+            let addresses = (host.as_str(), parsed.port)
+                .to_socket_addrs()
+                .map_err(|error| {
+                    BackendError::new(format!("failed to resolve endpoint {value}: {error}"))
+                })?;
+            let address = if ipv6_enabled {
+                addresses.into_iter().next()
+            } else {
+                addresses.into_iter().find(SocketAddr::is_ipv4)
+            };
+            address.ok_or_else(|| {
+                BackendError::new(format!(
+                    "DNS returned no {} addresses for endpoint {value}",
+                    if ipv6_enabled { "" } else { "IPv4" }
+                ))
+            })
+        }
     }
 }
