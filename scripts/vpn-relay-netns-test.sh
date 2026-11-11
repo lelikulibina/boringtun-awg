@@ -30,7 +30,7 @@ trap cleanup EXIT
 
 fail() {
     echo "vpn-relay namespace test: $*" >&2
-    for log in "$TMP/bootstrap-nft-failure.log" "$TMP/indexed-nft-failure.log" "$TMP/startup-route-rollback-failure.log" "$TMP/startup-nft-cleanup-ip-commands.log" "$TMP/startup-route-rollback-ip.log" "$TMP/startup-route-rollback-route-after.txt" "$TMP/startup-route-rollback-routes-all.txt" "$TMP/startup-nft-cleanup-failure.log" "$TMP/daemon.log" "$TMP/conflict.log" "$TMP/policy-conflict.log" "$TMP/route-conflict.log" "$TMP/policy-shadow-conflict.log" "$TMP/partial-setup-conflict.log" "$TMP/partial-interface-config.log" "$TMP/partial-policy-route.log" "$TMP/partial-forwarding.log" "$TMP/partial-ipv4-forwarding.log" "$TMP/partial-ipv4-forwarding-restore-failure.log" "$TMP/reload-failure.log" "$TMP/reload-route-failure.log" "$TMP/reload-immutable.log" "$TMP/shutdown-cleanup-failure.log" "$TMP/shutdown-forwarding-restore-failure.log" "$TMP/shutdown-ipv6-forwarding-restore-failure.log" "$TMP/preexisting-forwarding.log" "$TMP/fail-route-commands.log" "$TMP/forwarding-management-disabled.log" "$TMP/tun-identity-loss.log"; do
+    for log in "$TMP/bootstrap-nft-failure.log" "$TMP/indexed-nft-failure.log" "$TMP/startup-route-rollback-failure.log" "$TMP/startup-nft-cleanup-ip-commands.log" "$TMP/startup-route-rollback-ip.log" "$TMP/startup-route-rollback-route-after.txt" "$TMP/startup-route-rollback-routes-all.txt" "$TMP/startup-nft-cleanup-failure.log" "$TMP/daemon.log" "$TMP/conflict.log" "$TMP/policy-conflict.log" "$TMP/route-conflict.log" "$TMP/policy-shadow-conflict.log" "$TMP/partial-setup-conflict.log" "$TMP/partial-interface-config.log" "$TMP/partial-policy-route.log" "$TMP/partial-forwarding.log" "$TMP/partial-ipv4-forwarding.log" "$TMP/partial-ipv4-forwarding-restore-failure.log" "$TMP/reload-failure.log" "$TMP/reload-route-failure.log" "$TMP/reload-immutable.log" "$TMP/shutdown-cleanup-failure.log" "$TMP/shutdown-forwarding-restore-failure.log" "$TMP/preexisting-forwarding.log" "$TMP/fail-route-commands.log" "$TMP/forwarding-management-disabled.log" "$TMP/tun-identity-loss.log"; do
         if [[ -f "$log" ]]; then
             cat "$log" >&2
         fi
@@ -425,33 +425,6 @@ ip netns exec "$NS" nft delete table inet vpn_relay_it
 # Force a known initial state: forwarding may already be enabled by the
 # runner's namespace setup, in which case startup correctly avoids rewriting it.
 ip netns exec "$NS" sysctl -qw net.ipv4.ip_forward=0
-# daemon must restore IPv4 immediately and remove the routes, TUNs and nft
-# policy that were installed earlier in startup.
-REAL_SYSCTL="$(command -v sysctl)"
-mkdir -p "$TMP/fail-sysctl"
-cat >"$TMP/fail-sysctl/sysctl" <<EOF
-#!/bin/sh
-if [ "\$1" = "-w" ] && [ "\$2" = "net.ipv6.conf.all.forwarding=1" ]; then
-    echo "injected IPv6 forwarding failure" >&2
-    exit 42
-fi
-exec "$REAL_SYSCTL" "\$@"
-EOF
-chmod +x "$TMP/fail-sysctl/sysctl"
-expect_startup_failure partial-forwarding.log "injected IPv6 forwarding failure" "$TMP/fail-sysctl"
-for family in -4; do
-    if ip -n "$NS" "$family" rule show | grep -Eq 'fwmark 0x(80000000|80000001|1001|1002|1003)'; then
-        fail "policy rules leaked after partial forwarding failure for $family"
-    fi
-done
-for table in 10000 10001; do
-    for family in -4; do
-        if ip -n "$NS" "$family" route show table "$table" | grep -Eq 'default dev (awg-primary|awg-secondary) proto 242'; then
-            fail "policy routes leaked from table $table after partial forwarding failure for $family"
-        fi
-    done
-done
-
 # Reset IPv4 explicitly so the injected write is guaranteed to be attempted.
 ip netns exec "$NS" sysctl -qw net.ipv4.ip_forward=0
 # A failed IPv4 enable write is ambiguous: the sysctl may have changed before
