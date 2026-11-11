@@ -322,6 +322,16 @@ impl RoutingPlan {
         Ok(())
     }
 
+    /// Families used by every shared policy-routing lifecycle operation.
+    /// Strict IPv4-only mode must not even probe or clean up IPv6 rules.
+    pub fn ip_policy_families(&self) -> &'static [&'static str] {
+        if self.ipv6_transport_blocked {
+            &["-4"]
+        } else {
+            &["-4", "-6"]
+        }
+    }
+
     pub fn ip_families(egress: &EgressPlan) -> &'static [&'static str] {
         if egress.ipv6_enabled {
             &["-4", "-6"]
