@@ -2088,7 +2088,7 @@ mod tests {
     #[test]
     fn rtnetlink_ipv4_forwarding_rejects_truncated_devconf() {
         let mut inet = Vec::new();
-        append_netlink_attribute(&mut inet, IFLA_INET_CONF, &[0, 0, 0, 0]);
+        append_netlink_attribute(&mut inet, IFLA_INET_CONF, &[]);
         let mut af_spec = Vec::new();
         append_netlink_attribute(&mut af_spec, AF_INET_ATTR | NLA_F_NESTED, &inet);
         let mut attributes = Vec::new();
