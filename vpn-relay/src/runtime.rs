@@ -1813,19 +1813,6 @@ fn recover_forwarding_state(path: &Path, namespace_inode: u64) -> Result<(), Run
     remove_forwarding_state_file(path)
 }
 
-fn recover_forwarding_state_with(
-    path: &Path,
-    namespace_inode: u64,
-    read: impl FnMut(&str) -> Result<String, RuntimeError>,
-    write: impl FnMut(&str, &str) -> Result<(), RuntimeError>,
-) -> Result<(), RuntimeError> {
-    let Some(state) = load_forwarding_state(path, namespace_inode)? else {
-        return Ok(());
-    };
-    restore_forwarding_state_with_mode(&state, read, write)?;
-    remove_forwarding_state_file(path)
-}
-
 fn enable_forwarding_durable(
     path: &Path,
     namespace_inode: u64,
