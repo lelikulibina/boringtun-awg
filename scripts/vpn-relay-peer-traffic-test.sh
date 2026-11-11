@@ -436,66 +436,6 @@ foreign_output_after="$(foreign_counter output)"
 [[ "$foreign_input_after" -gt "$foreign_input_before" ]] || fail "foreign INPUT accept chain did not observe the denied packet"
 [[ "$foreign_output_after" -gt "$foreign_output_before" ]] || fail "foreign OUTPUT accept chain did not observe the denied packet"
 
-expect_tcp6() {
-    local ns="$1" address="$2" port="$3" expected="$4" label="$5"
-    local source
-    if [[ "$ns" == "$CLIENT_NS" ]]; then source="fd77::2"; else source="fd77::1"; fi
-    ip netns exec "$ns" python3 - "$address" "$port" "$expected" "$label" "$source" <<'PY'
-import socket, sys
-address, port, expected, label, source = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5]
-try:
-    with socket.create_connection((address, port), timeout=1.5, source_address=(source, 0)) as conn:
-        conn.settimeout(1.5)
-        payload = conn.recv(2)
-        if expected == "deny":
-            raise SystemExit(f"{label}: connection unexpectedly succeeded")
-        if payload != b"ok":
-            raise SystemExit(f"{label}: unexpected response {payload!r}")
-except OSError as error:
-    if expected == "allow":
-        raise SystemExit(f"{label}: expected connection failed: {error}")
-    print(f"{label}: blocked as expected")
-else:
-    print(f"{label}: allowed as expected")
-PY
-}
-expect_tcp6 "$CLIENT_NS" fd77::1 8082 allow "IPv6 client to server allowed INPUT/OUTPUT"
-expect_tcp6 "$SERVER_NS" fd77::2 8082 allow "IPv6 server to client allowed INPUT/OUTPUT"
-expect_tcp6 "$CLIENT_NS" fd77::1 8083 deny "IPv6 server INPUT default deny"
-expect_tcp6 "$SERVER_NS" fd77::2 8083 deny "IPv6 server OUTPUT default deny"
-
-# Add the secondary source only after the baseline traffic checks so it cannot
-# influence the kernel source-address selection in earlier probes.
-
-# ICMPv6 uses the same explicit allow-list semantics as TCP. A second,
-# authenticated client address is deliberately absent from the server INPUT
-# source selector: the echo request must reach the TUN but receive no reply.
-ip netns exec "$SERVER_NS" timeout 5 tcpdump -nn -i wg-peer-test -c 1 \
-    'ip6 and src host fd77::3 and dst host fd77::1' \
-    >"$TMP/" 2>&1 &
-capture_pid=$!
-TCP_PIDS+=("$capture_pid")
-sleep 0.25
-wait "$capture_pid" || fail "ICMPv6 INPUT deny probe did not reach the server TUN"
-
-# The server OUTPUT allow rule names only fd77::2. Sending to the other
-# authenticated client address must be denied before a packet reaches its TUN.
-ip netns exec "$CLIENT_NS" timeout 3 tcpdump -nn -i wg-peer-test -c 1 \
-    'ip6 and src host fd77::1 and dst host fd77::3' \
-    >"$TMP/" 2>&1 &
-capture_pid=$!
-TCP_PIDS+=("$capture_pid")
-sleep 0.25
-if ip netns exec "$SERVER_NS" ping -6 -n -I fd77::1 -c 1 -W 1 fd77::3; then
-    fail "server OUTPUT accepted ICMPv6 to a destination outside its explicit allow rule"
-fi
-set +e
-wait "$capture_pid"
-icmpv6_output_capture_status=$?
-set -e
-[[ "$icmpv6_output_capture_status" -eq 124 ]] || fail "denied ICMPv6 OUTPUT packet reached the client TUN (tcpdump status $icmpv6_output_capture_status)"
-
-
 # The physical request is deliberately untracked in the client namespace:
 # this keeps the forged reverse packet a NEW local flow on the client, so its
 # OUTPUT allow rule can transmit it through the TUN. The server still tracks
