@@ -671,7 +671,9 @@ if config.count(old) != 1:
     raise SystemExit("cannot find unique priority-5 routing rule for reload")
 if config.count(old_v6) != 1:
     raise SystemExit("cannot find unique IPv6 primary masquerade rule for reload")
-config = config.replace(old, new, 1).replace(old_v6, new_v6, 1)
+# Keep the original primary IPv6 route active; add a separate destination
+# whose route changes to the secondary uplink during this reload.
+config = config.replace(old, new, 1) + "\\n" + new_v6
 with open(path, "w", encoding="utf-8") as stream:
     stream.write(config)
 PY
