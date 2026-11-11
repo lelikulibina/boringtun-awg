@@ -137,13 +137,8 @@ impl Device {
             if let Some(peer) = self.peers.get(&public_key) {
                 let mut peer = peer.lock();
 
-                if peer.endpoint().addr != config.endpoint {
-                    peer.shutdown_endpoint();
-                    if let Some(endpoint) = config.endpoint {
-                        peer.set_endpoint(endpoint);
-                    } else {
-                        peer.endpoint_mut().addr = None;
-                    }
+                if peer.configured_endpoint() != config.endpoint {
+                    peer.update_configured_endpoint(config.endpoint);
                 }
                 if peer.preshared_key() != config.preshared_key.as_ref() {
                     peer.set_preshared_key(config.preshared_key);
@@ -298,6 +293,33 @@ mod tests {
         assert_eq!(updated.peers[0].endpoint, None);
         assert_eq!(updated.peers[0].persistent_keepalive, None);
         assert_eq!(updated.peers[0].allowed_ips, vec![second_prefix]);
+
+        // A peer without a configured endpoint learns its remote address from
+        // authenticated traffic. An AllowedIPs-only reload must retain it.
+        let learned_endpoint = "127.0.0.2:51821".parse().unwrap();
+        device.with_device_mut(|inner| {
+            inner
+                .peers
+                .get(&public_key)
+                .expect("peer before roaming endpoint reload")
+                .lock()
+                .set_endpoint(learned_endpoint);
+        });
+        device
+            .replace_peers(&[PeerConfig {
+                public_key: *public_key.as_bytes(),
+                endpoint: None,
+                allowed_ips: vec![second_prefix],
+                persistent_keepalive: None,
+                preshared_key: None,
+            }])
+            .expect("reload peer without changing its configured endpoint");
+        let roaming = device.snapshot().expect("roaming peer snapshot");
+        assert_eq!(
+            roaming.peers[0].endpoint,
+            Some(learned_endpoint),
+            "AllowedIPs-only reload must preserve the dynamically learned endpoint"
+        );
 
         // Adding an unrelated peer must not reconstruct the unchanged peer:
         // its Arc owns the live Peer/Tunn state, including the Noise session.
