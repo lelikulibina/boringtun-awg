@@ -592,9 +592,9 @@ impl RoutingPlan {
                 )),
                 NatAction::Masquerade => {
                     let family = if self.ipv6_transport_blocked {
-                        "meta nfproto ipv4 "
+                        " meta nfproto ipv4 "
                     } else {
-                        ""
+                        " "
                     };
                     output.push_str(&format!(
                         "add rule {} {} postrouting {}{}masquerade\n",
