@@ -282,17 +282,18 @@ fn parse_interface(source: &str) -> Result<(InterfaceConfig, Vec<String>), Impor
         let allowed_ips = list_optional(values, "allowedips");
         ipv6_enabled |= allowed_ips.iter().any(|a| a.contains(':'));
         let endpoint = values.get("endpoint").cloned();
-        let persistent_keepalive_secs = values
+        let (persistent_keepalive_secs, persistent_keepalive_range) = values
             .get("persistentkeepalive")
-            .filter(|v| !v.eq_ignore_ascii_case("off") && *v != "0")
-            .map(|v| parse_number::<u16>(v, "PersistentKeepalive"))
-            .transpose()?;
+            .map(|value| parse_persistent_keepalive(value))
+            .transpose()?
+            .unwrap_or((None, None));
         parsed_peers.push(PeerConfig {
             public_key,
             preshared_key: values.get("presharedkey").cloned(),
             endpoint,
             allowed_ips,
             persistent_keepalive_secs,
+            persistent_keepalive_range,
         });
         for key in values.keys() {
             if !matches!(
@@ -442,6 +443,30 @@ fn list_optional(v: &HashMap<String, String>, key: &str) -> Vec<String> {
         })
         .unwrap_or_default()
 }
+fn parse_persistent_keepalive(value: &str) -> Result<(Option<u16>, Option<(u32, u32)>), ImportError> {
+    let value = value.trim();
+    if value.eq_ignore_ascii_case("off") || value == "0" || value == "0-0" {
+        return Ok((None, None));
+    }
+    if let Some((min, max)) = value.split_once('-') {
+        if max.contains('-') {
+            return Err(ImportError::Parse(format!("invalid PersistentKeepalive range '{value}'")));
+        }
+        let min = parse_number::<u32>(min, "PersistentKeepalive range minimum")?;
+        let max = parse_number::<u32>(max, "PersistentKeepalive range maximum")?;
+        if min == 0 || max == 0 || min > max {
+            return Err(ImportError::Parse(format!("invalid PersistentKeepalive range '{value}': expected 1 <= min <= max")));
+        }
+        return Ok((None, Some((min, max))));
+    }
+    let seconds = parse_number::<u16>(value, "PersistentKeepalive")?;
+    if seconds == 0 {
+        Ok((None, None))
+    } else {
+        Ok((Some(seconds), None))
+    }
+}
+
 fn parse_number<T: std::str::FromStr>(v: &str, key: &str) -> Result<T, ImportError> {
     v.parse()
         .map_err(|_| ImportError::Parse(format!("invalid {key} value '{v}'")))
@@ -532,7 +557,31 @@ PersistentKeepalive = 25
         assert_eq!(cfg.listen_port, None);
         assert!(cfg.ipv6_enabled);
         assert_eq!(cfg.peers[0].persistent_keepalive_secs, Some(25));
+        assert_eq!(cfg.peers[0].persistent_keepalive_range, None);
         assert!(warnings.iter().any(|w| w.contains("DNS")));
+    }
+
+    #[test]
+    fn imports_amnezia_persistent_keepalive_ranges_and_disable_values() {
+        let range = CLIENT.replace("PersistentKeepalive = 25", "PersistentKeepalive = 25-35");
+        let (cfg, _) = parse_interface(&range).unwrap();
+        assert_eq!(cfg.peers[0].persistent_keepalive_secs, None);
+        assert_eq!(cfg.peers[0].persistent_keepalive_range, Some((25, 35)));
+
+        for value in ["off", "0", "0-0"] {
+            let input = CLIENT.replace("PersistentKeepalive = 25", &format!("PersistentKeepalive = {value}"));
+            let (cfg, _) = parse_interface(&input).unwrap();
+            assert_eq!(cfg.peers[0].persistent_keepalive_secs, None);
+            assert_eq!(cfg.peers[0].persistent_keepalive_range, None);
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_persistent_keepalive_ranges() {
+        for value in ["35-25", "0-25", "25-0", "1-2-3", "4294967296-4294967297"] {
+            let input = CLIENT.replace("PersistentKeepalive = 25", &format!("PersistentKeepalive = {value}"));
+            assert!(parse_interface(&input).is_err(), "accepted invalid range {value}");
+        }
     }
 
     #[test]
