@@ -122,6 +122,6 @@ persistent_keepalive_secs = "25-35"
 ```
 
 Границы включительные; допустимо `1 <= min <= max`. Одновременно указывать
-`persistent_keepalive_secs` и `persistent_keepalive_range` нельзя указывать одновременно. Старое поле `persistent_keepalive_range = [25, 35]` также остаётся совместимым. Импорт
+Поля `persistent_keepalive_secs` и `persistent_keepalive_range` нельзя указывать одновременно. Старый формат `persistent_keepalive_range = [25, 35]` также остаётся совместимым. Импорт
 WireGuard/AmneziaWG принимает `PersistentKeepalive = 25` и диапазон
 `PersistentKeepalive = 25-35`; `off`, `0` и `0-0` означают отключение.
