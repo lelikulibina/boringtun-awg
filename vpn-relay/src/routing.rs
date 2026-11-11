@@ -826,10 +826,6 @@ egress = "awg-primary"
     #[test]
     fn ipv4_only_selector_free_routing_firewall_and_masquerade_are_family_limited() {
         let mut config = sample_config();
-        config.daemon.ipv6_enabled = false;
-        for interface in config.interfaces.values_mut() {
-            interface.ipv6_enabled = false;
-        }
         config.routing.rules[0].source = None;
         config.routing.rules[0].destination = None;
         config.routing.rules[0].nat = NatMode::Masquerade;
