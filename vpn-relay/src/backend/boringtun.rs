@@ -202,8 +202,22 @@ fn build_awg_config(
         return Ok((ObfuscationRanges::default(), AmneziaConfig::default()));
     }
 
-    let defaults = AmneziaWgConfig::default();
-    let config = interface.awg.as_ref().unwrap_or(&defaults);
+    let mut config = interface.awg.clone().unwrap_or_default();
+    if let Some(key) = config.header_protection_key.as_deref() {
+        // User-facing configuration follows WireGuard: standard Base64.
+        // BoringTun's AmneziaWG config builder consumes the hex UAPI form.
+        let decoded = decode_key(
+            key,
+            &format!("interfaces.{name}.awg.header_protection_key"),
+        )
+        .map_err(|error| BackendError::new(error.to_string()))?;
+        config.header_protection_key = Some(
+            decoded
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect(),
+        );
+    }
     config
         .build()
         .map_err(|error| BackendError::new(format!("interfaces.{name}.awg: {error}")))
