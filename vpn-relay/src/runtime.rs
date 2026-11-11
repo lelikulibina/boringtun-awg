@@ -1502,10 +1502,7 @@ fn open_ipv6_force_forwarding_sysctl(
     entry: &InterfaceForwardingState,
     write: bool,
 ) -> Result<File, RuntimeError> {
-    let path = format!(
-        "/proc/sys/net/ipv6/conf/{}/force_forwarding",
-        entry.name
-    );
+    let path = format!("/proc/sys/net/ipv6/conf/{}/force_forwarding", entry.name);
     let file = OpenOptions::new()
         .read(!write)
         .write(write)
@@ -2637,9 +2634,15 @@ mod tests {
             writes,
             vec![
                 ("net.ipv4.conf.r-in0.forwarding".to_owned(), "0".to_owned()),
-                ("net.ipv6.conf.r-in0.force_forwarding".to_owned(), "0".to_owned()),
+                (
+                    "net.ipv6.conf.r-in0.force_forwarding".to_owned(),
+                    "0".to_owned()
+                ),
                 ("net.ipv4.conf.r-out0.forwarding".to_owned(), "0".to_owned()),
-                ("net.ipv6.conf.r-out0.force_forwarding".to_owned(), "0".to_owned()),
+                (
+                    "net.ipv6.conf.r-out0.force_forwarding".to_owned(),
+                    "0".to_owned()
+                ),
             ]
         );
     }
