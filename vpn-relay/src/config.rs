@@ -136,6 +136,30 @@ pub struct InterfaceConfig {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(untagged)]
+pub enum PersistentKeepaliveConfig {
+    Seconds(u16),
+    Range(String),
+}
+
+impl PersistentKeepaliveConfig {
+    pub fn to_range(&self) -> Result<(u32, u32), String> {
+        match self {
+            Self::Seconds(seconds) => Ok((u32::from(*seconds), u32::from(*seconds))),
+            Self::Range(value) => {
+                let (min, max) = value.split_once('-').ok_or_else(|| format!("invalid PersistentKeepalive range '{value}'"))?;
+                if max.contains('-') { return Err(format!("invalid PersistentKeepalive range '{value}'")); }
+                let min = min.parse::<u32>().map_err(|_| format!("invalid PersistentKeepalive range '{value}'"))?;
+                let max = max.parse::<u32>().map_err(|_| format!("invalid PersistentKeepalive range '{value}'"))?;
+                if min == 0 || max == 0 || min > max {
+                    return Err(format!("invalid PersistentKeepalive range '{value}': expected 1 <= min <= max"));
+                }
+                Ok((min, max))
+            }
+        }
+    }
+}
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct PeerConfig {
     pub public_key: String,
@@ -146,7 +170,7 @@ pub struct PeerConfig {
     #[serde(default)]
     pub allowed_ips: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub persistent_keepalive_secs: Option<u16>,
+    pub persistent_keepalive_secs: Option<PersistentKeepaliveConfig>,
     /// Inclusive AmneziaWG keepalive interval range in seconds. Mutually exclusive with the legacy fixed interval.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub persistent_keepalive_range: Option<(u32, u32)>,
@@ -542,6 +566,9 @@ impl Config {
                     return invalid(format!(
                         "{peer_path} must not set both persistent_keepalive_secs and persistent_keepalive_range"
                     ));
+                }
+                if let Some(value) = &peer.persistent_keepalive_secs {
+                    value.to_range().map_err(|error| ConfigError::Validation(format!("{peer_path}.persistent_keepalive_secs: {error}")))?;
                 }
                 if let Some((min, max)) = peer.persistent_keepalive_range {
                     if min == 0 || max == 0 || min > max {
@@ -1521,33 +1548,18 @@ egress = "awg-uplink"
     fn persistent_keepalive_range_is_validated_and_mutually_exclusive() {
         let ranged = valid_config().replace(
             "persistent_keepalive_secs = 25",
-            "persistent_keepalive_range = [25, 35]",
+            "persistent_keepalive_secs = \\\"25-35\\\"",
         );
         let config = Config::parse_toml(&ranged).unwrap();
-        assert_eq!(
-            config.interfaces["awg-uplink"].peers[0].persistent_keepalive_range,
-            Some((25, 35))
-        );
-
-        for range in ["[35, 25]", "[0, 25]", "[25, 0]"] {
-            let input = valid_config().replace(
-                "persistent_keepalive_secs = 25",
-                &format!("persistent_keepalive_range = {range}"),
-            );
-            assert!(
-                Config::parse_toml(&input).is_err(),
-                "accepted range {range}"
-            );
+        assert_eq!(config.interfaces["awg-uplink"].peers[0].persistent_keepalive_secs, Some(PersistentKeepaliveConfig::Range("25-35".to_owned())));
+        for range in ["35-25", "0-25", "25-0", "1-2-3", "4294967296-4294967297"] {
+            let input = valid_config().replace("persistent_keepalive_secs = 25", &format!("persistent_keepalive_secs = \\\"{range}\\\""));
+            assert!(Config::parse_toml(&input).is_err(), "accepted range {range}");
         }
-
-        let both = valid_config().replace(
-            "persistent_keepalive_secs = 25",
-            "persistent_keepalive_secs = 25\npersistent_keepalive_range = [25, 35]",
-        );
-        assert!(Config::parse_toml(&both)
-            .unwrap_err()
-            .to_string()
-            .contains("must not set both"));
+        let fixed = Config::parse_toml(&valid_config()).unwrap();
+        assert_eq!(fixed.interfaces["awg-uplink"].peers[0].persistent_keepalive_secs, Some(PersistentKeepaliveConfig::Seconds(25)));
+        let both = valid_config().replace("persistent_keepalive_secs = 25", "persistent_keepalive_secs = 25\\npersistent_keepalive_range = [25, 35]");
+        assert!(Config::parse_toml(&both).unwrap_err().to_string().contains("must not set both"));
     }
 
     #[test]
