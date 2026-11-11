@@ -677,9 +677,6 @@ impl Config {
                     let Some(address) = rule.nat_to else {
                         return invalid("routing.rules.nat_to is required when nat = \"snat\"");
                     };
-                    if !address.is_ipv4() {
-                        return invalid("routing.rules.nat_to supports IPv4 addresses only");
-                    }
 
                 }
                 NatMode::None | NatMode::Masquerade if rule.nat_to.is_some() => {
