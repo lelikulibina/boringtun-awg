@@ -933,8 +933,12 @@ egress = "awg-primary"
         }
         let plan = RoutingPlan::from_config(&config);
         let commands = plan.ip_commands();
-        assert!(commands.iter().all(|command| command.first().is_some_and(|family| family == "-4")));
-        assert!(!commands.iter().any(|command| command.first().is_some_and(|family| family == "-6")));
+        assert!(commands
+            .iter()
+            .all(|command| command.first().is_some_and(|family| family == "-4")));
+        assert!(!commands
+            .iter()
+            .any(|command| command.first().is_some_and(|family| family == "-6")));
 
         let script = plan.nft_script();
         assert!(script.contains("socket_fwmarks { type mark;"));
