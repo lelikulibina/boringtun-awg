@@ -32,6 +32,10 @@ trap cleanup EXIT
 
 fail() {
     echo "vpn-relay per-interface forwarding packet test: $*" >&2
+    if [[ -f "$TMP/daemon.log" ]]; then
+        echo "--- vpn-relay daemon log ---" >&2
+        cat "$TMP/daemon.log" >&2
+    fi
     exit 1
 }
 
