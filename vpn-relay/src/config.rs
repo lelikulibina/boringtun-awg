@@ -46,6 +46,10 @@ pub struct DaemonConfig {
     pub stats_interval_secs: u64,
     #[serde(default = "default_nft_table")]
     pub nft_table: String,
+    /// Enable IPv6 datapath support. When false, IPv6 is rejected in tunnel
+    /// configuration and blocked on every managed interface.
+    #[serde(default = "default_ipv6_enabled")]
+    pub ipv6_enabled: bool,
     #[serde(default)]
     pub manage_ip_forwarding: bool,
     /// Interfaces whose link-scoped forwarding sysctls vpn-relay manages.
@@ -61,6 +65,7 @@ impl Default for DaemonConfig {
             log_level: default_log_level(),
             stats_interval_secs: default_stats_interval(),
             nft_table: default_nft_table(),
+            ipv6_enabled: default_ipv6_enabled(),
             manage_ip_forwarding: false,
             forwarding_interfaces: Vec::new(),
         }
@@ -77,6 +82,10 @@ fn default_stats_interval() -> u64 {
 
 fn default_nft_table() -> String {
     "vpn_relay".to_owned()
+}
+
+fn default_ipv6_enabled() -> bool {
+    true
 }
 
 fn default_mtu() -> u16 {
@@ -382,6 +391,9 @@ impl Config {
         if self.daemon.nft_table != next.daemon.nft_table {
             return invalid("reload cannot change daemon.nft_table while the daemon is running");
         }
+        if self.daemon.ipv6_enabled != next.daemon.ipv6_enabled {
+            return invalid("reload cannot change daemon.ipv6_enabled while the daemon is running");
+        }
         if self.daemon.manage_ip_forwarding != next.daemon.manage_ip_forwarding
             || self.daemon.forwarding_interfaces != next.daemon.forwarding_interfaces
         {
@@ -508,6 +520,14 @@ impl Config {
             return invalid("[daemon].log_level must be trace, debug, info, warn, or error");
         }
 
+        for (name, interface) in &self.interfaces {
+            if !self.daemon.ipv6_enabled && interface.ipv6_enabled {
+                return invalid(format!(
+                    "interfaces.{name}.ipv6_enabled cannot be true when daemon.ipv6_enabled = false"
+                ));
+            }
+        }
+
         let mut listen_ports = HashSet::new();
 
         for (interface_name, interface) in &self.interfaces {
@@ -542,6 +562,11 @@ impl Config {
                 let parsed =
                     parse_prefix(address, &format!("interfaces.{}.address", interface_name))?;
                 has_ipv6 |= parsed.0.is_ipv6();
+            }
+            if has_ipv6 && !interface.ipv6_enabled {
+                return invalid(format!(
+                    "interfaces.{interface_name}.address contains IPv6, but IPv6 is disabled on that interface"
+                ));
             }
             if has_ipv6 && interface.mtu < 1280 {
                 return invalid(format!(
@@ -592,12 +617,19 @@ impl Config {
                     }
                 }
                 if let Some(endpoint) = &peer.endpoint {
-                    PeerEndpoint::parse(endpoint).map_err(|error| {
+                    let parsed = PeerEndpoint::parse(endpoint).map_err(|error| {
                         ConfigError::Validation(format!(
                             "{peer_path}.endpoint is invalid: {}",
                             error
                         ))
                     })?;
+                    if matches!(parsed.host, EndpointHost::Ip(ip) if ip.is_ipv6())
+                        && !interface.ipv6_enabled
+                    {
+                        return invalid(format!(
+                            "{peer_path}.endpoint uses an IPv6 literal, but IPv6 is disabled on interface '{interface_name}'"
+                        ));
+                    }
                 }
                 for prefix in &peer.allowed_ips {
                     let parsed = parse_prefix(prefix, &format!("{peer_path}.allowed_ips"))?;
@@ -696,6 +728,21 @@ impl Config {
                         .collect::<Result<Vec<_>, _>>()
                 })
                 .transpose()?;
+
+            let ingress_ipv6 = self.interfaces[&rule.ingress].ipv6_enabled;
+            let egress_ipv6 = self.interfaces[&rule.egress].ipv6_enabled;
+            if source_prefixes
+                .iter()
+                .flatten()
+                .chain(destination_prefixes.iter().flatten())
+                .any(|(address, _)| address.is_ipv6())
+                && !(ingress_ipv6 && egress_ipv6)
+            {
+                return invalid(format!(
+                    "routing rule {} -> {} contains IPv6 selectors but IPv6 is disabled on ingress or egress",
+                    rule.ingress, rule.egress
+                ));
+            }
 
             match rule.nat {
                 NatMode::Snat => {
