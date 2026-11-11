@@ -968,8 +968,7 @@ fn netlink_extended_ack(response: &[u8], offset: usize, length: usize) -> Option
         if attributes.len() < 4 {
             return None;
         }
-        let attribute_length =
-            u16::from_ne_bytes(attributes[0..2].try_into().ok()?) as usize;
+        let attribute_length = u16::from_ne_bytes(attributes[0..2].try_into().ok()?) as usize;
         let kind = u16::from_ne_bytes(attributes[2..4].try_into().ok()?) & !NLA_F_NESTED;
         if attribute_length < 4 || attribute_length > attributes.len() {
             return None;
@@ -1140,9 +1139,8 @@ fn netlink_request(
                     return Err(LinuxError::Command {
                         program: "rtnetlink request".into(),
                         status: "kernel rejected request".into(),
-                        stderr: extended.map_or(errno.clone(), |message| {
-                            format!("{errno}: {message}")
-                        }),
+                        stderr: extended
+                            .map_or(errno.clone(), |message| format!("{errno}: {message}")),
                     });
                 }
                 if message_type == RTM_GETLINK && kind == RTM_NEWLINK {
