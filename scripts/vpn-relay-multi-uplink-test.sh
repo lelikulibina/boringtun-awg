@@ -660,7 +660,7 @@ egress = "awg-primary"
 nat = "masquerade"
 '''
 new_v6 = '''[[routing.rules]]
-priority = 200
+priority = 201
 ingress = "wg-ingress"
 source = "fd77::2/128"
 destination = "2001:db8:102::/48"
