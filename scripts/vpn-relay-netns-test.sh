@@ -31,7 +31,7 @@ trap cleanup EXIT
 
 fail() {
     echo "vpn-relay namespace test: $*" >&2
-    for log in "$TMP/bootstrap-nft-failure.log" "$TMP/indexed-nft-failure.log" "$TMP/startup-route-rollback-failure.log" "$TMP/startup-nft-cleanup-failure.log" "$TMP/daemon.log" "$TMP/conflict.log" "$TMP/policy-conflict.log" "$TMP/route-conflict.log" "$TMP/policy-shadow-conflict.log" "$TMP/partial-setup-conflict.log" "$TMP/partial-interface-config.log" "$TMP/partial-policy-route.log" "$TMP/partial-forwarding.log" "$TMP/partial-ipv4-forwarding.log" "$TMP/partial-ipv4-forwarding-restore-failure.log" "$TMP/reload-failure.log" "$TMP/reload-route-failure.log" "$TMP/reload-immutable.log" "$TMP/shutdown-cleanup-failure.log" "$TMP/shutdown-forwarding-restore-failure.log" "$TMP/shutdown-ipv6-forwarding-restore-failure.log" "$TMP/preexisting-forwarding.log" "$TMP/fail-route-commands.log" "$TMP/forwarding-management-disabled.log" "$TMP/tun-identity-loss.log"; do
+    for log in "$TMP/bootstrap-nft-failure.log" "$TMP/indexed-nft-failure.log" "$TMP/startup-route-rollback-failure.log" "$TMP/startup-nft-cleanup-ip-commands.log" "$TMP/startup-nft-cleanup-failure.log" "$TMP/daemon.log" "$TMP/conflict.log" "$TMP/policy-conflict.log" "$TMP/route-conflict.log" "$TMP/policy-shadow-conflict.log" "$TMP/partial-setup-conflict.log" "$TMP/partial-interface-config.log" "$TMP/partial-policy-route.log" "$TMP/partial-forwarding.log" "$TMP/partial-ipv4-forwarding.log" "$TMP/partial-ipv4-forwarding-restore-failure.log" "$TMP/reload-failure.log" "$TMP/reload-route-failure.log" "$TMP/reload-immutable.log" "$TMP/shutdown-cleanup-failure.log" "$TMP/shutdown-forwarding-restore-failure.log" "$TMP/shutdown-ipv6-forwarding-restore-failure.log" "$TMP/preexisting-forwarding.log" "$TMP/fail-route-commands.log" "$TMP/forwarding-management-disabled.log" "$TMP/tun-identity-loss.log"; do
         if [[ -f "$log" ]]; then
             cat "$log" >&2
         fi
@@ -304,8 +304,9 @@ REAL_NFT_CLEANUP="$(command -v nft)"
 mkdir -p "$TMP/fail-interface-and-nft-cleanup"
 cat >"$TMP/fail-interface-and-nft-cleanup/ip" <<EOF
 #!/bin/sh
-if [ "\$1" = "-4" ] && [ "\$2" = "address" ] && [ "\$3" = "replace" \\
-    && [ "\$6" = "awg-primary" ]; then
+printf '%s\\n' "\$*" >>"$TMP/startup-nft-cleanup-ip-commands.log"
+if [ "\$2" = "address" ] && [ "\$3" = "replace" ] \
+    && [ "\$*" = *"awg-primary"* ]; then
     echo "injected TUN address failure before nft cleanup" >&2
     exit 42
 fi
@@ -323,7 +324,7 @@ EOF
 chmod +x "$TMP/fail-interface-and-nft-cleanup/ip" "$TMP/fail-interface-and-nft-cleanup/nft"
 echo "[vpn-relay-netns-test] starting startup nftables-cleanup failure scenario" >&2
 set +e
-timeout --signal=TERM --kill-after=5s 30s ip netns exec "$NS" env PATH="$TMP/fail-interface-and-nft-cleanup:$PATH" "$BIN" --config "$TMP/config.toml" >"$TMP/startup-nft-cleanup-failure.log" 2>&1
+timeout --signal=KILL 10s ip netns exec "$NS" env PATH="$TMP/fail-interface-and-nft-cleanup:$PATH" "$BIN" --config "$TMP/config.toml" >"$TMP/startup-nft-cleanup-failure.log" 2>&1
 startup_nft_cleanup_status=$?
 set -e
 echo "[vpn-relay-netns-test] startup nftables-cleanup scenario exited with status $startup_nft_cleanup_status" >&2
