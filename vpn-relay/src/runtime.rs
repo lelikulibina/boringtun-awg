@@ -342,9 +342,7 @@ fn rollback_peer_replacements(
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Eq, PartialEq)]
 struct ForwardingState {
     ipv4: String,
-    ipv6: String,
     ipv4_changed: bool,
-    ipv6_changed: bool,
     /// Per-link state is optional so version-1 namespace-only journals remain readable.
     #[serde(default)]
     interfaces: Vec<InterfaceForwardingState>,
@@ -361,14 +359,6 @@ struct InterfaceForwardingState {
     ipv6: String,
     ipv4_changed: bool,
     ipv6_changed: bool,
-    /// Whether IPv6 forwarding is required on this tunnel. Old journals
-    /// default to true so interrupted older versions can still be recovered.
-    #[serde(default = "default_ipv6_forwarding_enabled")]
-    ipv6_enabled: bool,
-}
-
-fn default_ipv6_forwarding_enabled() -> bool {
-    true
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -525,7 +515,6 @@ impl Runtime {
         recover_forwarding_state(
             &forwarding_state_path,
             namespace_inode,
-            config.daemon.ipv6_enabled,
         )?;
         let control_socket = ControlSocket::bind(InstanceLock::current_control_path()?)?;
         let conntrack_mark_state_path = InstanceLock::current_conntrack_mark_state_path()?;
@@ -676,7 +665,6 @@ impl Runtime {
                 namespace_inode,
                 &config.daemon.forwarding_interfaces,
                 &config.interfaces.keys().cloned().collect(),
-                config.daemon.ipv6_enabled,
             ) {
                 Ok(state) => Some(state),
                 Err(error) => {
@@ -799,7 +787,6 @@ impl Runtime {
                 self.routing.egresses.iter().any(|current| {
                     current.interface == next.interface
                         && current.mark == next.mark
-                        && current.ipv6_enabled == next.ipv6_enabled
                 })
             });
         if same_egress_resources {
@@ -1266,17 +1253,14 @@ fn enable_forwarding_with(
 ) -> Result<ForwardingState, RuntimeError> {
     let state = ForwardingState {
         ipv4: read("net.ipv4.ip_forward")?,
-        ipv6: "0".to_owned(),
         ipv4_changed: false,
-        ipv6_changed: false,
         interfaces: Vec::new(),
     };
-    enable_forwarding_state_with(state, false, &mut write)
+    enable_forwarding_state_with(state, &mut write)
 }
 
 fn enable_forwarding_state_with(
     mut state: ForwardingState,
-    _enable_ipv6: bool,
     mut write: impl FnMut(&str, &str) -> Result<(), RuntimeError>,
 ) -> Result<ForwardingState, RuntimeError> {
     if state.ipv4 != "1" {
@@ -1290,8 +1274,6 @@ fn enable_forwarding_state_with(
             return Err(enable_error);
         }
     }
-    state.ipv6 = "0".to_owned();
-    state.ipv6_changed = false;
     Ok(state)
 }
 
@@ -1646,7 +1628,6 @@ fn enable_interface_forwarding_durable(
     namespace_inode: u64,
     names: &[String],
     daemon_owned_names: &std::collections::BTreeSet<String>,
-    _legacy_ipv6_enabled_names: &std::collections::BTreeSet<String>,
 ) -> Result<ForwardingState, RuntimeError> {
     if read_sysctl("net.ipv4.ip_forward")? != "1" {
         return Err(RuntimeError::Forwarding(
@@ -1671,13 +1652,11 @@ fn enable_interface_forwarding_durable(
         entries.push(InterfaceForwardingState {
             name: name.clone(), ifindex, daemon_owned: daemon_owned_names.contains(name),
             ipv4: if ipv4 { "1" } else { "0" }.to_owned(),
-            ipv6: "0".to_owned(), ipv4_changed: false, ipv6_changed: false,
-            ipv6_enabled: false,
+            ipv4_changed: false,
         });
     }
     let mut state = ForwardingState {
-        ipv4: "1".to_owned(), ipv6: "0".to_owned(),
-        ipv4_changed: false, ipv6_changed: false, interfaces: entries,
+        ipv4: "1".to_owned(), ipv4_changed: false, interfaces: entries,
     };
     for entry in &mut state.interfaces { entry.ipv4_changed = entry.ipv4 != "1"; }
     validate_forwarding_state(&state)?;
@@ -1763,7 +1742,6 @@ fn restore_forwarding_state_with_mode(
 fn recover_forwarding_state(
     path: &Path,
     namespace_inode: u64,
-    _legacy_ipv6_enabled: bool,
 ) -> Result<(), RuntimeError> {
     let Some(state) = load_forwarding_state(path, namespace_inode)? else { return Ok(()); };
     // Old journal IPv6 fields are ignored; recovery is strictly IPv4-only.
@@ -1798,20 +1776,17 @@ fn enable_forwarding_durable(
     if !forwarding_interfaces.is_empty() {
         return enable_interface_forwarding_durable(
             path, namespace_inode, forwarding_interfaces, daemon_owned_names,
-            &std::collections::BTreeSet::new(),
         );
     }
     let mut state = ForwardingState {
         ipv4: read_sysctl("net.ipv4.ip_forward")?,
-        ipv6: "0".to_owned(),
         ipv4_changed: false,
-        ipv6_changed: false,
         interfaces: Vec::new(),
     };
     state.ipv4_changed = state.ipv4 != "1";
     validate_forwarding_state(&state)?;
     if state.ipv4_changed { persist_forwarding_state(path, namespace_inode, &state)?; }
-    match enable_forwarding_state_with(state, false, write_sysctl) {
+    match enable_forwarding_state_with(state, write_sysctl) {
         Ok(state) => Ok(state),
         Err(error) => {
             if !matches!(error, RuntimeError::FatalTransition(_)) {
