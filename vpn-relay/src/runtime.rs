@@ -1274,11 +1274,12 @@ fn enable_forwarding_with(
         ipv6_changed: false,
         interfaces: Vec::new(),
     };
-    enable_forwarding_state_with(state, &mut write)
+    enable_forwarding_state_with(state, true, &mut write)
 }
 
 fn enable_forwarding_state_with(
     mut state: ForwardingState,
+    enable_ipv6: bool,
     mut write: impl FnMut(&str, &str) -> Result<(), RuntimeError>,
 ) -> Result<ForwardingState, RuntimeError> {
     // Writing an already-enabled IPv4 ip_forward sysctl is not harmless:
@@ -1295,7 +1296,7 @@ fn enable_forwarding_state_with(
             return Err(enable_error);
         }
     }
-    if state.ipv6 != "1" {
+    if enable_ipv6 && state.ipv6 != "1" {
         state.ipv6_changed = true;
         if let Err(enable_error) = write("net.ipv6.conf.all.forwarding", "1") {
             // A failed sysctl write may leave its resulting value uncertain.
@@ -2081,7 +2082,7 @@ fn enable_forwarding_durable(
     if state.ipv4_changed || state.ipv6_changed {
         persist_forwarding_state(path, namespace_inode, &state)?;
     }
-    match enable_forwarding_state_with(state, write_sysctl) {
+    match enable_forwarding_state_with(state, ipv6_enabled, write_sysctl) {
         Ok(state) => Ok(state),
         Err(error) => {
             if !matches!(error, RuntimeError::FatalTransition(_)) {
@@ -2641,6 +2642,30 @@ mod tests {
             )))
         })
         .unwrap();
+    }
+
+    #[test]
+    fn ipv4_only_forwarding_enable_never_touches_ipv6_sysctls() {
+        let state = ForwardingState {
+            ipv4: "0".to_owned(),
+            ipv6: "0".to_owned(),
+            ipv4_changed: false,
+            ipv6_changed: false,
+            interfaces: Vec::new(),
+        };
+        let mut writes = Vec::new();
+        let enabled = enable_forwarding_state_with(&state, false, |key, value| {
+            assert!(!key.starts_with("net.ipv6."), "unexpected write: {key}");
+            writes.push((key.to_owned(), value.to_owned()));
+            Ok(())
+        })
+        .unwrap();
+        assert!(enabled.ipv4_changed);
+        assert!(!enabled.ipv6_changed);
+        assert_eq!(
+            writes,
+            vec![("net.ipv4.ip_forward".to_owned(), "1".to_owned())]
+        );
     }
 
     #[test]
