@@ -147,6 +147,9 @@ pub struct PeerConfig {
     pub allowed_ips: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub persistent_keepalive_secs: Option<u16>,
+    /// Inclusive AmneziaWG keepalive interval range in seconds. Mutually exclusive with the legacy fixed interval.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub persistent_keepalive_range: Option<(u32, u32)>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -532,6 +535,14 @@ impl Config {
                 }
                 if let Some(psk) = &peer.preshared_key {
                     decode_key(psk, &format!("{peer_path}.preshared_key"))?;
+                }
+                if peer.persistent_keepalive_secs.is_some() && peer.persistent_keepalive_range.is_some() {
+                    return invalid(format!("{peer_path} must not set both persistent_keepalive_secs and persistent_keepalive_range"));
+                }
+                if let Some((min, max)) = peer.persistent_keepalive_range {
+                    if min == 0 || max == 0 || min > max {
+                        return invalid(format!("{peer_path}.persistent_keepalive_range must satisfy 1 <= min <= max"));
+                    }
                 }
                 if let Some(endpoint) = &peer.endpoint {
                     PeerEndpoint::parse(endpoint).map_err(|error| {
