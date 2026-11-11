@@ -1512,6 +1512,30 @@ egress = "awg-uplink"
     }
 
     #[test]
+    fn persistent_keepalive_range_is_validated_and_mutually_exclusive() {
+        let ranged = valid_config().replace(
+            "persistent_keepalive_secs = 25",
+            "persistent_keepalive_range = [25, 35]",
+        );
+        let config = Config::parse_toml(&ranged).unwrap();
+        assert_eq!(config.interfaces["awg-uplink"].peers[0].persistent_keepalive_range, Some((25, 35)));
+
+        for range in ["[35, 25]", "[0, 25]", "[25, 0]"] {
+            let input = valid_config().replace(
+                "persistent_keepalive_secs = 25",
+                &format!("persistent_keepalive_range = {range}"),
+            );
+            assert!(Config::parse_toml(&input).is_err(), "accepted range {range}");
+        }
+
+        let both = valid_config().replace(
+            "persistent_keepalive_secs = 25",
+            "persistent_keepalive_secs = 25\npersistent_keepalive_range = [25, 35]",
+        );
+        assert!(Config::parse_toml(&both).unwrap_err().to_string().contains("must not set both"));
+    }
+
+    #[test]
     fn configuration_uses_only_the_canonical_singular_address_key() {
         let input = valid_config().replace("address =", "addresses =");
         assert!(Config::parse_toml(&input).is_err());
