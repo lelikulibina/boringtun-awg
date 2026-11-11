@@ -1139,10 +1139,10 @@ fn parse_link_ipv4_forwarding(response: &[u8]) -> Result<bool, LinuxError> {
             resource: "IPv4 link configuration".into(),
             details: "kernel omitted IFLA_INET_CONF".into(),
         })?;
-    if conf.1.len() < IPV4_DEVCONF_MAX * 4 {
+    if conf.1.len() < 4 {
         return Err(LinuxError::Conflict {
             resource: "IPv4 link configuration".into(),
-            details: "kernel returned a truncated IPv4 devconf array".into(),
+            details: "kernel omitted the IPv4 forwarding devconf value".into(),
         });
     }
     match u32::from_ne_bytes(conf.1[0..4].try_into().unwrap()) {
