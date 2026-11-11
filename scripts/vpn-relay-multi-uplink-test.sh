@@ -866,14 +866,17 @@ fi
 # Run real iperf3 servers on each isolated uplink. Separate ports keep the
 # IPv4/IPv6 and primary/secondary destinations independently observable.
 start_iperf_listener() {
-    local ns="$1" port="$2" family="$3" label="$4" bind
-    if [[ "$family" == "6" ]]; then bind="::"; else bind="0.0.0.0"; fi
+    local ns="$1" port="$2" bind="$3" label="$4"
+    # Bind the UDP data socket to the same destination address used by the
+    # client. Wildcard binding lets iperf3 select the TUN address as its UDP
+    # source for a loopback-hosted destination, so the client never accepts
+    # the server's UDP stream and the test stalls after the 4-byte probe.
     ip netns exec "$ns" iperf3 -s -B "$bind" -p "$port" --forceflush >"$TMP/$label.log" 2>&1 &
     IPERF_PIDS+=("$!")
 }
-for spec in "PRIMARY_NS 5201 4 p-tcp" "SECONDARY_NS 5202 4 s16" "SECONDARY_NS 5203 4 s24" "PRIMARY_NS 5204 6 p6" "SECONDARY_NS 5205 6 s6"; do
-    read -r ns port family label <<<"$spec"
-    start_iperf_listener "${!ns}" "$port" "$family" "$label"
+for spec in "PRIMARY_NS 5201 203.0.113.1 p-tcp" "SECONDARY_NS 5202 195.142.1.1 s16" "SECONDARY_NS 5203 79.100.22.1 s24" "PRIMARY_NS 5204 2001:db8:1::1 p6" "SECONDARY_NS 5205 2001:db8:195:1::1 s6"; do
+    read -r ns port bind label <<<"$spec"
+    start_iperf_listener "${!ns}" "$port" "$bind" "$label"
 done
 sleep 0.5
 for pid in "${IPERF_PIDS[@]}"; do
