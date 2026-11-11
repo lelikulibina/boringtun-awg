@@ -869,10 +869,12 @@ with open(path, "w", encoding="utf-8") as stream:
 PY
 # Keep both traffic directions active across the peer-set commit and rollback
 # to the original AllowedIPs set. This detects one-way datapath interruption.
-timeout 20s ip netns exec "$CLIENT_NS" ping -n -i 0.05 -c 100 -W 2 10.77.0.1 \
+# iputils ping may enforce a one-second interval on restricted runners;
+# use a finite packet count instead of killing the probe after 20 seconds.
+ip netns exec "$CLIENT_NS" ping -n -c 20 -W 2 10.77.0.1 \
     >"$TMP/peer-update-continuous-ping.log" 2>&1 &
 PEER_UPDATE_PING_PID=$!
-timeout 20s ip netns exec "$SERVER_NS" ping -n -i 0.05 -c 100 -W 2 10.77.0.2 \
+ip netns exec "$SERVER_NS" ping -n -c 20 -W 2 10.77.0.2 \
     >"$TMP/peer-update-continuous-reverse-ping.log" 2>&1 &
 PEER_UPDATE_REVERSE_PING_PID=$!
 sleep 0.2
@@ -942,9 +944,9 @@ fi
 if ! wait "$PEER_UPDATE_REVERSE_PING_PID"; then
     fail "server-to-client traffic failed during peer AllowedIPs updates"
 fi
-grep -Eq '100 packets transmitted, 100 received, 0% packet loss' "$TMP/peer-update-continuous-ping.log" \
+grep -Eq '20 packets transmitted, 20 received, 0% packet loss' "$TMP/peer-update-continuous-ping.log" \
     || fail "client-to-server packet loss detected during peer AllowedIPs updates"
-grep -Eq '100 packets transmitted, 100 received, 0% packet loss' "$TMP/peer-update-continuous-reverse-ping.log" \
+grep -Eq '20 packets transmitted, 20 received, 0% packet loss' "$TMP/peer-update-continuous-reverse-ping.log" \
     || fail "server-to-client packet loss detected during peer AllowedIPs updates"
 kill -0 "$SERVER_PID" 2>/dev/null || fail "server daemon exited after peer AllowedIPs reload"
 
