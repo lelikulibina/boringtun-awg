@@ -305,8 +305,12 @@ mkdir -p "$TMP/fail-interface-and-nft-cleanup"
 cat >"$TMP/fail-interface-and-nft-cleanup/ip" <<EOF
 #!/bin/sh
 printf '%s\\n' "\$*" >>"$TMP/startup-nft-cleanup-ip-commands.log"
+target_interface=0
+for argument in "\$@"; do
+    [ "\$argument" = "awg-primary" ] && target_interface=1
+done
 if [ "\$2" = "address" ] && [ "\$3" = "replace" ] \
-    && [ "\$*" = *"awg-primary"* ]; then
+    && [ "\$target_interface" -eq 1 ]; then
     echo "injected TUN address failure before nft cleanup" >&2
     exit 42
 fi
