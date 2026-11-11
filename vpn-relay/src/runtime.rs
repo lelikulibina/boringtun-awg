@@ -2002,10 +2002,7 @@ fn restore_forwarding_state_with_mode(
     }
 }
 
-fn forwarding_state_for_recovery(
-    state: &ForwardingState,
-    ipv6_enabled: bool,
-) -> ForwardingState {
+fn forwarding_state_for_recovery(state: &ForwardingState, ipv6_enabled: bool) -> ForwardingState {
     let mut recovery_state = state.clone();
     if !ipv6_enabled {
         recovery_state.ipv6_changed = false;
@@ -2153,9 +2150,10 @@ mod tests {
         };
         let recovery = forwarding_state_for_recovery(&state, false);
         assert!(!recovery.ipv6_changed);
-        assert!(recovery.interfaces.iter().all(|entry| {
-            !entry.ipv6_enabled && !entry.ipv6_changed
-        }));
+        assert!(recovery
+            .interfaces
+            .iter()
+            .all(|entry| { !entry.ipv6_enabled && !entry.ipv6_changed }));
 
         restore_forwarding_state_with_mode(
             &recovery,
