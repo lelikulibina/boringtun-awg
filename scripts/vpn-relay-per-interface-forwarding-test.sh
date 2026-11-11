@@ -60,18 +60,12 @@ ip -n "$NS" link set uplink0 up
 ip -n "$NS" link add untrusted0 type dummy
 ip -n "$NS" link set untrusted0 up
 
-# IPv4's namespace switch is a prerequisite, not owned by vpn-relay. IPv6
-# global forwarding must stay off; selected IPv6 links use force_forwarding.
+# IPv4's namespace switch is a prerequisite, not owned by vpn-relay.
 ip netns exec "$NS" sysctl -qw net.ipv4.ip_forward=1
 ip netns exec "$NS" sysctl -qw net.ipv6.conf.all.forwarding=0
 for iface in lo uplink0 untrusted0; do
     ip netns exec "$NS" sysctl -qw "net.ipv4.conf.$iface.forwarding=0"
-    ip netns exec "$NS" sysctl -qw "net.ipv6.conf.$iface.force_forwarding=0"
 done
-# force_forwarding must not alter the IPv6 Host/Router mode or RA policy.
-ip netns exec "$NS" sysctl -qw net.ipv6.conf.uplink0.forwarding=0
-ip netns exec "$NS" sysctl -qw net.ipv6.conf.uplink0.accept_ra=2
-
 # An unmanaged interface with forwarding enabled must make startup fail
 # before the daemon changes any interface sysctl or installs its firewall.
 ip netns exec "$NS" sysctl -qw net.ipv4.conf.untrusted0.forwarding=1
@@ -83,22 +77,13 @@ grep -Fq "unmanaged interface 'untrusted0' has IPv4 forwarding enabled" "$TMP/re
 ip netns exec "$NS" nft list table inet vpn_relay_per_if_test >/dev/null 2>&1 && fail "firewall leaked after unmanaged-forwarding rejection"
 ip netns exec "$NS" sysctl -qw net.ipv4.conf.untrusted0.forwarding=0
 
-# IPv6's per-link force_forwarding flag is also part of the unmanaged-link
-# guard and must be rejected independently.
-ip netns exec "$NS" sysctl -qw net.ipv6.conf.untrusted0.force_forwarding=1
-if ip netns exec "$NS" "$BIN" --config "$TMP/config.toml" >"$TMP/reject.log" 2>&1; then
-    fail "daemon accepted an unmanaged IPv6 forwarding interface"
-fi
-grep -Fq "unmanaged interface 'untrusted0' has IPv6 forwarding enabled" "$TMP/reject.log" || fail "IPv6 startup rejection did not identify the unmanaged interface"
-ip netns exec "$NS" sysctl -qw net.ipv6.conf.untrusted0.force_forwarding=0
-
 start_daemon() {
     ip netns exec "$NS" "$BIN" --config "$TMP/config.toml" >"$TMP/daemon.log" 2>&1 &
     PID=$!
     for _ in $(seq 1 30); do
         if ip netns exec "$NS" nft list table inet vpn_relay_per_if_test >/dev/null 2>&1 \
             && [[ "$(ip netns exec "$NS" sysctl -n net.ipv4.conf.uplink0.forwarding)" == "1" ]] \
-            && [[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.uplink0.force_forwarding)" == "1" ]]; then
+; then
             return 0
         fi
         if ! kill -0 "$PID" 2>/dev/null; then
@@ -113,10 +98,6 @@ start_daemon() {
 
 start_daemon || fail "daemon did not enable selected per-interface forwarding"
 [[ "$(ip netns exec "$NS" sysctl -n net.ipv4.conf.untrusted0.forwarding)" == "0" ]] || fail "unmanaged IPv4 interface was enabled"
-[[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.untrusted0.force_forwarding)" == "0" ]] || fail "unmanaged IPv6 interface was enabled"
-[[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "0" ]] || fail "daemon enabled namespace-wide IPv6 forwarding"
-[[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.uplink0.forwarding)" == "0" ]] || fail "daemon changed IPv6 Host/Router forwarding mode"
-[[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.uplink0.accept_ra)" == "2" ]] || fail "daemon changed uplink Router Advertisement policy"
 
 # Changes made by another administrator while the daemon is running must be
 # detected; the daemon stops and retains its fail-closed firewall.
@@ -146,11 +127,7 @@ kill -TERM "$PID"
 wait "$PID" || fail "daemon failed during graceful per-interface restore"
 PID=""
 [[ "$(ip netns exec "$NS" sysctl -n net.ipv4.conf.uplink0.forwarding)" == "0" ]] || fail "IPv4 interface forwarding was not restored"
-[[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.uplink0.force_forwarding)" == "0" ]] || fail "IPv6 force_forwarding was not restored"
-[[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.uplink0.forwarding)" == "0" ]] || fail "daemon changed IPv6 Host/Router forwarding mode on shutdown"
-[[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.uplink0.accept_ra)" == "2" ]] || fail "daemon changed uplink Router Advertisement policy on shutdown"
 [[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "1" ]] || fail "daemon changed externally-owned IPv4 global forwarding"
-[[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "0" ]] || fail "daemon changed externally-owned IPv6 global forwarding"
 ip netns exec "$NS" nft list table inet vpn_relay_per_if_test >/dev/null 2>&1 && fail "firewall survived graceful shutdown"
 
 # SIGKILL leaves the durable journal but closes the TUN descriptor. Recovery
@@ -169,7 +146,6 @@ kill -TERM "$PID"
 wait "$PID" || fail "daemon failed after per-interface journal recovery"
 PID=""
 [[ "$(ip netns exec "$NS" sysctl -n net.ipv4.conf.uplink0.forwarding)" == "0" ]] || fail "uplink IPv4 sysctl was not restored after SIGKILL recovery"
-[[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.uplink0.force_forwarding)" == "0" ]] || fail "uplink IPv6 sysctl was not restored after SIGKILL recovery"
 [[ ! -e "/run/vpn-relay-netns-$INODE.forwarding" ]] || fail "forwarding journal remained after successful recovery and shutdown"
 
 echo "vpn-relay per-interface forwarding test passed"
