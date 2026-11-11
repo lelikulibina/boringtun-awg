@@ -58,7 +58,9 @@ random_trailers = false
 # i5 = "<dz 2>"
 # Ключ HP: ровно 64 шестнадцатеричных символа; одинаковый на обоих узлах.
 # При включении HP задайте S1-S4 не менее 12 байт.
-# header_protection_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+# Ключ Header Protection: 32 байта в стандартном Base64, как private_key/public_key.
+# Сгенерируйте отдельный ключ командой awg genkey и задайте одинаковое значение на обеих сторонах.
+# header_protection_key = "QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI="
 # content_padding_addition = "10-100"
 # Режим дополнения выбирается автоматически: AWG 3.0 — по MTU, AWG 3.1 — по UDP window.
 # rekey_after_time = "100-120"
