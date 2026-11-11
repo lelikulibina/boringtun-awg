@@ -1930,7 +1930,7 @@ mod tests {
         append_netlink_attribute(&mut af_spec, AF_INET_ATTR | NLA_F_NESTED, &inet);
         let mut attributes = Vec::new();
         append_netlink_attribute(&mut attributes, IFLA_AF_SPEC | NLA_F_NESTED, &af_spec);
-        build_link_message(RTM_GETLINK + 2, 0, 9, 1, &attributes).unwrap()
+        build_link_message(RTM_NEWLINK, 0, 9, 1, &attributes).unwrap()
     }
 
     #[test]
@@ -1951,7 +1951,7 @@ mod tests {
         append_netlink_attribute(&mut af_spec, AF_INET_ATTR | NLA_F_NESTED, &inet);
         let mut attributes = Vec::new();
         append_netlink_attribute(&mut attributes, IFLA_AF_SPEC | NLA_F_NESTED, &af_spec);
-        let response = build_link_message(RTM_GETLINK + 2, 0, 9, 1, &attributes).unwrap();
+        let response = build_link_message(RTM_NEWLINK, 0, 9, 1, &attributes).unwrap();
         assert!(matches!(
             parse_link_ipv4_forwarding(&response),
             Err(LinuxError::Conflict { details, .. }) if details.contains("truncated")
