@@ -2645,6 +2645,73 @@ mod tests {
     }
 
     #[test]
+    fn per_interface_restore_continues_after_identity_mismatch() {
+        let state = ForwardingState {
+            ipv4: "0".to_owned(),
+            ipv6: "0".to_owned(),
+            ipv4_changed: false,
+            ipv6_changed: false,
+            interfaces: ["r-in0", "r-out0"]
+                .into_iter()
+                .enumerate()
+                .map(|(index, name)| InterfaceForwardingState {
+                    name: name.to_owned(),
+                    ifindex: index as u32 + 20,
+                    daemon_owned: false,
+                    ipv4: "0".to_owned(),
+                    ipv6: "0".to_owned(),
+                    ipv4_changed: true,
+                    ipv6_changed: true,
+                })
+                .collect(),
+        };
+        let mut reads = Vec::new();
+        let mut writes = Vec::new();
+
+        let result = restore_interface_forwarding_entries_with(
+            &state,
+            |key| {
+                reads.push(key.to_owned());
+                Ok("1".to_owned())
+            },
+            |key, value| {
+                writes.push((key.to_owned(), value.to_owned()));
+                Ok(())
+            },
+            |name, _| {
+                if name == "r-in0" {
+                    Err(RuntimeError::Forwarding(
+                        "injected interface identity mismatch".to_owned(),
+                    ))
+                } else {
+                    Ok(())
+                }
+            },
+        );
+
+        assert!(matches!(
+            result,
+            Err(RuntimeError::FatalTransition(message))
+                if message.matches("r-in0").count() == 2
+                    && message.contains("identity mismatch")
+        ));
+        assert_eq!(
+            reads,
+            vec![
+                "net.ipv4.conf.r-out0.forwarding",
+                "net.ipv6.conf.r-out0.force_forwarding",
+            ]
+        );
+        assert_eq!(
+            writes,
+            vec![
+                ("net.ipv4.conf.r-out0.forwarding".to_owned(), "0".to_owned()),
+                ("net.ipv6.conf.r-out0.force_forwarding".to_owned(), "0".to_owned()),
+            ]
+        );
+    }
+
+    #[test]
     fn restore_forwarding_reports_both_failures() {
         let state = ForwardingState {
             ipv4: "0".to_owned(),
