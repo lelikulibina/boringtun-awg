@@ -443,19 +443,25 @@ fn list_optional(v: &HashMap<String, String>, key: &str) -> Vec<String> {
         })
         .unwrap_or_default()
 }
-fn parse_persistent_keepalive(value: &str) -> Result<(Option<u16>, Option<(u32, u32)>), ImportError> {
+fn parse_persistent_keepalive(
+    value: &str,
+) -> Result<(Option<u16>, Option<(u32, u32)>), ImportError> {
     let value = value.trim();
     if value.eq_ignore_ascii_case("off") || value == "0" || value == "0-0" {
         return Ok((None, None));
     }
     if let Some((min, max)) = value.split_once('-') {
         if max.contains('-') {
-            return Err(ImportError::Parse(format!("invalid PersistentKeepalive range '{value}'")));
+            return Err(ImportError::Parse(format!(
+                "invalid PersistentKeepalive range '{value}'"
+            )));
         }
         let min = parse_number::<u32>(min, "PersistentKeepalive range minimum")?;
         let max = parse_number::<u32>(max, "PersistentKeepalive range maximum")?;
         if min == 0 || max == 0 || min > max {
-            return Err(ImportError::Parse(format!("invalid PersistentKeepalive range '{value}': expected 1 <= min <= max")));
+            return Err(ImportError::Parse(format!(
+                "invalid PersistentKeepalive range '{value}': expected 1 <= min <= max"
+            )));
         }
         return Ok((None, Some((min, max))));
     }
@@ -569,7 +575,10 @@ PersistentKeepalive = 25
         assert_eq!(cfg.peers[0].persistent_keepalive_range, Some((25, 35)));
 
         for value in ["off", "0", "0-0"] {
-            let input = CLIENT.replace("PersistentKeepalive = 25", &format!("PersistentKeepalive = {value}"));
+            let input = CLIENT.replace(
+                "PersistentKeepalive = 25",
+                &format!("PersistentKeepalive = {value}"),
+            );
             let (cfg, _) = parse_interface(&input).unwrap();
             assert_eq!(cfg.peers[0].persistent_keepalive_secs, None);
             assert_eq!(cfg.peers[0].persistent_keepalive_range, None);
@@ -580,7 +589,10 @@ PersistentKeepalive = 25
     fn rejects_invalid_persistent_keepalive_ranges() {
         for value in ["35-25", "0-25", "25-0", "1-2-3", "4294967296-4294967297"] {
             let input = CLIENT.replace("PersistentKeepalive = 25", &format!("PersistentKeepalive = {value}"));
-            assert!(parse_interface(&input).is_err(), "accepted invalid range {value}");
+            assert!(
+                parse_interface(&input).is_err(),
+                "accepted invalid range {value}"
+            );
         }
     }
 
