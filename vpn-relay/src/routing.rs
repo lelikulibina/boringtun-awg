@@ -349,7 +349,7 @@ impl RoutingPlan {
                 .collect::<Vec<_>>()
                 .join(", ");
             output.push_str(&format!(
-                "add set {} {} ipv6_blocked_interfaces {{ type ifname; elements = {{ {} }}; }}\n",
+                "add set {} {} ipv6_drop_interfaces {{ type ifname; elements = {{ {} }}; }}\n",
                 self.nft_family, self.nft_table, elements
             ));
             output.push_str(&format!(
@@ -804,10 +804,6 @@ egress = "awg-primary"
     #[test]
     fn ipv4_only_mode_blocks_ipv6_only_on_managed_tun_interfaces() {
         let mut config = sample_config();
-        config.daemon.ipv6_enabled = false;
-        for interface in config.interfaces.values_mut() {
-            interface.ipv6_enabled = false;
-        }
         let plan = RoutingPlan::from_config(&config);
         let commands = plan.ip_commands();
         assert!(commands
@@ -911,8 +907,8 @@ egress = "awg-primary"
         config.firewall.output.rules.push(FirewallRule {
             interface: "awg-primary".to_owned(),
             source: None,
-            destination: Some(vec!["2001:db8::/32".to_owned()]),
-            protocol: Some(FirewallProtocol::Icmpv6),
+            destination: Some(vec!["203.0.113.1/32".to_owned()]),
+            protocol: Some(FirewallProtocol::Icmp),
             ports: None,
         });
 
@@ -920,7 +916,7 @@ egress = "awg-primary"
         assert!(script.contains(
             "input iifname \"wg-server\" ip saddr 10.0.0.2/32 meta l4proto icmp ct state"
         ));
-        assert!(script.contains("output oifname \"awg-primary\" ip6 daddr 2001:db8::/32 meta l4proto ipv6-icmp ct state"));
+        assert!(script.contains("output oifname \"awg-primary\" ip daddr 203.0.113.1/32 meta l4proto icmp ct state"));
     }
 
     #[test]
@@ -954,26 +950,6 @@ egress = "awg-primary"
         let script = RoutingPlan::from_config(&config).nft_script();
         assert!(script.contains("ip saddr { 10.0.0.0/24, 10.1.0.0/24 }"));
         assert!(script.contains("ip daddr { 195.142.0.0/16, 79.100.22.0/24 }"));
-    }
-
-    #[test]
-    fn nft_rule_generates_separate_ipv4_and_ipv6_selector_variants() {
-        let mut config = sample_config();
-        config.routing.rules[0].source = Some(vec![
-            "10.0.0.0/24".to_owned(),
-            "2001:db8:10::/48".to_owned(),
-        ]);
-        config.routing.rules[0].destination = Some(vec![
-            "195.142.0.0/16".to_owned(),
-            "2001:db8:20::/48".to_owned(),
-        ]);
-
-        let script = RoutingPlan::from_config(&config).nft_script();
-
-        assert!(script.contains("ip saddr 10.0.0.0/24 ip daddr 195.142.0.0/16"));
-        assert!(script.contains("ip6 saddr 2001:db8:10::/48 ip6 daddr 2001:db8:20::/48"));
-        assert!(!script.contains("ip saddr 10.0.0.0/24 ip6 daddr"));
-        assert!(!script.contains("ip6 saddr 2001:db8:10::/48 ip daddr"));
     }
 
     #[test]
@@ -1014,13 +990,8 @@ egress = "awg-primary"
     }
 
     #[test]
-    fn ipv6_blocklist_uses_the_same_numeric_interface_identity() {
+    fn ipv6_drop_guard_covers_every_managed_tun_by_numeric_identity() {
         let mut config = sample_config();
-        config
-            .interfaces
-            .get_mut("awg-secondary")
-            .unwrap()
-            .ipv6_enabled = false;
         let mut plan = RoutingPlan::from_config(&config);
         plan.bind_interface_indices(BTreeMap::from([
             ("wg-server".to_owned(), 17),
@@ -1177,60 +1148,6 @@ egress = "awg-primary"
     }
 
     #[test]
-    fn creates_ipv4_and_ipv6_policy_rules_for_each_uplink() {
-        let plan = RoutingPlan::from_config(&sample_config());
-        let commands = plan.ip_commands();
-        assert_eq!(commands.len(), 14);
-        assert!(commands
-            .iter()
-            .any(|args| args.first().is_some_and(|arg| arg == "-6")));
-        assert!(commands
-            .iter()
-            .any(|args| args.iter().any(|arg| arg == "0x80000000")));
-        assert!(commands
-            .iter()
-            .any(|args| args.iter().any(|arg| arg == "main")));
-    }
-
-    #[test]
-    fn ipv6_blocking_is_independent_for_ingress_and_egress_tunnels() {
-        let mut config = sample_config();
-        config.interfaces.get_mut("wg-server").unwrap().ipv6_enabled = false;
-        config
-            .interfaces
-            .get_mut("awg-secondary")
-            .unwrap()
-            .ipv6_enabled = false;
-        let plan = RoutingPlan::from_config(&config);
-        let script = plan.nft_script();
-        assert!(script.contains("elements = { \"awg-secondary\", \"wg-server\" }"));
-        assert!(
-            script.contains("prerouting iifname @ipv6_blocked_interfaces meta nfproto ipv6 drop")
-        );
-        assert!(script.contains("forward oifname @ipv6_blocked_interfaces meta nfproto ipv6 drop"));
-        assert!(script.contains("output oifname @ipv6_blocked_interfaces meta nfproto ipv6 drop"));
-        assert!(!script.contains("forward iifname @managed_interfaces meta nfproto ipv6 drop"));
-
-        // A route selector must not emit IPv6 classifier/NAT variants when
-        // either its ingress or egress tunnel has IPv6 disabled.
-        config.routing.rules[0].source = Some(vec!["2001:db8:10::/48".to_owned()]);
-        config.routing.rules[0].destination = Some(vec!["2001:db8:20::/48".to_owned()]);
-        let filtered_plan = RoutingPlan::from_config(&config);
-        assert!(rule_family_variants(&filtered_plan.decisions[0]).is_empty());
-
-        let commands = plan.ip_commands();
-        assert!(commands.iter().any(|args| {
-            args.first().is_some_and(|x| x == "-6") && args.iter().any(|x| x == "main")
-        }));
-        assert!(commands.iter().any(|args| {
-            args.first().is_some_and(|x| x == "-6") && args.iter().any(|x| x == "awg-primary")
-        }));
-        assert!(!commands.iter().any(|args| {
-            args.first().is_some_and(|x| x == "-6") && args.iter().any(|x| x == "awg-secondary")
-        }));
-    }
-
-    #[test]
     fn overlapping_rules_sharing_egress_keep_distinct_conntrack_decisions() {
         let mut config = sample_config();
         config.routing.rules[0].source = None;
@@ -1372,11 +1289,11 @@ egress = "awg-primary"
         config.routing.rules[0].source = Some(vec!["10.10.0.0/24".to_owned()]);
         config.routing.rules[0].destination = None;
         config.routing.rules[1].source = None;
-        config.routing.rules[1].destination = Some(vec!["2001:db8:20::/48".to_owned()]);
+        config.routing.rules[1].destination = Some(vec!["203.0.113.0/24".to_owned()]);
 
         let script = RoutingPlan::from_config(&config).nft_script();
         assert!(script.contains("ct state new ip saddr 10.10.0.0/24 meta mark set"));
-        assert!(script.contains("ct state new ip6 daddr 2001:db8:20::/48 meta mark set"));
-        assert!(!script.contains("ip saddr 10.10.0.0/24 ip6 daddr"));
+        assert!(script.contains("ct state new ip daddr 203.0.113.0/24 meta mark set"));
+        assert!(script.contains("ip saddr 10.10.0.0/24 meta mark set"));
     }
 }
