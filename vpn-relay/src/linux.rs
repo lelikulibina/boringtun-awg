@@ -1921,6 +1921,43 @@ mod tests {
         assert_eq!(calls, 1, "replacement must be a single nft transaction");
     }
 
+    fn ipv4_link_response(forwarding: u32) -> Vec<u8> {
+        let mut devconf = vec![0u8; IPV4_DEVCONF_MAX * 4];
+        devconf[0..4].copy_from_slice(&forwarding.to_ne_bytes());
+        let mut inet = Vec::new();
+        append_netlink_attribute(&mut inet, IFLA_INET_CONF, &devconf);
+        let mut af_spec = Vec::new();
+        append_netlink_attribute(&mut af_spec, AF_INET_ATTR | NLA_F_NESTED, &inet);
+        let mut attributes = Vec::new();
+        append_netlink_attribute(&mut attributes, IFLA_AF_SPEC | NLA_F_NESTED, &af_spec);
+        build_link_message(RTM_GETLINK + 2, 0, 9, 1, &attributes).unwrap()
+    }
+
+    #[test]
+    fn rtnetlink_ipv4_forwarding_readback_parses_kernel_devconf() {
+        assert!(parse_link_ipv4_forwarding(&ipv4_link_response(1)).unwrap());
+        assert!(!parse_link_ipv4_forwarding(&ipv4_link_response(0)).unwrap());
+        assert!(matches!(
+            parse_link_ipv4_forwarding(&ipv4_link_response(2)),
+            Err(LinuxError::Conflict { .. })
+        ));
+    }
+
+    #[test]
+    fn rtnetlink_ipv4_forwarding_rejects_truncated_devconf() {
+        let mut inet = Vec::new();
+        append_netlink_attribute(&mut inet, IFLA_INET_CONF, &[0, 0, 0, 0]);
+        let mut af_spec = Vec::new();
+        append_netlink_attribute(&mut af_spec, AF_INET_ATTR | NLA_F_NESTED, &inet);
+        let mut attributes = Vec::new();
+        append_netlink_attribute(&mut attributes, IFLA_AF_SPEC | NLA_F_NESTED, &af_spec);
+        let response = build_link_message(RTM_GETLINK + 2, 0, 9, 1, &attributes).unwrap();
+        assert!(matches!(
+            parse_link_ipv4_forwarding(&response),
+            Err(LinuxError::Conflict { details, .. }) if details.contains("truncated")
+        ));
+    }
+
     #[test]
     fn interface_name_round_trips_current_network_namespace_identity() {
         let index = interface_index("lo").expect("loopback interface exists");
