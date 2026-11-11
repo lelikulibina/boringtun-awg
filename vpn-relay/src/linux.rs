@@ -2173,15 +2173,41 @@ mod tests {
     }
 
     #[test]
+    fn rtnetlink_extended_ack_extracts_uncapped_kernel_message() {
+        let mut response = vec![0u8; 16];
+        response[4..6].copy_from_slice(&NLMSG_ERROR.to_ne_bytes());
+        response.extend_from_slice(&(-libc::EINVAL).to_ne_bytes());
+        let mut original = [0u8; 16];
+        original[0..4].copy_from_slice(&20u32.to_ne_bytes());
+        response.extend_from_slice(&original);
+        response.extend_from_slice(&[1, 2, 3, 4]);
+        let message = b"invalid uncapped attribute\\0";
+        let attribute_length = 4 + message.len();
+        response.extend_from_slice(&(attribute_length as u16).to_ne_bytes());
+        response.extend_from_slice(&NLMSGERR_ATTR_MSG.to_ne_bytes());
+        response.extend_from_slice(message);
+        response.resize(align_netlink(response.len()), 0);
+        let length = response.len();
+        response[0..4].copy_from_slice(&(length as u32).to_ne_bytes());
+        response[6..8].copy_from_slice(&NLM_F_ACK_TLVS.to_ne_bytes());
+        assert_eq!(
+            netlink_extended_ack(&response, 0, length).as_deref(),
+            Some("invalid uncapped attribute")
+        );
+    }
+
+    #[test]
     fn rtnetlink_extended_ack_ignores_malformed_attributes() {
         let mut response = vec![0u8; 36];
-        response[0..4].copy_from_slice(&36u32.to_ne_bytes());
         response[4..6].copy_from_slice(&NLMSG_ERROR.to_ne_bytes());
         response[6..8].copy_from_slice(&(NLM_F_CAPPED | NLM_F_ACK_TLVS).to_ne_bytes());
         response[16..20].copy_from_slice(&(-libc::EINVAL).to_ne_bytes());
         response[20..24].copy_from_slice(&16u32.to_ne_bytes());
-        response[32..34].copy_from_slice(&3u16.to_ne_bytes());
-        assert_eq!(netlink_extended_ack(&response, 0, 36), None);
+        response.extend_from_slice(&3u16.to_ne_bytes());
+        response.extend_from_slice(&NLMSGERR_ATTR_MSG.to_ne_bytes());
+        let length = response.len();
+        response[0..4].copy_from_slice(&(length as u32).to_ne_bytes());
+        assert_eq!(netlink_extended_ack(&response, 0, length), None);
     }
 
     #[test]
