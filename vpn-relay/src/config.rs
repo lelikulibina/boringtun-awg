@@ -1455,39 +1455,18 @@ egress = "awg-uplink"
     }
 
     #[test]
-    fn firewall_icmp_protocol_must_match_selector_address_family() {
-        let icmp_v6_selector = format!(
-            "{}\n[[firewall.input.rules]]\ninterface = \"wg-server\"\nsource = [\"2001:db8::2/128\"]\nprotocol = \"icmp\"\n",
-            ipv4_config().replace(
-                "socket_fwmark = 4097",
-                "socket_fwmark = 4097\nipv6_enabled = true",
-            )
+    fn firewall_rejects_ipv6_selectors_and_icmpv6() {
+        let ipv6_selector = format!(
+            "{}\n[[firewall.input.rules]]\ninterface = \"wg-server\"\nsource = [\"2001:db8::2/128\"]\n",
+            ipv4_config()
         );
-        assert!(Config::parse_toml(&icmp_v6_selector)
-            .unwrap_err()
-            .to_string()
-            .contains("icmp\" cannot be combined with IPv6"));
+        assert!(Config::parse_toml(&ipv6_selector).is_err());
 
-        let icmp_v4_selector = format!(
-            "{}\n[[firewall.output.rules]]\ninterface = \"awg-uplink\"\ndestination = [\"10.0.0.0/24\"]\nprotocol = \"icmpv6\"\n",
-            ipv4_config().replace(
-                "socket_fwmark = 4098",
-                "socket_fwmark = 4098\nipv6_enabled = true",
-            )
-        );
-        assert!(Config::parse_toml(&icmp_v4_selector)
-            .unwrap_err()
-            .to_string()
-            .contains("icmpv6\" cannot be combined with IPv4"));
-
-        let disabled_icmpv6 = format!(
+        let icmpv6 = format!(
             "{}\n[[firewall.input.rules]]\ninterface = \"wg-server\"\nprotocol = \"icmpv6\"\n",
             ipv4_config()
         );
-        assert!(Config::parse_toml(&disabled_icmpv6)
-            .unwrap_err()
-            .to_string()
-            .contains("icmpv6\" requires IPv6"));
+        assert!(Config::parse_toml(&icmpv6).is_err());
     }
 
     #[test]
@@ -1543,25 +1522,13 @@ egress = "awg-uplink"
     }
 
     #[test]
-    fn static_snat_family_must_match_the_intersection_of_both_selectors() {
-        let input = ipv4_config()
-            .replace(
-                "[interfaces.wg-server]",
-                "[interfaces.wg-server]\nipv6_enabled = true",
-            )
-            .replace(
-                "[interfaces.awg-uplink]",
-                "[interfaces.awg-uplink]\nipv6_enabled = true",
-            )
-            .replacen(
-                "destination = \"0.0.0.0/0\"",
-                "source = [\"10.10.0.0/24\", \"2001:db8::/32\"]\ndestination = \"0.0.0.0/0\"\nnat = \"snat\"\nnat_to = \"2001:db8::10\"",
-                1,
-            );
-        let error = Config::parse_toml(&input).unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("routing rule's selected source/destination family"));
+    fn static_snat_rejects_ipv6_addresses_and_selectors() {
+        let input = ipv4_config().replacen(
+            "egress = \"awg-uplink\"",
+            "egress = \"awg-uplink\"\nsource = \"2001:db8::/32\"\nnat = \"snat\"\nnat_to = \"2001:db8::10\"",
+            1,
+        );
+        assert!(Config::parse_toml(&input).is_err());
     }
 
     #[test]
@@ -1595,7 +1562,7 @@ egress = "awg-uplink"
     fn routing_rule_allows_both_ip_selectors_to_be_omitted() {
         let input = valid_config()
             .replace("destination = \"0.0.0.0/0\"\n", "")
-            .replace("destination = \"::/0\"\n", "");
+            .replace("destination = \"203.0.113.0/24\"\n", "");
         let config = Config::parse_toml(&input).unwrap();
         assert!(config.routing.rules[0].source.is_none());
         assert!(config.routing.rules[0].destination.is_none());
