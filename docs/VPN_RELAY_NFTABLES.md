@@ -285,7 +285,10 @@ daemon-owned TUN не восстанавливаются: их sysctl исчез
 
 Startup сохраняет исходные IPv4 значения в journal. Shutdown/recovery
 восстанавливают их только при совпадении identity и daemon-written value.
-IPv6-поля старых журналов не используются.
+При recovery старого journal проверяется только JSON-флаг незавершённого
+IPv6-изменения: если прежняя версия оставила pending IPv6 sysctl recovery,
+запуск прекращается, journal сохраняется, а значения нужно восстановить
+вручную. Сам vpn-relay IPv6 sysctl не читает и не меняет.
 
 ## Проверки и ограничения
 
