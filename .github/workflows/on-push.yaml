@@ -198,7 +198,7 @@ jobs:
         run: cargo build -p vpn-relay --bin vpn-relay
       - name: Exercise daemon routing in isolated network namespace
         timeout-minutes: 12
-        run: timeout --signal=TERM --kill-after=30s 10m sudo bash scripts/vpn-relay-netns-test.sh
+        run: timeout --signal=TERM --kill-after=15s 5m sudo bash scripts/vpn-relay-netns-test.sh
       - name: Verify per-interface forwarding ownership and recovery
         run: sudo bash scripts/vpn-relay-per-interface-forwarding-test.sh
       - name: Verify IPv4/IPv6 per-interface forwarding at packet level
