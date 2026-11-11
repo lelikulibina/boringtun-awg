@@ -63,7 +63,6 @@ pub struct NftFirewallRule {
     pub destination: Option<Vec<String>>,
     pub protocol: Option<FirewallProtocol>,
     pub ports: Option<Vec<u16>>,
-    pub ipv6_enabled: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -344,7 +343,7 @@ impl RoutingPlan {
 
         if !self.ipv6_drop_interfaces.is_empty() {
             let elements = self
-                .ipv6_blocked_interfaces
+                .ipv6_drop_interfaces
                 .iter()
                 .map(|name| format!("\"{}\"", name))
                 .collect::<Vec<_>>()
@@ -724,58 +723,9 @@ fn nft_family_match(prefix: &str) -> &'static str {
 fn rule_family_variants(
     rule: &RoutingDecision,
 ) -> Vec<(Option<&'static str>, Vec<String>, Vec<String>)> {
-    let families = |prefixes: &Option<Vec<String>>| -> Vec<&'static str> {
-        prefixes
-            .as_ref()
-            .into_iter()
-            .flatten()
-            .map(|prefix| nft_family_match(prefix))
-            .collect()
-    };
-    let source_families = families(&rule.source);
-    let destination_families = families(&rule.destination);
-    let selected: Vec<&'static str> =
-        match (source_families.is_empty(), destination_families.is_empty()) {
-            (true, true) => {
-                return if rule.ipv6_enabled {
-                    vec![(None, Vec::new(), Vec::new())]
-                } else {
-                    vec![(Some("ip"), Vec::new(), Vec::new())]
-                };
-            }
-            (false, true) => source_families,
-            (true, false) => destination_families,
-            (false, false) => source_families
-                .into_iter()
-                .filter(|family| destination_families.contains(family))
-                .collect(),
-        };
-
-    selected
-        .into_iter()
-        .filter(|family| *family != "ip6" || rule.ipv6_enabled)
-        .collect::<std::collections::BTreeSet<_>>()
-        .into_iter()
-        .map(|family| {
-            let sources = rule
-                .source
-                .as_ref()
-                .into_iter()
-                .flatten()
-                .filter(|prefix| nft_family_match(prefix) == family)
-                .cloned()
-                .collect();
-            let destinations = rule
-                .destination
-                .as_ref()
-                .into_iter()
-                .flatten()
-                .filter(|prefix| nft_family_match(prefix) == family)
-                .cloned()
-                .collect();
-            (Some(family), sources, destinations)
-        })
-        .collect()
+    let sources = rule.source.clone().unwrap_or_default();
+    let destinations = rule.destination.clone().unwrap_or_default();
+    vec![(Some("ip"), sources, destinations)]
 }
 
 fn append_cidr_selector(
