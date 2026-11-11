@@ -510,10 +510,7 @@ impl Runtime {
         let instance_lock = InstanceLock::acquire(&lock_path)?;
         let forwarding_state_path = InstanceLock::current_forwarding_state_path()?;
         let namespace_inode = InstanceLock::current_netns_inode()?;
-        recover_forwarding_state(
-            &forwarding_state_path,
-            namespace_inode,
-        )?;
+        recover_forwarding_state(&forwarding_state_path, namespace_inode)?;
         let control_socket = ControlSocket::bind(InstanceLock::current_control_path()?)?;
         let conntrack_mark_state_path = InstanceLock::current_conntrack_mark_state_path()?;
         let mut conntrack_mark_history = load_conntrack_mark_history(&conntrack_mark_state_path)?;
@@ -782,10 +779,10 @@ impl Runtime {
         // peer-only or firewall-only reload would look like a route migration.
         let same_egress_resources = self.routing.egresses.len() == next_routing.egresses.len()
             && next_routing.egresses.iter().all(|next| {
-                self.routing.egresses.iter().any(|current| {
-                    current.interface == next.interface
-                        && current.mark == next.mark
-                })
+                self.routing
+                    .egresses
+                    .iter()
+                    .any(|current| current.interface == next.interface && current.mark == next.mark)
             });
         if same_egress_resources {
             for next in &mut next_routing.egresses {
@@ -1287,7 +1284,10 @@ fn validate_forwarding_state(state: &ForwardingState) -> Result<(), RuntimeError
         if entry.name.is_empty()
             || entry.name.len() > 15
             || !entry.name.is_ascii()
-            || !entry.name.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+            || !entry
+                .name
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
             || entry.ifindex == 0
         {
             return Err(RuntimeError::Forwarding(
@@ -1448,9 +1448,14 @@ fn remove_forwarding_state_file(path: &Path) -> Result<(), RuntimeError> {
 }
 
 fn interface_forwarding_sysctl_key(name: &str, family: &str) -> Result<String, RuntimeError> {
-    if name.is_empty() || name.len() > 15 || !name.is_ascii()
-        || !name.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
-        || name == "." || name == ".."
+    if name.is_empty()
+        || name.len() > 15
+        || !name.is_ascii()
+        || !name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+        || name == "."
+        || name == ".."
     {
         return Err(RuntimeError::Forwarding(
             "refusing to construct a sysctl path from an invalid interface name".to_owned(),
@@ -1463,8 +1468,6 @@ fn interface_forwarding_sysctl_key(name: &str, family: &str) -> Result<String, R
     }
     Ok(format!("net.ipv4.conf.{name}.forwarding"))
 }
-
-
 
 fn read_forwarding_state_value(state: &ForwardingState, key: &str) -> Result<String, RuntimeError> {
     for entry in &state.interfaces {
@@ -1487,7 +1490,11 @@ fn write_forwarding_state_value(
             let enabled = match value {
                 "0" => false,
                 "1" => true,
-                _ => return Err(RuntimeError::Forwarding("IPv4 forwarding must be 0 or 1".to_owned())),
+                _ => {
+                    return Err(RuntimeError::Forwarding(
+                        "IPv4 forwarding must be 0 or 1".to_owned(),
+                    ))
+                }
             };
             verify_forwarding_interface(&entry.name, entry.ifindex)?;
             linux::set_ipv4_interface_forwarding(entry.ifindex, enabled)
@@ -1508,14 +1515,20 @@ fn restore_interface_forwarding_entry_with(
     mut write: impl FnMut(&str, &str) -> Result<(), RuntimeError>,
     mut verify: impl FnMut(&str, u32) -> Result<(), RuntimeError>,
 ) -> Result<(), RuntimeError> {
-    if family != "ipv4" || !changed { return Ok(()); }
+    if family != "ipv4" || !changed {
+        return Ok(());
+    }
     let key = interface_forwarding_sysctl_key(&entry.name, "ipv4")?;
     if let Err(error) = verify(&entry.name, entry.ifindex) {
-        if entry.daemon_owned { return Ok(()); }
+        if entry.daemon_owned {
+            return Ok(());
+        }
         return Err(error);
     }
     let current = read(&key)?;
-    if current == original || current != "1" { return Ok(()); }
+    if current == original || current != "1" {
+        return Ok(());
+    }
     verify(&entry.name, entry.ifindex)?;
     write(&key, original)
 }
@@ -1533,17 +1546,27 @@ fn restore_interface_forwarding_entries_with(
 ) -> Result<(), RuntimeError> {
     let mut failures = Vec::new();
     for entry in &state.interfaces {
-        if entry.daemon_owned { continue; }
+        if entry.daemon_owned {
+            continue;
+        }
         if let Err(error) = restore_interface_forwarding_entry_with(
-            entry, "ipv4", &entry.ipv4, entry.ipv4_changed,
-            &mut read, &mut write, &mut verify,
+            entry,
+            "ipv4",
+            &entry.ipv4,
+            entry.ipv4_changed,
+            &mut read,
+            &mut write,
+            &mut verify,
         ) {
             failures.push(format!("{} IPv4: {error}", entry.name));
         }
     }
-    if failures.is_empty() { Ok(()) } else {
+    if failures.is_empty() {
+        Ok(())
+    } else {
         Err(RuntimeError::FatalTransition(format!(
-            "failed to recover per-interface forwarding state: {}", failures.join("; ")
+            "failed to recover per-interface forwarding state: {}",
+            failures.join("; ")
         )))
     }
 }
@@ -1557,7 +1580,10 @@ fn verify_managed_forwarding_runtime(
             "namespace-wide IPv4 forwarding prerequisite changed".to_owned(),
         ));
     }
-    let allowed = allowed_names.iter().cloned().collect::<std::collections::BTreeSet<_>>();
+    let allowed = allowed_names
+        .iter()
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
     validate_unmanaged_forwarding_with(
         &allowed,
         &interface_sysctl_names("/proc/sys/net/ipv4/conf")?,
@@ -1569,7 +1595,8 @@ fn verify_managed_forwarding_runtime(
             .map_err(|error| RuntimeError::Forwarding(error.to_string()))?
         {
             return Err(RuntimeError::Forwarding(format!(
-                "managed interface '{}' lost its IPv4 forwarding enable value", entry.name
+                "managed interface '{}' lost its IPv4 forwarding enable value",
+                entry.name
             )));
         }
     }
@@ -1582,7 +1609,9 @@ fn validate_unmanaged_forwarding_with(
     mut read: impl FnMut(&str) -> Result<Option<String>, RuntimeError>,
 ) -> Result<(), RuntimeError> {
     for name in ipv4_interfaces {
-        if allowed.contains(name) { continue; }
+        if allowed.contains(name) {
+            continue;
+        }
         let key = format!("net.ipv4.conf.{name}.forwarding");
         let Some(value) = read(&key)? else {
             return Err(RuntimeError::Forwarding(format!(
@@ -1630,7 +1659,10 @@ fn enable_interface_forwarding_durable(
             "per-interface forwarding requires net.ipv4.ip_forward=1; configure this namespace-wide prerequisite externally".to_owned(),
         ));
     }
-    let allowed = names.iter().cloned().collect::<std::collections::BTreeSet<_>>();
+    let allowed = names
+        .iter()
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
     validate_unmanaged_forwarding_with(
         &allowed,
         &interface_sysctl_names("/proc/sys/net/ipv4/conf")?,
@@ -1645,15 +1677,21 @@ fn enable_interface_forwarding_durable(
             .map_err(|error| RuntimeError::Forwarding(error.to_string()))?;
         verify_forwarding_interface(name, ifindex)?;
         entries.push(InterfaceForwardingState {
-            name: name.clone(), ifindex, daemon_owned: daemon_owned_names.contains(name),
+            name: name.clone(),
+            ifindex,
+            daemon_owned: daemon_owned_names.contains(name),
             ipv4: if ipv4 { "1" } else { "0" }.to_owned(),
             ipv4_changed: false,
         });
     }
     let mut state = ForwardingState {
-        ipv4: "1".to_owned(), ipv4_changed: false, interfaces: entries,
+        ipv4: "1".to_owned(),
+        ipv4_changed: false,
+        interfaces: entries,
     };
-    for entry in &mut state.interfaces { entry.ipv4_changed = entry.ipv4 != "1"; }
+    for entry in &mut state.interfaces {
+        entry.ipv4_changed = entry.ipv4 != "1";
+    }
     validate_forwarding_state(&state)?;
     if state.interfaces.iter().any(|entry| entry.ipv4_changed) {
         persist_forwarding_state(path, namespace_inode, &state)?;
@@ -1664,7 +1702,9 @@ fn enable_interface_forwarding_durable(
         |key, value| write_forwarding_state_value(&state, key, value),
         verify_forwarding_interface,
     ) {
-        if matches!(error, RuntimeError::FatalTransition(_)) { return Err(error); }
+        if matches!(error, RuntimeError::FatalTransition(_)) {
+            return Err(error);
+        }
         remove_forwarding_state_file(path)?;
         return Err(error);
     }
@@ -1679,22 +1719,29 @@ fn enable_interface_forwarding_entries_with(
 ) -> Result<(), RuntimeError> {
     let mut failures = Vec::new();
     for entry in &state.interfaces {
-        if !entry.ipv4_changed { continue; }
+        if !entry.ipv4_changed {
+            continue;
+        }
         let key = interface_forwarding_sysctl_key(&entry.name, "ipv4")?;
         if let Err(error) = verify(&entry.name, entry.ifindex).and_then(|()| write(&key, "1")) {
             failures.push(format!("{} IPv4: {error}", entry.name));
         }
     }
-    if failures.is_empty() { return Ok(()); }
-    if let Err(rollback_error) = restore_interface_forwarding_entries_with(
-        state, &mut read, &mut write, &mut verify
-    ) {
+    if failures.is_empty() {
+        return Ok(());
+    }
+    if let Err(rollback_error) =
+        restore_interface_forwarding_entries_with(state, &mut read, &mut write, &mut verify)
+    {
         return Err(RuntimeError::FatalTransition(format!(
             "per-interface forwarding setup failed ({}); rollback failed ({rollback_error}); fail-closed nftables policy must remain installed",
             failures.join("; ")
         )));
     }
-    Err(RuntimeError::Forwarding(format!("per-interface forwarding setup failed: {}", failures.join("; "))))
+    Err(RuntimeError::Forwarding(format!(
+        "per-interface forwarding setup failed: {}",
+        failures.join("; ")
+    )))
 }
 
 fn restore_forwarding_state_with(
@@ -1714,31 +1761,37 @@ fn restore_forwarding_state_with_mode(
     if state.ipv4_changed {
         match read("net.ipv4.ip_forward") {
             Ok(current) if current == state.ipv4 => {}
-            Ok(_) => if let Err(error) = write("net.ipv4.ip_forward", &state.ipv4) {
-                failures.push(format!("IPv4: {error}"));
-            },
+            Ok(_) => {
+                if let Err(error) = write("net.ipv4.ip_forward", &state.ipv4) {
+                    failures.push(format!("IPv4: {error}"));
+                }
+            }
             Err(error) => failures.push(format!("IPv4 read: {error}")),
         }
     }
     if let Err(error) = restore_interface_forwarding_entries_with(
-        state, &mut read, &mut write, verify_forwarding_interface
-    ) { failures.push(error.to_string()); }
-    if failures.is_empty() { Ok(()) } else {
+        state,
+        &mut read,
+        &mut write,
+        verify_forwarding_interface,
+    ) {
+        failures.push(error.to_string());
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
         Err(RuntimeError::FatalTransition(format!(
-            "failed to recover IPv4 forwarding state: {}", failures.join("; ")
+            "failed to recover IPv4 forwarding state: {}",
+            failures.join("; ")
         )))
     }
 }
 
 
-
-
-
-fn recover_forwarding_state(
-    path: &Path,
-    namespace_inode: u64,
-) -> Result<(), RuntimeError> {
-    let Some(state) = load_forwarding_state(path, namespace_inode)? else { return Ok(()); };
+fn recover_forwarding_state(path: &Path, namespace_inode: u64) -> Result<(), RuntimeError> {
+    let Some(state) = load_forwarding_state(path, namespace_inode)? else {
+        return Ok(());
+    };
     restore_forwarding_state_with_mode(
         &state,
         |key| read_forwarding_state_value(&state, key),
@@ -1768,7 +1821,10 @@ fn enable_forwarding_durable(
 ) -> Result<ForwardingState, RuntimeError> {
     if !forwarding_interfaces.is_empty() {
         return enable_interface_forwarding_durable(
-            path, namespace_inode, forwarding_interfaces, daemon_owned_names,
+            path,
+            namespace_inode,
+            forwarding_interfaces,
+            daemon_owned_names,
         );
     }
     let mut state = ForwardingState {
@@ -1778,7 +1834,9 @@ fn enable_forwarding_durable(
     };
     state.ipv4_changed = state.ipv4 != "1";
     validate_forwarding_state(&state)?;
-    if state.ipv4_changed { persist_forwarding_state(path, namespace_inode, &state)?; }
+    if state.ipv4_changed {
+        persist_forwarding_state(path, namespace_inode, &state)?;
+    }
     match enable_forwarding_state_with(state, write_sysctl) {
         Ok(state) => Ok(state),
         Err(error) => {
@@ -1796,7 +1854,9 @@ fn restore_forwarding_with(
 ) -> Result<(), RuntimeError> {
     if state.ipv4_changed {
         write("net.ipv4.ip_forward", &state.ipv4).map_err(|error| {
-            RuntimeError::FatalTransition(format!("failed to restore IPv4 forwarding state: {error}"))
+            RuntimeError::FatalTransition(format!(
+                "failed to restore IPv4 forwarding state: {error}"
+            ))
         })?;
     }
     Ok(())
