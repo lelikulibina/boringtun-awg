@@ -256,6 +256,7 @@ pub struct Device {
     next_index: IndexLfsr,
 
     config: DeviceConfig,
+    ipv6_enabled: bool,
 
     cleanup_paths: Vec<String>,
 
@@ -369,9 +370,18 @@ fn require_key_pair(
 
 impl DeviceHandle {
     pub fn new(name: &str, config: DeviceConfig) -> Result<DeviceHandle, Error> {
+        Self::new_with_ipv6(name, config, true)
+    }
+
+    /// Create a device that never opens or registers an IPv6 UDP socket.
+    pub fn new_ipv4_only(name: &str, config: DeviceConfig) -> Result<DeviceHandle, Error> {
+        Self::new_with_ipv6(name, config, false)
+    }
+
+    fn new_with_ipv6(name: &str, config: DeviceConfig, ipv6_enabled: bool) -> Result<DeviceHandle, Error> {
         let n_threads = config.n_threads;
         let listen_port = config.listen_port.unwrap_or(0);
-        let mut wg_interface = Device::new(name, config)?;
+        let mut wg_interface = Device::new(name, config, ipv6_enabled)?;
         // Port 0 retains the historical behaviour: let the OS choose one.
         wg_interface.open_listen_socket(listen_port)?;
 
@@ -831,7 +841,7 @@ impl Device {
         Ok(())
     }
 
-    pub fn new(name: &str, config: DeviceConfig) -> Result<Device, Error> {
+    pub fn new(name: &str, config: DeviceConfig, ipv6_enabled: bool) -> Result<Device, Error> {
         let poll = EventPoll::<Handler>::new()?;
 
         // Create a tunnel device
@@ -859,6 +869,7 @@ impl Device {
             queue: Arc::new(poll),
             iface,
             config,
+            ipv6_enabled,
             exit_notice: Default::default(),
             yield_notice: Default::default(),
             fwmark: Default::default(),
@@ -930,15 +941,16 @@ impl Device {
             port = udp_sock4.local_addr()?.as_socket().unwrap().port();
         }
 
-        let udp_sock6 = socket2::Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP))?;
-        udp_sock6.set_reuse_address(true)?;
-        udp_sock6.bind(&SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, port, 0, 0).into())?;
-        udp_sock6.set_nonblocking(true)?;
-
         self.register_udp_handler(udp_sock4.try_clone().unwrap())?;
-        self.register_udp_handler(udp_sock6.try_clone().unwrap())?;
         self.udp4 = Some(udp_sock4);
-        self.udp6 = Some(udp_sock6);
+        if self.ipv6_enabled {
+            let udp_sock6 = socket2::Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP))?;
+            udp_sock6.set_reuse_address(true)?;
+            udp_sock6.bind(&SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, port, 0, 0).into())?;
+            udp_sock6.set_nonblocking(true)?;
+            self.register_udp_handler(udp_sock6.try_clone().unwrap())?;
+            self.udp6 = Some(udp_sock6);
+        }
 
         self.listen_port = port;
 
@@ -1077,10 +1089,10 @@ impl Device {
 
                 let peer_map = &d.peers;
 
-                let (udp4, udp6) = match (d.udp4.as_ref(), d.udp6.as_ref()) {
-                    (Some(udp4), Some(udp6)) => (udp4, udp6),
-                    _ => return Action::Continue,
+                let Some(udp4) = d.udp4.as_ref() else {
+                    return Action::Continue;
                 };
+                let udp6 = d.udp6.as_ref();
 
                 // Go over each peer and invoke the timer function
                 for peer in peer_map.values() {
@@ -1101,9 +1113,8 @@ impl Device {
                                 SocketAddr::V4(_) => {
                                     udp4.send_to(packet, &endpoint_addr.into()).ok()
                                 }
-                                SocketAddr::V6(_) => {
-                                    udp6.send_to(packet, &endpoint_addr.into()).ok()
-                                }
+                                SocketAddr::V6(_) => udp6
+                                    .and_then(|socket| socket.send_to(packet, &endpoint_addr.into()).ok()),
                             };
                         }
                         // update_timers only yields Done/Err/WriteToNetwork, but
@@ -1462,7 +1473,7 @@ impl Device {
                 let mtu = d.mtu.load(Ordering::Relaxed);
 
                 let udp4 = d.udp4.as_ref().expect("Not connected");
-                let udp6 = d.udp6.as_ref().expect("Not connected");
+                let udp6 = d.udp6.as_ref();
 
                 let peers = &d.peers_by_ip;
                 for _ in 0..MAX_ITR {
@@ -1505,7 +1516,9 @@ impl Device {
                             } else if let Some(addr @ SocketAddr::V4(_)) = endpoint.addr {
                                 let _: Result<_, _> = udp4.send_to(packet, &addr.into());
                             } else if let Some(addr @ SocketAddr::V6(_)) = endpoint.addr {
-                                let _: Result<_, _> = udp6.send_to(packet, &addr.into());
+                                if let Some(udp6) = udp6 {
+                                    let _: Result<_, _> = udp6.send_to(packet, &addr.into());
+                                }
                             } else {
                                 tracing::error!("No endpoint");
                             }
