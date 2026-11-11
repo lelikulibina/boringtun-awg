@@ -890,7 +890,9 @@ struct NetlinkAddress {
     groups: u32,
 }
 
-fn align_netlink(length: usize) -> usize { (length + 3) & !3 }
+fn align_netlink(length: usize) -> usize {
+    (length + 3) & !3
+}
 
 fn append_netlink_attribute(buffer: &mut Vec<u8>, kind: u16, payload: &[u8]) {
     let length = 4 + payload.len();
@@ -900,7 +902,13 @@ fn append_netlink_attribute(buffer: &mut Vec<u8>, kind: u16, payload: &[u8]) {
     buffer.resize(align_netlink(buffer.len()), 0);
 }
 
-fn build_link_message(message_type: u16, flags: u16, ifindex: u32, sequence: u32, attributes: &[u8]) -> Result<Vec<u8>, LinuxError> {
+fn build_link_message(
+    message_type: u16,
+    flags: u16,
+    ifindex: u32,
+    sequence: u32,
+    attributes: &[u8],
+) -> Result<Vec<u8>, LinuxError> {
     let index = i32::try_from(ifindex).map_err(|_| LinuxError::Conflict {
         resource: format!("network interface index {ifindex}"),
         details: "ifindex does not fit the rtnetlink interface index field".into(),
@@ -919,60 +927,145 @@ fn build_link_message(message_type: u16, flags: u16, ifindex: u32, sequence: u32
     message.extend_from_slice(&0u32.to_ne_bytes());
     message.extend_from_slice(attributes);
     let length = u32::try_from(message.len()).map_err(|_| LinuxError::Conflict {
-        resource: "rtnetlink message".into(), details: "message length overflow".into(),
+        resource: "rtnetlink message".into(),
+        details: "message length overflow".into(),
     })?;
     message[0..4].copy_from_slice(&length.to_ne_bytes());
     Ok(message)
 }
 
-fn netlink_request(ifindex: u32, message_type: u16, flags: u16, attributes: &[u8]) -> Result<Vec<u8>, LinuxError> {
+fn netlink_request(
+    ifindex: u32,
+    message_type: u16,
+    flags: u16,
+    attributes: &[u8],
+) -> Result<Vec<u8>, LinuxError> {
     use std::os::fd::{AsRawFd, FromRawFd};
     static NEXT_SEQUENCE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
     let sequence = NEXT_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let message = build_link_message(message_type, flags, ifindex, sequence, attributes)?;
-    let fd = unsafe { libc::socket(libc::AF_NETLINK, libc::SOCK_RAW | libc::SOCK_CLOEXEC, NETLINK_ROUTE) };
+    let fd = unsafe {
+        libc::socket(
+            libc::AF_NETLINK,
+            libc::SOCK_RAW | libc::SOCK_CLOEXEC,
+            NETLINK_ROUTE,
+        )
+    };
     if fd < 0 {
-        return Err(LinuxError::Spawn { program: "rtnetlink socket".into(), source: std::io::Error::last_os_error() });
+        return Err(LinuxError::Spawn {
+            program: "rtnetlink socket".into(),
+            source: std::io::Error::last_os_error(),
+        });
     }
     let socket = unsafe { std::os::fd::OwnedFd::from_raw_fd(fd) };
-    let local = NetlinkAddress { family: libc::AF_NETLINK as u16, pad: 0, pid: 0, groups: 0 };
-    let bind_result = unsafe { libc::bind(socket.as_raw_fd(), &local as *const NetlinkAddress as *const libc::sockaddr, std::mem::size_of::<NetlinkAddress>() as libc::socklen_t) };
+    let local = NetlinkAddress {
+        family: libc::AF_NETLINK as u16,
+        pad: 0,
+        pid: 0,
+        groups: 0,
+    };
+    let bind_result = unsafe {
+        libc::bind(
+            socket.as_raw_fd(),
+            &local as *const NetlinkAddress as *const libc::sockaddr,
+            std::mem::size_of::<NetlinkAddress>() as libc::socklen_t,
+        )
+    };
     if bind_result < 0 {
-        return Err(LinuxError::Command { program: "rtnetlink bind".into(), status: "failed".into(), stderr: std::io::Error::last_os_error().to_string() });
+        return Err(LinuxError::Command {
+            program: "rtnetlink bind".into(),
+            status: "failed".into(),
+            stderr: std::io::Error::last_os_error().to_string(),
+        });
     }
     let timeout = libc::timeval { tv_sec: 5, tv_usec: 0 };
-    let timeout_result = unsafe { libc::setsockopt(socket.as_raw_fd(), libc::SOL_SOCKET, libc::SO_RCVTIMEO, &timeout as *const libc::timeval as *const libc::c_void, std::mem::size_of::<libc::timeval>() as libc::socklen_t) };
+    let timeout_result = unsafe {
+        libc::setsockopt(
+            socket.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_RCVTIMEO,
+            &timeout as *const libc::timeval as *const libc::c_void,
+            std::mem::size_of::<libc::timeval>() as libc::socklen_t,
+        )
+    };
     if timeout_result < 0 {
-        return Err(LinuxError::Command { program: "rtnetlink receive timeout".into(), status: "failed".into(), stderr: std::io::Error::last_os_error().to_string() });
+        return Err(LinuxError::Command {
+            program: "rtnetlink receive timeout".into(),
+            status: "failed".into(),
+            stderr: std::io::Error::last_os_error().to_string(),
+        });
     }
-    let kernel = NetlinkAddress { family: libc::AF_NETLINK as u16, pad: 0, pid: 0, groups: 0 };
-    let sent = unsafe { libc::sendto(socket.as_raw_fd(), message.as_ptr() as *const libc::c_void, message.len(), 0, &kernel as *const NetlinkAddress as *const libc::sockaddr, std::mem::size_of::<NetlinkAddress>() as libc::socklen_t) };
+    let kernel = NetlinkAddress {
+        family: libc::AF_NETLINK as u16,
+        pad: 0,
+        pid: 0,
+        groups: 0,
+    };
+    let sent = unsafe {
+        libc::sendto(
+            socket.as_raw_fd(),
+            message.as_ptr() as *const libc::c_void,
+            message.len(),
+            0,
+            &kernel as *const NetlinkAddress as *const libc::sockaddr,
+            std::mem::size_of::<NetlinkAddress>() as libc::socklen_t,
+        )
+    };
     if sent < 0 || sent as usize != message.len() {
-        return Err(LinuxError::Command { program: "rtnetlink send".into(), status: "failed".into(), stderr: std::io::Error::last_os_error().to_string() });
+        return Err(LinuxError::Command {
+            program: "rtnetlink send".into(),
+            status: "failed".into(),
+            stderr: std::io::Error::last_os_error().to_string(),
+        });
     }
     let mut response = vec![0u8; 16 * 1024];
     loop {
-        let received = unsafe { libc::recv(socket.as_raw_fd(), response.as_mut_ptr() as *mut libc::c_void, response.len(), 0) };
+        let received = unsafe {
+            libc::recv(
+                socket.as_raw_fd(),
+                response.as_mut_ptr() as *mut libc::c_void,
+                response.len(),
+                0,
+            )
+        };
         if received < 0 {
-            return Err(LinuxError::Command { program: "rtnetlink receive".into(), status: "failed".into(), stderr: std::io::Error::last_os_error().to_string() });
+            return Err(LinuxError::Command {
+                program: "rtnetlink receive".into(),
+                status: "failed".into(),
+                stderr: std::io::Error::last_os_error().to_string(),
+            });
         }
         let received = received as usize;
         let mut offset = 0usize;
         while offset + 16 <= received {
-            let length = u32::from_ne_bytes(response[offset..offset + 4].try_into().unwrap()) as usize;
+            let length =
+                u32::from_ne_bytes(response[offset..offset + 4].try_into().unwrap()) as usize;
             if length < 16 || offset + length > received {
-                return Err(LinuxError::Conflict { resource: "rtnetlink response".into(), details: "kernel returned a malformed netlink message".into() });
+                return Err(LinuxError::Conflict {
+                    resource: "rtnetlink response".into(),
+                    details: "kernel returned a malformed netlink message".into(),
+                });
             }
             let kind = u16::from_ne_bytes(response[offset + 4..offset + 6].try_into().unwrap());
             let seq = u32::from_ne_bytes(response[offset + 8..offset + 12].try_into().unwrap());
             if seq == sequence {
                 if kind == NLMSG_ERROR {
                     if length < 20 {
-                        return Err(LinuxError::Conflict { resource: "rtnetlink acknowledgement".into(), details: "kernel returned a truncated netlink error".into() });
+                        return Err(LinuxError::Conflict {
+                            resource: "rtnetlink acknowledgement".into(),
+                            details: "kernel returned a truncated netlink error".into(),
+                        });
                     }
-                    let code = i32::from_ne_bytes(response[offset + 16..offset + 20].try_into().unwrap());
-                    if code == 0 { return Ok(response[..received].to_vec()); }
-                    return Err(LinuxError::Command { program: "rtnetlink request".into(), status: "kernel rejected request".into(), stderr: std::io::Error::from_raw_os_error(-code).to_string() });
+                    let code =
+                        i32::from_ne_bytes(response[offset + 16..offset + 20].try_into().unwrap());
+                    if code == 0 {
+                        return Ok(response[..received].to_vec());
+                    }
+                    return Err(LinuxError::Command {
+                        program: "rtnetlink request".into(),
+                        status: "kernel rejected request".into(),
+                        stderr: std::io::Error::from_raw_os_error(-code).to_string(),
+                    });
                 }
                 if message_type == RTM_GETLINK && kind == RTM_NEWLINK {
                     return Ok(response[offset..offset + length].to_vec());
@@ -988,18 +1081,27 @@ fn parse_link_ipv4_forwarding(response: &[u8]) -> Result<bool, LinuxError> {
         let mut result = Vec::new();
         while !bytes.is_empty() {
             if bytes.len() < 4 {
-                return Err(LinuxError::Conflict { resource: "rtnetlink link attributes".into(), details: "truncated attribute header".into() });
+                return Err(LinuxError::Conflict {
+                    resource: "rtnetlink link attributes".into(),
+                    details: "truncated attribute header".into(),
+                });
             }
             let length = u16::from_ne_bytes(bytes[0..2].try_into().unwrap()) as usize;
             let kind = u16::from_ne_bytes(bytes[2..4].try_into().unwrap()) & !NLA_F_NESTED;
             if length < 4 || length > bytes.len() {
-                return Err(LinuxError::Conflict { resource: "rtnetlink link attributes".into(), details: "invalid attribute length".into() });
+                return Err(LinuxError::Conflict {
+                    resource: "rtnetlink link attributes".into(),
+                    details: "invalid attribute length".into(),
+                });
             }
             result.push((kind, &bytes[4..length]));
             let aligned = align_netlink(length);
             if aligned > bytes.len() {
                 if length != bytes.len() {
-                    return Err(LinuxError::Conflict { resource: "rtnetlink link attributes".into(), details: "invalid attribute alignment".into() });
+                    return Err(LinuxError::Conflict {
+                        resource: "rtnetlink link attributes".into(),
+                        details: "invalid attribute alignment".into(),
+                    });
                 }
                 break;
             }
@@ -1008,31 +1110,58 @@ fn parse_link_ipv4_forwarding(response: &[u8]) -> Result<bool, LinuxError> {
         Ok(result)
     }
     if response.len() < 32 {
-        return Err(LinuxError::Conflict { resource: "rtnetlink link response".into(), details: "truncated RTM_NEWLINK response".into() });
+        return Err(LinuxError::Conflict {
+            resource: "rtnetlink link response".into(),
+            details: "truncated RTM_NEWLINK response".into(),
+        });
     }
     let link_attributes = attributes(&response[32..])?;
-    let af_spec = link_attributes.iter().find(|(kind, _)| *kind == IFLA_AF_SPEC)
-        .ok_or_else(|| LinuxError::Conflict { resource: "IPv4 link configuration".into(), details: "kernel omitted IFLA_AF_SPEC".into() })?;
+    let af_spec = link_attributes
+        .iter()
+        .find(|(kind, _)| *kind == IFLA_AF_SPEC)
+        .ok_or_else(|| LinuxError::Conflict {
+            resource: "IPv4 link configuration".into(),
+            details: "kernel omitted IFLA_AF_SPEC".into(),
+        })?;
     let families = attributes(af_spec.1)?;
-    let inet = families.iter().find(|(kind, _)| *kind == AF_INET_ATTR)
-        .ok_or_else(|| LinuxError::Conflict { resource: "IPv4 link configuration".into(), details: "kernel omitted AF_INET configuration".into() })?;
+    let inet = families
+        .iter()
+        .find(|(kind, _)| *kind == AF_INET_ATTR)
+        .ok_or_else(|| LinuxError::Conflict {
+            resource: "IPv4 link configuration".into(),
+            details: "kernel omitted AF_INET configuration".into(),
+        })?;
     let inet_attributes = attributes(inet.1)?;
-    let conf = inet_attributes.iter().find(|(kind, _)| *kind == IFLA_INET_CONF)
-        .ok_or_else(|| LinuxError::Conflict { resource: "IPv4 link configuration".into(), details: "kernel omitted IFLA_INET_CONF".into() })?;
+    let conf = inet_attributes
+        .iter()
+        .find(|(kind, _)| *kind == IFLA_INET_CONF)
+        .ok_or_else(|| LinuxError::Conflict {
+            resource: "IPv4 link configuration".into(),
+            details: "kernel omitted IFLA_INET_CONF".into(),
+        })?;
     if conf.1.len() < IPV4_DEVCONF_MAX * 4 {
-        return Err(LinuxError::Conflict { resource: "IPv4 link configuration".into(), details: "kernel returned a truncated IPv4 devconf array".into() });
+        return Err(LinuxError::Conflict {
+            resource: "IPv4 link configuration".into(),
+            details: "kernel returned a truncated IPv4 devconf array".into(),
+        });
     }
     match u32::from_ne_bytes(conf.1[0..4].try_into().unwrap()) {
         0 => Ok(false),
         1 => Ok(true),
-        value => Err(LinuxError::Conflict { resource: "IPv4 forwarding".into(), details: format!("kernel returned unexpected forwarding value {value}") }),
+        value => Err(LinuxError::Conflict {
+            resource: "IPv4 forwarding".into(),
+            details: format!("kernel returned unexpected forwarding value {value}"),
+        }),
     }
 }
 
 /// Read IPv4 forwarding by ifindex using RTM_GETLINK (no name-based sysctl lookup).
 pub fn ipv4_interface_forwarding(ifindex: u32) -> Result<bool, LinuxError> {
     if ifindex == 0 {
-        return Err(LinuxError::Conflict { resource: "IPv4 forwarding interface".into(), details: "ifindex 0 is not valid".into() });
+        return Err(LinuxError::Conflict {
+            resource: "IPv4 forwarding interface".into(),
+            details: "ifindex 0 is not valid".into(),
+        });
     }
     let response = netlink_request(ifindex, RTM_GETLINK, NLM_F_REQUEST, &[])?;
     parse_link_ipv4_forwarding(&response)
@@ -1055,7 +1184,13 @@ pub fn set_ipv4_interface_forwarding(ifindex: u32, enabled: bool) -> Result<(), 
     netlink_request(ifindex, RTM_NEWLINK, NLM_F_REQUEST | NLM_F_ACK, &attributes)?;
     let actual = ipv4_interface_forwarding(ifindex)?;
     if actual != enabled {
-        return Err(LinuxError::Conflict { resource: format!("IPv4 forwarding on ifindex {ifindex}"), details: format!("kernel acknowledged update but reports forwarding={}", u8::from(actual)) });
+        return Err(LinuxError::Conflict {
+            resource: format!("IPv4 forwarding on ifindex {ifindex}"),
+            details: format!(
+                "kernel acknowledged update but reports forwarding={}",
+                u8::from(actual)
+            ),
+        });
     }
     Ok(())
 }
