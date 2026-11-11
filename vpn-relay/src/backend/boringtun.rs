@@ -214,6 +214,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn backend_passes_keepalive_ranges_and_preserves_fixed_interval_compatibility() {
+        for (setting, expected) in [
+            ("persistent_keepalive_range = [25, 35]", Some((25, 35))),
+            ("persistent_keepalive_secs = 25", Some((25, 25))),
+        ] {
+            let source = format!(
+                "type = \\\"wg\\\"\\naddress = [\\\"10.0.0.1/24\\\"]\\nprivate_key = \\\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\\\"\\n[[peers]]\\npublic_key = \\\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\\\"\\nallowed_ips = [\\\"10.0.0.2/32\\\"]\\n{setting}\\n"
+            );
+            let interface: InterfaceConfig = toml::from_str(&source).unwrap();
+            let prepared = PreparedInterface { peer_endpoints: vec![None] };
+            let peers = build_peer_configs("wg-test", &interface, &prepared).unwrap();
+            assert_eq!(peers[0].persistent_keepalive, expected);
+        }
+    }
+
+    #[test]
     fn backend_preflight_resolves_peer_endpoints_before_runtime_setup() {
         let mut interface: InterfaceConfig = toml::from_str(
             r#"
