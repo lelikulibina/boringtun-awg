@@ -1083,7 +1083,6 @@ mtu = 1380
 listen_port = 51820
 private_key = "{KEY}"
 socket_fwmark = 4097
-ipv6_enabled = true
 
 [[interfaces.wg-server.peers]]
 public_key = "{KEY}"
@@ -1096,12 +1095,11 @@ mtu = 1380
 listen_port = 51821
 private_key = "{KEY}"
 socket_fwmark = 4098
-ipv6_enabled = true
 
 [[interfaces.awg-uplink.peers]]
 public_key = "{KEY}"
 endpoint = "198.51.100.10:51820"
-allowed_ips = ["0.0.0.0/0", "::/0"]
+allowed_ips = ["0.0.0.0/0"]
 persistent_keepalive_secs = 25
 
 [interfaces.awg-uplink.awg]
@@ -1123,23 +1121,12 @@ ingress = "wg-server"
 destination = "0.0.0.0/0"
 egress = "awg-uplink"
 
-[[routing.rules]]
-priority = 110
-ingress = "wg-server"
-destination = "::/0"
-egress = "awg-uplink"
 "#
         )
     }
 
     fn ipv4_config() -> String {
         valid_config()
-            .replace("ipv6_enabled = true\n", "")
-            .replace(", \"::/0\"", "")
-            .replace(
-                "[[routing.rules]]\npriority = 110\ningress = \"wg-server\"\ndestination = \"::/0\"\negress = \"awg-uplink\"\n",
-                "",
-            )
     }
 
     #[test]
