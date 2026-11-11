@@ -407,7 +407,7 @@ h4 = "301-400"
 
 [[interfaces.up-secondary.peers]]
 public_key = "$ROUTER_SECONDARY_PUBLIC"
-allowed_ips = ["10.77.0.2/32", "10.77.0.3/32", "fd77::2/128", "fd77::3/128"]
+allowed_ips = ["10.30.0.1/32", "10.77.0.2/32", "10.77.0.3/32", "fd30::1/128", "fd77::2/128", "fd77::3/128"]
 
 [firewall.input]
 [[firewall.input.rules]]
