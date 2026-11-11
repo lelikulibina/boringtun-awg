@@ -272,12 +272,9 @@ impl RoutingPlan {
         socket_marks.sort_unstable();
 
         let managed_interfaces: Vec<_> = config.interfaces.keys().cloned().collect();
-        let ipv6_blocked_interfaces: Vec<_> = config
-            .interfaces
-            .iter()
-            .filter(|(_, interface)| !interface.ipv6_enabled)
-            .map(|(name, _)| name.clone())
-            .collect();
+        // IPv6 is unsupported by vpn-relay. Keep only a per-TUN drop guard;
+        // do not apply IPv6 policy to BoringTun's outer UDP sockets.
+        let ipv6_blocked_interfaces: Vec<_> = config.interfaces.keys().cloned().collect();
 
         Self {
             nft_family: "inet".to_owned(),
@@ -288,7 +285,7 @@ impl RoutingPlan {
             input_rules,
             output_rules,
             socket_marks,
-            ipv6_transport_blocked: !config.daemon.ipv6_enabled,
+            ipv6_transport_blocked: false,
             ipv6_blocked_interfaces,
             interface_indices: None,
         }
@@ -932,7 +929,7 @@ egress = "awg-primary"
     }
 
     #[test]
-    fn daemon_ipv4_only_mode_omits_ipv6_policy_and_blocks_outer_udp_sockets() {
+    fn ipv4_only_mode_blocks_ipv6_only_on_managed_tun_interfaces() {
         let mut config = sample_config();
         config.daemon.ipv6_enabled = false;
         for interface in config.interfaces.values_mut() {
@@ -949,8 +946,8 @@ egress = "awg-primary"
 
         let script = plan.nft_script();
         assert!(script.contains("socket_fwmarks { type mark;"));
-        assert!(script.contains("input meta nfproto ipv6 socket mark @socket_fwmarks drop"));
-        assert!(script.contains("output meta nfproto ipv6 meta mark @socket_fwmarks drop"));
+        assert!(!script.contains("socket mark @socket_fwmarks drop"));
+        assert!(!script.contains("meta mark @socket_fwmarks drop"));
         assert!(
             script.contains("prerouting iifname @ipv6_blocked_interfaces meta nfproto ipv6 drop")
         );
