@@ -4,7 +4,7 @@ use boringtun::noise::amnezia::AmneziaWgConfig;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
-use std::net::{IpAddr, SocketAddr};
+use std::net::{Ipv4Addr, SocketAddr};
 use std::path::Path;
 use std::str::FromStr;
 
@@ -109,7 +109,7 @@ pub enum NatMode {
 pub enum NatAction {
     None,
     Masquerade,
-    Snat(IpAddr),
+    Snat(Ipv4Addr),
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -266,7 +266,7 @@ pub struct RoutingRule {
     pub nat: NatMode,
     /// Required only for static source NAT.
     #[serde(default)]
-    pub nat_to: Option<IpAddr>,
+    pub nat_to: Option<Ipv4Addr>,
 }
 
 impl RoutingRule {
@@ -680,24 +680,7 @@ impl Config {
                     if !address.is_ipv4() {
                         return invalid("routing.rules.nat_to supports IPv4 addresses only");
                     }
-                    let family_matches = match (&source_prefixes, &destination_prefixes) {
-                        (Some(sources), Some(destinations)) => sources.iter().any(|(source, _)| {
-                            source.is_ipv4()
-                                && destinations.iter().any(|(destination, _)| {
-                                    destination.is_ipv4()
-                                })
-                        }),
-                        (Some(sources), None) => sources
-                            .iter()
-                            .any(|(source, _)| source.is_ipv4() == address.is_ipv4()),
-                        (None, Some(destinations)) => destinations
-                            .iter()
-                            .any(|(destination, _)| destination.is_ipv4() == address.is_ipv4()),
-                        (None, None) => true,
-                    };
-                    if !family_matches {
-                        return invalid("routing.rules.nat_to address family must match the routing rule's selected source/destination family");
-                    }
+
                 }
                 NatMode::None | NatMode::Masquerade if rule.nat_to.is_some() => {
                     return invalid("routing.rules.nat_to is valid only when nat = \"snat\"");
@@ -705,18 +688,7 @@ impl Config {
                 NatMode::None | NatMode::Masquerade => {}
             }
 
-            if let (Some(sources), Some(destinations)) = (&source_prefixes, &destination_prefixes) {
-                let has_common_family = sources.iter().any(|source| {
-                    destinations
-                        .iter()
-                        .any(|destination| source.0.is_ipv4() == destination.0.is_ipv4())
-                });
-                if !has_common_family {
-                    return invalid(
-                        "routing.rules.source and destination must share at least one address family",
-                    );
-                }
-            }
+
         }
 
         for (direction, rules, is_input) in [
@@ -791,18 +763,18 @@ pub struct PeerEndpoint {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum EndpointHost {
-    Ip(std::net::IpAddr),
+    Ip(Ipv4Addr),
     Dns(String),
 }
 
 impl PeerEndpoint {
     pub fn parse(value: &str) -> Result<Self, String> {
         if let Ok(address) = SocketAddr::from_str(value) {
-            if !address.is_ipv4() {
-                return Err("IPv6 endpoints are not supported by vpn-relay".to_owned());
-            }
+            let SocketAddr::V4(address) = address else {
+                return Err("IPv4 endpoints only are supported by vpn-relay".to_owned());
+            };
             return Ok(Self {
-                host: EndpointHost::Ip(address.ip()),
+                host: EndpointHost::Ip(*address.ip()),
                 port: address.port(),
             });
         }
@@ -820,10 +792,7 @@ impl PeerEndpoint {
             return Err("invalid host; IPv4 literals or DNS names are supported".to_owned());
         }
 
-        if let Ok(address) = host.parse::<std::net::IpAddr>() {
-            if !address.is_ipv4() {
-                return Err("IPv6 endpoints are not supported by vpn-relay".to_owned());
-            }
+        if let Ok(address) = host.parse::<Ipv4Addr>() {
             return Ok(Self { host: EndpointHost::Ip(address), port });
         }
         if !valid_ascii_dns_name(host) {
@@ -869,41 +838,32 @@ pub fn decode_key(value: &str, field: &str) -> Result<[u8; 32], ConfigError> {
     })
 }
 
-fn canonical_prefix(value: &str, field: &str) -> Result<(IpAddr, u8), ConfigError> {
+fn canonical_prefix(value: &str, field: &str) -> Result<(Ipv4Addr, u8), ConfigError> {
     let (address, prefix) = parse_prefix(value, field)?;
-    let IpAddr::V4(address) = address else {
-        return invalid(format!("{field} must contain IPv4 CIDRs only"));
-    };
     let bits = u32::from(address);
     let mask = if prefix == 0 { 0 } else { u32::MAX << (32 - prefix) };
-    let network = IpAddr::V4(std::net::Ipv4Addr::from(bits & mask));
-    Ok((network, prefix))
+    Ok((Ipv4Addr::from(bits & mask), prefix))
 }
 
-fn parse_prefix(value: &str, field: &str) -> Result<(IpAddr, u8), ConfigError> {
+fn parse_prefix(value: &str, field: &str) -> Result<(Ipv4Addr, u8), ConfigError> {
     let (address, prefix) = value.split_once('/').ok_or_else(|| {
         ConfigError::Validation(format!(
-            "{} contains invalid CIDR '{}': expected address/prefix",
-            field, value
+            "{} contains invalid CIDR '{}': expected IPv4 address/prefix", field, value
         ))
     })?;
-    let address = address.parse::<IpAddr>().map_err(|error| {
-        ConfigError::Validation(format!("{} contains invalid CIDR '{}': {}", field, value, error))
+    let address = address.parse::<Ipv4Addr>().map_err(|error| {
+        ConfigError::Validation(format!(
+            "{} contains invalid IPv4 CIDR '{}': {}", field, value, error
+        ))
     })?;
-    if !address.is_ipv4() {
-        return invalid(format!("{field} supports IPv4 CIDRs only"));
-    }
     let prefix = prefix.parse::<u8>().map_err(|error| {
         ConfigError::Validation(format!(
-            "{} contains invalid CIDR '{}': {}",
-            field, value, error
+            "{} contains invalid CIDR '{}': {}", field, value, error
         ))
     })?;
-    let max_prefix = if address.is_ipv4() { 32 } else { 128 };
-    if prefix > max_prefix {
+    if prefix > 32 {
         return Err(ConfigError::Validation(format!(
-            "{} contains invalid CIDR '{}': prefix exceeds {}",
-            field, value, max_prefix
+            "{} contains invalid CIDR '{}': prefix exceeds 32", field, value
         )));
     }
     Ok((address, prefix))
@@ -1417,7 +1377,7 @@ egress = "awg-uplink"
         let error = Config::parse_toml(&input).unwrap_err();
         assert!(error
             .to_string()
-            .contains("share at least one address family"));
+            .contains("IPv4 CIDR"));
     }
 
     #[test]
