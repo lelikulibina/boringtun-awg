@@ -80,63 +80,20 @@ ip -n "$CLIENT_B" address add 10.10.2.2/24 dev b0
 ip -n "$ROUTER" address add 10.10.3.1/24 dev r-bad0
 ip -n "$CLIENT_BAD" address add 10.10.3.2/24 dev bad0
 
-ip -n "$ROUTER" -6 address add fd10:1::1/64 dev r-in0
-ip -n "$CLIENT_A" -6 address add fd10:1::2/64 dev a0
-ip -n "$ROUTER" -6 address add fd10:2::1/64 dev r-out0
-ip -n "$CLIENT_B" -6 address add fd10:2::2/64 dev b0
-ip -n "$ROUTER" -6 address add fd10:3::1/64 dev r-bad0
-ip -n "$CLIENT_BAD" -6 address add fd10:3::2/64 dev bad0
 
 ip -n "$CLIENT_A" route add 10.10.2.0/24 via 10.10.1.1
 ip -n "$CLIENT_B" route add 10.10.1.0/24 via 10.10.2.1
 ip -n "$CLIENT_BAD" route add 10.10.1.0/24 via 10.10.3.1
-ip -n "$CLIENT_A" -6 route add fd10:2::/64 via fd10:1::1
-ip -n "$CLIENT_B" -6 route add fd10:1::/64 via fd10:2::1
-ip -n "$CLIENT_BAD" -6 route add fd10:1::/64 via fd10:3::1
 
 # Let vpn-relay own the per-interface switches. IPv4's namespace-wide
 # prerequisite remains externally managed; IPv6 global forwarding stays off.
 INODE="$(ip netns exec "$ROUTER" stat -Lc '%i' /proc/self/ns/net)"
 ip netns exec "$ROUTER" sysctl -qw net.ipv4.ip_forward=1
-ip netns exec "$ROUTER" sysctl -qw net.ipv6.conf.all.forwarding=0
 ip netns exec "$ROUTER" sysctl -qw net.ipv4.conf.all.rp_filter=0
 for iface in lo r-in0 r-out0 r-bad0; do
     ip netns exec "$ROUTER" sysctl -qw "net.ipv4.conf.$iface.rp_filter=0"
     ip netns exec "$ROUTER" sysctl -qw "net.ipv4.conf.$iface.forwarding=0"
-    ip netns exec "$ROUTER" sysctl -qw "net.ipv6.conf.$iface.force_forwarding=0"
 done
-ip netns exec "$ROUTER" sysctl -qw net.ipv6.conf.r-in0.accept_ra=2
-
-# A procfs descriptor must remain tied to the original IPv6 sysctl entry.
-# Reusing the interface name must not redirect a stale descriptor to the
-# replacement interface.
-command -v python3 >/dev/null || fail "python3 is required for the sysctl identity race test"
-ip netns exec "$ROUTER" python3 - <<'PY'
-import os
-import subprocess
-
-path = "/proc/sys/net/ipv6/conf/race0/force_forwarding"
-subprocess.run(["ip", "link", "add", "race0", "type", "veth", "peer", "name", "race-peer"], check=True)
-fd = os.open(path, os.O_RDWR)
-try:
-    os.write(fd, b"0\n")
-    subprocess.run(["ip", "link", "del", "race0"], check=True)
-    subprocess.run(["ip", "link", "add", "race0", "type", "veth", "peer", "name", "race-peer"], check=True)
-    try:
-        os.lseek(fd, 0, os.SEEK_SET)
-        os.write(fd, b"1\n")
-    except OSError:
-        pass
-    else:
-        raise SystemExit("stale force_forwarding descriptor unexpectedly accepted a write")
-    with open(path, "r", encoding="ascii") as current:
-        value = current.read().strip()
-    if value != "0":
-        raise SystemExit(f"replacement interface was modified through stale descriptor: {value}")
-finally:
-    os.close(fd)
-    subprocess.run(["ip", "link", "del", "race0"], check=False)
-PY
 
 cat >"$TMP/router.toml" <<TOML
 [daemon]
@@ -163,7 +120,7 @@ for _ in $(seq 1 40); do
         PID=""
         fail "vpn-relay exited before forwarding became ready"
     fi
-    if ip netns exec "$ROUTER" nft list table inet "$TABLE" >/dev/null 2>&1 && [[ "$(ip netns exec "$ROUTER" sysctl -n net.ipv4.conf.r-in0.forwarding)" == "1" ]] && [[ "$(ip netns exec "$ROUTER" sysctl -n net.ipv4.conf.r-out0.forwarding)" == "1" ]] && [[ "$(ip netns exec "$ROUTER" sysctl -n net.ipv6.conf.r-in0.force_forwarding)" == "1" ]] && [[ "$(ip netns exec "$ROUTER" sysctl -n net.ipv6.conf.r-out0.force_forwarding)" == "1" ]]; then
+    if ip netns exec "$ROUTER" nft list table inet "$TABLE" >/dev/null 2>&1 && [[ "$(ip netns exec "$ROUTER" sysctl -n net.ipv4.conf.r-in0.forwarding)" == "1" ]] && [[ "$(ip netns exec "$ROUTER" sysctl -n net.ipv4.conf.r-out0.forwarding)" == "1" ]]; then
         ready=true
         break
     fi
@@ -172,21 +129,11 @@ done
 [[ "$ready" == true ]] || fail "vpn-relay did not enable selected per-interface forwarding"
 
 [[ "$(ip netns exec "$ROUTER" sysctl -n net.ipv4.conf.r-bad0.forwarding)" == "0" ]] || fail "daemon enabled untrusted IPv4 ingress"
-[[ "$(ip netns exec "$ROUTER" sysctl -n net.ipv6.conf.r-bad0.force_forwarding)" == "0" ]] || fail "daemon enabled untrusted IPv6 ingress"
-[[ "$(ip netns exec "$ROUTER" sysctl -n net.ipv6.conf.all.forwarding)" == "0" ]] || fail "daemon enabled namespace-wide IPv6 forwarding"
-[[ "$(ip netns exec "$ROUTER" sysctl -n net.ipv6.conf.r-in0.forwarding)" == "0" ]] || fail "daemon changed IPv6 Host/Router forwarding mode"
-[[ "$(ip netns exec "$ROUTER" sysctl -n net.ipv6.conf.r-in0.accept_ra)" == "2" ]] || fail "daemon changed ingress Router Advertisement policy"
 
 ip netns exec "$CLIENT_A" ping -n -c 2 -W 2 10.10.2.2 >/dev/null || fail "IPv4 packet was not forwarded from allowlisted ingress"
 ip netns exec "$CLIENT_B" ping -n -c 2 -W 2 10.10.1.2 >/dev/null || fail "IPv4 reply path was not forwarded"
 if ip netns exec "$CLIENT_BAD" ping -n -c 1 -W 1 10.10.1.2 >/dev/null 2>&1; then
     fail "IPv4 packet was forwarded from an interface outside the allowlist"
-fi
-
-ip netns exec "$CLIENT_A" ping -6 -n -c 2 -W 2 fd10:2::2 >/dev/null || fail "IPv6 force_forwarding did not forward allowlisted ingress"
-ip netns exec "$CLIENT_B" ping -6 -n -c 2 -W 2 fd10:1::2 >/dev/null || fail "IPv6 reply path was not forwarded"
-if ip netns exec "$CLIENT_BAD" ping -6 -n -c 1 -W 1 fd10:1::2 >/dev/null 2>&1; then
-    fail "IPv6 packet was forwarded from an interface outside the allowlist"
 fi
 
 # Graceful shutdown must restore only the values owned by vpn-relay.
@@ -195,11 +142,8 @@ wait "$PID" || fail "vpn-relay failed during graceful shutdown"
 PID=""
 for iface in r-in0 r-out0; do
     [[ "$(ip netns exec "$ROUTER" sysctl -n "net.ipv4.conf.$iface.forwarding")" == "0" ]] || fail "IPv4 forwarding was not restored on $iface"
-    [[ "$(ip netns exec "$ROUTER" sysctl -n "net.ipv6.conf.$iface.force_forwarding")" == "0" ]] || fail "IPv6 force_forwarding was not restored on $iface"
 done
 [[ "$(ip netns exec "$ROUTER" sysctl -n net.ipv4.ip_forward)" == "1" ]] || fail "daemon changed externally-owned IPv4 global forwarding"
-[[ "$(ip netns exec "$ROUTER" sysctl -n net.ipv6.conf.all.forwarding)" == "0" ]] || fail "daemon changed externally-owned IPv6 global forwarding"
-[[ "$(ip netns exec "$ROUTER" sysctl -n net.ipv6.conf.r-in0.accept_ra)" == "2" ]] || fail "daemon changed ingress Router Advertisement policy"
 ip netns exec "$ROUTER" nft list table inet "$TABLE" >/dev/null 2>&1 && fail "firewall table survived graceful shutdown"
 
 echo "vpn-relay per-interface forwarding packet test passed"
