@@ -294,7 +294,10 @@ daemon-owned TUN не восстанавливаются: их sysctl исчез
   заранее включённый `net.ipv4.ip_forward=1` и выключенный
   `net.ipv6.conf.all.forwarding=0`. IPv4 использует
   `net.ipv4.conf.<if>.forwarding`, IPv6 — `net.ipv6.conf.<if>.force_forwarding`.
-  Все неразрешённые интерфейсы должны иметь forwarding-флаги 0. Демон
+  При `daemon.ipv6_enabled = true` IPv6 `force_forwarding` включается на
+  всех интерфейсах из allowlist независимо от per-TUN `ipv6_enabled`;
+  per-TUN флаг управляет только inner IPv6 трафиком. Все неразрешённые
+  интерфейсы должны иметь forwarding-флаги 0. Демон
   проверяет prerequisites и allowlist каждую секунду; при drift завершает
   работу, сохраняя fail-closed firewall. IPv6 `force_forwarding` не меняет
   Host/Router setting интерфейса и `accept_ra`.
