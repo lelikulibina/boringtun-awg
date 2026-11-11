@@ -588,7 +588,7 @@ fi
 # this address, so a successful probe alone is insufficient: observe the
 # selected remote TUN and require the priority-5 secondary path.
 ip netns exec "$SECONDARY_NS" timeout 5 tcpdump -nn -i up-secondary -c 1 \
-    'icmp and dst host 198.51.102.2' >"$TMP/priority-secondary.log" 2>&1 &
+    'icmp and dst host 198.51.100.2' >"$TMP/priority-secondary.log" 2>&1 &
 capture_pid=$!
 sleep 0.25
 ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -c 1 -W 2 198.51.100.2 \
@@ -646,11 +646,11 @@ PY
 "$BIN" --config "$TMP/router.toml" --check >/dev/null \
     || fail "runtime routing/NAT reload candidate did not validate"
 ip netns exec "$PRIMARY_NS" timeout 5 tcpdump -nn -i up-primary -c 1 \
-    'icmp and src host 10.20.0.1 and dst host 198.51.100.2' \
+    'icmp and src host 10.20.0.1 and dst host 198.51.102.2' \
     >"$TMP/runtime-reload-primary-capture.log" 2>&1 &
 primary_reload_capture=$!
 ip netns exec "$SECONDARY_NS" timeout 3 tcpdump -nn -i up-secondary -c 1 \
-    'icmp and dst host 198.51.100.2' \
+    'icmp and dst host 198.51.102.2' \
     >"$TMP/runtime-reload-secondary-capture.log" 2>&1 &
 secondary_reload_capture=$!
 sleep 0.25
