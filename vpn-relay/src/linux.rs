@@ -536,7 +536,7 @@ where
                 run_ip_cleanup_with(&stale_route, run_command)?;
             }
 
-            for &family in RoutingPlan::ip_families(egress) {
+            for &family in plan.ip_families_for_egress(egress) {
                 let priority = egress.ip_rule_priority.to_string();
                 let mark = format!("0x{:x}", egress.mark);
                 let table = egress.table_id.to_string();
@@ -1346,7 +1346,9 @@ mod tests {
     fn ipv4_only_policy_apply_and_cleanup_never_call_ip6() {
         let mut plan = cleanup_test_plan();
         plan.ipv6_transport_blocked = true;
-        plan.egresses[0].ipv6_enabled = false;
+        // The global IPv4-only switch must override even an inconsistent
+        // per-egress flag in a manually constructed plan.
+        plan.egresses[0].ipv6_enabled = true;
         plan.socket_marks = vec![0x1000_0001];
         assert_eq!(plan.ip_policy_families(), &["-4"]);
 
