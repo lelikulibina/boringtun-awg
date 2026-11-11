@@ -28,7 +28,6 @@ pub struct EgressPlan {
 }
 
 #[derive(Clone, Debug, serde::Deserialize, Eq, PartialEq, serde::Serialize)]
-#[serde(deny_unknown_fields)]
 pub struct RoutingDecision {
     pub priority: u32,
     pub ingress: String,
