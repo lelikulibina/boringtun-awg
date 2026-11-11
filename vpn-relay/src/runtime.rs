@@ -1998,6 +1998,21 @@ fn restore_forwarding_state_with_mode(
     }
 }
 
+fn forwarding_state_for_recovery(
+    state: &ForwardingState,
+    ipv6_enabled: bool,
+) -> ForwardingState {
+    let mut recovery_state = state.clone();
+    if !ipv6_enabled {
+        recovery_state.ipv6_changed = false;
+        for entry in &mut recovery_state.interfaces {
+            entry.ipv6_changed = false;
+            entry.ipv6_enabled = false;
+        }
+    }
+    recovery_state
+}
+
 fn recover_forwarding_state(
     path: &Path,
     namespace_inode: u64,
@@ -2009,14 +2024,7 @@ fn recover_forwarding_state(
     // An IPv4-only daemon must not inspect or restore IPv6 sysctls, including
     // entries written by an older dual-stack version. Restore only the IPv4
     // portion of a legacy journal and keep the datapath fail-closed for IPv6.
-    let mut recovery_state = state.clone();
-    if !ipv6_enabled {
-        recovery_state.ipv6_changed = false;
-        for entry in &mut recovery_state.interfaces {
-            entry.ipv6_changed = false;
-            entry.ipv6_enabled = false;
-        }
-    }
+    let recovery_state = forwarding_state_for_recovery(state, ipv6_enabled);
     restore_forwarding_state_with_mode(
         &recovery_state,
         |key| read_forwarding_state_value(&recovery_state, key),
@@ -2120,6 +2128,44 @@ fn restore_forwarding(state: &ForwardingState) -> Result<(), RuntimeError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ipv4_only_recovery_never_reads_or_writes_legacy_ipv6_journal_entries() {
+        let state = ForwardingState {
+            ipv4: "0".to_owned(),
+            ipv6: "1".to_owned(),
+            ipv4_changed: false,
+            ipv6_changed: true,
+            interfaces: vec![InterfaceForwardingState {
+                name: "awg0".to_owned(),
+                ifindex: 7,
+                daemon_owned: false,
+                ipv4: "0".to_owned(),
+                ipv6: "0".to_owned(),
+                ipv4_changed: false,
+                ipv6_changed: true,
+                ipv6_enabled: true,
+            }],
+        };
+        let recovery = forwarding_state_for_recovery(&state, false);
+        assert!(!recovery.ipv6_changed);
+        assert!(recovery.interfaces.iter().all(|entry| {
+            !entry.ipv6_enabled && !entry.ipv6_changed
+        }));
+
+        restore_forwarding_state_with_mode(
+            &recovery,
+            |key| {
+                assert!(!key.starts_with("net.ipv6."), "unexpected read: {key}");
+                Ok("0".to_owned())
+            },
+            |key, _| {
+                assert!(!key.starts_with("net.ipv6."), "unexpected write: {key}");
+                Ok(())
+            },
+        )
+        .unwrap();
+    }
 
     #[test]
     fn unmanaged_forwarding_interfaces_must_remain_disabled() {
