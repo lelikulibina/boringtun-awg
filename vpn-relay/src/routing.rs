@@ -434,6 +434,13 @@ impl RoutingPlan {
             for (family, sources, _) in firewall_rule_family_variants(rule, true) {
                 let mut selectors = format!("iifname \"{}\"", rule.interface);
                 if let Some(family) = family {
+                    if sources.is_empty() {
+                        selectors.push_str(if family == "ip" {
+                            " meta nfproto ipv4"
+                        } else {
+                            " meta nfproto ipv6"
+                        });
+                    }
                     append_cidr_selector(&mut selectors, family, "saddr", &sources);
                 }
                 append_firewall_protocol_selector(&mut selectors, rule);
@@ -473,6 +480,13 @@ impl RoutingPlan {
             for (family, _, destinations) in firewall_rule_family_variants(rule, false) {
                 let mut selectors = format!("oifname \"{}\"", rule.interface);
                 if let Some(family) = family {
+                    if destinations.is_empty() {
+                        selectors.push_str(if family == "ip" {
+                            " meta nfproto ipv4"
+                        } else {
+                            " meta nfproto ipv6"
+                        });
+                    }
                     append_cidr_selector(&mut selectors, family, "daddr", &destinations);
                 }
                 append_firewall_protocol_selector(&mut selectors, rule);
@@ -520,6 +534,13 @@ impl RoutingPlan {
             for (family, sources, destinations) in rule_family_variants(rule) {
                 let mut selectors = format!("iifname \"{}\" ct state new", rule.ingress);
                 if let Some(family) = family {
+                    if sources.is_empty() && destinations.is_empty() {
+                        selectors.push_str(if family == "ip" {
+                            " meta nfproto ipv4"
+                        } else {
+                            " meta nfproto ipv6"
+                        });
+                    }
                     append_cidr_selector(&mut selectors, family, "saddr", &sources);
                     append_cidr_selector(&mut selectors, family, "daddr", &destinations);
                 }
@@ -569,10 +590,17 @@ impl RoutingPlan {
                     "add rule {} {} postrouting {} return\n",
                     self.nft_family, self.nft_table, selector
                 )),
-                NatAction::Masquerade => output.push_str(&format!(
-                    "add rule {} {} postrouting {} masquerade\n",
-                    self.nft_family, self.nft_table, selector
-                )),
+                NatAction::Masquerade => {
+                    let family = if self.ipv6_transport_blocked {
+                        "meta nfproto ipv4 "
+                    } else {
+                        ""
+                    };
+                    output.push_str(&format!(
+                        "add rule {} {} postrouting {}{}masquerade\n",
+                        self.nft_family, self.nft_table, selector, family
+                    ));
+                }
                 NatAction::Snat(address) => {
                     let family = if address.is_ipv4() { "ip" } else { "ip6" };
                     let nfproto = if address.is_ipv4() { "ipv4" } else { "ipv6" };
@@ -709,7 +737,11 @@ fn firewall_rule_family_variants(
         rule.destination.as_ref()
     };
     let Some(prefixes) = prefixes else {
-        return vec![(None, Vec::new(), Vec::new())];
+        return if rule.ipv6_enabled {
+            vec![(None, Vec::new(), Vec::new())]
+        } else {
+            vec![(Some("ip"), Vec::new(), Vec::new())]
+        };
     };
     prefixes
         .iter()
@@ -776,7 +808,13 @@ fn rule_family_variants(
     let destination_families = families(&rule.destination);
     let selected: Vec<&'static str> =
         match (source_families.is_empty(), destination_families.is_empty()) {
-            (true, true) => return vec![(None, Vec::new(), Vec::new())],
+            (true, true) => {
+                return if rule.ipv6_enabled {
+                    vec![(None, Vec::new(), Vec::new())]
+                } else {
+                    vec![(Some("ip"), Vec::new(), Vec::new())]
+                };
+            }
             (false, true) => source_families,
             (true, false) => destination_families,
             (false, false) => source_families
