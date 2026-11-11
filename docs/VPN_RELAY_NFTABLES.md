@@ -212,32 +212,24 @@ port-forwarding этой моделью не предоставляются. В�
 совместимость семейства SNAT target с доступными семействами selectors и
 IPv6-enabled состоянием интерфейсов.
 
-## IPv6
+## IPv4-only datapath и IPv6 isolation
 
-Есть два уровня настройки:
+`vpn-relay` поддерживает только IPv4. В конфигурации запрещены IPv6-адреса
+TUN, IPv6 AllowedIPs, IPv6 endpoint literals, IPv6 routing/firewall selectors,
+ICMPv6 и IPv6 SNAT. Отдельного переключателя dual-stack нет.
 
-- `[daemon].ipv6_enabled = true` (значение по умолчанию) сохраняет
-  dual-stack поведение. IPv6 можно включать отдельно на каждом managed TUN
-  через `[interfaces.<name>].ipv6_enabled`.
-- `[daemon].ipv6_enabled = false` включает строгий IPv4-only режим. В нём
-  запрещены IPv6-адреса TUN, IPv6 AllowedIPs, IPv6 endpoint literals,
-  IPv6 routing/firewall selectors и IPv6 SNAT. Конфигурация с такими
-  параметрами отклоняется до создания системных ресурсов.
+Для каждого управляемого TUN nftables устанавливает безусловные IPv6 drop
+правила в `prerouting` по ingress interface, `forward` и `output`
+по egress interface. Эти правила добавляются до разрешающих правил и не
+зависят от conntrack state, поэтому блокируют в том числе established traffic.
+При привязке к ifindex те же правила используют числовую identity исходного
+TUN. Физические интерфейсы и UDP-сокеты BoringTun этими правилами не
+фильтруются.
 
-В IPv4-only режиме vpn-relay не создаёт IPv6 policy routes, не генерирует
-IPv6 NAT rules и не читает/изменяет IPv6 forwarding sysctl, включая
-восстановление старого forwarding journal. IPv6 пакеты блокируются на
-managed TUN ingress/egress, а дополнительные socket-mark правила nftables
-блокируют IPv6 transport packets на входе и выходе BoringTun UDP sockets.
-Сам BoringTun остаётся без изменений и использует штатную реализацию
-dual-stack socket; IPv6 transport не может быть использован через datapath
-vpn-relay. Обычный dual-stack режим при `daemon.ipv6_enabled = true`
-сохраняется.
-
-TUN — L3 интерфейс, поэтому neighbour discovery на нём не является обычной
-Ethernet ND задачей. В dual-stack режиме ICMPv6/PMTU для включённого inner IPv6
-должен быть явно разрешён подходящими firewall/routing rules; нельзя считать,
-что любой ICMPv6 автоматически разрешён политикой.
+`vpn-relay` не создаёт IPv6 адреса или маршруты, не вызывает `ip -6`,
+не создаёт IPv6 policy rules/NAT и не читает, не изменяет и не восстанавливает
+IPv6 sysctl. `boringtun/` остаётся неизменённым; IPv4-only ограничение
+реализовано на уровне конфигурации, маршрутизации и firewall `vpn-relay`.
 
 ## Peer identity и anti-spoofing
 
@@ -286,21 +278,16 @@ daemon-owned TUN не восстанавливаются: их sysctl исчез
 **Режимы `manage_ip_forwarding`:**
 
 - `false`: forwarding sysctl не меняются.
-- `true` + пустой `forwarding_interfaces`: legacy namespace-wide режим,
-  который переключает `net.ipv4.ip_forward` и
-  `net.ipv6.conf.all.forwarding`. Он может изменить host/router defaults и
-  IPv6 RA behaviour, поэтому не подходит для общего host namespace.
-- `true` + непустой `forwarding_interfaces`: per-interface режим. Требует
-  заранее включённый `net.ipv4.ip_forward=1` и выключенный
-  `net.ipv6.conf.all.forwarding=0`. IPv4 использует
-  `net.ipv4.conf.<if>.forwarding`, IPv6 — `net.ipv6.conf.<if>.force_forwarding`.
-  При `daemon.ipv6_enabled = true` IPv6 `force_forwarding` включается на
-  всех интерфейсах из allowlist независимо от per-TUN `ipv6_enabled`;
-  per-TUN флаг управляет только inner IPv6 трафиком. Все неразрешённые
-  интерфейсы должны иметь forwarding-флаги 0. Демон
-  проверяет prerequisites и allowlist каждую секунду; при drift завершает
-  работу, сохраняя fail-closed firewall. IPv6 `force_forwarding` не меняет
-  Host/Router setting интерфейса и `accept_ra`.
+- `true` + пустой `forwarding_interfaces`: daemon управляет только
+  namespace-wide `net.ipv4.ip_forward`.
+- `true` + непустой `forwarding_interfaces`: daemon проверяет
+  `net.ipv4.ip_forward=1`, проверяет forwarding на unmanaged IPv4 links
+  и управляет только `net.ipv4.conf.<if>.forwarding` для allowlisted
+  интерфейсов. IPv6 sysctl в обоих режимах не читаются и не меняются.
+
+Startup сохраняет исходные IPv4 значения в journal. Shutdown/recovery
+восстанавливают их только при совпадении identity и daemon-written value.
+IPv6-поля старых журналов не используются.
 
 ## Проверки и ограничения
 
