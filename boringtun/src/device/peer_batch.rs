@@ -299,6 +299,42 @@ mod tests {
         assert_eq!(updated.peers[0].persistent_keepalive, None);
         assert_eq!(updated.peers[0].allowed_ips, vec![second_prefix]);
 
+        // Adding an unrelated peer must not reconstruct the unchanged peer:
+        // its Arc owns the live Peer/Tunn state, including the Noise session.
+        let retained_peer = device.with_device_mut(|inner| {
+            Arc::clone(inner.peers.get(&public_key).expect("retained peer"))
+        });
+        let second_public_key =
+            x25519::PublicKey::from(&x25519::StaticSecret::from([4u8; 32]));
+        let third_prefix = AllowedIP {
+            addr: "10.30.0.0".parse().unwrap(),
+            cidr: 24,
+        };
+        device
+            .replace_peers(&[
+                PeerConfig {
+                    public_key: *public_key.as_bytes(),
+                    endpoint: None,
+                    allowed_ips: vec![second_prefix],
+                    persistent_keepalive: None,
+                    preshared_key: None,
+                },
+                config(*second_public_key.as_bytes(), vec![third_prefix]),
+            ])
+            .expect("add another peer without replacing the unchanged peer");
+        let retained_after_reload = device.with_device_mut(|inner| {
+            Arc::clone(inner.peers.get(&public_key).expect("retained peer after reload"))
+        });
+        assert!(
+            Arc::ptr_eq(&retained_peer, &retained_after_reload),
+            "unchanged peer must retain its Peer/Tunn allocation across replacement"
+        );
+        assert_eq!(
+            retained_peer.lock().index(),
+            retained_after_reload.lock().index(),
+            "unchanged peer index must remain stable"
+        );
+
         device.replace_peers(&[]).expect("remove all peers");
         assert!(device.snapshot().expect("empty snapshot").peers.is_empty());
 
