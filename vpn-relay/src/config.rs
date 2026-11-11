@@ -1752,15 +1752,34 @@ egress = "awg-uplink"
     }
 
     #[test]
-    fn rejects_removed_global_ipv6_setting() {
+    fn daemon_ipv4_only_mode_rejects_ipv6_configuration() {
         let input = valid_config().replace(
             "manage_ip_forwarding = false",
-            "manage_ip_forwarding = false\nipv6_enabled = true",
+            "manage_ip_forwarding = false\nipv6_enabled = false",
         );
-        assert!(Config::parse_toml(&input)
+        let config = Config::parse_toml(&input).unwrap();
+        assert!(!config.daemon.ipv6_enabled);
+
+        let enabled_interface = input.replace(
+            "socket_fwmark = 4097",
+            "socket_fwmark = 4097\nipv6_enabled = true",
+        );
+        assert!(Config::parse_toml(&enabled_interface)
             .unwrap_err()
             .to_string()
-            .contains("unknown field"));
+            .contains("daemon.ipv6_enabled = false"));
+
+        let ipv6_address = input.replace(
+            "10.10.0.1/24",
+            "2001:db8::1/64",
+        );
+        assert!(Config::parse_toml(&ipv6_address).is_err());
+
+        let ipv6_endpoint = input.replace(
+            "allowed_ips = [\\"10.10.0.2/32\\"]",
+            "allowed_ips = [\\"10.10.0.2/32\\"]\nendpoint = \\"[2001:db8::2]:51820\\"",
+        );
+        assert!(Config::parse_toml(&ipv6_endpoint).is_err());
     }
 
     #[test]
