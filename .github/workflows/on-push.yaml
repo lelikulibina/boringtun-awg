@@ -194,7 +194,7 @@ jobs:
           # GitHub-hosted Ubuntu images already include most networking tools.
           # Avoid contacting Ubuntu mirrors when the complete toolset is present:
           # runner mirror DNS can be unavailable even while other network access works.
-          packages=(iproute2 nftables iputils-ping wireguard-tools iperf3 tcpdump)
+          packages=(iproute2 nftables iputils-ping tcpdump)
           missing=()
           for package in "${packages[@]}"; do
             status=$(dpkg-query -W -f='${db:Status-Status}' "$package" 2>/dev/null || true)
