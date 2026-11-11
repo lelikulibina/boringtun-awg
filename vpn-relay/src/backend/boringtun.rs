@@ -179,10 +179,10 @@ fn build_peer_configs(
                     })
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            let persistent_keepalive = peer.persistent_keepalive_range.or_else(|| {
-                peer.persistent_keepalive_secs
-                    .map(|seconds| (u32::from(seconds), u32::from(seconds)))
-            });
+            let persistent_keepalive = match &peer.persistent_keepalive_secs {
+                Some(value) => Some(value.to_range().map_err(BackendError::new)?),
+                None => peer.persistent_keepalive_range,
+            };
             Ok(PeerConfig {
                 public_key,
                 endpoint: *endpoint,
@@ -218,6 +218,7 @@ mod tests {
         for (setting, expected) in [
             ("persistent_keepalive_range = [25, 35]", Some((25, 35))),
             ("persistent_keepalive_secs = 25", Some((25, 25))),
+            ("persistent_keepalive_secs = \\\"25-35\\\"", Some((25, 35))),
         ] {
             let source = format!(
                 r#"
