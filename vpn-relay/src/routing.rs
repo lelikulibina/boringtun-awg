@@ -402,7 +402,7 @@ impl RoutingPlan {
                 .collect::<Vec<_>>()
                 .join(", ");
             output.push_str(&format!(
-                "add set {} {} socket_fwmarks {{ type mark; elements = {{ {} }}; }}\\n",
+                "add set {} {} socket_fwmarks {{ type mark; elements = {{ {} }}; }}\n",
                 self.nft_family, self.nft_table, marks
             ));
             // BoringTun keeps its regular dual-stack socket implementation.
@@ -973,15 +973,15 @@ egress = "awg-primary"
 
         let script = RoutingPlan::from_config(&config).nft_script();
         assert!(script.contains(
-            "prerouting iifname \\"wg-server\\" ct state new meta nfproto ipv4 meta mark"
+            "prerouting iifname \"wg-server\" ct state new meta nfproto ipv4 meta mark"
         ));
         assert!(script.contains(
-            "input iifname \\"wg-server\\" meta nfproto ipv4 tcp dport { 22 }"
+            "input iifname \"wg-server\" meta nfproto ipv4 tcp dport { 22 }"
         ));
         assert!(script.contains(
-            "output oifname \\"awg-secondary\\" meta nfproto ipv4 udp dport { 53 }"
+            "output oifname \"awg-secondary\" meta nfproto ipv4 udp dport { 53 }"
         ));
-        assert!(script.contains("postrouting iifname \\"wg-server\\" oifname \\"awg-secondary\\""));
+        assert!(script.contains("postrouting iifname \"wg-server\" oifname \"awg-secondary\""));
         assert!(script.contains("meta nfproto ipv4 masquerade"));
         assert!(!script.contains("meta nfproto ipv6 masquerade"));
     }
