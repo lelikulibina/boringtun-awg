@@ -1338,7 +1338,31 @@ fn load_forwarding_state(
             "forwarding state file exceeds 4 KiB".to_owned(),
         ));
     }
-    let saved: ForwardingStateFile = serde_json::from_slice(&bytes)
+    let document: serde_json::Value = serde_json::from_slice(&bytes)
+        .map_err(|error| RuntimeError::Forwarding(error.to_string()))?;
+    let state = document.get("state").unwrap_or(&document);
+    let global_ipv6_pending = state
+        .get("ipv6_changed")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    let interface_ipv6_pending = state
+        .get("interfaces")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|entries| {
+            entries.iter().any(|entry| {
+                entry
+                    .get("ipv6_changed")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false)
+            })
+        });
+    if global_ipv6_pending || interface_ipv6_pending {
+        return Err(RuntimeError::Forwarding(format!(
+            "legacy forwarding journal '{}' contains pending IPv6 sysctl recovery; vpn-relay no longer manages IPv6, restore the recorded IPv6 values manually before removing this journal",
+            path.display()
+        )));
+    }
+    let saved: ForwardingStateFile = serde_json::from_value(document)
         .map_err(|error| RuntimeError::Forwarding(error.to_string()))?;
     if saved.version != 1 {
         return Err(RuntimeError::Forwarding(format!(
@@ -1767,41 +1791,7 @@ fn restore_forwarding_state_with_mode(
     }
 }
 
-fn reject_pending_legacy_ipv6_recovery(path: &Path) -> Result<(), RuntimeError> {
-    let bytes = match fs::read(path) {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(RuntimeError::Forwarding(error.to_string())),
-    };
-    let document: serde_json::Value = serde_json::from_slice(&bytes)
-        .map_err(|error| RuntimeError::Forwarding(error.to_string()))?;
-    let state = document.get("state").unwrap_or(&document);
-    let global_pending = state
-        .get("ipv6_changed")
-        .and_then(serde_json::Value::as_bool)
-        .unwrap_or(false);
-    let interface_pending = state
-        .get("interfaces")
-        .and_then(serde_json::Value::as_array)
-        .is_some_and(|entries| {
-            entries.iter().any(|entry| {
-                entry
-                    .get("ipv6_changed")
-                    .and_then(serde_json::Value::as_bool)
-                    .unwrap_or(false)
-            })
-        });
-    if global_pending || interface_pending {
-        return Err(RuntimeError::Forwarding(format!(
-            "legacy forwarding journal '{}' contains pending IPv6 sysctl recovery; vpn-relay no longer manages IPv6, restore the recorded IPv6 values manually before removing this journal",
-            path.display()
-        )));
-    }
-    Ok(())
-}
-
 fn recover_forwarding_state(path: &Path, namespace_inode: u64) -> Result<(), RuntimeError> {
-    reject_pending_legacy_ipv6_recovery(path)?;
     let Some(state) = load_forwarding_state(path, namespace_inode)? else {
         return Ok(());
     };
@@ -1928,7 +1918,15 @@ mod tests {
                 }]
             }
         });
-        fs::write(&path, serde_json::to_vec(&document).unwrap()).unwrap();
+        let bytes = serde_json::to_vec(&document).unwrap();
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)
+            .unwrap();
+        file.write_all(&bytes).unwrap();
+        file.sync_all().unwrap();
 
         let error = recover_forwarding_state(&path, 4242).unwrap_err();
         assert!(error.to_string().contains("pending IPv6 sysctl recovery"));
