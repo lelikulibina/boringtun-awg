@@ -577,11 +577,7 @@ for spec in \
     grep -q "dev $expected" <<<"$result" || fail "IPv4 mark $mark expected $expected, got: $result"
 done
 
-for spec in \
-    "0x80000000 awg-primary" \
-    "0x1001 main0"; do
-    read -r mark expected <<<"$spec"
-    chain="$(ip netns exec "$NS" nft list chain inet vpn_relay_it prerouting)"
+chain="$(ip netns exec "$NS" nft list chain inet vpn_relay_it prerouting)"
 forward_chain="$(ip netns exec "$NS" nft list chain inet vpn_relay_it forward)"
 grep -Fq 'iif @managed_interfaces drop' <<<"$forward_chain" || fail "managed ingress isolation drop is missing"
 grep -Fq 'oif @managed_interfaces drop' <<<"$forward_chain" || fail "managed egress isolation drop is missing"
