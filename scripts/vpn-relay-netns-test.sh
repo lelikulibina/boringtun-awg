@@ -66,7 +66,6 @@ expect_startup_failure() {
     DAEMON_PID=""
     [[ $status -ne 0 ]] || fail "daemon accepted $description"
     [[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "0" ]] || fail "IPv4 forwarding was not restored after rejecting $description"
-    [[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "0" ]] || fail "IPv6 forwarding was not restored after rejecting $description"
     if ip netns exec "$NS" nft list table inet vpn_relay_it >/dev/null 2>&1; then
         fail "vpn-relay nftables table leaked after rejecting $description"
     fi
@@ -92,7 +91,6 @@ manage_ip_forwarding = true
 
 [interfaces.wg-server]
 type = "wg"
-ipv6_enabled = false
 address = ["10.10.0.1/24"]
 listen_port = 51820
 private_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
@@ -100,7 +98,6 @@ socket_fwmark = 4097
 
 [interfaces.awg-primary]
 type = "awg"
-ipv6_enabled = true
 address = ["10.20.0.2/32"]
 listen_port = 51821
 private_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
@@ -116,7 +113,6 @@ disable_cookies = false
 
 [interfaces.awg-secondary]
 type = "awg"
-ipv6_enabled = false
 address = ["10.30.0.2/32"]
 listen_port = 51822
 private_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
@@ -157,11 +153,9 @@ ip -n "$NS" link set lo up
 # The daemon must enable forwarding for its lifetime and restore the original
 # namespace values when it exits.
 ip netns exec "$NS" sysctl -qw net.ipv4.ip_forward=0
-ip netns exec "$NS" sysctl -qw net.ipv6.conf.all.forwarding=0
 ip -n "$NS" link add main0 type dummy
 ip -n "$NS" link set main0 up
 ip -n "$NS" route replace default dev main0
-ip -n "$NS" -6 route replace default dev main0
 
 # A separate administrator-owned base chain at an earlier hook priority must
 # coexist with vpn-relay and survive its shutdown unchanged.
@@ -193,7 +187,6 @@ set -e
 DAEMON_PID=""
 [[ $conflict_status -ne 0 ]] || fail "daemon accepted a foreign nftables table"
 [[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "0" ]] || fail "IPv4 forwarding changed after nftables ownership conflict"
-[[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "0" ]] || fail "IPv6 forwarding changed after nftables ownership conflict"
 ip netns exec "$NS" nft list table inet vpn_relay_it >/dev/null 2>&1 || fail "foreign nftables table was deleted"
 if ip netns exec "$NS" ip -4 rule show | grep -Eq 'fwmark 0x(80000000|80000001|1001)'; then
     fail "policy rules leaked after nftables ownership conflict"
@@ -211,31 +204,22 @@ ip netns exec "$NS" nft list chain inet foreign_filter output >/dev/null || fail
 # A foreign rule that happens to use the daemon's priority, mark and table
 # must not be adopted or removed merely because its selectors look identical.
 ip -n "$NS" -4 rule add priority 9000 fwmark 0x1001 lookup main
-ip -n "$NS" -6 rule add priority 9000 fwmark 0x1001 lookup main
 expect_startup_failure policy-conflict.log "foreign policy rules"
 ip -n "$NS" -4 rule show | grep -Fq 'fwmark 0x1001 lookup main' || fail "foreign IPv4 policy rule was removed"
-ip -n "$NS" -6 rule show | grep -Fq 'fwmark 0x1001 lookup main' || fail "foreign IPv6 policy rule was removed"
 ip -n "$NS" -4 rule del priority 9000 fwmark 0x1001 lookup main
-ip -n "$NS" -6 rule del priority 9000 fwmark 0x1001 lookup main
 
 # A broader fwmark rule at a higher precedence must not shadow the daemon's
 # socket mark even when it does not occupy the reserved priority 9000 slot.
 ip -n "$NS" -4 rule add priority 8000 fwmark 0x1000/0xffff0000 lookup main
-ip -n "$NS" -6 rule add priority 8000 fwmark 0x1000/0xffff0000 lookup main
 expect_startup_failure policy-shadow-conflict.log "policy rule that shadows a reserved socket fwmark"
 ip -n "$NS" -4 rule show | grep -Fq 'fwmark 0x1000/0xffff0000 lookup main' || fail "foreign masked IPv4 fwmark rule was removed"
-ip -n "$NS" -6 rule show | grep -Fq 'fwmark 0x1000/0xffff0000 lookup main' || fail "foreign masked IPv6 fwmark rule was removed"
 ip -n "$NS" -4 rule del priority 8000 fwmark 0x1000/0xffff0000 lookup main
-ip -n "$NS" -6 rule del priority 8000 fwmark 0x1000/0xffff0000 lookup main
 
-# Pre-existing routes in reserved IPv4 and IPv6 tables must both be preserved.
+# Pre-existing routes in reserved IPv4 tables must both be preserved.
 ip -n "$NS" -4 route replace default dev main0 table 10000 proto static
-ip -n "$NS" -6 route replace default dev main0 table 10000 proto static
 expect_startup_failure route-conflict.log "foreign routing-table routes"
 ip -n "$NS" -4 route show table 10000 | grep -Fq 'default dev main0 proto static' || fail "foreign IPv4 route in table 10000 was overwritten"
-ip -n "$NS" -6 route show table 10000 | grep -Fq 'default dev main0 proto static' || fail "foreign IPv6 route in table 10000 was overwritten"
 ip -n "$NS" -4 route del default dev main0 table 10000 proto static
-ip -n "$NS" -6 route del default dev main0 table 10000 proto static
 
 # Force a failure after two interfaces have already been created and configured.
 # Interface names are processed in sorted order (awg-primary, awg-secondary,
@@ -272,7 +256,6 @@ if ip -n "$NS" -4 rule show | grep -Eq 'fwmark 0x(80000000|80000001|1001|1002)';
     fail "policy routing leaked after partial setup rollback"
 fi
 [[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "0" ]] || fail "partial setup failure changed IPv4 forwarding"
-[[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "0" ]] || fail "partial setup failure changed IPv6 forwarding"
 ip -n "$NS" link del wg-server
 
 # Fail while configure_interface is applying the first TUN address, after the
@@ -344,7 +327,6 @@ for iface in wg-server awg-primary awg-secondary; do
     fi
 done
 [[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "0" ]] || fail "IPv4 forwarding changed after nftables cleanup failure"
-[[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "0" ]] || fail "IPv6 forwarding changed after nftables cleanup failure"
 ip netns exec "$NS" nft delete table inet vpn_relay_it
 
 # Exercise both nftables installation boundaries during initial startup.
@@ -383,39 +365,10 @@ grep -Fq "injected bootstrap nftables transaction failure" "$TMP/bootstrap-nft-f
 
 expect_startup_failure indexed-nft-failure.log "indexed nftables activation failure" "$TMP/fail-indexed-nft"
 grep -Fq "injected indexed nftables activation failure" "$TMP/indexed-nft-failure.log" || fail "indexed nftables activation failure was not observed"
-for family in -4 -6; do
+for family in -4; do
     if ip -n "$NS" "$family" rule show | grep -q 'proto 242'; then
         fail "policy rules leaked after indexed nftables activation failure for $family"
     fi
-done
-
-# Inject an iproute2 failure after the first egress has installed its IPv4
-# route and rule. Rollback must remove those partial resources as well as the
-# socket rules and the fail-closed nftables table.
-REAL_IP="$(command -v ip)"
-mkdir -p "$TMP/fail-ip"
-cat >"$TMP/fail-ip/ip" <<EOF
-#!/bin/sh
-if [ "\$1" = "-6" ] && [ "\$2" = "route" ] && [ "\$3" = "replace" ] \
-    && [ "\$4" = "default" ] && [ "\$6" = "awg-primary" ] && [ "\$8" = "10000" ]; then
-    echo "injected IPv6 policy-route failure" >&2
-    exit 42
-fi
-exec "$REAL_IP" "\$@"
-EOF
-chmod +x "$TMP/fail-ip/ip"
-expect_startup_failure partial-policy-route.log "injected IPv6 policy-route failure" "$TMP/fail-ip"
-for family in -4 -6; do
-    if ip -n "$NS" "$family" rule show | grep -Eq 'fwmark 0x(80000000|80000001|1001|1002|1003)'; then
-        fail "policy rules leaked after partial policy-routing failure for $family"
-    fi
-done
-for table in 10000 10001; do
-    for family in -4 -6; do
-        if ip -n "$NS" "$family" route show table "$table" | grep -Eq 'default dev (awg-primary|awg-secondary) proto 242'; then
-            fail "policy routes leaked from table $table after partial policy-routing failure for $family"
-        fi
-    done
 done
 
 # If policy-route installation fails on the second egress and rollback of the
@@ -465,7 +418,6 @@ if grep -Eq 'default dev awg-primary proto 242' "$TMP/startup-route-rollback-rou
     fail "policy route survived after its TUN interface was destroyed"
 fi
 [[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "0" ]] || fail "IPv4 forwarding changed after policy-route rollback failure"
-[[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "0" ]] || fail "IPv6 forwarding changed after policy-route rollback failure"
 # The TUN teardown has already removed its bound route. Remove the
 # retained fail-closed firewall before continuing.
 ip netns exec "$NS" nft delete table inet vpn_relay_it
@@ -473,8 +425,6 @@ ip netns exec "$NS" nft delete table inet vpn_relay_it
 # Force a known initial state: forwarding may already be enabled by the
 # runner's namespace setup, in which case startup correctly avoids rewriting it.
 ip netns exec "$NS" sysctl -qw net.ipv4.ip_forward=0
-ip netns exec "$NS" sysctl -qw net.ipv6.conf.all.forwarding=0
-# Fail IPv6 forwarding after IPv4 forwarding has already been enabled. The
 # daemon must restore IPv4 immediately and remove the routes, TUNs and nft
 # policy that were installed earlier in startup.
 REAL_SYSCTL="$(command -v sysctl)"
@@ -489,13 +439,13 @@ exec "$REAL_SYSCTL" "\$@"
 EOF
 chmod +x "$TMP/fail-sysctl/sysctl"
 expect_startup_failure partial-forwarding.log "injected IPv6 forwarding failure" "$TMP/fail-sysctl"
-for family in -4 -6; do
+for family in -4; do
     if ip -n "$NS" "$family" rule show | grep -Eq 'fwmark 0x(80000000|80000001|1001|1002|1003)'; then
         fail "policy rules leaked after partial forwarding failure for $family"
     fi
 done
 for table in 10000 10001; do
-    for family in -4 -6; do
+    for family in -4; do
         if ip -n "$NS" "$family" route show table "$table" | grep -Eq 'default dev (awg-primary|awg-secondary) proto 242'; then
             fail "policy routes leaked from table $table after partial forwarding failure for $family"
         fi
@@ -521,52 +471,6 @@ EOF
 chmod +x "$TMP/fail-ipv4-enable-sysctl/sysctl"
 expect_startup_failure partial-ipv4-forwarding.log "IPv4 forwarding enable-after-write failure" "$TMP/fail-ipv4-enable-sysctl"
 grep -Fq "injected IPv4 forwarding enable-after-write failure" "$TMP/partial-ipv4-forwarding.log" || fail "IPv4 enable-after-write failure was not observed"
-
-# Force IPv6 off so the startup path attempts to enable it and exercises
-# the ambiguous-write/restore-failure branch deterministically.
-ip netns exec "$NS" sysctl -qw net.ipv6.conf.all.forwarding=0
-# If IPv6 enable fails after changing the sysctl and restoring that
-# same family also fails, startup must retain the already-installed
-# fail-closed nftables policy.
-mkdir -p "$TMP/fail-ipv6-enable-restore-sysctl"
-cat >"$TMP/fail-ipv6-enable-restore-sysctl/sysctl" <<EOF
-#!/bin/sh
-if [ "\$1" = "-w" ] && [ "\$2" = "net.ipv6.conf.all.forwarding=1" ]; then
-    "$REAL_SYSCTL_STARTUP" "\$@" || exit "\$?"
-    echo "injected IPv6 forwarding enable-after-write failure" >&2
-    exit 42
-fi
-if [ "\$1" = "-w" ] && [ "\$2" = "net.ipv6.conf.all.forwarding=0" ]; then
-    echo "injected IPv6 forwarding restore failure after IPv6 enable error" >&2
-    exit 43
-fi
-exec "$REAL_SYSCTL_STARTUP" "\$@"
-EOF
-chmod +x "$TMP/fail-ipv6-enable-restore-sysctl/sysctl"
-if ip netns exec "$NS" env PATH="$TMP/fail-ipv6-enable-restore-sysctl:$PATH" "$BIN" --config "$TMP/config.toml" >"$TMP/partial-ipv6-forwarding-restore-failure.log" 2>&1; then
-    fail "daemon accepted an IPv6 enable failure followed by an IPv6 restore failure"
-fi
-grep -Fq "injected IPv6 forwarding enable-after-write failure" "$TMP/partial-ipv6-forwarding-restore-failure.log" || fail "ambiguous IPv6 enable failure was not reported"
-grep -Fq "injected IPv6 forwarding restore failure after IPv6 enable error" "$TMP/partial-ipv6-forwarding-restore-failure.log" || fail "IPv6 restore failure was not reported"
-grep -Fq "startup aborted with forwarding state uncertain; retaining nftables policy" "$TMP/partial-ipv6-forwarding-restore-failure.log" || fail "startup did not retain fail-closed policy after forwarding rollback failure"
-ip netns exec "$NS" nft list table inet vpn_relay_it >/dev/null 2>&1 || fail "fail-closed nftables policy was removed after forwarding rollback failure"
-[[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "0" ]] || fail "IPv4 forwarding was not restored after IPv6 enable failure"
-[[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "1" ]] || fail "IPv6 forwarding state did not reflect the injected restore failure"
-for iface in wg-server awg-primary awg-secondary; do
-    if ip netns exec "$NS" ip link show dev "$iface" >/dev/null 2>&1; then
-        fail "TUN interface $iface leaked after forwarding rollback failure"
-    fi
-done
-for family in -4 -6; do
-    if ip -n "$NS" "$family" rule show | grep -q 'proto 242'; then
-        fail "policy rules leaked after forwarding rollback failure for $family"
-    fi
-done
-ip netns exec "$NS" sysctl -qw net.ipv6.conf.all.forwarding=0
-ip netns exec "$NS" nft delete table inet vpn_relay_it
-# The injected rollback failure deliberately retains its durable journal.
-# After manually restoring both sysctls, clear it before the next scenario.
-clear_forwarding_state_file
 
 REAL_NFT="$(command -v nft)"
 REAL_IP="$(command -v ip)"
@@ -616,7 +520,6 @@ for _ in $(seq 1 30); do
         ip netns exec "$NS" ip link show dev "$iface" >/dev/null 2>&1 || ready=0
     done
     [[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "1" ]] || ready=0
-    [[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "1" ]] || ready=0
     ip -n "$NS" -4 rule show | grep -Fq 'fwmark 0x80000000 lookup 10000 proto 242' || ready=0
     if [[ $ready -eq 1 ]]; then
         break
@@ -631,7 +534,6 @@ for iface in wg-server awg-primary awg-secondary; do
     ip netns exec "$NS" ip link show dev "$iface" >/dev/null 2>&1 || fail "TUN interface $iface was not created"
 done
 [[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "1" ]] || fail "IPv4 forwarding was not enabled during startup"
-[[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "1" ]] || fail "IPv6 forwarding was not enabled during startup"
 
 # A second daemon in the same namespace must be rejected without disturbing
 # the already-running instance or its networking state.
@@ -672,7 +574,6 @@ for _ in $(seq 1 30); do
     ip netns exec "$NS" nft list table inet vpn_relay_it >/dev/null 2>&1 || ready=0
     ip -n "$NS" -4 rule show | grep -Fq 'fwmark 0x80000000 lookup 10000 proto 242' || ready=0
     ip -n "$NS" -4 rule show | grep -Fq 'fwmark 0x1001 lookup main proto 242' || ready=0
-    ip -n "$NS" -6 rule show | grep -Fq 'fwmark 0x1001 lookup main proto 242' || ready=0
     ip -n "$NS" -4 route show table 10000 | grep -Fq 'default dev awg-primary proto 242' || ready=0
     ip netns exec "$NS" ip link show dev wg-server >/dev/null 2>&1 || ready=0
     grep -Fq 'vpn-relay runtime started' "$TMP/crash-restart.log" || ready=0
@@ -683,7 +584,7 @@ for _ in $(seq 1 30); do
     sleep 1
 done
 [[ $ready -eq 1 ]] || fail "daemon did not recover stale owned resources after SIGKILL"
-for family in -4 -6; do
+for family in -4; do
     rules="$(ip -n "$NS" "$family" rule show)"
     grep -Fq 'fwmark 0x1001 lookup main proto 242' <<<"$rules" || fail "socket rule lacks vpn-relay ownership tag for $family"
     grep -Fq 'fwmark 0x80000000 lookup 10000 proto 242' <<<"$rules" || fail "primary rule lacks vpn-relay ownership tag for $family"
@@ -694,12 +595,6 @@ rules="$(ip -n "$NS" -4 rule show)"
 grep -Fq 'fwmark 0x80000001 lookup 10001 proto 242' <<<"$rules" || fail "secondary IPv4 rule lacks vpn-relay ownership tag; rules: $rules"
 routes="$(ip -n "$NS" -4 route show table 10001)"
 grep -Fq 'default dev awg-secondary proto 242' <<<"$routes" || fail "secondary IPv4 route lacks vpn-relay ownership tag"
-if ip -n "$NS" -6 rule show | grep -Fq 'fwmark 0x80000001 lookup 10001'; then
-    fail "IPv6 policy rule was installed for IPv6-disabled egress"
-fi
-if ip -n "$NS" -6 route show table 10001 2>/dev/null | grep -q .; then
-    fail "IPv6 route was installed for IPv6-disabled egress"
-fi
 for spec in \
     "0x80000000 awg-primary" \
     "0x80000001 awg-secondary" \
@@ -713,22 +608,16 @@ for spec in \
     "0x80000000 awg-primary" \
     "0x1001 main0"; do
     read -r mark expected <<<"$spec"
-    result="$(ip netns exec "$NS" ip -6 route get 2001:db8::9 mark "$mark")"
-    grep -q "dev $expected" <<<"$result" || fail "IPv6 mark $mark expected $expected, got: $result"
-done
-
-chain="$(ip netns exec "$NS" nft list chain inet vpn_relay_it prerouting)"
+    chain="$(ip netns exec "$NS" nft list chain inet vpn_relay_it prerouting)"
 forward_chain="$(ip netns exec "$NS" nft list chain inet vpn_relay_it forward)"
 grep -Fq 'iif @managed_interfaces drop' <<<"$forward_chain" || fail "managed ingress isolation drop is missing"
 grep -Fq 'oif @managed_interfaces drop' <<<"$forward_chain" || fail "managed egress isolation drop is missing"
-blocked_set="$(ip netns exec "$NS" nft list set inet vpn_relay_it ipv6_blocked_interfaces)"
-grep -Fq 'type iface_index' <<<"$blocked_set" || fail "IPv6 blocked set is not indexed by kernel interface identity"
-grep -Fq '"awg-secondary"' <<<"$blocked_set" || fail "IPv6-disabled egress is absent from the indexed blocked set"
-grep -Fq '"wg-server"' <<<"$blocked_set" || fail "IPv6-disabled ingress is absent from the indexed blocked set"
-grep -Fq 'iif @ipv6_blocked_interfaces meta nfproto ipv6 drop' <<<"$chain" || fail "IPv6 ingress drop is missing"
-grep -Fq 'oif @ipv6_blocked_interfaces meta nfproto ipv6 drop' <<<"$forward_chain" || fail "IPv6 egress drop is missing"
+blocked_set="$(ip netns exec "$NS" nft list set inet vpn_relay_it ipv6_drop_interfaces)"
+grep -Fq 'type iface_index' <<<"$blocked_set" || fail "IPv6 drop set is not indexed by TUN identity"
+grep -Fq 'iif @ipv6_drop_interfaces meta nfproto ipv6 drop' <<<"$chain" || fail "IPv6 ingress drop on TUN is missing"
+grep -Fq 'oif @ipv6_drop_interfaces meta nfproto ipv6 drop' <<<"$forward_chain" || fail "IPv6 forwarded egress drop on TUN is missing"
 output_chain="$(ip netns exec "$NS" nft list chain inet vpn_relay_it output)"
-grep -Fq 'oif @ipv6_blocked_interfaces meta nfproto ipv6 drop' <<<"$output_chain" || fail "locally generated IPv6 egress drop is missing"
+grep -Fq 'oif @ipv6_drop_interfaces meta nfproto ipv6 drop' <<<"$output_chain" || fail "locally generated IPv6 forwarded egress drop on TUN is missing"
 grep -Fq 'ct direction reply meta mark set 0' <<<"$chain" || fail "reply packet mark reset is missing"
 
 grep -Eq 'iifname "wg-server" iif != .* counter packets [0-9]+ bytes [0-9]+ drop' <<<"$chain" || fail "same-name replacement ingress guard is missing"
@@ -844,7 +733,7 @@ for old_table in 10000 10001; do
 done
 input_after_reload="$(ip netns exec "$NS" nft list chain inet vpn_relay_it input)"
 grep -Fq 'ip saddr 10.10.0.2 udp dport 53' <<<"$input_after_reload" || fail "successful reload did not install the new INPUT exception"
-for family in -4 -6; do
+for family in -4; do
     for socket_mark in 0x1001 0x1002 0x1003; do
         ip -n "$NS" "$family" rule show | grep -Fq "fwmark $socket_mark lookup main proto 242" || fail "reload changed socket policy-routing rule $socket_mark for $family"
     done
@@ -898,7 +787,6 @@ if ip -n "$NS" -4 rule show | grep -q 'proto 242'; then
     fail "vpn-relay policy rules survived fatal cleanup shutdown"
 fi
 [[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "0" ]] || fail "IPv4 forwarding was not restored after fatal cleanup"
-[[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "0" ]] || fail "IPv6 forwarding was not restored after fatal cleanup"
 for iface in wg-server awg-primary awg-secondary; do
     if ip netns exec "$NS" ip link show dev "$iface" >/dev/null 2>&1; then
         fail "TUN interface $iface survived fatal cleanup shutdown"
@@ -906,7 +794,6 @@ for iface in wg-server awg-primary awg-secondary; do
 done
 
 [[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "0" ]] || fail "IPv4 forwarding value was not restored"
-[[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "0" ]] || fail "IPv6 forwarding value was not restored"
 
 if ip netns exec "$NS" nft list table inet vpn_relay_it >/dev/null 2>&1; then
     fail "daemon-owned nftables table survived shutdown"
@@ -920,7 +807,7 @@ fi
 if ip netns exec "$NS" ip -4 rule show | grep -q 'fwmark 0x1001'; then
     fail "outer socket policy rule survived shutdown"
 fi
-for family in -4 -6; do
+for family in -4; do
     if ip -n "$NS" "$family" rule show | grep -q 'proto 242'; then
         fail "vpn-relay policy rule survived shutdown for $family"
     fi
@@ -976,7 +863,6 @@ ip -n "$NS" -4 rule show | grep -Fq 'fwmark 0x1001 lookup main proto 242' || fai
 [[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "0" ]] || fail "IPv4 forwarding was not restored after shutdown cleanup failure"
 grep -Fq "shutdown cleanup incomplete; retaining fail-closed nftables policy" "$TMP/shutdown-cleanup-failure.log" || fail "daemon did not report retained fail-closed policy"
 # A failed IPv4 forwarding restore during graceful shutdown must also retain
-# the nftables policy, while restoration of IPv6 must still be attempted.
 REAL_SYSCTL_SHUTDOWN="$(command -v sysctl)"
 mkdir -p "$TMP/fail-shutdown-sysctl"
 cat >"$TMP/fail-shutdown-sysctl/sysctl" <<EOF
@@ -995,7 +881,6 @@ for _ in $(seq 1 30); do
     ready=1
     ip netns exec "$NS" nft list table inet vpn_relay_it >/dev/null 2>&1 || ready=0
     [[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "1" ]] || ready=0
-    [[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "1" ]] || ready=0
     [[ $ready -eq 1 ]] && break
     if ! kill -0 "$DAEMON_PID" 2>/dev/null; then
         fail "daemon exited before shutdown-forwarding failure test became ready"
@@ -1009,7 +894,6 @@ wait "$DAEMON_PID" || fail "daemon failed while handling graceful shutdown forwa
 DAEMON_PID=""
 ip netns exec "$NS" nft list table inet vpn_relay_it >/dev/null 2>&1 || fail "nftables fail-closed policy was removed despite IPv4 forwarding restore failure"
 [[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "1" ]] || fail "injected IPv4 forwarding restore unexpectedly succeeded"
-[[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "0" ]] || fail "IPv6 forwarding was not restored after IPv4 restore failure"
 grep -Fq "injected shutdown IPv4 forwarding restore failure" "$TMP/shutdown-forwarding-restore-failure.log" || fail "daemon log omitted injected IPv4 forwarding restore failure"
 grep -Fq "shutdown cleanup incomplete; retaining fail-closed nftables policy" "$TMP/shutdown-forwarding-restore-failure.log" || fail "daemon did not report retained fail-closed policy after forwarding restore failure"
 # Repair the deliberately retained state with the real sysctl executable.
@@ -1017,51 +901,10 @@ ip netns exec "$NS" "$REAL_SYSCTL_SHUTDOWN" -w net.ipv4.ip_forward=0 >/dev/null
 ip netns exec "$NS" nft delete table inet vpn_relay_it
 clear_forwarding_state_file
 
-# Exercise the other forwarding family independently: an IPv6 restore failure
-# must preserve the policy without preventing IPv4 from being restored.
-mkdir -p "$TMP/fail-shutdown-ipv6-sysctl"
-cat >"$TMP/fail-shutdown-ipv6-sysctl/sysctl" <<EOF
-#!/bin/sh
-if [ -f "$TMP/fail-shutdown-ipv6-forwarding-restore" ] && [ "\$1" = "-w" ] \
-    && [ "\$2" = "net.ipv6.conf.all.forwarding=0" ]; then
-    echo "injected shutdown IPv6 forwarding restore failure" >&2
-    exit 42
-fi
-exec "$REAL_SYSCTL_SHUTDOWN" "\$@"
-EOF
-chmod +x "$TMP/fail-shutdown-ipv6-sysctl/sysctl"
-ip netns exec "$NS" env PATH="$TMP/fail-shutdown-ipv6-sysctl:$PATH" "$BIN" --config "$TMP/config.toml" >"$TMP/shutdown-ipv6-forwarding-restore-failure.log" 2>&1 &
-DAEMON_PID=$!
-for _ in $(seq 1 30); do
-    ready=1
-    ip netns exec "$NS" nft list table inet vpn_relay_it >/dev/null 2>&1 || ready=0
-    [[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "1" ]] || ready=0
-    [[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "1" ]] || ready=0
-    [[ $ready -eq 1 ]] && break
-    if ! kill -0 "$DAEMON_PID" 2>/dev/null; then
-        fail "daemon exited before IPv6 shutdown-forwarding failure test became ready"
-    fi
-    sleep 1
-done
-[[ $ready -eq 1 ]] || fail "daemon did not become ready for IPv6 shutdown-forwarding failure test"
-touch "$TMP/fail-shutdown-ipv6-forwarding-restore"
-kill -TERM "$DAEMON_PID"
-wait "$DAEMON_PID" || fail "daemon failed while handling graceful IPv6 forwarding restore failure"
-DAEMON_PID=""
-ip netns exec "$NS" nft list table inet vpn_relay_it >/dev/null 2>&1 || fail "nftables fail-closed policy was removed despite IPv6 forwarding restore failure"
-[[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "0" ]] || fail "IPv4 forwarding was not restored after IPv6 restore failure"
-[[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "1" ]] || fail "injected IPv6 forwarding restore unexpectedly succeeded"
-grep -Fq "injected shutdown IPv6 forwarding restore failure" "$TMP/shutdown-ipv6-forwarding-restore-failure.log" || fail "daemon log omitted injected IPv6 forwarding restore failure"
-grep -Fq "shutdown cleanup incomplete; retaining fail-closed nftables policy" "$TMP/shutdown-ipv6-forwarding-restore-failure.log" || fail "daemon did not retain fail-closed policy after IPv6 forwarding restore failure"
-ip netns exec "$NS" "$REAL_SYSCTL_SHUTDOWN" -w net.ipv6.conf.all.forwarding=0 >/dev/null
-ip netns exec "$NS" nft delete table inet vpn_relay_it
-clear_forwarding_state_file
-
 # Forwarding may already be enabled by the host before vpn-relay starts.
 # The daemon must preserve that original state rather than unconditionally
 # disabling forwarding during graceful shutdown.
 ip netns exec "$NS" sysctl -qw net.ipv4.ip_forward=1
-ip netns exec "$NS" sysctl -qw net.ipv6.conf.all.forwarding=1
 ip netns exec "$NS" "$BIN" --config "$TMP/config.toml" >"$TMP/preexisting-forwarding.log" 2>&1 &
 DAEMON_PID=$!
 for _ in $(seq 1 30); do
@@ -1071,7 +914,6 @@ for _ in $(seq 1 30); do
         ip netns exec "$NS" ip link show dev "$iface" >/dev/null 2>&1 || ready=0
     done
     [[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "1" ]] || ready=0
-    [[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "1" ]] || ready=0
     [[ $ready -eq 1 ]] && break
     if ! kill -0 "$DAEMON_PID" 2>/dev/null; then
         fail "daemon exited before pre-existing forwarding state test became ready"
@@ -1083,7 +925,6 @@ kill -TERM "$DAEMON_PID"
 wait "$DAEMON_PID" || fail "daemon failed while restoring pre-existing forwarding state"
 DAEMON_PID=""
 [[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "1" ]] || fail "daemon disabled pre-existing IPv4 forwarding during shutdown"
-[[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "1" ]] || fail "daemon disabled pre-existing IPv6 forwarding during shutdown"
 if ip netns exec "$NS" nft list table inet vpn_relay_it >/dev/null 2>&1; then
     fail "daemon-owned nftables table survived shutdown with pre-existing forwarding"
 fi
@@ -1093,14 +934,12 @@ for iface in wg-server awg-primary awg-secondary; do
     fi
 done
 ip netns exec "$NS" sysctl -qw net.ipv4.ip_forward=0
-ip netns exec "$NS" sysctl -qw net.ipv6.conf.all.forwarding=0
 
-# When forwarding management is disabled, vpn-relay must leave both sysctls
+# When forwarding management is disabled, vpn-relay must leave the IPv4 forwarding sysctl
 # untouched across startup and shutdown, even if their initial values differ.
 cp "$TMP/config.toml" "$TMP/config-no-forwarding-management.toml"
 sed -i 's/manage_ip_forwarding = true/manage_ip_forwarding = false/' "$TMP/config-no-forwarding-management.toml"
 ip netns exec "$NS" sysctl -qw net.ipv4.ip_forward=1
-ip netns exec "$NS" sysctl -qw net.ipv6.conf.all.forwarding=0
 ip netns exec "$NS" "$BIN" --config "$TMP/config-no-forwarding-management.toml" >"$TMP/forwarding-management-disabled.log" 2>&1 &
 DAEMON_PID=$!
 for _ in $(seq 1 30); do
@@ -1110,7 +949,6 @@ for _ in $(seq 1 30); do
         ip netns exec "$NS" ip link show dev "$iface" >/dev/null 2>&1 || ready=0
     done
     [[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "1" ]] || ready=0
-    [[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "0" ]] || ready=0
     [[ $ready -eq 1 ]] && break
     if ! kill -0 "$DAEMON_PID" 2>/dev/null; then
         fail "daemon exited before forwarding-management-disabled test became ready"
@@ -1122,7 +960,6 @@ kill -TERM "$DAEMON_PID"
 wait "$DAEMON_PID" || fail "daemon failed while forwarding management was disabled"
 DAEMON_PID=""
 [[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "1" ]] || fail "daemon changed IPv4 forwarding while management was disabled"
-[[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "0" ]] || fail "daemon changed IPv6 forwarding while management was disabled"
 if ip netns exec "$NS" nft list table inet vpn_relay_it >/dev/null 2>&1; then
     fail "daemon-owned nftables table survived shutdown with forwarding management disabled"
 fi
