@@ -883,8 +883,10 @@ successful shutdown removes the firewall.
    ответственностью оператора. В upstream добавлен UAPI `NETCONFA_FORCE_FORWARDING`
    для netconf notifications/dump, однако изученный kernel patch добавляет
    заполнение и отправку атрибута, а не обработчик записи `RTM_NEWNETCONF`.
-   Поэтому этот атрибут нельзя считать заменой sysctl write API; реализацию
-   нельзя переключать на него без подтверждённого kernel-side setter.
+   Дополнительно проверен текущий upstream `net/core/rtnetlink.c`: зарегистрирован
+   `RTM_GETNETCONF` dump handler, но не `RTM_NEWNETCONF` setter. Поэтому этот
+   атрибут нельзя считать заменой sysctl write API; реализацию нельзя
+   переключать на него без подтверждённого kernel-side setter.
 3. Переход IPv4 на ifindex снижает TOCTOU, но не устраняет его полностью:
    ifindex не является постоянным идентификатором после удаления интерфейса.
    Между userspace identity guard и обработкой netlink-запроса теоретически
