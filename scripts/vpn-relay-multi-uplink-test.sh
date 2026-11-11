@@ -882,7 +882,7 @@ done
 
 run_iperf() {
     local proto="$1" label="$2" target="$3" port="$4" family="$5"
-    local direction args=() logfile uplink_ns uplink_iface router_iface
+    local direction args=() logfile uplink_ns uplink_iface router_iface capture_pid
     local -a capture_pids=()
     case "$label" in
         primary*) uplink_ns="$PRIMARY_NS"; uplink_iface="up-primary"; router_iface="awg-primary" ;;
@@ -917,7 +917,7 @@ run_iperf() {
         timeout 20s ip netns exec "$CLIENT_NS" iperf3 "${args[@]}" >"$logfile" 2>&1 \
             || fail "$label $direction $proto iperf3 stream failed"
         for capture_pid in "${capture_pids[@]}"; do
-            kill -INT "$capture_pid" 2>/dev/null || true
+            kill -TERM "$capture_pid" 2>/dev/null || true
             wait "$capture_pid" 2>/dev/null || true
         done
         capture_pids=()
