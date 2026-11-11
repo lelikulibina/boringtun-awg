@@ -1651,7 +1651,10 @@ egress = "awg-uplink"
     fn rejects_invalid_awg_extension_values() {
         for (field, value) in [
             ("header_protection_key", "\"abcd\""),
-            ("header_protection_key", "\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\""),
+            (
+                "header_protection_key",
+                "\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"",
+            ),
             ("content_padding_addition", "\"100-10\""),
             ("rekey_timeout", "\"8-3\""),
             ("i1", "\"<unknown 2>\""),
