@@ -2580,6 +2580,71 @@ mod tests {
     }
 
     #[test]
+    fn per_interface_restore_attempts_every_family_after_failures() {
+        let state = ForwardingState {
+            ipv4: "0".to_owned(),
+            ipv6: "0".to_owned(),
+            ipv4_changed: false,
+            ipv6_changed: false,
+            interfaces: ["r-in0", "r-out0"]
+                .into_iter()
+                .enumerate()
+                .map(|(index, name)| InterfaceForwardingState {
+                    name: name.to_owned(),
+                    ifindex: index as u32 + 10,
+                    daemon_owned: false,
+                    ipv4: "0".to_owned(),
+                    ipv6: "0".to_owned(),
+                    ipv4_changed: true,
+                    ipv6_changed: true,
+                })
+                .collect(),
+        };
+        let mut reads = Vec::new();
+        let mut writes = Vec::new();
+        let mut verified = Vec::new();
+
+        let result = restore_interface_forwarding_entries_with(
+            &state,
+            |key| {
+                reads.push(key.to_owned());
+                Ok("1".to_owned())
+            },
+            |key, value| {
+                writes.push((key.to_owned(), value.to_owned()));
+                Err(RuntimeError::Forwarding(format!(
+                    "injected restore failure for {key}"
+                )))
+            },
+            |name, index| {
+                verified.push((name.to_owned(), index));
+                Ok(())
+            },
+        );
+
+        let message = match result {
+            Err(RuntimeError::FatalTransition(message)) => message,
+            other => panic!("expected aggregated fatal restore error, got {other:?}"),
+        };
+        assert_eq!(reads.len(), 4);
+        assert_eq!(writes.len(), 4);
+        assert_eq!(verified.len(), 8);
+        for name in ["r-in0", "r-out0"] {
+            assert!(message.contains(&format!("{name} ipv4")));
+            assert!(message.contains(&format!("{name} ipv6")));
+        }
+        assert_eq!(
+            writes,
+            vec![
+                ("net.ipv4.conf.r-in0.forwarding".to_owned(), "0".to_owned()),
+                ("net.ipv6.conf.r-in0.force_forwarding".to_owned(), "0".to_owned()),
+                ("net.ipv4.conf.r-out0.forwarding".to_owned(), "0".to_owned()),
+                ("net.ipv6.conf.r-out0.force_forwarding".to_owned(), "0".to_owned()),
+            ]
+        );
+    }
+
+    #[test]
     fn restore_forwarding_reports_both_failures() {
         let state = ForwardingState {
             ipv4: "0".to_owned(),
