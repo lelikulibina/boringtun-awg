@@ -1998,6 +1998,14 @@ fn restore_forwarding_state_with_mode(
     }
 }
 
+fn has_pending_ipv6_recovery(state: &ForwardingState) -> bool {
+    state.ipv6_changed
+        || state
+            .interfaces
+            .iter()
+            .any(|entry| entry.ipv6_enabled && entry.ipv6_changed)
+}
+
 fn forwarding_state_for_recovery(state: &ForwardingState, ipv6_enabled: bool) -> ForwardingState {
     let mut recovery_state = state.clone();
     if !ipv6_enabled {
@@ -2019,8 +2027,14 @@ fn recover_forwarding_state(
         return Ok(());
     };
     // An IPv4-only daemon must not inspect or restore IPv6 sysctls, including
-    // entries written by an older dual-stack version. Restore only the IPv4
-    // portion of a legacy journal and keep the datapath fail-closed for IPv6.
+    // entries written by an older dual-stack version. If a previous process
+    // was killed before restoring IPv6 forwarding, preserve the journal and
+    // refuse startup rather than silently leave namespace-wide forwarding on.
+    if !ipv6_enabled && has_pending_ipv6_recovery(&state) {
+        return Err(RuntimeError::Forwarding(
+            "IPv6 forwarding recovery is pending in the previous runtime journal; refusing IPv4-only startup without touching IPv6 sysctls. Restore once with daemon.ipv6_enabled=true or restore the recorded IPv6 forwarding values manually".to_owned(),
+        ));
+    }
     let recovery_state = forwarding_state_for_recovery(&state, ipv6_enabled);
     restore_forwarding_state_with_mode(
         &recovery_state,
@@ -2129,6 +2143,32 @@ fn restore_forwarding(state: &ForwardingState) -> Result<(), RuntimeError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ipv4_only_startup_detects_pending_legacy_ipv6_recovery() {
+        let state = ForwardingState {
+            ipv4: "0".to_owned(),
+            ipv6: "1".to_owned(),
+            ipv4_changed: false,
+            ipv6_changed: true,
+            interfaces: vec![InterfaceForwardingState {
+                name: "awg0".to_owned(),
+                ifindex: 7,
+                daemon_owned: false,
+                ipv4: "0".to_owned(),
+                ipv6: "0".to_owned(),
+                ipv4_changed: false,
+                ipv6_changed: true,
+                ipv6_enabled: true,
+            }],
+        };
+        assert!(has_pending_ipv6_recovery(&state));
+
+        let mut clean = state.clone();
+        clean.ipv6_changed = false;
+        clean.interfaces[0].ipv6_changed = false;
+        assert!(!has_pending_ipv6_recovery(&clean));
+    }
 
     #[test]
     fn ipv4_only_recovery_never_reads_or_writes_legacy_ipv6_journal_entries() {
