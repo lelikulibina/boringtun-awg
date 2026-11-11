@@ -610,6 +610,9 @@ ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -c 4 -W 2 79.100.22.1 \
 ip -n "$PRIMARY_NS" address add 198.51.102.2/32 dev lo
 ip -n "$SECONDARY_NS" address add 198.51.102.2/32 dev lo
 ip -n "$CLIENT_NS" route replace 198.51.102.2/32 dev wg-client
+ip -6 -n "$PRIMARY_NS" address add 2001:db8:102::2/128 dev lo
+ip -6 -n "$SECONDARY_NS" address add 2001:db8:102::2/128 dev lo
+ip -6 -n "$CLIENT_NS" route replace 2001:db8:102::2/128 dev wg-client
 
 # Change a live routing decision and its NAT action without restarting the
 # router. The same destination exists behind both uplinks, so packet capture
@@ -637,9 +640,27 @@ destination = "198.51.102.2/32"
 egress = "awg-primary"
 nat = "masquerade"
 '''
+old_v6 = '''[[routing.rules]]
+priority = 200
+ingress = "wg-ingress"
+source = "fd77::2/128"
+destination = "2001:db8:1::/48"
+egress = "awg-primary"
+nat = "masquerade"
+'''
+new_v6 = '''[[routing.rules]]
+priority = 200
+ingress = "wg-ingress"
+source = "fd77::2/128"
+destination = "2001:db8:102::/48"
+egress = "awg-secondary"
+nat = "masquerade"
+'''
 if config.count(old) != 1:
     raise SystemExit("cannot find unique priority-5 routing rule for reload")
-config = config.replace(old, new, 1)
+if config.count(old_v6) != 1:
+    raise SystemExit("cannot find unique IPv6 primary masquerade rule for reload")
+config = config.replace(old, new, 1).replace(old_v6, new_v6, 1)
 with open(path, "w", encoding="utf-8") as stream:
     stream.write(config)
 PY
@@ -669,6 +690,30 @@ secondary_reload_status=$?
 set -e
 [[ "$secondary_reload_status" -eq 124 ]] \
     || fail "old secondary routing decision remained active after runtime reload"
+
+# Repeat the live routing/NAT transition for IPv6. The destination exists on
+# both remote uplinks; the translated source identifies the newly selected
+# secondary egress, while the primary capture must remain empty.
+ip netns exec "$PRIMARY_NS" timeout 3 tcpdump -nn -i up-primary -c 1 \
+    'icmp6 and dst host 2001:db8:102::2' >"$TMP/runtime-reload-primary-v6-capture.log" 2>&1 &
+primary_v6_reload_capture=$!
+ip netns exec "$SECONDARY_NS" timeout 5 tcpdump -nn -i up-secondary -c 1 \
+    'icmp6 and src host fd30::1 and dst host 2001:db8:102::2' \
+    >"$TMP/runtime-reload-secondary-v6-capture.log" 2>&1 &
+secondary_v6_reload_capture=$!
+sleep 0.25
+ip netns exec "$CLIENT_NS" ping -6 -n -I fd77::2 -c 1 -W 3 2001:db8:102::2 \
+    || fail "packet did not traverse the new secondary IPv6 masquerade decision after reload"
+wait "$secondary_v6_reload_capture" \
+    || fail "reloaded IPv6 routing decision did not send translated traffic through secondary uplink"
+grep -Fq 'fd30::1 > 2001:db8:102::2' "$TMP/runtime-reload-secondary-v6-capture.log" \
+    || fail "runtime reload did not apply the secondary IPv6 masquerade source address"
+set +e
+wait "$primary_v6_reload_capture"
+primary_v6_reload_status=$?
+set -e
+[[ "$primary_v6_reload_status" -eq 124 ]] \
+    || fail "old primary IPv6 routing decision remained active after runtime reload"
 
 # The second WG peer is included in the secondary source CIDR array but not in
 # the primary rule. Verify both IPv4 and IPv6 membership at packet level.
