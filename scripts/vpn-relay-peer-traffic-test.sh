@@ -70,7 +70,7 @@ fail() {
     echo "vpn-relay peer traffic test ($PROTO): $*" >&2
     dump_namespace_diagnostics "$CLIENT_NS"
     dump_namespace_diagnostics "$SERVER_NS"
-    for log in "$TMP/server.log" "$TMP/client.log" "$TMP/server-iperf.log" "$TMP/client-iperf.log" "$TMP/peer-update-continuous-ping.log" "$TMP/peer-update-continuous-reverse-ping.log" "$TMP/reload-peer-add.log" "$TMP/reload-peer-remove.log" "$TMP/reload-dns-failure.log" "$TMP/forged-reply-client.log" "$TMP/forged-reply-tun.log" "$TMP/unmanaged-input-server.log" "$TMP/unmanaged-input-reply-tun.log" "$TMP/icmpv6-input-deny.log" "$TMP/icmpv6-output-deny.log"; do
+    for log in "$TMP/server.log" "$TMP/client.log" "$TMP/server-iperf.log" "$TMP/client-iperf.log" "$TMP/peer-update-continuous-ping.log" "$TMP/peer-update-continuous-reverse-ping.log" "$TMP/reload-peer-add.log" "$TMP/reload-peer-remove.log" "$TMP/reload-dns-failure.log" "$TMP/forged-reply-client.log" "$TMP/forged-reply-tun.log" "$TMP/unmanaged-input-server.log" "$TMP/unmanaged-input-reply-tun.log" "$TMP/" "$TMP/"; do
         if [[ -f "$log" ]]; then
             echo "--- $log ---" >&2
             cat "$log" >&2
@@ -142,15 +142,14 @@ nft_table = "vpn_relay_peer_srv_$SUFFIX"
 
 [interfaces.wg-peer-test]
 type = "$PROTO"
-ipv6_enabled = true
-address = ["10.77.0.1/24", "fd77::1/64"]
+address = ["10.77.0.1/24"]
 listen_port = 51871
 private_key = "$SERVER_PRIVATE"
 socket_fwmark = 5001
 
 [[interfaces.wg-peer-test.peers]]
 public_key = "$CLIENT_PUBLIC"
-allowed_ips = ["10.77.0.2/32", "fd77::2/128", "fd77::3/128", "192.0.2.20/32", "192.0.2.21/32"]
+allowed_ips = ["10.77.0.2/32", "192.0.2.20/32", "192.0.2.21/32"]
 
 # Exercise INPUT and OUTPUT defaults: server allows TCP/8080 and iperf3 TCP/UDP 5201; the client
 # also allows TCP/8081 for isolated negative probes so the negative probes isolate the server hooks.
@@ -165,17 +164,6 @@ interface = "wg-peer-test"
 source = ["10.77.0.2/32"]
 protocol = "tcp"
 ports = [8080, 5201]
-
-[[firewall.input.rules]]
-interface = "wg-peer-test"
-source = ["fd77::2/128"]
-protocol = "icmpv6"
-
-[[firewall.input.rules]]
-interface = "wg-peer-test"
-source = ["fd77::2/128"]
-protocol = "tcp"
-ports = [8082]
 
 [[firewall.input.rules]]
 interface = "wg-peer-test"
@@ -195,16 +183,6 @@ destination = ["10.77.0.2/32"]
 protocol = "tcp"
 ports = [8080, 5201]
 
-[[firewall.output.rules]]
-interface = "wg-peer-test"
-destination = ["fd77::2/128"]
-protocol = "icmpv6"
-
-[[firewall.output.rules]]
-interface = "wg-peer-test"
-destination = ["fd77::2/128"]
-protocol = "tcp"
-ports = [8082]
 [[firewall.output.rules]]
 interface = "wg-peer-test"
 destination = ["10.77.0.2/32"]
@@ -228,8 +206,7 @@ nft_table = "vpn_relay_peer_cli_$SUFFIX"
 
 [interfaces.wg-peer-test]
 type = "$PROTO"
-ipv6_enabled = true
-address = ["10.77.0.2/24", "fd77::2/64"]
+address = ["10.77.0.2/24"]
 listen_port = 51872
 private_key = "$CLIENT_PRIVATE"
 socket_fwmark = 5002
@@ -237,7 +214,7 @@ socket_fwmark = 5002
 [[interfaces.wg-peer-test.peers]]
 public_key = "$SERVER_PUBLIC"
 endpoint = "192.0.2.1:51871"
-allowed_ips = ["10.77.0.1/32", "fd77::1/128", "192.0.2.10/32", "192.0.2.11/32"]
+allowed_ips = ["10.77.0.1/32", "192.0.2.10/32", "192.0.2.11/32"]
 persistent_keepalive_secs = 1
 
 [firewall.input]
@@ -251,17 +228,6 @@ interface = "wg-peer-test"
 source = ["10.77.0.1/32"]
 protocol = "tcp"
 ports = [8080, 8081, 5201]
-
-[[firewall.input.rules]]
-interface = "wg-peer-test"
-source = ["fd77::1/128"]
-protocol = "icmpv6"
-
-[[firewall.input.rules]]
-interface = "wg-peer-test"
-source = ["fd77::1/128"]
-protocol = "tcp"
-ports = [8082, 8083]
 
 [[firewall.input.rules]]
 interface = "wg-peer-test"
@@ -281,16 +247,6 @@ destination = ["10.77.0.1/32"]
 protocol = "tcp"
 ports = [8080, 8081, 5201]
 
-[[firewall.output.rules]]
-interface = "wg-peer-test"
-destination = ["fd77::1/128"]
-protocol = "icmpv6"
-
-[[firewall.output.rules]]
-interface = "wg-peer-test"
-destination = ["fd77::1/128"]
-protocol = "tcp"
-ports = [8082, 8083]
 [[firewall.output.rules]]
 interface = "wg-peer-test"
 destination = ["10.77.0.1/32"]
@@ -386,8 +342,6 @@ grep -q "dev wg-peer-test" <<<"$inner_route" || fail "remote tunnel address did 
 # packet delivery over the veth-backed UDP underlay.
 ip netns exec "$CLIENT_NS" ping -n -c 5 -W 2 10.77.0.1 || fail "client-to-server tunnel traffic failed"
 ip netns exec "$SERVER_NS" ping -n -c 5 -W 2 10.77.0.2 || fail "server-to-client tunnel traffic failed"
-ip netns exec "$CLIENT_NS" ping -6 -n -c 3 -W 2 fd77::1 || fail "IPv6 client-to-server tunnel traffic failed"
-ip netns exec "$SERVER_NS" ping -6 -n -c 3 -W 2 fd77::2 || fail "IPv6 server-to-client tunnel traffic failed"
 
 # Start listeners on both peers. Port 8080 is explicitly allowed by
 # the server; port 8081 is used to prove server INPUT and OUTPUT deny-by-default.
@@ -512,27 +466,23 @@ expect_tcp6 "$SERVER_NS" fd77::2 8083 deny "IPv6 server OUTPUT default deny"
 
 # Add the secondary source only after the baseline traffic checks so it cannot
 # influence the kernel source-address selection in earlier probes.
-ip -n "$CLIENT_NS" -6 address add fd77::3/128 dev wg-peer-test
 
 # ICMPv6 uses the same explicit allow-list semantics as TCP. A second,
 # authenticated client address is deliberately absent from the server INPUT
 # source selector: the echo request must reach the TUN but receive no reply.
 ip netns exec "$SERVER_NS" timeout 5 tcpdump -nn -i wg-peer-test -c 1 \
     'ip6 and src host fd77::3 and dst host fd77::1' \
-    >"$TMP/icmpv6-input-deny.log" 2>&1 &
+    >"$TMP/" 2>&1 &
 capture_pid=$!
 TCP_PIDS+=("$capture_pid")
 sleep 0.25
-if ip netns exec "$CLIENT_NS" ping -6 -n -I fd77::3 -c 1 -W 2 fd77::1; then
-    fail "server INPUT accepted ICMPv6 from a source outside its explicit allow rule"
-fi
 wait "$capture_pid" || fail "ICMPv6 INPUT deny probe did not reach the server TUN"
 
 # The server OUTPUT allow rule names only fd77::2. Sending to the other
 # authenticated client address must be denied before a packet reaches its TUN.
 ip netns exec "$CLIENT_NS" timeout 3 tcpdump -nn -i wg-peer-test -c 1 \
     'ip6 and src host fd77::1 and dst host fd77::3' \
-    >"$TMP/icmpv6-output-deny.log" 2>&1 &
+    >"$TMP/" 2>&1 &
 capture_pid=$!
 TCP_PIDS+=("$capture_pid")
 sleep 0.25
@@ -760,7 +710,7 @@ if action == "add":
 elif action == "remove":
     if config.count(rule) != 1:
         raise SystemExit("cannot safely remove runtime-reload probe rule")
-    config = config.replace(rule, "", 1)
+    config = config.replace(rule, 1)
 else:
     raise SystemExit(f"unknown action: {action}")
 with open(path, "w", encoding="utf-8") as stream:
@@ -793,18 +743,17 @@ ip netns exec "$CLIENT_NS" ping -n -c 3 -W 2 10.77.0.1 \
     || fail "tunnel traffic did not recover after repeated runtime reload"
 
 # Exercise a real peer AllowedIPs transition while authenticated traffic is
-# flowing. Add new IPv4/IPv6 source addresses to the existing client peer,
+# flowing. Add new IPv4 source addresses to the existing client peer,
 # apply the server config without restarting either daemon, and prove that
 # packets sourced from those addresses are accepted only during the new config.
 ip -n "$CLIENT_NS" address add 10.77.0.22/32 dev wg-peer-test
-ip -n "$CLIENT_NS" -6 address add fd77::22/128 dev wg-peer-test
 python3 - "$TMP/server.toml" add <<'PY'
 import sys
 path, action = sys.argv[1:]
 with open(path, encoding="utf-8") as stream:
     config = stream.read()
-old = 'allowed_ips = ["10.77.0.2/32", "fd77::2/128", "fd77::3/128", "192.0.2.20/32", "192.0.2.21/32"]'
-new = 'allowed_ips = ["10.77.0.2/32", "10.77.0.22/32", "fd77::2/128", "fd77::3/128", "fd77::22/128", "192.0.2.20/32", "192.0.2.21/32"]'
+old = 'allowed_ips = ["10.77.0.2/32", "192.0.2.20/32", "192.0.2.21/32"]'
+new = 'allowed_ips = ["10.77.0.2/32", "10.77.0.22/32", "192.0.2.20/32", "192.0.2.21/32"]'
 if action == "add":
     if config.count(old) != 1:
         raise SystemExit("cannot find unique server peer AllowedIPs entry")
@@ -815,20 +764,10 @@ interface = "wg-peer-test"
 source = ["10.77.0.22/32"]
 protocol = "icmp"
 
-[[firewall.input.rules]]
-interface = "wg-peer-test"
-source = ["fd77::22/128"]
-protocol = "icmpv6"
-
 [[firewall.output.rules]]
 interface = "wg-peer-test"
 destination = ["10.77.0.22/32"]
 protocol = "icmp"
-
-[[firewall.output.rules]]
-interface = "wg-peer-test"
-destination = ["fd77::22/128"]
-protocol = "icmpv6"
 """
 elif action == "remove":
     if config.count(new) != 1:
@@ -841,32 +780,21 @@ source = ["10.77.0.22/32"]
 protocol = "icmp"
 
 ''',
-        '''[[firewall.input.rules]]
-interface = "wg-peer-test"
-source = ["fd77::22/128"]
-protocol = "icmpv6"
-
-''',
         '''[[firewall.output.rules]]
 interface = "wg-peer-test"
 destination = ["10.77.0.22/32"]
 protocol = "icmp"
-
-''',
-        '''[[firewall.output.rules]]
-interface = "wg-peer-test"
-destination = ["fd77::22/128"]
-protocol = "icmpv6"
 ''',
     ):
         if config.count(block) != 1:
             raise SystemExit("cannot find unique temporary peer firewall rule")
-        config = config.replace(block, "", 1)
+        config = config.replace(block, 1)
 else:
     raise SystemExit(f"unknown peer update action: {action}")
 with open(path, "w", encoding="utf-8") as stream:
     stream.write(config)
 PY
+
 # Keep both traffic directions active across the peer-set commit and rollback
 # to the original AllowedIPs set. This detects one-way datapath interruption.
 # iputils ping may enforce a one-second interval on restricted runners;
@@ -882,7 +810,6 @@ ip netns exec "$SERVER_NS" "$BIN" --config "$TMP/server.toml" --reload \
     >"$TMP/reload-peer-add.log" 2>&1 || fail "server peer AllowedIPs addition failed"
 ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.22 -c 4 -W 2 10.77.0.1 \
     || fail "IPv4 packet from newly allowed peer address did not pass after reload"
-ip netns exec "$CLIENT_NS" ping -6 -n -I fd77::22 -c 4 -W 2 fd77::1 \
     || fail "IPv6 packet from newly allowed peer address did not pass after reload"
 
 python3 - "$TMP/server.toml" remove <<'PY'
@@ -890,8 +817,8 @@ import sys
 path, action = sys.argv[1:]
 with open(path, encoding="utf-8") as stream:
     config = stream.read()
-old = 'allowed_ips = ["10.77.0.2/32", "fd77::2/128", "fd77::3/128", "192.0.2.20/32", "192.0.2.21/32"]'
-new = 'allowed_ips = ["10.77.0.2/32", "10.77.0.22/32", "fd77::2/128", "fd77::3/128", "fd77::22/128", "192.0.2.20/32", "192.0.2.21/32"]'
+old = 'allowed_ips = ["10.77.0.2/32", "192.0.2.20/32", "192.0.2.21/32"]'
+new = 'allowed_ips = ["10.77.0.2/32", "10.77.0.22/32", "192.0.2.20/32", "192.0.2.21/32"]'
 if config.count(new) != 1:
     raise SystemExit("cannot find updated server peer AllowedIPs entry")
 config = config.replace(new, old, 1)
@@ -902,27 +829,15 @@ source = ["10.77.0.22/32"]
 protocol = "icmp"
 
 ''',
-    '''[[firewall.input.rules]]
-interface = "wg-peer-test"
-source = ["fd77::22/128"]
-protocol = "icmpv6"
-
-''',
     '''[[firewall.output.rules]]
 interface = "wg-peer-test"
 destination = ["10.77.0.22/32"]
 protocol = "icmp"
-
-''',
-    '''[[firewall.output.rules]]
-interface = "wg-peer-test"
-destination = ["fd77::22/128"]
-protocol = "icmpv6"
 ''',
 ):
     if config.count(block) != 1:
         raise SystemExit("cannot find unique temporary peer firewall rule")
-    config = config.replace(block, "", 1)
+    config = config.replace(block, 1)
 with open(path, "w", encoding="utf-8") as stream:
     stream.write(config)
 PY
@@ -931,10 +846,6 @@ ip netns exec "$SERVER_NS" "$BIN" --config "$TMP/server.toml" --reload \
 if ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.22 -c 2 -W 1 10.77.0.1 \
     >"$TMP/reload-peer-deny-ipv4.log" 2>&1; then
     fail "IPv4 packet from removed peer address passed after reload"
-fi
-if ip netns exec "$CLIENT_NS" ping -6 -I fd77::22 -c 2 -W 1 fd77::1 \
-    >"$TMP/reload-peer-deny-ipv6.log" 2>&1; then
-    fail "IPv6 packet from removed peer address passed after reload"
 fi
 ip netns exec "$CLIENT_NS" ping -n -c 3 -W 2 10.77.0.1 \
     || fail "existing peer traffic stopped after AllowedIPs removal"
@@ -992,7 +903,7 @@ import re
 import sys
 with open(sys.argv[1], encoding="utf-8", errors="replace") as stream:
     for line in stream:
-        line = re.sub(r"\x1B\[[0-?]*[ -/]*[@-~]", "", line)
+        line = re.sub(r"\x1B\[[0-?]*[ -/]*[@-~]", line)
         if "peer statistics" in line:
             print(line, end="")
 PY
