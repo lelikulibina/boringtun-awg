@@ -676,11 +676,8 @@ impl Runtime {
                 namespace_inode,
                 &config.daemon.forwarding_interfaces,
                 &config.interfaces.keys().cloned().collect(),
-                &config
-                    .interfaces
-                    .iter()
-                    .filter_map(|(name, interface)| interface.ipv6_enabled.then_some(name.clone()))
-                    .collect(),
+                config.daemon.ipv6_enabled
+                    && config.interfaces.values().any(|interface| interface.ipv6_enabled),
             ) {
                 Ok(state) => Some(state),
                 Err(error) => {
@@ -2052,18 +2049,22 @@ fn enable_forwarding_durable(
     namespace_inode: u64,
     forwarding_interfaces: &[String],
     daemon_owned_names: &std::collections::BTreeSet<String>,
-    ipv6_enabled_names: &std::collections::BTreeSet<String>,
+    ipv6_enabled: bool,
 ) -> Result<ForwardingState, RuntimeError> {
     if !forwarding_interfaces.is_empty() {
+        let ipv6_enabled_names = if ipv6_enabled {
+            forwarding_interfaces.iter().cloned().collect()
+        } else {
+            std::collections::BTreeSet::new()
+        };
         return enable_interface_forwarding_durable(
             path,
             namespace_inode,
             forwarding_interfaces,
             daemon_owned_names,
-            ipv6_enabled_names,
+            &ipv6_enabled_names,
         );
     }
-    let ipv6_enabled = !ipv6_enabled_names.is_empty();
     let state = ForwardingState {
         ipv4: read_sysctl("net.ipv4.ip_forward")?,
         ipv6: if ipv6_enabled {
