@@ -870,44 +870,46 @@ successful shutdown removes the firewall.
   `DEVCONF_FORWARDING` и `DEVCONF_FORCE_FORWARDING` из массива конфигурации
   нельзя записать через этот путь `RTM_NEWLINK`.
 
-Следующий шаг реализации должен быть гибридным и проверяемым:
+Гибридная реализация и оставшиеся ограничения:
 
-1. IPv4 forwarding перевести на `RTM_NEWLINK` с `ifi_index`, nested
-   `IFLA_AF_SPEC/AF_INET/IFLA_INET_CONF`, ACK и проверкой результата чтением
-   состояния для того же ifindex.
-2. Для IPv6 сохранить семантику `force_forwarding`, пока не найден и не
-   подтверждён поддерживаемый kernel API записи по ifindex. Отдельно исследовать
-   безопасную работу через открытый procfs sysctl file descriptor; само
-   открытие FD ещё не считается доказательством защиты от удаления интерфейса.
-3. Не считать переход на ifindex полным устранением TOCTOU: он убирает повторное
-   разрешение имени, но ifindex не является постоянным идентификатором объекта
-   после удаления интерфейса. Нужно проверить гонку между разрешением ifindex
-   в userspace и обработкой `RTM_NEWLINK`, включая удаление и повторное создание
-   интерфейса с тем же именем и возможное повторное использование ifindex.
-   Если нельзя гарантировать привязку операции к исходному объекту, остаточный
-   риск должен быть явно сохранён в документации.
+1. IPv4 forwarding переведён на `RTM_NEWLINK` с `ifi_index` и вложенными
+   `IFLA_AF_SPEC/AF_INET/IFLA_INET_CONF`. Kernel ACK проверяется, затем
+   `RTM_GETLINK` читает `IFLA_INET_CONF` для того же ifindex и подтверждает
+   фактическое значение. В операции записи больше нет повторного разрешения
+   имени через procfs sysctl path.
+2. IPv6 сохраняет `force_forwarding` через procfs sysctl: подтверждённого
+   поддерживаемого kernel API записи этого параметра по ifindex пока нет.
+   Перед чтением/записью проверяется пара name/ifindex; RA policy остаётся
+   ответственностью оператора.
+3. Переход IPv4 на ifindex снижает TOCTOU, но не устраняет его полностью:
+   ifindex не является постоянным идентификатором после удаления интерфейса.
+   Между userspace identity guard и обработкой netlink-запроса теоретически
+   возможно удаление и повторное создание link с повторным использованием
+   ifindex. В Linux API нет generation token для RTM_NEWLINK, который атомарно
+   связывает запрос с ранее проверенным объектом. Этот остаточный риск сохраняется.
 
-Acceptance criteria: проверка ACK/error/extack; отсутствие частичной записи при
-ошибочном атрибуте; сохранение исходных значений при rollback; корректное
-поведение при исчезновении интерфейса между resolve/open/write; отсутствие
-записи в новый интерфейс после rename/delete/recreate и проверки повторного
-использования ifindex; IPv4 и IPv6 packet-level forwarding в отдельном network
-namespace. До выполнения этих критериев текущая sysctl-реализация остаётся
-действующей, а TOCTOU — открытым ограничением.
+Оставшиеся acceptance criteria: проверить extack-диагностику и поведение на
+поддерживаемой матрице ядер; подтвердить отказ без изменения состояния при
+исчезновении link до обработки запроса; исследовать защиту от повторного
+использования ifindex; отдельно закрыть IPv6 sysctl write TOCTOU. Packet-level
+IPv4/IPv6 forwarding и lifecycle/recovery suites уже существуют и повторно
+проверяются CI. Полное устранение TOCTOU не заявляется.
 
 ### Per-interface forwarding — реализация
 
 - [x] Добавлен конфигурационный allowlist daemon.forwarding_interfaces; имена валидируются, дубликаты отклоняются, изменение списка через reload запрещено.
 - [x] Per-interface режим включается только при manage_ip_forwarding=true и непустом allowlist. Пустой список сохраняет прежний namespace-wide режим для обратной совместимости.
 - [x] IPv4 требует внешнего net.ipv4.ip_forward=1; демон не переключает его, поскольку изменение сбрасывает host/router defaults в namespace.
-- [x] IPv4 allowlist управляется через net.ipv4.conf.<if>.forwarding. На старте и каждую секунду проверяется, что неразрешённые интерфейсы имеют forwarding=0.
+- [x] IPv4 allowlist управляется через rtnetlink `RTM_NEWLINK` по сохранённому ifindex; после ACK выполняется `RTM_GETLINK` readback того же ifindex. На старте и каждую секунду проверяется, что неразрешённые интерфейсы имеют forwarding=0.
 - [x] IPv6 требует net.ipv6.conf.all.forwarding=0; allowlist использует net.ipv6.conf.<if>.force_forwarding=1. Это сохраняет per-interface Host/Router setting и не меняет accept_ra; RA policy остаётся ответственностью оператора.
-- [x] Внешние interface sysctl journal включают namespace inode, name, ifindex, original value и ownership flag; identity проверяется перед каждым чтением/записью. Восстановление выполняется только если текущее значение всё ещё равно daemon-written 1.
+- [x] Внешний interface forwarding journal включает namespace inode, name, ifindex, original value и ownership flag; IPv4 read/write/restore адресуются по ifindex, IPv6 остаётся на sysctl с проверкой identity. Восстановление выполняется только если текущее значение всё ещё равно daemon-written 1.
 - [x] Записи daemon-owned TUN не восстанавливаются: их sysctl исчезает вместе с непостоянным TUN, а попытка записи по сохранённым name/ifindex могла бы попасть в новый интерфейс после повторного использования идентификаторов.
 - [x] Журнал записывается до изменения sysctl. Частичная ошибка запуска запускает rollback; неуспешный rollback оставляет journal и fail-closed firewall.
 - [x] Runtime проверяет global prerequisites, состояние unmanaged links и allowlisted links; при drift выполняется fatal shutdown с сохранением firewall.
 - [x] Добавлены unit tests для валидации allowlist, identity mismatch, внешних изменений sysctl, partial-write rollback и TUN recovery.
 - [x] Добавлены root-only network namespace suites: daemon lifecycle/recovery, unmanaged interface rejection, runtime drift, а также реальные IPv4/IPv6 packet probes для allowlisted и blocked ingress interfaces.
-- [ ] Остаточный риск: проверка name/ifindex и sysctl write не атомарны; guard выполняется непосредственно перед операцией, но для полного устранения TOCTOU потребуется переход на netlink API, адресующий интерфейс по ifindex. Это отдельное усиление, не блокирующее текущую ограниченную модель.
+- [ ] Остаточный риск TOCTOU не закрыт полностью. IPv4 sysctl write заменён на RTM_NEWLINK по ifindex с ACK и RTM_GETLINK readback, но повторное использование ifindex между userspace guard и обработкой запроса теоретически возможно. IPv6 force_forwarding всё ещё записывается по sysctl path; требуется отдельное решение для безопасной записи без повторного разрешения имени.
 
 net.ipv4.ip_forward=1 и net.ipv6.conf.all.forwarding=0 должны быть выставлены до запуска daemon и оставаться неизменными на протяжении его работы. Если global IPv6 forwarding включить, ядро переключит Host/Router setting всех интерфейсов и сбросит force_forwarding; runtime monitor завершит daemon и сохранит fail-closed firewall. Внешние интерфейсы, на которых forwarding уже включён, должны быть включены в allowlist; иначе startup отклоняется.
+
+| 2026-11-11 | IPv4 per-interface forwarding переведён на rtnetlink | Добавлена запись `RTM_NEWLINK` по ifindex с nested IPv4 devconf forwarding attribute, kernel ACK и `RTM_GETLINK` readback того же ifindex. Runtime startup, rollback, recovery и drift verification используют netlink для IPv4; IPv6 `force_forwarding` остаётся на sysctl. TOCTOU из-за возможного повторного использования ifindex явно сохранён как остаточный риск. | Ожидает полного CI |
