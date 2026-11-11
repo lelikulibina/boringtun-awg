@@ -6,10 +6,10 @@
 log_level = "info"
 stats_interval_secs = 10
 nft_table = "vpn_relay"
-# false: vpn-relay does not change kernel forwarding sysctls; enable IPv4/IPv6
-# forwarding externally before routing traffic through this host. Set true only
-# in an isolated network namespace: it changes namespace-wide host/router mode
-# and can affect forwarding/Router Advertisement behaviour on every interface.
+# false: демон не меняет sysctl пересылки пакетов. До маршрутизации включите
+# пересылку IPv4/IPv6 самостоятельно. true используйте только в изолированном
+# сетевом пространстве имён: режим меняется для всего пространства и может
+# повлиять на пересылку пакетов и Router Advertisement на всех интерфейсах.
 manage_ip_forwarding = false
 
 [interfaces.wg-server]
@@ -32,7 +32,7 @@ address = ["10.20.0.2/32"]
 mtu = 1380
 listen_port = 51821
 private_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
- # socket_fwmark опущен: демон назначит его автоматически
+# socket_fwmark не задан: демон назначит его автоматически
 
 [interfaces.awg-primary.awg]
 # Необязательно: явный выбор поколения. Если опустить, BoringTun определит
@@ -50,15 +50,17 @@ h3 = "3"
 h4 = "4"
 disable_cookies = false
 random_trailers = false
-# AWG 3.1 options (uncomment and configure consistently on both peers where required):
+# Параметры AWG 3.1. Раскомментируйте их и согласуйте значения на обоих узлах.
 # i1 = "<b 0x4142><r 8>"
 # i2 = "<t>"
 # i3 = "<rc 4>"
 # i4 = "<rd 4>"
 # i5 = "<dz 2>"
-# header_protection_key = "64_HEX_CHARACTERS_SHARED_WITH_PEER"
+# Ключ HP: ровно 64 шестнадцатеричных символа; одинаковый на обоих узлах.
+# При включении HP задайте S1-S4 не менее 12 байт.
+# header_protection_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 # content_padding_addition = "10-100"
-# Padding mode is selected automatically from protocol (AWG 3.0: MTU; AWG 3.1: UDP window).
+# Режим дополнения выбирается автоматически: AWG 3.0 — по MTU, AWG 3.1 — по UDP window.
 # rekey_after_time = "100-120"
 # rekey_timeout = "3-8"
 # reject_after_time = "150-180"
@@ -69,7 +71,7 @@ random_trailers = false
 public_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 endpoint = "vpn-primary.example.net:51820"
 allowed_ips = ["0.0.0.0/0", "::/0"]
-persistent_keepalive_secs = 25
+persistent_keepalive_secs = "25-35"
 
 [interfaces.awg-secondary]
 type = "awg"
@@ -118,7 +120,7 @@ egress = "awg-primary"
 nat = "masquerade"
 
 
-# INPUT и OUTPUT по умолчанию запрещают трафик через managed TUN.
+# INPUT и OUTPUT по умолчанию запрещают трафик через управляемые TUN-интерфейсы.
 # Разрешения задаются только явно. Раскомментируйте при необходимости:
 #
 # [[firewall.input.rules]]
