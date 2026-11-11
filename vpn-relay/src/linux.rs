@@ -2181,7 +2181,7 @@ mod tests {
         original[0..4].copy_from_slice(&20u32.to_ne_bytes());
         response.extend_from_slice(&original);
         response.extend_from_slice(&[1, 2, 3, 4]);
-        let message = b"invalid uncapped attribute\\0";
+        let message = b"invalid uncapped attribute\0";
         let attribute_length = 4 + message.len();
         response.extend_from_slice(&(attribute_length as u16).to_ne_bytes());
         response.extend_from_slice(&NLMSGERR_ATTR_MSG.to_ne_bytes());
