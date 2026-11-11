@@ -1447,7 +1447,7 @@ fn remove_forwarding_state_file(path: &Path) -> Result<(), RuntimeError> {
     }
 }
 
-fn interface_forwarding_sysctl_key(name: &str, family: &str) -> Result<String, RuntimeError> {
+fn interface_forwarding_sysctl_key(name: &str) -> Result<String, RuntimeError> {
     if name.is_empty()
         || name.len() > 15
         || !name.is_ascii()
@@ -1461,17 +1461,12 @@ fn interface_forwarding_sysctl_key(name: &str, family: &str) -> Result<String, R
             "refusing to construct a sysctl path from an invalid interface name".to_owned(),
         ));
     }
-    if family != "ipv4" {
-        return Err(RuntimeError::Forwarding(
-            "vpn-relay supports IPv4 forwarding only".to_owned(),
-        ));
-    }
     Ok(format!("net.ipv4.conf.{name}.forwarding"))
 }
 
 fn read_forwarding_state_value(state: &ForwardingState, key: &str) -> Result<String, RuntimeError> {
     for entry in &state.interfaces {
-        if key == interface_forwarding_sysctl_key(&entry.name, "ipv4")? {
+        if key == interface_forwarding_sysctl_key(&entry.name)? {
             let enabled = linux::ipv4_interface_forwarding(entry.ifindex)
                 .map_err(|error| RuntimeError::Forwarding(error.to_string()))?;
             return Ok(if enabled { "1" } else { "0" }.to_owned());
@@ -1486,7 +1481,7 @@ fn write_forwarding_state_value(
     value: &str,
 ) -> Result<(), RuntimeError> {
     for entry in &state.interfaces {
-        if key == interface_forwarding_sysctl_key(&entry.name, "ipv4")? {
+        if key == interface_forwarding_sysctl_key(&entry.name)? {
             let enabled = match value {
                 "0" => false,
                 "1" => true,
@@ -1508,17 +1503,16 @@ fn write_forwarding_state_value(
 
 fn restore_interface_forwarding_entry_with(
     entry: &InterfaceForwardingState,
-    family: &str,
     original: &str,
     changed: bool,
     mut read: impl FnMut(&str) -> Result<String, RuntimeError>,
     mut write: impl FnMut(&str, &str) -> Result<(), RuntimeError>,
     mut verify: impl FnMut(&str, u32) -> Result<(), RuntimeError>,
 ) -> Result<(), RuntimeError> {
-    if family != "ipv4" || !changed {
+    if !changed {
         return Ok(());
     }
-    let key = interface_forwarding_sysctl_key(&entry.name, "ipv4")?;
+    let key = interface_forwarding_sysctl_key(&entry.name)?;
     if let Err(error) = verify(&entry.name, entry.ifindex) {
         if entry.daemon_owned {
             return Ok(());
@@ -1551,7 +1545,6 @@ fn restore_interface_forwarding_entries_with(
         }
         if let Err(error) = restore_interface_forwarding_entry_with(
             entry,
-            "ipv4",
             &entry.ipv4,
             entry.ipv4_changed,
             &mut read,
@@ -1722,7 +1715,7 @@ fn enable_interface_forwarding_entries_with(
         if !entry.ipv4_changed {
             continue;
         }
-        let key = interface_forwarding_sysctl_key(&entry.name, "ipv4")?;
+        let key = interface_forwarding_sysctl_key(&entry.name)?;
         if let Err(error) = verify(&entry.name, entry.ifindex).and_then(|()| write(&key, "1")) {
             failures.push(format!("{} IPv4: {error}", entry.name));
         }
