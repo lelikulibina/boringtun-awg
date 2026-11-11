@@ -1,5 +1,5 @@
 //! Import standard WireGuard and AmneziaWG INI configurations.
-use crate::config::{Config, InterfaceConfig, PeerConfig, PersistentKeepaliveConfig, TunnelType};
+use crate::config::{Config, InterfaceConfig, PeerConfig, PeerEndpoint, PersistentKeepaliveConfig, TunnelType};
 use boringtun::noise::amnezia::AmneziaWgConfig;
 use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
@@ -271,7 +271,9 @@ fn parse_interface(source: &str) -> Result<(InterfaceConfig, Vec<String>), Impor
     }
 
     let mut parsed_peers = Vec::new();
-    let mut ipv6_enabled = address.iter().any(|a| a.contains(':'));
+    if address.iter().any(|a| a.contains(':')) {
+        return Err(ImportError::Parse("IPv6 interface addresses are not supported by vpn-relay".into()));
+    }
     for (index, values) in peers.iter().enumerate() {
         let public_key = required(
             values,
@@ -280,8 +282,17 @@ fn parse_interface(source: &str) -> Result<(InterfaceConfig, Vec<String>), Impor
         )?
         .to_owned();
         let allowed_ips = list_optional(values, "allowedips");
-        ipv6_enabled |= allowed_ips.iter().any(|a| a.contains(':'));
+        if allowed_ips.iter().any(|a| a.contains(':')) {
+            return Err(ImportError::Parse(format!(
+                "[Peer {}] IPv6 AllowedIPs are not supported by vpn-relay", index + 1
+            )));
+        }
         let endpoint = values.get("endpoint").cloned();
+        if let Some(endpoint) = &endpoint {
+            PeerEndpoint::parse(endpoint).map_err(|error| {
+                ImportError::Parse(format!("[Peer {}] invalid Endpoint: {error}", index + 1))
+            })?;
+        }
         let persistent_keepalive_secs = values
             .get("persistentkeepalive")
             .map(|value| parse_persistent_keepalive(value))
@@ -317,7 +328,6 @@ fn parse_interface(source: &str) -> Result<(InterfaceConfig, Vec<String>), Impor
         tunnel_type,
         address,
         mtu,
-        ipv6_enabled,
         listen_port,
         private_key,
         socket_fwmark,
@@ -545,25 +555,35 @@ mod tests {
 
     const CLIENT: &str = r#"[Interface]
 PrivateKey = AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
-Address = 10.0.0.2/32, fd00::2/128
+Address = 10.0.0.2/32
 DNS = 1.1.1.1
 MTU = 1380
 
 [Peer]
 PublicKey = AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
 PresharedKey = AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
-Endpoint = [2001:db8::1]:51820
-AllowedIPs = 0.0.0.0/0, ::/0
+Endpoint = vpn.example.com:51820
+AllowedIPs = 0.0.0.0/0
 PersistentKeepalive = 25
 "#;
 
     #[test]
-    fn imports_wireguard_profiles_without_inferring_router_roles() {
+    fn rejects_ipv6_source_profiles() {
+        for source in [
+            CLIENT.replace("Address = 10.0.0.2/32", "Address = fd00::2/128"),
+            CLIENT.replace("AllowedIPs = 0.0.0.0/0", "AllowedIPs = ::/0"),
+            CLIENT.replace("Endpoint = vpn.example.com:51820", "Endpoint = [2001:db8::1]:51820"),
+        ] {
+            assert!(parse_interface(&source).is_err());
+        }
+    }
+
+    #[test]
+    fn imports_ipv4_wireguard_profiles_without_inferring_router_roles() {
         let (cfg, warnings) = parse_interface(CLIENT).unwrap();
         assert_eq!(cfg.tunnel_type, TunnelType::WireGuard);
-        assert_eq!(cfg.address, vec!["10.0.0.2/32", "fd00::2/128"]);
+        assert_eq!(cfg.address, vec!["10.0.0.2/32"]);
         assert_eq!(cfg.listen_port, None);
-        assert!(cfg.ipv6_enabled);
         assert_eq!(
             cfg.peers[0].persistent_keepalive_secs,
             Some(PersistentKeepaliveConfig::Seconds(25))
@@ -573,7 +593,7 @@ PersistentKeepalive = 25
     }
 
     #[test]
-    fn imports_amnezia_persistent_keepalive_ranges_and_disable_values() {
+    fn imports_ipv4_amnezia_persistent_keepalive_ranges_and_disable_values() {
         let range = CLIENT.replace("PersistentKeepalive = 25", "PersistentKeepalive = 25-35");
         let (cfg, _) = parse_interface(&range).unwrap();
         assert_eq!(
