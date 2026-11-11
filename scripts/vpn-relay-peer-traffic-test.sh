@@ -702,7 +702,7 @@ run_iperf_probe() {
     [[ "$direction" == "reverse" ]] && args+=(-R)
     timeout 20s ip netns exec "$CLIENT_NS" iperf3 "${args[@]}" >"$logfile" 2>&1 \
         || fail "iperf3 $proto $direction transfer failed"
-    python3 - "$logfile" "$proto" <<'PY'
+    if ! python3 - "$logfile" "$proto" <<'PY'
 import json, sys
 with open(sys.argv[1], encoding="utf-8") as stream:
     report = json.load(stream)
@@ -722,7 +722,9 @@ else:
         raise SystemExit(f"UDP receiver got {received} bytes with {lost:.2f}% loss")
     print(f"UDP receiver: {received} bytes, {lost:.2f}% loss")
 PY
-    [[ "$?" -eq 0 ]] || fail "iperf3 $proto $direction receiver statistics invalid"
+    then
+        fail "iperf3 $proto $direction receiver statistics invalid"
+    fi
 }
 for proto in tcp udp; do
     for direction in forward reverse; do
