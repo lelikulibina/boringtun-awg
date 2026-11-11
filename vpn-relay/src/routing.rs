@@ -400,11 +400,11 @@ impl RoutingPlan {
             // sockets on ingress or leaving them on the underlay, including
             // dynamically learned IPv6 peer endpoints.
             output.push_str(&format!(
-                "add rule {} {} input meta nfproto ipv6 socket mark @socket_fwmarks drop\\n",
+                "add rule {} {} input meta nfproto ipv6 socket mark @socket_fwmarks drop\n",
                 self.nft_family, self.nft_table
             ));
             output.push_str(&format!(
-                "add rule {} {} output meta nfproto ipv6 meta mark @socket_fwmarks drop\\n",
+                "add rule {} {} output meta nfproto ipv6 meta mark @socket_fwmarks drop\n",
                 self.nft_family, self.nft_table
             ));
         }
