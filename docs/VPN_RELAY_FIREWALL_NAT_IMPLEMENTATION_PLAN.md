@@ -413,46 +413,59 @@ Backend `DeviceHandle::snapshot` не содержит PSK и поэтому н�
 обычной ошибки — прежний Config и прежняя policy; при невозможности rollback
 runtime останавливает управление и сохраняет fail-closed firewall.
 
-### Архитектура безопасного per-interface forwarding
+### Per-interface forwarding: реализованная архитектура и остаточные проверки
 
-Текущее `manage_ip_forwarding` намеренно управляет namespace-wide
-`net.ipv4.ip_forward` и `net.ipv6.conf.all.forwarding`. Durable journal
-восстанавливает исходные значения после graceful shutdown и SIGKILL, но это
-не делает включение безопасным для общего host namespace: меняется поведение
-всех интерфейсов namespace.
+Per-interface режим добавлен отдельно от legacy namespace-wide режима через
+`manage_ip_forwarding=true` и непустой `forwarding_interfaces`. Пустой список
+сохраняет прежнее поведение; `manage_ip_forwarding=false` не меняет sysctl.
 
-Целевое направление — отдельный режим per-interface forwarding, не заменяющий
-существующую namespace-wide опцию молча:
+Реализовано:
 
-- IPv4: владеть только `net.ipv4.conf.<managed-if>.forwarding` для явно
-  перечисленных managed ingress/egress интерфейсов; не менять `all.forwarding`
-  и `default.forwarding`. Проверить эффективную семантику Linux sysctl при
-  комбинациях `all`, `default` и per-interface values.
-- IPv6: до реализации проверить поведение `net.ipv6.conf.<if>.forwarding`,
-  `all.forwarding`, RA acceptance и доступность/семантику `force_forwarding`
-  на поддерживаемых ядрах. Нельзя включать IPv6 forwarding или отключать RA
-  на unmanaged интерфейсах как побочный эффект.
-- В конфигурации явно перечислять interfaces, для которых daemon вправе
-  менять forwarding; неизвестные и не-managed interfaces отклонять до startup.
-- Durable journal должен стать версионированным списком записей
-  (namespace inode, interface identity/ifindex, sysctl key, original value,
-  value written by daemon), а recovery — восстанавливать только значения,
-  которые daemon действительно менял, с защитой от повторного использования
-  ifindex и удаления/переименования интерфейса.
-- Startup: bootstrap firewall → TUN creation/identity verification →
-  per-interface sysctl journal persist → per-interface forwarding enable →
-  policy routes. Shutdown: stop workers → remove routes → remove TUN →
-  restore only daemon-owned per-interface values → remove firewall last.
-  При неопределённом результате restore firewall остаётся fail-closed.
-- Проверки: unit failure injection для каждого read/write/persist/fsync/restore;
-  kernel matrix для IPv4/IPv6 и старых/новых поддерживаемых ядер; netns packet
-  probes, подтверждающие forwarding на выбранных TUN и отсутствие изменений
-  на unmanaged interfaces, включая Router Advertisement поведение.
+- IPv4: daemon управляет только per-link forwarding через rtnetlink
+  `RTM_NEWLINK` по ifindex, проверяет kernel ACK и выполняет
+  `RTM_GETLINK` readback. Глобальный `net.ipv4.ip_forward=1` является
+  prerequisite Linux forwarding и должен быть заранее включён оператором;
+  daemon не должен переключать его в per-interface режиме, поскольку запись
+  глобального switch сбрасывает IPv4 параметры.
+- IPv6: daemon использует `net.ipv6.conf.<if>.force_forwarding` при
+  `net.ipv6.conf.all.forwarding=0`. Конкретный procfs entry открывается до
+  проверки identity, а read/write выполняется через тот же FD. В upstream
+  netconf UAPI не найден setter `RTM_NEWNETCONF` для этого атрибута.
+- Allowlist валидируется до изменения системного состояния; startup и runtime
+  проверяют unmanaged interfaces и identity управляемых интерфейсов.
+- Durable versioned journal хранит namespace inode, имя/ifindex, исходные
+  значения и флаги изменений. Recovery не записывает сохранённые значения
+  по имени в daemon-owned ephemeral TUN и не перезаписывает операторские
+  изменения.
+- Startup, rollback, recovery и graceful shutdown учитывают per-interface
+  forwarding. Firewall остаётся fail-closed при неопределённом результате
+  восстановления.
 
-До завершения kernel compatibility matrix и packet-level тестов
-`manage_ip_forwarding=true` остаётся допустимым только в dedicated network
-namespace. На общем host namespace использовать `false` и внешнее управление
-forwarding.
+Подтверждено daemon-driven packet-level network namespace тестом: IPv4/IPv6
+forwarding на allowlisted links, отсутствие forwarding на unmanaged link,
+двусторонняя передача пакетов, сохранение `accept_ra` и восстановление
+исходных значений. Базовый сценарий прошёл CI run `42992213621`.
+
+Остаётся:
+
+- [ ] Выполнить stale IPv6 procfs FD race test: удалить интерфейс и создать
+  новый с тем же именем, подтвердить отказ записи через старый FD и отсутствие
+  изменений replacement link. Тест добавлен, выполнение не подтверждено.
+- [ ] Закрыть/документировать остаточный IPv4 ifindex reuse TOCTOU между
+  identity guard и rtnetlink обработкой; ACK/readback не являются generation
+  token.
+- [ ] Выполнить kernel compatibility matrix для минимально поддерживаемого и
+  актуальных ядер, включая дистрибутивные backport `force_forwarding`.
+- [ ] Завершить failure-injection для каждого read/write/persist/fsync/restore
+  шага; в том числе новый тест агрегации четырёх per-interface restore failures
+  ожидает исполнения.
+- [ ] Проверить Podman rootful/private-network-namespace deployment на целевой
+  матрице: `CAP_NET_ADMIN`, `/dev/net/tun`, netlink и sysctl доступ.
+
+До завершения kernel compatibility matrix и race validation per-interface
+режим нельзя объявлять универсально совместимым со всеми ядрами. Для общего
+host namespace legacy `manage_ip_forwarding=true` по-прежнему не рекомендуется;
+использовать dedicated network namespace либо `false` с внешним управлением.
 
 ## 12. Этап 9 — документация и CI
 
