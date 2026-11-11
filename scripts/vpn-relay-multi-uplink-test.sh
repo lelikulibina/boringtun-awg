@@ -286,7 +286,7 @@ destination = ["10.77.0.2/32", "10.77.0.3/32", "fd77::2/128", "fd77::3/128"]
 priority = 5
 ingress = "wg-ingress"
 source = "10.77.0.2/32"
-destination = "198.51.100.2/32"
+destination = "198.51.102.2/32"
 egress = "awg-secondary"
 
 [[routing.rules]]
@@ -588,7 +588,7 @@ fi
 # this address, so a successful probe alone is insufficient: observe the
 # selected remote TUN and require the priority-5 secondary path.
 ip netns exec "$SECONDARY_NS" timeout 5 tcpdump -nn -i up-secondary -c 1 \
-    'icmp and dst host 198.51.100.2' >"$TMP/priority-secondary.log" 2>&1 &
+    'icmp and dst host 198.51.102.2' >"$TMP/priority-secondary.log" 2>&1 &
 capture_pid=$!
 sleep 0.25
 ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -c 1 -W 2 198.51.100.2 \
@@ -604,6 +604,12 @@ ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -c 4 -W 2 195.142.1.1 \
     || fail "195.142.0.0/16 traffic did not traverse awg-secondary"
 ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -c 4 -W 2 79.100.22.1 \
     || fail "79.100.22.0/24 traffic did not traverse awg-secondary"
+
+# Add a destination reachable through both remote uplinks but not covered
+# by any other routing selector, so the reload probe cannot pass via fallback.
+ip -n "$PRIMARY_NS" address add 198.51.102.2/32 dev lo
+ip -n "$SECONDARY_NS" address add 198.51.102.2/32 dev lo
+ip -n "$CLIENT_NS" route replace 198.51.102.2/32 dev wg-client
 
 # Change a live routing decision and its NAT action without restarting the
 # router. The same destination exists behind both uplinks, so packet capture
@@ -627,7 +633,7 @@ mark_base = 0x90000000
 priority = 5
 ingress = "wg-ingress"
 source = "10.77.0.2/32"
-destination = "198.51.100.2/32"
+destination = "198.51.102.2/32"
 egress = "awg-primary"
 nat = "masquerade"
 '''
@@ -651,11 +657,11 @@ sleep 0.25
 ip netns exec "$ROUTER_NS" "$BIN" --config "$TMP/router.toml" --reload \
     >"$TMP/runtime-routing-nat-reload.log" 2>&1 \
     || fail "runtime routing/NAT reload failed while both uplinks were active"
-ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -e 5150 -c 1 -W 3 198.51.100.2 \
+ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -e 5150 -c 1 -W 3 198.51.102.2 \
     || fail "packet did not traverse the new primary masquerade decision after reload"
 wait "$primary_reload_capture" \
     || fail "reloaded routing decision did not send translated traffic through primary uplink"
-grep -Fq '10.20.0.1 > 198.51.100.2' "$TMP/runtime-reload-primary-capture.log" \
+grep -Fq '10.20.0.1 > 198.51.102.2' "$TMP/runtime-reload-primary-capture.log" \
     || fail "runtime reload did not apply the new primary masquerade source address"
 set +e
 wait "$secondary_reload_capture"
