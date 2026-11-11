@@ -38,7 +38,7 @@ pub struct RoutingDecision {
     /// Unique decision id persisted in conntrack for reverse filtering and NAT.
     pub conntrack_mark: u32,
     pub nat: NatMode,
-    pub nat_to: Option<std::net::IpAddr>,
+    pub nat_to: Option<std::net::Ipv4Addr>,
 }
 
 impl RoutingDecision {
