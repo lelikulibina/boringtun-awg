@@ -2709,7 +2709,10 @@ mod tests {
             writes,
             vec![
                 ("net.ipv4.conf.r-out0.forwarding".to_owned(), "0".to_owned()),
-                ("net.ipv6.conf.r-out0.force_forwarding".to_owned(), "0".to_owned()),
+                (
+                    "net.ipv6.conf.r-out0.force_forwarding".to_owned(),
+                    "0".to_owned()
+                ),
             ]
         );
     }
