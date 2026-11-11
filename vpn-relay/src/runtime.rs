@@ -2657,7 +2657,7 @@ mod tests {
             interfaces: Vec::new(),
         };
         let mut writes = Vec::new();
-        let enabled = enable_forwarding_state_with(&state, false, |key, value| {
+        let enabled = enable_forwarding_state_with(state, false, |key, value| {
             assert!(!key.starts_with("net.ipv6."), "unexpected write: {key}");
             writes.push((key.to_owned(), value.to_owned()));
             Ok(())
