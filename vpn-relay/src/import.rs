@@ -1,5 +1,5 @@
 //! Import standard WireGuard and AmneziaWG INI configurations.
-use crate::config::{Config, InterfaceConfig, PeerConfig, TunnelType};
+use crate::config::{Config, InterfaceConfig, PeerConfig, PersistentKeepaliveConfig, TunnelType};
 use boringtun::noise::amnezia::AmneziaWgConfig;
 use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
@@ -282,18 +282,18 @@ fn parse_interface(source: &str) -> Result<(InterfaceConfig, Vec<String>), Impor
         let allowed_ips = list_optional(values, "allowedips");
         ipv6_enabled |= allowed_ips.iter().any(|a| a.contains(':'));
         let endpoint = values.get("endpoint").cloned();
-        let (persistent_keepalive_secs, persistent_keepalive_range) = values
+        let persistent_keepalive_secs = values
             .get("persistentkeepalive")
             .map(|value| parse_persistent_keepalive(value))
             .transpose()?
-            .unwrap_or((None, None));
+            .flatten();
         parsed_peers.push(PeerConfig {
             public_key,
             preshared_key: values.get("presharedkey").cloned(),
             endpoint,
             allowed_ips,
             persistent_keepalive_secs,
-            persistent_keepalive_range,
+            persistent_keepalive_range: None,
         });
         for key in values.keys() {
             if !matches!(
@@ -445,10 +445,10 @@ fn list_optional(v: &HashMap<String, String>, key: &str) -> Vec<String> {
 }
 fn parse_persistent_keepalive(
     value: &str,
-) -> Result<(Option<u16>, Option<(u32, u32)>), ImportError> {
+) -> Result<Option<PersistentKeepaliveConfig>, ImportError> {
     let value = value.trim();
     if value.eq_ignore_ascii_case("off") || value == "0" || value == "0-0" {
-        return Ok((None, None));
+        return Ok(None);
     }
     if let Some((min, max)) = value.split_once('-') {
         if max.contains('-') {
@@ -463,13 +463,13 @@ fn parse_persistent_keepalive(
                 "invalid PersistentKeepalive range '{value}': expected 1 <= min <= max"
             )));
         }
-        return Ok((None, Some((min, max))));
+        return Ok(Some(PersistentKeepaliveConfig::Range(format!("{min}-{max}"))));
     }
     let seconds = parse_number::<u16>(value, "PersistentKeepalive")?;
     if seconds == 0 {
-        Ok((None, None))
+        Ok(None)
     } else {
-        Ok((Some(seconds), None))
+        Ok(Some(PersistentKeepaliveConfig::Seconds(seconds)))
     }
 }
 
@@ -562,7 +562,7 @@ PersistentKeepalive = 25
         assert_eq!(cfg.address, vec!["10.0.0.2/32", "fd00::2/128"]);
         assert_eq!(cfg.listen_port, None);
         assert!(cfg.ipv6_enabled);
-        assert_eq!(cfg.peers[0].persistent_keepalive_secs, Some(25));
+        assert_eq!(cfg.peers[0].persistent_keepalive_secs, Some(PersistentKeepaliveConfig::Seconds(25)));
         assert_eq!(cfg.peers[0].persistent_keepalive_range, None);
         assert!(warnings.iter().any(|w| w.contains("DNS")));
     }
@@ -571,8 +571,8 @@ PersistentKeepalive = 25
     fn imports_amnezia_persistent_keepalive_ranges_and_disable_values() {
         let range = CLIENT.replace("PersistentKeepalive = 25", "PersistentKeepalive = 25-35");
         let (cfg, _) = parse_interface(&range).unwrap();
-        assert_eq!(cfg.peers[0].persistent_keepalive_secs, None);
-        assert_eq!(cfg.peers[0].persistent_keepalive_range, Some((25, 35)));
+        assert_eq!(cfg.peers[0].persistent_keepalive_secs, Some(PersistentKeepaliveConfig::Range("25-35".to_owned())));
+        assert_eq!(cfg.peers[0].persistent_keepalive_range, None);
 
         for value in ["off", "0", "0-0"] {
             let input = CLIENT.replace(
