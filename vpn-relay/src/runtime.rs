@@ -1513,13 +1513,21 @@ fn read_forwarding_state_value(state: &ForwardingState, key: &str) -> Result<Str
     read_sysctl(key)
 }
 
-fn write_forwarding_state_value(state: &ForwardingState, key: &str, value: &str) -> Result<(), RuntimeError> {
+fn write_forwarding_state_value(
+    state: &ForwardingState,
+    key: &str,
+    value: &str,
+) -> Result<(), RuntimeError> {
     for entry in &state.interfaces {
         if key == interface_forwarding_sysctl_key(&entry.name, "ipv4")? {
             let enabled = match value {
                 "0" => false,
                 "1" => true,
-                _ => return Err(RuntimeError::Forwarding("IPv4 forwarding must be 0 or 1".to_owned())),
+                _ => {
+                    return Err(RuntimeError::Forwarding(
+                        "IPv4 forwarding must be 0 or 1".to_owned(),
+                    ))
+                }
             };
             verify_forwarding_interface(&entry.name, entry.ifindex)?;
             linux::set_ipv4_interface_forwarding(entry.ifindex, enabled)
