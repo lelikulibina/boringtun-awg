@@ -23,6 +23,10 @@ pub struct Peer {
     /// The index the tunnel uses
     index: u32,
     endpoint: RwLock<Endpoint>,
+    // The configured endpoint is distinct from the endpoint learned from
+    // authenticated incoming packets. Reloading an unchanged None must not
+    // erase a roaming peer's live endpoint.
+    configured_endpoint: Option<SocketAddr>,
     preshared_key: Option<[u8; 32]>,
 }
 
@@ -79,6 +83,7 @@ impl Peer {
                 addr: endpoint,
                 conn: None,
             }),
+            configured_endpoint: endpoint,
             preshared_key,
         }
     }
@@ -93,6 +98,26 @@ impl Peer {
 
     pub(crate) fn endpoint_mut(&self) -> parking_lot::RwLockWriteGuard<'_, Endpoint> {
         self.endpoint.write()
+    }
+
+    pub(crate) fn configured_endpoint(&self) -> Option<SocketAddr> {
+        self.configured_endpoint
+    }
+
+    /// Apply a configured endpoint change without confusing it with a
+    /// dynamically learned endpoint from a roaming peer.
+    pub(crate) fn update_configured_endpoint(&mut self, addr: Option<SocketAddr>) {
+        if self.configured_endpoint == addr {
+            return;
+        }
+
+        self.shutdown_endpoint();
+        if let Some(endpoint) = addr {
+            self.set_endpoint(endpoint);
+        } else {
+            self.endpoint_mut().addr = None;
+        }
+        self.configured_endpoint = addr;
     }
 
     pub fn shutdown_endpoint(&self) {
