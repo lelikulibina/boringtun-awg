@@ -381,11 +381,7 @@ impl RoutingPlan {
                 let mut selectors = format!("iifname \"{}\"", rule.interface);
                 if let Some(family) = family {
                     if sources.is_empty() {
-                        selectors.push_str(if family == "ip" {
-                            " meta nfproto ipv4"
-                        } else {
-                            " meta nfproto ipv6"
-                        });
+                        selectors.push_str(" meta nfproto ipv4");
                     }
                     append_cidr_selector(&mut selectors, family, "saddr", &sources);
                 }
@@ -427,11 +423,7 @@ impl RoutingPlan {
                 let mut selectors = format!("oifname \"{}\"", rule.interface);
                 if let Some(family) = family {
                     if destinations.is_empty() {
-                        selectors.push_str(if family == "ip" {
-                            " meta nfproto ipv4"
-                        } else {
-                            " meta nfproto ipv6"
-                        });
+                        selectors.push_str(" meta nfproto ipv4");
                     }
                     append_cidr_selector(&mut selectors, family, "daddr", &destinations);
                 }
@@ -481,11 +473,7 @@ impl RoutingPlan {
                 let mut selectors = format!("iifname \"{}\" ct state new", rule.ingress);
                 if let Some(family) = family {
                     if sources.is_empty() && destinations.is_empty() {
-                        selectors.push_str(if family == "ip" {
-                            " meta nfproto ipv4"
-                        } else {
-                            " meta nfproto ipv6"
-                        });
+                        selectors.push_str(" meta nfproto ipv4");
                     }
                     append_cidr_selector(&mut selectors, family, "saddr", &sources);
                     append_cidr_selector(&mut selectors, family, "daddr", &destinations);
