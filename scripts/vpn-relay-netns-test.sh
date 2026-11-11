@@ -17,7 +17,6 @@ clear_forwarding_state_file() {
 cleanup() {
     if [[ -n "$DAEMON_PID" ]] && kill -0 "$DAEMON_PID" 2>/dev/null; then
         kill -TERM "$DAEMON_PID" 2>/dev/null || true
-echo "[vpn-relay-netns-test] waiting for daemon (script line 20)" >&2
         wait "$DAEMON_PID" 2>/dev/null || true
     fi
     ip netns del "$NS" 2>/dev/null || true
@@ -61,7 +60,6 @@ expect_startup_failure() {
         fail "daemon did not reject $description"
     fi
     set +e
-echo "[vpn-relay-netns-test] waiting for daemon (script line 63)" >&2
     wait "$DAEMON_PID"
     status=$?
     set -e
@@ -189,7 +187,6 @@ if [[ -n "$state" && "$state" != Z* ]]; then
     fail "daemon did not reject a pre-existing foreign nftables table"
 fi
 set +e
-echo "[vpn-relay-netns-test] waiting for daemon (script line 190)" >&2
 wait "$DAEMON_PID"
 conflict_status=$?
 set -e
@@ -259,7 +256,6 @@ if [[ -n "$state" && "$state" != Z* ]]; then
     fail "daemon did not reject a TUN name conflict after partial interface setup"
 fi
 set +e
-echo "[vpn-relay-netns-test] waiting for daemon (script line 259)" >&2
 wait "$DAEMON_PID"
 partial_status=$?
 set -e
@@ -642,7 +638,6 @@ done
 ip netns exec "$NS" "$BIN" --config "$TMP/config.toml" >"$TMP/duplicate.log" 2>&1 &
 DUPLICATE_PID=$!
 set +e
-echo "[vpn-relay-netns-test] waiting for duplicate daemon (script line 617)" >&2
 wait "$DUPLICATE_PID"
 duplicate_status=$?
 set -e
@@ -657,7 +652,6 @@ kill -0 "$DAEMON_PID" 2>/dev/null || fail "original daemon exited after duplicat
 # replace only the resources carrying vpn-relay ownership metadata.
 kill -KILL "$DAEMON_PID"
 set +e
-echo "[vpn-relay-netns-test] waiting for daemon (script line 631)" >&2
 wait "$DAEMON_PID"
 crash_status=$?
 set -e
@@ -774,7 +768,6 @@ ip -n "$NS" -4 rule add priority 12000 fwmark 0x40000000 lookup 11000
 # Inject failure while staging the new egress route. The old policy
 # route and nft classifier must remain active and no partial new route may leak.
 touch "$TMP/fail-route"
-echo "[vpn-relay-netns-test] management operation at script line 747" >&2
 if ip netns exec "$NS" "$BIN" --config "$TMP/config.toml" --reload >"$TMP/reload-route-failure.log" 2>&1; then
     fail "runtime reload unexpectedly succeeded with injected policy-route failure"
 fi
@@ -793,7 +786,6 @@ ip -n "$NS" -4 route show table 10000 | grep -Fq 'default dev awg-primary proto 
 # Stale-resource cleanup is part of staging too. A failure there must unwind
 # the candidate egress transaction and leave the old active plan untouched.
 touch "$TMP/fail-stale-rule-cleanup"
-echo "[vpn-relay-netns-test] management operation at script line 765" >&2
 if ip netns exec "$NS" "$BIN" --config "$TMP/config.toml" --reload >"$TMP/reload-stale-rule-cleanup.log" 2>&1; then
     fail "runtime reload succeeded despite injected stale policy-rule cleanup failure"
 fi
@@ -811,7 +803,6 @@ fi
 ip -n "$NS" -4 route show table 10000 | grep -Fq 'default dev awg-primary proto 242' || fail "stale cleanup failure removed the previous active egress route"
 
 touch "$TMP/fail-nft"
-echo "[vpn-relay-netns-test] management operation at script line 782" >&2
 if ip netns exec "$NS" "$BIN" --config "$TMP/config.toml" --reload >"$TMP/reload-failure.log" 2>&1; then
     fail "runtime reload unexpectedly succeeded with injected nftables failure"
 fi
@@ -831,7 +822,6 @@ fi
 
 # Retry without failure injection. The new routing selector, firewall exception
 # and peer set must become active together from the daemon's point of view.
-echo "[vpn-relay-netns-test] management operation at script line 801" >&2
 ip netns exec "$NS" "$BIN" --config "$TMP/config.toml" --reload >"$TMP/reload-success.log" 2>&1 || fail "runtime reload failed after removing nftables failure injection"
 chain_after_reload="$(ip netns exec "$NS" nft list chain inet vpn_relay_it prerouting)"
 grep -Fq 'ip daddr 198.51.100.0/24' <<<"$chain_after_reload" || fail "successful reload did not install the new routing selector"
@@ -863,7 +853,6 @@ done
 # The legacy peer-only operation must remain available and must not replace the
 # current firewall/routing plan with unrelated changes from the file.
 sed -i 's/10.10.0.2\/32/10.10.0.3\/32/g' "$TMP/config.toml"
-echo "[vpn-relay-netns-test] management operation at script line 832" >&2
 ip netns exec "$NS" "$BIN" --config "$TMP/config.toml" --replace-peers wg-server >"$TMP/replace-peers.log" 2>&1 || fail "legacy peer-only replacement failed after runtime reload"
 kill -0 "$DAEMON_PID" 2>/dev/null || fail "daemon exited after peer-only replacement"
 
@@ -871,7 +860,6 @@ kill -0 "$DAEMON_PID" 2>/dev/null || fail "daemon exited after peer-only replace
 # currently active runtime configuration.
 cp "$TMP/config.toml" "$TMP/config-before-immutable-reload.toml"
 sed -i 's/listen_port = 51820/listen_port = 51830/' "$TMP/config.toml"
-echo "[vpn-relay-netns-test] management operation at script line 839" >&2
 if ip netns exec "$NS" "$BIN" --config "$TMP/config.toml" --reload >"$TMP/reload-immutable.log" 2>&1; then
     fail "runtime reload accepted an immutable tunnel listen-port change"
 fi
@@ -885,7 +873,6 @@ grep -Fq 'ip saddr 10.10.0.2 udp dport 53' <<<"$input_after_rejected_reload" || 
 # the partially-retired old plan and the newly active plan during Drop.
 sed -i 's/0x90000000/0xA0000000/g; s/egress = "awg-secondary"/egress = "awg-primary"/g' "$TMP/config.toml"
 touch "$TMP/fail-old-route-cleanup"
-echo "[vpn-relay-netns-test] management operation at script line 852" >&2
 if ip netns exec "$NS" "$BIN" --config "$TMP/config.toml" --reload >"$TMP/reload-old-route-cleanup.log" 2>&1; then
     fail "runtime reload succeeded despite injected old-route cleanup failure"
 fi
@@ -896,7 +883,6 @@ fi
 DAEMON_PID=""
 # The fatal daemon must have removed its control socket as part of shutdown;
 # a subsequent management request must not reach a stale listener.
-echo "[vpn-relay-netns-test] management operation at script line 862" >&2
 if ip netns exec "$NS" "$BIN" --config "$TMP/config.toml" --reload >"$TMP/reload-after-fatal.log" 2>&1; then
     fail "control socket accepted a reload after fatal daemon shutdown"
 fi
@@ -983,7 +969,6 @@ done
 [[ $ready -eq 1 ]] || fail "daemon did not become ready for shutdown-cleanup failure test"
 touch "$TMP/fail-shutdown-rule-delete"
 kill -TERM "$DAEMON_PID"
-echo "[vpn-relay-netns-test] waiting for daemon (script line 948)" >&2
 wait "$DAEMON_PID" || fail "daemon failed while handling graceful shutdown cleanup failure"
 DAEMON_PID=""
 ip netns exec "$NS" nft list table inet vpn_relay_it >/dev/null 2>&1 || fail "nftables fail-closed policy was removed despite policy-rule cleanup failure"
@@ -1020,7 +1005,6 @@ done
 [[ $ready -eq 1 ]] || fail "daemon did not become ready for shutdown-forwarding failure test"
 touch "$TMP/fail-shutdown-forwarding-restore"
 kill -TERM "$DAEMON_PID"
-echo "[vpn-relay-netns-test] waiting for daemon (script line 984)" >&2
 wait "$DAEMON_PID" || fail "daemon failed while handling graceful shutdown forwarding restore failure"
 DAEMON_PID=""
 ip netns exec "$NS" nft list table inet vpn_relay_it >/dev/null 2>&1 || fail "nftables fail-closed policy was removed despite IPv4 forwarding restore failure"
@@ -1062,7 +1046,6 @@ done
 [[ $ready -eq 1 ]] || fail "daemon did not become ready for IPv6 shutdown-forwarding failure test"
 touch "$TMP/fail-shutdown-ipv6-forwarding-restore"
 kill -TERM "$DAEMON_PID"
-echo "[vpn-relay-netns-test] waiting for daemon (script line 1025)" >&2
 wait "$DAEMON_PID" || fail "daemon failed while handling graceful IPv6 forwarding restore failure"
 DAEMON_PID=""
 ip netns exec "$NS" nft list table inet vpn_relay_it >/dev/null 2>&1 || fail "nftables fail-closed policy was removed despite IPv6 forwarding restore failure"
@@ -1097,7 +1080,6 @@ for _ in $(seq 1 30); do
 done
 [[ $ready -eq 1 ]] || fail "daemon did not become ready with pre-existing forwarding enabled"
 kill -TERM "$DAEMON_PID"
-echo "[vpn-relay-netns-test] waiting for daemon (script line 1059)" >&2
 wait "$DAEMON_PID" || fail "daemon failed while restoring pre-existing forwarding state"
 DAEMON_PID=""
 [[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "1" ]] || fail "daemon disabled pre-existing IPv4 forwarding during shutdown"
@@ -1137,7 +1119,6 @@ for _ in $(seq 1 30); do
 done
 [[ $ready -eq 1 ]] || fail "daemon did not become ready with forwarding management disabled"
 kill -TERM "$DAEMON_PID"
-echo "[vpn-relay-netns-test] waiting for daemon (script line 1098)" >&2
 wait "$DAEMON_PID" || fail "daemon failed while forwarding management was disabled"
 DAEMON_PID=""
 [[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "1" ]] || fail "daemon changed IPv4 forwarding while management was disabled"
@@ -1187,7 +1168,6 @@ if [[ -n "$state" && "$state" != Z* ]]; then
     fail "daemon did not stop after losing its original TUN descriptor"
 fi
 set +e
-echo "[vpn-relay-netns-test] waiting for daemon (script line 1147)" >&2
 wait "$DAEMON_PID"
 status=$?
 set -e
