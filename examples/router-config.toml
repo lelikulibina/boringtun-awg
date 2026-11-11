@@ -48,7 +48,7 @@ s3 = 0
 s4 = 0
 # h1-h4, i1-i5, HeaderProtectionKey, CPA и диапазоны таймеров задаются в AWG-профиле.
 # Для Header Protection значения S1-S4 должны быть не меньше 12 байт.
-# content_padding_mode = "udp_window" # AWG 3.1; значение "mtu" выбирает AWG 3.0
+# content_padding_mode = "udp_window" # AWG 3.1; "mtu" — для AWG 3.0
 
 [interfaces.awg-secondary]
 protocol = "awg2"
