@@ -934,7 +934,10 @@ def udp_server(port,fam):
                 delay=start+(i+1)*INTERVAL-time.monotonic()
                 if delay>0: time.sleep(delay)
 def udp_client(target,port,fam,direction):
-    s=sock(fam,socket.SOCK_DGRAM); s.bind(addr(fam,port)); s.settimeout(8); peer=(target,port)
+    # Use an ephemeral source port. Reusing the service port as the client
+    # source port creates a symmetric UDP tuple and makes NAT/reply-path
+    # diagnostics ambiguous; real clients use an independent local port.
+    s=sock(fam,socket.SOCK_DGRAM); s.bind(addr(fam,0)); s.settimeout(8); peer=(target,port)
     mode=b"S" if direction=="forward" else b"R"; s.sendto(b"VRTP"+mode+struct.pack("!I",COUNT),peer)
     if mode==b"S":
         payload=b"x"*(SIZE-4); start=time.monotonic()
