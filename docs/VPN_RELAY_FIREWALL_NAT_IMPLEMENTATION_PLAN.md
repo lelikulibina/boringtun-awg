@@ -118,7 +118,7 @@
   уничтожает managed TUN links, и только после этого удаляет nftables policy;
   исходное forwarding состояние восстанавливается в самом конце.
 - [x] Повторный запуск и аварийное завершение не оставляют опасного состояния: после SIGKILL startup восстанавливает исходные namespace-wide forwarding sysctl из приватного durable journal, затем безопасно переустанавливает daemon-owned firewall, policy routes и TUN. Полный SIGKILL/restart lifecycle и graceful restore прошли CI 42849072652.
-- [!] `manage_ip_forwarding=true` меняет namespace-wide IPv4/IPv6 forwarding и затрагивает host/router settings интерфейсов; не включать на общем host namespace без отдельного решения. Для общего хоста использовать `false` и внешнее управление. Требуется отдельное проектирование per-interface forwarding (включая совместимость IPv6 kernels с `force_forwarding`) и packet-level проверка.
+- [x] Реализованы два явно различающихся режима forwarding: `manage_ip_forwarding=false` не меняет sysctl; `true` с пустым `forwarding_interfaces` сохраняет legacy namespace-wide режим; `true` с непустым allowlist включает per-interface forwarding. Для общего host namespace legacy режим не рекомендуется. Per-interface режим проверен IPv4/IPv6 packet-level; ограничения kernel compatibility и остаточный ifindex TOCTOU перечислены в разделе 12.
 
 Критерий приёмки: тесты проверяют передачу реальных пакетов в network namespaces,
 а не только строки сгенерированного nftables script.
@@ -954,3 +954,5 @@ net.ipv4.ip_forward=1 и net.ipv6.conf.all.forwarding=0 должны быть в
 
 
 | 2026-11-11 | Подтверждены per-interface stale-FD race и новые recovery tests | CI run `43007873964`, HEAD `51add82544928cf903f75fa26aee351c4b465447`: integration job успешно выполнил `scripts/vpn-relay-per-interface-forwarding-packet-test.sh`, включая удаление интерфейса и создание replacement под тем же именем с проверкой stale procfs FD. Unit tests подтвердили `per_interface_restore_attempts_every_family_after_failures`, `per_interface_restore_continues_after_identity_mismatch` и `rtnetlink_ipv4_forwarding_rejects_response_for_different_ifindex`. Остаточный IPv4 ifindex reuse TOCTOU, kernel matrix, Podman deployment и полная failure-injection matrix остаются открытыми. | Подтверждено CI; частично завершено |
+
+| 2026-11-11 | Расширена packet-level матрица runtime routing/NAT reload для IPv6 | Multi-uplink сценарий теперь меняет при reload IPv4 decision с secondary на primary masquerade и одновременно IPv6 decision с primary на secondary masquerade. Для IPv6 destination размещён на обоих uplink; tcpdump проверяет фактический egress и post-NAT source, а отсутствие пакета на старом uplink исключает сохранение прежней классификации. Запуск нового сценария ожидает CI. | Реализовано; ожидает CI |
