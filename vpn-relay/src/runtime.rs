@@ -1296,6 +1296,9 @@ fn enable_forwarding_state_with(
             return Err(enable_error);
         }
     }
+    if !enable_ipv6 {
+        state.ipv6_changed = false;
+    }
     if enable_ipv6 && state.ipv6 != "1" {
         state.ipv6_changed = true;
         if let Err(enable_error) = write("net.ipv6.conf.all.forwarding", "1") {
@@ -2650,7 +2653,7 @@ mod tests {
             ipv4: "0".to_owned(),
             ipv6: "0".to_owned(),
             ipv4_changed: false,
-            ipv6_changed: false,
+            ipv6_changed: true,
             interfaces: Vec::new(),
         };
         let mut writes = Vec::new();
