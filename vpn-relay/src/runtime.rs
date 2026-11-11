@@ -2025,7 +2025,7 @@ fn recover_forwarding_state(
     // An IPv4-only daemon must not inspect or restore IPv6 sysctls, including
     // entries written by an older dual-stack version. Restore only the IPv4
     // portion of a legacy journal and keep the datapath fail-closed for IPv6.
-    let recovery_state = forwarding_state_for_recovery(state, ipv6_enabled);
+    let recovery_state = forwarding_state_for_recovery(&state, ipv6_enabled);
     restore_forwarding_state_with_mode(
         &recovery_state,
         |key| read_forwarding_state_value(&recovery_state, key),
