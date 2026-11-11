@@ -875,6 +875,11 @@ const RTM_GETLINK: u16 = 18;
 const NLM_F_REQUEST: u16 = 0x01;
 const NLM_F_ACK: u16 = 0x04;
 const NLMSG_ERROR: u16 = 2;
+const NLM_F_CAPPED: u16 = 0x100;
+const NLM_F_ACK_TLVS: u16 = 0x200;
+const NLMSGERR_ATTR_MSG: u16 = 1;
+const SOL_NETLINK: libc::c_int = 270;
+const NETLINK_EXT_ACK: libc::c_int = 11;
 const IFLA_AF_SPEC: u16 = 26;
 const IFLA_INET_CONF: u16 = 1;
 const IPV4_DEVCONF_FORWARDING: u16 = 1;
@@ -935,6 +940,59 @@ fn build_link_message(
     Ok(message)
 }
 
+fn netlink_extended_ack(response: &[u8], offset: usize, length: usize) -> Option<String> {
+    if length < 20 {
+        return None;
+    }
+    let flags = u16::from_ne_bytes(response[offset + 6..offset + 8].try_into().ok()?);
+    if flags & NLM_F_ACK_TLVS == 0 {
+        return None;
+    }
+    let original_length =
+        u32::from_ne_bytes(response[offset + 20..offset + 24].try_into().ok()?) as usize;
+    if original_length < 16 {
+        return None;
+    }
+    let original_payload_length = if flags & NLM_F_CAPPED != 0 {
+        16
+    } else {
+        original_length
+    };
+    let attributes_offset = offset.checked_add(16 + align_netlink(4 + original_payload_length))?;
+    let end = offset.checked_add(length)?;
+    if attributes_offset > end {
+        return None;
+    }
+    let mut attributes = &response[attributes_offset..end];
+    while !attributes.is_empty() {
+        if attributes.len() < 4 {
+            return None;
+        }
+        let attribute_length =
+            u16::from_ne_bytes(attributes[0..2].try_into().ok()?) as usize;
+        let kind = u16::from_ne_bytes(attributes[2..4].try_into().ok()?) & !NLA_F_NESTED;
+        if attribute_length < 4 || attribute_length > attributes.len() {
+            return None;
+        }
+        if kind == NLMSGERR_ATTR_MSG {
+            let message = attributes[4..attribute_length]
+                .split(|byte| *byte == 0)
+                .next()?;
+            let message = String::from_utf8_lossy(message).trim().to_owned();
+            if !message.is_empty() {
+                return Some(message);
+            }
+            return None;
+        }
+        let aligned = align_netlink(attribute_length);
+        if aligned > attributes.len() {
+            return None;
+        }
+        attributes = &attributes[aligned..];
+    }
+    None
+}
+
 fn netlink_request(
     ifindex: u32,
     message_type: u16,
@@ -959,6 +1017,18 @@ fn netlink_request(
         });
     }
     let socket = unsafe { std::os::fd::OwnedFd::from_raw_fd(fd) };
+    // Extended ACKs provide kernel-side context (for example, the rejected
+    // attribute) when supported. Keep the request functional on older kernels.
+    let enabled: libc::c_int = 1;
+    unsafe {
+        libc::setsockopt(
+            socket.as_raw_fd(),
+            SOL_NETLINK,
+            NETLINK_EXT_ACK,
+            &enabled as *const libc::c_int as *const libc::c_void,
+            std::mem::size_of_val(&enabled) as libc::socklen_t,
+        );
+    }
     let local = NetlinkAddress {
         family: libc::AF_NETLINK as u16,
         pad: 0,
@@ -1065,10 +1135,14 @@ fn netlink_request(
                     if code == 0 {
                         return Ok(response[..received].to_vec());
                     }
+                    let errno = std::io::Error::from_raw_os_error(-code).to_string();
+                    let extended = netlink_extended_ack(&response, offset, length);
                     return Err(LinuxError::Command {
                         program: "rtnetlink request".into(),
                         status: "kernel rejected request".into(),
-                        stderr: std::io::Error::from_raw_os_error(-code).to_string(),
+                        stderr: extended.map_or(errno.clone(), |message| {
+                            format!("{errno}: {message}")
+                        }),
                     });
                 }
                 if message_type == RTM_GETLINK && kind == RTM_NEWLINK {
@@ -2073,6 +2147,43 @@ mod tests {
         let mut attributes = Vec::new();
         append_netlink_attribute(&mut attributes, IFLA_AF_SPEC | NLA_F_NESTED, &af_spec);
         build_link_message(RTM_NEWLINK, 0, 9, 1, &attributes).unwrap()
+    }
+
+    #[test]
+    fn rtnetlink_extended_ack_extracts_kernel_message() {
+        let mut response = vec![0u8; 16];
+        response[0..4].copy_from_slice(&40u32.to_ne_bytes());
+        response[4..6].copy_from_slice(&NLMSG_ERROR.to_ne_bytes());
+        response[6..8].copy_from_slice(&NLM_F_CAPPED.to_ne_bytes());
+        response.extend_from_slice(&(-libc::EINVAL).to_ne_bytes());
+        let mut original = [0u8; 16];
+        original[0..4].copy_from_slice(&16u32.to_ne_bytes());
+        response.extend_from_slice(&original);
+        let message = b"invalid forwarding attribute\\0";
+        let attribute_length = 4 + message.len();
+        response.extend_from_slice(&(attribute_length as u16).to_ne_bytes());
+        response.extend_from_slice(&NLMSGERR_ATTR_MSG.to_ne_bytes());
+        response.extend_from_slice(message);
+        response.resize(align_netlink(response.len()), 0);
+        let length = response.len();
+        response[0..4].copy_from_slice(&(length as u32).to_ne_bytes());
+        response[6..8].copy_from_slice(&(NLM_F_CAPPED | NLM_F_ACK_TLVS).to_ne_bytes());
+        assert_eq!(
+            netlink_extended_ack(&response, 0, length).as_deref(),
+            Some("invalid forwarding attribute")
+        );
+    }
+
+    #[test]
+    fn rtnetlink_extended_ack_ignores_malformed_attributes() {
+        let mut response = vec![0u8; 36];
+        response[0..4].copy_from_slice(&36u32.to_ne_bytes());
+        response[4..6].copy_from_slice(&NLMSG_ERROR.to_ne_bytes());
+        response[6..8].copy_from_slice(&(NLM_F_CAPPED | NLM_F_ACK_TLVS).to_ne_bytes());
+        response[16..20].copy_from_slice(&(-libc::EINVAL).to_ne_bytes());
+        response[20..24].copy_from_slice(&16u32.to_ne_bytes());
+        response[32..34].copy_from_slice(&3u16.to_ne_bytes());
+        assert_eq!(netlink_extended_ack(&response, 0, 36), None);
     }
 
     #[test]
