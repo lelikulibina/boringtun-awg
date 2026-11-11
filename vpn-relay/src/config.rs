@@ -147,10 +147,18 @@ impl PersistentKeepaliveConfig {
         match self {
             Self::Seconds(seconds) => Ok((u32::from(*seconds), u32::from(*seconds))),
             Self::Range(value) => {
-                let (min, max) = value.split_once('-').ok_or_else(|| format!("invalid PersistentKeepalive range '{value}'"))?;
-                if max.contains('-') { return Err(format!("invalid PersistentKeepalive range '{value}'")); }
-                let min = min.parse::<u32>().map_err(|_| format!("invalid PersistentKeepalive range '{value}'"))?;
-                let max = max.parse::<u32>().map_err(|_| format!("invalid PersistentKeepalive range '{value}'"))?;
+                let (min, max) = value.split_once('-').ok_or_else(|| {
+                    format!("invalid PersistentKeepalive range '{value}'")
+                })?;
+                if max.contains('-') {
+                    return Err(format!("invalid PersistentKeepalive range '{value}'"));
+                }
+                let min = min.parse::<u32>().map_err(|_| {
+                    format!("invalid PersistentKeepalive range '{value}'")
+                })?;
+                let max = max.parse::<u32>().map_err(|_| {
+                    format!("invalid PersistentKeepalive range '{value}'")
+                })?;
                 if min == 0 || max == 0 || min > max {
                     return Err(format!("invalid PersistentKeepalive range '{value}': expected 1 <= min <= max"));
                 }
@@ -568,7 +576,11 @@ impl Config {
                     ));
                 }
                 if let Some(value) = &peer.persistent_keepalive_secs {
-                    value.to_range().map_err(|error| ConfigError::Validation(format!("{peer_path}.persistent_keepalive_secs: {error}")))?;
+                    value.to_range().map_err(|error| {
+                        ConfigError::Validation(format!(
+                            "{peer_path}.persistent_keepalive_secs: {error}"
+                        ))
+                    })?;
                 }
                 if let Some((min, max)) = peer.persistent_keepalive_range {
                     if min == 0 || max == 0 || min > max {
