@@ -1297,6 +1297,16 @@ egress = "awg-uplink"
             .to_string()
             .contains("daemon.log_level"));
 
+        let ipv4_current = Config::parse_toml(&ipv4_config()).unwrap();
+        let mut changed_ipv6_mode = ipv4_current.clone();
+        changed_ipv6_mode.daemon.ipv6_enabled = false;
+        changed_ipv6_mode.validate().unwrap();
+        assert!(ipv4_current
+            .validate_reload_compatibility(&changed_ipv6_mode)
+            .unwrap_err()
+            .to_string()
+            .contains("daemon.ipv6_enabled"));
+
         let mut changed_stats_interval = current.clone();
         changed_stats_interval.daemon.stats_interval_secs += 1;
         changed_stats_interval.validate().unwrap();
