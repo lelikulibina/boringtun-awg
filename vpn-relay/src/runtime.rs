@@ -1676,7 +1676,7 @@ fn verify_managed_forwarding_runtime(
         &allowed,
         &interface_sysctl_names("/proc/sys/net/ipv4/conf")?,
         &interface_sysctl_names("/proc/sys/net/ipv6/conf")?,
-        read_sysctl,
+        read_unmanaged_forwarding_sysctl,
     )?;
     for entry in &state.interfaces {
         verify_forwarding_interface(&entry.name, entry.ifindex)?;
@@ -1703,7 +1703,7 @@ fn validate_unmanaged_forwarding_with(
     allowed: &std::collections::BTreeSet<String>,
     ipv4_interfaces: &[String],
     ipv6_interfaces: &[String],
-    mut read: impl FnMut(&str) -> Result<String, RuntimeError>,
+    mut read: impl FnMut(&str) -> Result<Option<String>, RuntimeError>,
 ) -> Result<(), RuntimeError> {
     for (family, interfaces, suffix) in [
         ("IPv4", ipv4_interfaces, "net.ipv4.conf"),
@@ -1718,7 +1718,18 @@ fn validate_unmanaged_forwarding_with(
             } else {
                 format!("{suffix}.{name}.force_forwarding")
             };
-            if read(&key)? != "0" {
+            let Some(value) = read(&key)? else {
+                if family == "IPv6" {
+                    // Kernels or container environments that do not expose
+                    // force_forwarding cannot enable IPv6 forwarding on this
+                    // unmanaged link while conf/all/forwarding is disabled.
+                    continue;
+                }
+                return Err(RuntimeError::Forwarding(format!(
+                    "IPv4 forwarding sysctl is unavailable for unmanaged interface '{name}'"
+                )));
+            };
+            if value.trim() != "0" {
                 return Err(RuntimeError::Forwarding(format!(
                     "unmanaged interface '{name}' has {family} forwarding enabled; disable it or add the interface to daemon.forwarding_interfaces"
                 )));
@@ -1726,6 +1737,23 @@ fn validate_unmanaged_forwarding_with(
         }
     }
     Ok(())
+}
+
+fn read_unmanaged_forwarding_sysctl(
+    key: &str,
+) -> Result<Option<String>, RuntimeError> {
+    if let Some(name) = key
+        .strip_prefix("net.ipv6.conf.")
+        .and_then(|key| key.strip_suffix(".force_forwarding"))
+    {
+        let path = format!("/proc/sys/net/ipv6/conf/{name}/force_forwarding");
+        return match fs::read_to_string(path) {
+            Ok(value) => Ok(Some(value.trim().to_owned())),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(RuntimeError::Forwarding(error.to_string())),
+        };
+    }
+    read_sysctl(key).map(Some)
 }
 
 fn interface_sysctl_names(directory: &str) -> Result<Vec<String>, RuntimeError> {
@@ -1771,7 +1799,7 @@ fn enable_interface_forwarding_durable(
         &allowed,
         &interface_sysctl_names("/proc/sys/net/ipv4/conf")?,
         &interface_sysctl_names("/proc/sys/net/ipv6/conf")?,
-        read_sysctl,
+        read_unmanaged_forwarding_sysctl,
     )?;
 
     let mut entries = Vec::with_capacity(names.len());
@@ -2037,21 +2065,33 @@ mod tests {
         let ipv6 = vec!["eth0".to_owned(), "wg0".to_owned()];
         validate_unmanaged_forwarding_with(&allowed, &ipv4, &ipv6, |key| {
             if key == "net.ipv4.conf.eth0.forwarding" {
-                Ok("0".to_owned())
+                Ok(Some("0".to_owned()))
             } else if key == "net.ipv6.conf.eth0.force_forwarding" {
-                Ok("1".to_owned())
+                Ok(Some("1".to_owned()))
             } else {
-                Ok("0".to_owned())
+                Ok(Some("0".to_owned()))
             }
         })
         .unwrap_err();
     }
 
     #[test]
+    fn unmanaged_ipv6_without_force_forwarding_sysctl_is_not_forwarding() {
+        let allowed = std::collections::BTreeSet::new();
+        validate_unmanaged_forwarding_with(
+            &allowed,
+            &[],
+            &["eth0".to_owned()],
+            |_| Ok(None),
+        )
+        .unwrap();
+    }
+
+    #[test]
     fn unmanaged_forwarding_treats_any_nonzero_value_as_enabled() {
         let allowed = std::collections::BTreeSet::new();
         validate_unmanaged_forwarding_with(&allowed, &["eth0".to_owned()], &[], |_| {
-            Ok("2".to_owned())
+            Ok(Some("2".to_owned()))
         })
         .unwrap_err();
     }
@@ -2063,7 +2103,7 @@ mod tests {
             &allowed,
             &["wg0".to_owned()],
             &["wg0".to_owned()],
-            |_| Ok("1".to_owned()),
+            |_| Ok(Some("1".to_owned())),
         )
         .unwrap();
     }
