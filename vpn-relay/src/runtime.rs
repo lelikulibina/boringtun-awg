@@ -361,6 +361,14 @@ struct InterfaceForwardingState {
     ipv6: String,
     ipv4_changed: bool,
     ipv6_changed: bool,
+    /// Whether IPv6 forwarding is required on this tunnel. Old journals
+    /// default to true so interrupted older versions can still be recovered.
+    #[serde(default = "default_ipv6_forwarding_enabled")]
+    ipv6_enabled: bool,
+}
+
+fn default_ipv6_forwarding_enabled() -> bool {
+    true
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -664,6 +672,13 @@ impl Runtime {
                 namespace_inode,
                 &config.daemon.forwarding_interfaces,
                 &config.interfaces.keys().cloned().collect(),
+                &config
+                    .interfaces
+                    .iter()
+                    .filter_map(|(name, interface)| {
+                        interface.ipv6_enabled.then_some(name.clone())
+                    })
+                    .collect(),
             ) {
                 Ok(state) => Some(state),
                 Err(error) => {
@@ -1580,7 +1595,7 @@ fn restore_interface_forwarding_entry_with(
     mut write: impl FnMut(&str, &str) -> Result<(), RuntimeError>,
     mut verify: impl FnMut(&str, u32) -> Result<(), RuntimeError>,
 ) -> Result<(), RuntimeError> {
-    if !changed {
+    if !changed || (family == "ipv6" && !entry.ipv6_enabled) {
         return Ok(());
     }
     let key = interface_forwarding_sysctl_key(&entry.name, family)?;
@@ -1632,7 +1647,11 @@ fn restore_interface_forwarding_entries_with(
         }
         for (family, original, changed) in [
             ("ipv4", entry.ipv4.as_str(), entry.ipv4_changed),
-            ("ipv6", entry.ipv6.as_str(), entry.ipv6_changed),
+            (
+                "ipv6",
+                entry.ipv6.as_str(),
+                entry.ipv6_enabled && entry.ipv6_changed,
+            ),
         ] {
             if let Err(error) = restore_interface_forwarding_entry_with(
                 entry,
@@ -1662,7 +1681,8 @@ fn verify_managed_forwarding_runtime(
     state: &ForwardingState,
 ) -> Result<(), RuntimeError> {
     if read_sysctl("net.ipv4.ip_forward")? != "1"
-        || read_sysctl("net.ipv6.conf.all.forwarding")? != "0"
+        || (state.interfaces.iter().any(|entry| entry.ipv6_enabled)
+            && read_sysctl("net.ipv6.conf.all.forwarding")? != "0")
     {
         return Err(RuntimeError::Forwarding(
             "namespace-wide forwarding prerequisites changed".to_owned(),
@@ -1672,10 +1692,15 @@ fn verify_managed_forwarding_runtime(
         .iter()
         .cloned()
         .collect::<std::collections::BTreeSet<_>>();
+    let ipv6_interfaces = if state.interfaces.iter().any(|entry| entry.ipv6_enabled) {
+        interface_sysctl_names("/proc/sys/net/ipv6/conf")?
+    } else {
+        Vec::new()
+    };
     validate_unmanaged_forwarding_with(
         &allowed,
         &interface_sysctl_names("/proc/sys/net/ipv4/conf")?,
-        &interface_sysctl_names("/proc/sys/net/ipv6/conf")?,
+        &ipv6_interfaces,
         read_unmanaged_forwarding_sysctl,
     )?;
     for entry in &state.interfaces {
@@ -1688,12 +1713,14 @@ fn verify_managed_forwarding_runtime(
                 entry.name
             )));
         }
-        let ipv6_key = interface_forwarding_sysctl_key(&entry.name, "ipv6")?;
-        if read_sysctl(&ipv6_key)? != "1" {
-            return Err(RuntimeError::Forwarding(format!(
-                "managed interface '{}' lost its IPv6 forwarding enable value",
-                entry.name
-            )));
+        if entry.ipv6_enabled {
+            let ipv6_key = interface_forwarding_sysctl_key(&entry.name, "ipv6")?;
+            if read_sysctl(&ipv6_key)? != "1" {
+                return Err(RuntimeError::Forwarding(format!(
+                    "managed interface '{}' lost its IPv6 forwarding enable value",
+                    entry.name
+                )));
+            }
         }
     }
     Ok(())
@@ -1776,13 +1803,15 @@ fn enable_interface_forwarding_durable(
     namespace_inode: u64,
     names: &[String],
     daemon_owned_names: &std::collections::BTreeSet<String>,
+    ipv6_enabled_names: &std::collections::BTreeSet<String>,
 ) -> Result<ForwardingState, RuntimeError> {
     // IPv4 requires the namespace-wide switch, but toggling it resets
     // interface host/router defaults; require the runtime/operator to enable
     // it before vpn-relay starts. IPv6 uses force_forwarding per link and must
     // keep conf/all/forwarding disabled, otherwise every link can forward.
     if read_sysctl("net.ipv4.ip_forward")? != "1"
-        || read_sysctl("net.ipv6.conf.all.forwarding")? != "0"
+        || (!ipv6_enabled_names.is_empty()
+            && read_sysctl("net.ipv6.conf.all.forwarding")? != "0")
     {
         return Err(RuntimeError::Forwarding(
             "per-interface forwarding requires net.ipv4.ip_forward=1 and net.ipv6.conf.all.forwarding=0; configure these namespace-wide prerequisites externally".to_owned(),
@@ -1793,10 +1822,15 @@ fn enable_interface_forwarding_durable(
         .iter()
         .cloned()
         .collect::<std::collections::BTreeSet<_>>();
+    let ipv6_interfaces = if ipv6_enabled_names.is_empty() {
+        Vec::new()
+    } else {
+        interface_sysctl_names("/proc/sys/net/ipv6/conf")?
+    };
     validate_unmanaged_forwarding_with(
         &allowed,
         &interface_sysctl_names("/proc/sys/net/ipv4/conf")?,
-        &interface_sysctl_names("/proc/sys/net/ipv6/conf")?,
+        &ipv6_interfaces,
         read_unmanaged_forwarding_sysctl,
     )?;
 
@@ -1806,7 +1840,7 @@ fn enable_interface_forwarding_durable(
             .map_err(|error| RuntimeError::Forwarding(error.to_string()))?;
         linux::verify_interface_identity(name, ifindex)
             .map_err(|error| RuntimeError::Forwarding(error.to_string()))?;
-        let ipv6_key = interface_forwarding_sysctl_key(name, "ipv6")?;
+        let ipv6_enabled = ipv6_enabled_names.contains(name);
         linux::verify_interface_identity(name, ifindex)
             .map_err(|error| RuntimeError::Forwarding(error.to_string()))?;
         let ipv4 = linux::ipv4_interface_forwarding(ifindex)
@@ -1814,7 +1848,11 @@ fn enable_interface_forwarding_durable(
         linux::verify_interface_identity(name, ifindex)
             .map_err(|error| RuntimeError::Forwarding(error.to_string()))?;
         let ipv4 = if ipv4 { "1" } else { "0" }.to_owned();
-        let ipv6 = read_sysctl(&ipv6_key)?;
+        let ipv6 = if ipv6_enabled {
+            read_sysctl(&interface_forwarding_sysctl_key(name, "ipv6")?)?
+        } else {
+            "0".to_owned()
+        };
         entries.push(InterfaceForwardingState {
             name: name.clone(),
             ifindex,
@@ -1823,6 +1861,7 @@ fn enable_interface_forwarding_durable(
             ipv6,
             ipv4_changed: false,
             ipv6_changed: false,
+            ipv6_enabled,
         });
     }
     let mut state = ForwardingState {
@@ -1834,7 +1873,7 @@ fn enable_interface_forwarding_durable(
     };
     for entry in &mut state.interfaces {
         entry.ipv4_changed = entry.ipv4 != "1";
-        entry.ipv6_changed = entry.ipv6 != "1";
+        entry.ipv6_changed = entry.ipv6_enabled && entry.ipv6 != "1";
     }
     validate_forwarding_state(&state)?;
     if state
@@ -1868,7 +1907,10 @@ fn enable_interface_forwarding_entries_with(
 ) -> Result<(), RuntimeError> {
     let mut failures = Vec::new();
     for entry in &state.interfaces {
-        for (family, changed) in [("ipv4", entry.ipv4_changed), ("ipv6", entry.ipv6_changed)] {
+        for (family, changed) in [
+            ("ipv4", entry.ipv4_changed),
+            ("ipv6", entry.ipv6_enabled && entry.ipv6_changed),
+        ] {
             if !changed {
                 continue;
             }
@@ -1985,6 +2027,7 @@ fn enable_forwarding_durable(
     namespace_inode: u64,
     forwarding_interfaces: &[String],
     daemon_owned_names: &std::collections::BTreeSet<String>,
+    ipv6_enabled_names: &std::collections::BTreeSet<String>,
 ) -> Result<ForwardingState, RuntimeError> {
     if !forwarding_interfaces.is_empty() {
         return enable_interface_forwarding_durable(
@@ -1992,18 +2035,24 @@ fn enable_forwarding_durable(
             namespace_inode,
             forwarding_interfaces,
             daemon_owned_names,
+            ipv6_enabled_names,
         );
     }
+    let ipv6_enabled = !ipv6_enabled_names.is_empty();
     let state = ForwardingState {
         ipv4: read_sysctl("net.ipv4.ip_forward")?,
-        ipv6: read_sysctl("net.ipv6.conf.all.forwarding")?,
+        ipv6: if ipv6_enabled {
+            read_sysctl("net.ipv6.conf.all.forwarding")?
+        } else {
+            "0".to_owned()
+        },
         ipv4_changed: false,
         ipv6_changed: false,
         interfaces: Vec::new(),
     };
     let mut state = state;
     state.ipv4_changed = state.ipv4 != "1";
-    state.ipv6_changed = state.ipv6 != "1";
+    state.ipv6_changed = ipv6_enabled && state.ipv6 != "1";
     validate_forwarding_state(&state)?;
     if state.ipv4_changed || state.ipv6_changed {
         persist_forwarding_state(path, namespace_inode, &state)?;
@@ -2126,6 +2175,7 @@ mod tests {
                 name: "eth0".to_owned(),
                 ifindex: 7,
                 daemon_owned: false,
+                ipv6_enabled: true,
                 ipv4: "0".to_owned(),
                 ipv6: "0".to_owned(),
                 ipv4_changed: true,
@@ -2179,6 +2229,7 @@ mod tests {
                 name: "eth0".to_owned(),
                 ifindex: 7,
                 daemon_owned: false,
+                ipv6_enabled: true,
                 ipv4: "0".to_owned(),
                 ipv6: "0".to_owned(),
                 ipv4_changed: true,
@@ -2232,6 +2283,7 @@ mod tests {
                 name: "eth0".to_owned(),
                 ifindex: 7,
                 daemon_owned: false,
+                ipv6_enabled: true,
                 ipv4: "0".to_owned(),
                 ipv6: "0".to_owned(),
                 ipv4_changed: true,
@@ -2263,6 +2315,7 @@ mod tests {
                 name: "wg0".to_owned(),
                 ifindex: 17,
                 daemon_owned: true,
+                ipv6_enabled: true,
                 ipv4: "0".to_owned(),
                 ipv6: "0".to_owned(),
                 ipv4_changed: true,
@@ -2294,6 +2347,7 @@ mod tests {
             name: "eth0".to_owned(),
             ifindex: 7,
             daemon_owned: false,
+            ipv6_enabled: true,
             ipv4: "0".to_owned(),
             ipv6: "0".to_owned(),
             ipv4_changed: true,
@@ -2336,6 +2390,7 @@ mod tests {
             name: "eth0".to_owned(),
             ifindex: 7,
             daemon_owned: false,
+            ipv6_enabled: true,
             ipv4: "0".to_owned(),
             ipv6: "0".to_owned(),
             ipv4_changed: true,
@@ -2364,6 +2419,7 @@ mod tests {
             name: "eth0".to_owned(),
             ifindex: 7,
             daemon_owned: false,
+            ipv6_enabled: true,
             ipv4: "0".to_owned(),
             ipv6: "0".to_owned(),
             ipv4_changed: true,
@@ -2401,6 +2457,7 @@ mod tests {
             name: "awg0".to_owned(),
             ifindex: 17,
             daemon_owned: false,
+            ipv6_enabled: true,
             ipv4: "0".to_owned(),
             ipv6: "1".to_owned(),
             ipv4_changed: true,
@@ -2425,6 +2482,7 @@ mod tests {
             name: "awg0".to_owned(),
             ifindex: 17,
             daemon_owned: false,
+            ipv6_enabled: true,
             ipv4: "0".to_owned(),
             ipv6: "0".to_owned(),
             ipv4_changed: true,
@@ -2623,6 +2681,7 @@ mod tests {
                     name: name.to_owned(),
                     ifindex: index as u32 + 10,
                     daemon_owned: false,
+                    ipv6_enabled: true,
                     ipv4: "0".to_owned(),
                     ipv6: "0".to_owned(),
                     ipv4_changed: true,
@@ -2694,6 +2753,7 @@ mod tests {
                     name: name.to_owned(),
                     ifindex: index as u32 + 20,
                     daemon_owned: false,
+                    ipv6_enabled: true,
                     ipv4: "0".to_owned(),
                     ipv6: "0".to_owned(),
                     ipv4_changed: true,
