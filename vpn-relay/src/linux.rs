@@ -299,7 +299,7 @@ fn route_has_owned_identity(line: &str, interface: &str) -> bool {
 }
 
 fn ensure_policy_slots_available(plan: &RoutingPlan) -> Result<(), LinuxError> {
-    for family in ["-4", "-6"] {
+    for &family in plan.ip_policy_families() {
         let args = vec![family.into(), "rule".into(), "show".into()];
         let rules = output("ip", &args)?;
         if !rules.status.success() {
@@ -506,7 +506,7 @@ where
     // runner injectable so every partial-apply and rollback boundary is tested.
     let install_result = (|| -> Result<(), LinuxError> {
         for egress in &plan.egresses {
-            if !egress.ipv6_enabled {
+            if !egress.ipv6_enabled && !plan.ipv6_transport_blocked {
                 let stale_rule = [
                     "-6".into(),
                     "rule".into(),
@@ -634,7 +634,7 @@ where
 {
     let mut failures = Vec::new();
     for egress in &plan.egresses {
-        for family in ["-4", "-6"] {
+        for &family in plan.ip_policy_families() {
             let rule = [
                 family.into(),
                 "rule".into(),
@@ -695,7 +695,7 @@ where
         // Interleaving delete/add per family could leave a partially refreshed
         // policy when a later stale-rule deletion fails.
         for mark in &plan.socket_marks {
-            for family in ["-4", "-6"] {
+            for &family in plan.ip_policy_families() {
                 let args = vec![
                     family.into(),
                     "rule".into(),
@@ -714,7 +714,7 @@ where
         }
         // Keep encrypted outer IPv6 transport on the main table even when inner IPv6 is disabled.
         for mark in &plan.socket_marks {
-            for family in ["-4", "-6"] {
+            for &family in plan.ip_policy_families() {
                 let args = vec![
                     family.into(),
                     "rule".into(),
@@ -757,7 +757,7 @@ where
 {
     let mut failures = Vec::new();
     for mark in &plan.socket_marks {
-        for family in ["-4", "-6"] {
+        for &family in plan.ip_policy_families() {
             let args = [
                 family.into(),
                 "rule".into(),
@@ -1589,7 +1589,7 @@ mod tests {
 
             let cleanup = &calls[calls.len() - 4..];
             assert_eq!(cleanup.len(), 4);
-            for family in ["-4", "-6"] {
+            for &family in plan.ip_policy_families() {
                 assert!(cleanup.iter().any(|args| args
                     .first()
                     .is_some_and(|value| value == family)
