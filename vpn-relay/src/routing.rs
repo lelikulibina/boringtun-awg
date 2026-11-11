@@ -550,14 +550,8 @@ impl RoutingPlan {
                 .replace("type ifname;", "type iface_index;")
                 .replace("iifname @managed_interfaces", "iif @managed_interfaces")
                 .replace("oifname @managed_interfaces", "oif @managed_interfaces")
-                .replace(
-                    "iifname @ipv6_drop_interfaces",
-                    "iif @ipv6_drop_interfaces",
-                )
-                .replace(
-                    "oifname @ipv6_drop_interfaces",
-                    "oif @ipv6_drop_interfaces",
-                )
+                .replace("iifname @ipv6_drop_interfaces", "iif @ipv6_drop_interfaces")
+                .replace("oifname @ipv6_drop_interfaces", "oif @ipv6_drop_interfaces")
                 .replace("iifname", "iif")
                 .replace("oifname", "oif");
 
@@ -804,9 +798,7 @@ egress = "awg-primary"
         assert!(!script.contains("socket_fwmarks"));
         assert!(!script.contains("socket mark @socket_fwmarks drop"));
         assert!(!script.contains("meta mark @socket_fwmarks drop"));
-        assert!(
-            script.contains("prerouting iifname @ipv6_drop_interfaces meta nfproto ipv6 drop")
-        );
+        assert!(script.contains("prerouting iifname @ipv6_drop_interfaces meta nfproto ipv6 drop"));
         assert!(!script.contains("snat ip6"));
     }
 
@@ -899,7 +891,9 @@ egress = "awg-primary"
         assert!(script.contains(
             "input iifname \"wg-server\" ip saddr 10.0.0.2/32 meta l4proto icmp ct state"
         ));
-        assert!(script.contains("output oifname \"awg-primary\" ip daddr 203.0.113.1/32 meta l4proto icmp ct state"));
+        assert!(script.contains(
+            "output oifname \"awg-primary\" ip daddr 203.0.113.1/32 meta l4proto icmp ct state"
+        ));
     }
 
     #[test]
@@ -984,7 +978,9 @@ egress = "awg-primary"
         .unwrap();
 
         let script = plan.nft_script();
-        assert!(script.contains("ipv6_drop_interfaces { type iface_index; elements = { 17, 18, 19 }"));
+        assert!(
+            script.contains("ipv6_drop_interfaces { type iface_index; elements = { 17, 18, 19 }")
+        );
         assert!(script.contains("prerouting iif @ipv6_drop_interfaces meta nfproto ipv6 drop"));
         assert!(script.contains("forward oif @ipv6_drop_interfaces meta nfproto ipv6 drop"));
         assert!(script.contains("output oif @ipv6_drop_interfaces meta nfproto ipv6 drop"));
