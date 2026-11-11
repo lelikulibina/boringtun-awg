@@ -639,8 +639,6 @@ impl Config {
                 }
                 NatMode::None | NatMode::Masquerade => {}
             }
-
-
         }
 
         for (direction, rules, is_input) in [
@@ -745,7 +743,10 @@ impl PeerEndpoint {
         }
 
         if let Ok(address) = host.parse::<Ipv4Addr>() {
-            return Ok(Self { host: EndpointHost::Ip(address), port });
+            return Ok(Self {
+                host: EndpointHost::Ip(address),
+                port,
+            });
         }
         if !valid_ascii_dns_name(host) {
             return Err(
@@ -793,29 +794,37 @@ pub fn decode_key(value: &str, field: &str) -> Result<[u8; 32], ConfigError> {
 fn canonical_prefix(value: &str, field: &str) -> Result<(Ipv4Addr, u8), ConfigError> {
     let (address, prefix) = parse_prefix(value, field)?;
     let bits = u32::from(address);
-    let mask = if prefix == 0 { 0 } else { u32::MAX << (32 - prefix) };
+    let mask = if prefix == 0 {
+        0
+    } else {
+        u32::MAX << (32 - prefix)
+    };
     Ok((Ipv4Addr::from(bits & mask), prefix))
 }
 
 fn parse_prefix(value: &str, field: &str) -> Result<(Ipv4Addr, u8), ConfigError> {
     let (address, prefix) = value.split_once('/').ok_or_else(|| {
         ConfigError::Validation(format!(
-            "{} contains invalid CIDR '{}': expected IPv4 address/prefix", field, value
+            "{} contains invalid CIDR '{}': expected IPv4 address/prefix",
+            field, value
         ))
     })?;
     let address = address.parse::<Ipv4Addr>().map_err(|error| {
         ConfigError::Validation(format!(
-            "{} contains invalid IPv4 CIDR '{}': {}", field, value, error
+            "{} contains invalid IPv4 CIDR '{}': {}",
+            field, value, error
         ))
     })?;
     let prefix = prefix.parse::<u8>().map_err(|error| {
         ConfigError::Validation(format!(
-            "{} contains invalid CIDR '{}': {}", field, value, error
+            "{} contains invalid CIDR '{}': {}",
+            field, value, error
         ))
     })?;
     if prefix > 32 {
         return Err(ConfigError::Validation(format!(
-            "{} contains invalid CIDR '{}': prefix exceeds 32", field, value
+            "{} contains invalid CIDR '{}': prefix exceeds 32",
+            field, value
         )));
     }
     Ok((address, prefix))
@@ -1328,9 +1337,7 @@ egress = "awg-uplink"
             "source = \"2001:db8::/32\"\ndestination = \"0.0.0.0/0\"",
         );
         let error = Config::parse_toml(&input).unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("IPv4 CIDR"));
+        assert!(error.to_string().contains("IPv4 CIDR"));
     }
 
     #[test]
