@@ -316,13 +316,20 @@ unmanaged output остаётся неизменным.
   rollback; ошибка rollback переводит runtime в fatal state. Immutable остаются
   interface identity/address/MTU/IPv6/listen port/private key/AWG parameters,
   socket marks, nft table, forwarding ownership и lifecycle. Unit tests проверяют
-  multi-device commit rollback и fatal rollback failure; packet-level concurrency
-  и полный end-to-end reload acceptance остаются отдельным критерием. Packet-level WG/AWG test now also adds and removes IPv4/IPv6 AllowedIPs for a live peer and verifies actual packet acceptance/rejection without restarting either daemon.
+  multi-device commit rollback и fatal rollback failure. Packet-level WG/AWG
+  integration test проверяет непрерывный аутентифицированный трафик во время
+  повторных nftables reload (100/100 ping, 0% loss), а также добавление и удаление
+  IPv4/IPv6 AllowedIPs у работающего peer с реальными probes без перезапуска
+  daemon; проверки прошли integration-tests CI 42982784239. Отдельно остаётся
+  packet-level acceptance изменения routing decisions, egress и NAT во время
+  работающего трафика через несколько uplink.
 
 Критерий приёмки: гарантии подтверждены тестами на реальном BoringTun traffic;
 неподтверждённые свойства не заявляются.
 
 | 2026-11-11 | Добавлена проверка отказа nftables delete при startup rollback | Failure injection сначала прерывает настройку адреса TUN, затем блокирует удаление принадлежащей демону nftables table. Проверяется fatal error с обеими причинами, отсутствие TUN, восстановление forwarding sysctl и сохранение fail-closed table; тест удаляет оставленную таблицу только после проверки. | Проверено, integration-tests CI 42982784239 |
+
+| 2026-11-11 | Подтверждены packet-level проверки runtime reload peer/firewall | Во время повторных атомарных nftables reload непрерывный WG traffic передал 100/100 ping без потерь; отдельные IPv4/IPv6 AllowedIPs add/remove transitions проверены реальными пакетами без перезапуска daemon. Также в том же integration run прошли startup rollback failure-injection сценарии. | Integration-tests CI 42982784239: success |
 
 ## 11. Этап 8 — runtime, rollback, ownership
 
