@@ -1802,10 +1802,7 @@ egress = "awg-uplink"
         );
         assert!(Config::parse_toml(&ipv6_endpoint).is_err());
 
-        let ipv6_allowed_ip = input.replace(
-            "10.10.0.2/32",
-            "2001:db8::2/128",
-        );
+        let ipv6_allowed_ip = input.replace("10.10.0.2/32", "2001:db8::2/128");
         assert!(Config::parse_toml(&ipv6_allowed_ip).is_err());
 
         let ipv6_route_selector = input.replace(
