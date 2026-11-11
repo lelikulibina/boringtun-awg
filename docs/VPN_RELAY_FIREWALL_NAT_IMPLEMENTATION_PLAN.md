@@ -3,7 +3,7 @@
 > Рабочая ветка: `feature/vpn-relay-firewall-nat`
 > Базовая ветка: `feature/boringtun-router-daemon`
 > Базовый commit: `ad3f35d2790e7e47c8d050fb7b3c206c69ac2aa4`
-> Последнее обновление: 2026-11-11 (test diagnostics cleanup, documentation audit, startup rollback CI verification)
+ > Последнее обновление: 2026-11-11 (IPv4 per-interface forwarding packet-level CI verification, extack parser hardening)
 >
 > Этот документ является рабочим журналом реализации. Статусы меняются только
 > после фактического изменения кода и выполнения соответствующих проверок.
@@ -912,4 +912,4 @@ IPv4/IPv6 forwarding и lifecycle/recovery suites уже существуют и
 
 net.ipv4.ip_forward=1 и net.ipv6.conf.all.forwarding=0 должны быть выставлены до запуска daemon и оставаться неизменными на протяжении его работы. Если global IPv6 forwarding включить, ядро переключит Host/Router setting всех интерфейсов и сбросит force_forwarding; runtime monitor завершит daemon и сохранит fail-closed firewall. Внешние интерфейсы, на которых forwarding уже включён, должны быть включены в allowlist; иначе startup отклоняется.
 
-| 2026-11-11 | IPv4 per-interface forwarding переведён на rtnetlink | Добавлена запись `RTM_NEWLINK` по ifindex с nested IPv4 devconf forwarding attribute, kernel ACK и `RTM_GETLINK` readback того же ifindex. Runtime startup, rollback, recovery и drift verification используют netlink для IPv4; IPv6 `force_forwarding` остаётся на sysctl. TOCTOU из-за возможного повторного использования ifindex явно сохранён как остаточный риск. | Ожидает полного CI |
+| 2026-11-11 | IPv4 per-interface forwarding переведён на rtnetlink и проверен packet-level | Добавлена запись `RTM_NEWLINK` по ifindex с nested IPv4 devconf forwarding attribute, kernel ACK и `RTM_GETLINK` readback того же ifindex. Runtime startup, rollback, recovery и drift verification используют netlink для IPv4; IPv6 `force_forwarding` остаётся на sysctl. Daemon-driven network-namespace тест подтверждает IPv4/IPv6 forwarding, запрет на неразрешённом интерфейсе, реальную двустороннюю передачу пакетов и восстановление исходных значений при graceful shutdown. CI run `42992213621`, HEAD `c34c836251f9230aab9b9822b77f442f636893fb`: все обязательные jobs и `all-systems-go` — success; Windows skipped. TOCTOU из-за возможного повторного использования ifindex явно сохранён как остаточный риск. | Проверено |
