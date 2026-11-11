@@ -282,10 +282,7 @@ fn resolve_endpoint(value: &str) -> Result<SocketAddr, BackendError> {
     let parsed = PeerEndpoint::parse(value)
         .map_err(|reason| BackendError::new(format!("invalid endpoint {value}: {reason}")))?;
     match parsed.host {
-        EndpointHost::Ip(ip) if ip.is_ipv4() => Ok(SocketAddr::new(ip, parsed.port)),
-        EndpointHost::Ip(_) => Err(BackendError::new(format!(
-            "IPv6 endpoint {value} is not supported by vpn-relay"
-        ))),
+        EndpointHost::Ip(ip) => Ok(SocketAddr::new(ip.into(), parsed.port)),
         EndpointHost::Dns(host) => {
             let addresses = (host.as_str(), parsed.port)
                 .to_socket_addrs()
