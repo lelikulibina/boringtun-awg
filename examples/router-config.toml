@@ -1,5 +1,5 @@
-# /etc/vpn-relay/config.toml
-# Демон работает от root на Linux. Файл содержит секреты: chmod 0600.
+# Путь к файлу конфигурации: /etc/vpn-relay/config.toml
+# Демон работает от root в Linux. Файл содержит секреты: установите права chmod 0600.
 
 [daemon]
 log_level = "info"
@@ -38,7 +38,7 @@ allowed_ips = ["0.0.0.0/0", "::/0"]
 persistent_keepalive_secs = 25
 
 [interfaces.awg-primary.awg]
-# Иллюстрация структуры. Значения должны соответствовать профилю AWG 3.1.
+# Пример структуры. Значения должны соответствовать профилю AWG 3.1.
 jc = 5
 jmin = 50
 jmax = 1000
@@ -46,9 +46,9 @@ s1 = 0
 s2 = 0
 s3 = 0
 s4 = 0
-# h1..h4, i1..i5, HeaderProtectionKey, CPA и timer ranges доступны в AWG config.
-# Для Header Protection все S1-S4 должны быть не меньше 12 байт.
-# content_padding_mode = "udp_window" # AWG 3.1; "mtu" selects AWG 3.0
+# h1-h4, i1-i5, HeaderProtectionKey, CPA и диапазоны таймеров задаются в AWG-профиле.
+# Для Header Protection значения S1-S4 должны быть не меньше 12 байт.
+# content_padding_mode = "udp_window" # AWG 3.1; значение "mtu" выбирает AWG 3.0
 
 [interfaces.awg-secondary]
 protocol = "awg2"
@@ -66,8 +66,8 @@ allowed_ips = ["0.0.0.0/0"]
 persistent_keepalive_secs = 25
 
 [routing]
-# Отдельная таблица маршрутизации создаётся для каждого egress.
-# Правила применяются только к forwarded пакетам, пришедшим с ingress TUN.
+# Для каждого исходящего интерфейса создаётся отдельная таблица маршрутизации.
+# Правила применяются только к пересылаемым пакетам, пришедшим с входящего TUN.
 
 [[routing.rules]]
 priority = 10
