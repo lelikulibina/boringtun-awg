@@ -31,7 +31,7 @@ trap cleanup EXIT
 
 fail() {
     echo "vpn-relay namespace test: $*" >&2
-    for log in "$TMP/bootstrap-nft-failure.log" "$TMP/indexed-nft-failure.log" "$TMP/startup-route-rollback-failure.log" "$TMP/startup-nft-cleanup-ip-commands.log" "$TMP/startup-nft-cleanup-failure.log" "$TMP/daemon.log" "$TMP/conflict.log" "$TMP/policy-conflict.log" "$TMP/route-conflict.log" "$TMP/policy-shadow-conflict.log" "$TMP/partial-setup-conflict.log" "$TMP/partial-interface-config.log" "$TMP/partial-policy-route.log" "$TMP/partial-forwarding.log" "$TMP/partial-ipv4-forwarding.log" "$TMP/partial-ipv4-forwarding-restore-failure.log" "$TMP/reload-failure.log" "$TMP/reload-route-failure.log" "$TMP/reload-immutable.log" "$TMP/shutdown-cleanup-failure.log" "$TMP/shutdown-forwarding-restore-failure.log" "$TMP/shutdown-ipv6-forwarding-restore-failure.log" "$TMP/preexisting-forwarding.log" "$TMP/fail-route-commands.log" "$TMP/forwarding-management-disabled.log" "$TMP/tun-identity-loss.log"; do
+    for log in "$TMP/bootstrap-nft-failure.log" "$TMP/indexed-nft-failure.log" "$TMP/startup-route-rollback-failure.log" "$TMP/startup-nft-cleanup-ip-commands.log" "$TMP/startup-route-rollback-ip.log" "$TMP/startup-route-rollback-route-after.txt" "$TMP/startup-route-rollback-routes-all.txt" "$TMP/startup-nft-cleanup-failure.log" "$TMP/daemon.log" "$TMP/conflict.log" "$TMP/policy-conflict.log" "$TMP/route-conflict.log" "$TMP/policy-shadow-conflict.log" "$TMP/partial-setup-conflict.log" "$TMP/partial-interface-config.log" "$TMP/partial-policy-route.log" "$TMP/partial-forwarding.log" "$TMP/partial-ipv4-forwarding.log" "$TMP/partial-ipv4-forwarding-restore-failure.log" "$TMP/reload-failure.log" "$TMP/reload-route-failure.log" "$TMP/reload-immutable.log" "$TMP/shutdown-cleanup-failure.log" "$TMP/shutdown-forwarding-restore-failure.log" "$TMP/shutdown-ipv6-forwarding-restore-failure.log" "$TMP/preexisting-forwarding.log" "$TMP/fail-route-commands.log" "$TMP/forwarding-management-disabled.log" "$TMP/tun-identity-loss.log"; do
         if [[ -f "$log" ]]; then
             cat "$log" >&2
         fi
@@ -428,6 +428,9 @@ done
 mkdir -p "$TMP/fail-route-rollback"
 cat >"$TMP/fail-route-rollback/ip" <<EOF
 #!/bin/sh
+printf 'ip' >>"$TMP/startup-route-rollback-ip.log"
+printf ' <%s>' "\$@" >>"$TMP/startup-route-rollback-ip.log"
+printf '\\n' >>"$TMP/startup-route-rollback-ip.log"
 if [ "\$1" = "-4" ] && [ "\$2" = "route" ] && [ "\$3" = "replace" ] \\
     && [ "\$4" = "default" ] && [ "\$6" = "awg-secondary" ] && [ "\$8" = "10001" ]; then
     echo "injected second-egress IPv4 policy-route installation failure before rollback" >&2
@@ -456,7 +459,9 @@ done
 if ip -n "$NS" -4 rule show | grep -q 'proto 242'; then
     fail "policy rules leaked after policy-route rollback failure"
 fi
-ip -n "$NS" -4 route show table 10000 | grep -Fq 'default dev awg-primary proto 242' || fail "expected first-egress route was not retained after injected cleanup failure"
+ip -n "$NS" -4 route show table 10000 >"$TMP/startup-route-rollback-route-after.txt" 2>&1
+ip -n "$NS" -4 route show table all >"$TMP/startup-route-rollback-routes-all.txt" 2>&1
+grep -Fq 'default dev awg-primary proto 242' "$TMP/startup-route-rollback-route-after.txt" || fail "expected first-egress route was not retained after injected cleanup failure"
 [[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "0" ]] || fail "IPv4 forwarding changed after policy-route rollback failure"
 [[ "$(ip netns exec "$NS" sysctl -n net.ipv6.conf.all.forwarding)" == "0" ]] || fail "IPv6 forwarding changed after policy-route rollback failure"
 # The first-egress route is deliberately retained. Remove only this test-owned
