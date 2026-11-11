@@ -76,24 +76,23 @@ fail() {
 [[ $EUID -eq 0 ]] || fail "must run as root"
 [[ -x "$BIN" ]] || fail "vpn-relay binary not found at $BIN"
 [[ -c /dev/net/tun ]] || fail "/dev/net/tun is unavailable"
-for command in ip nft wg ping iperf3 python3 tcpdump timeout; do
+for command in ip nft ping python3 tcpdump timeout; do
     command -v "$command" >/dev/null || fail "$command is required"
 done
 
-CLIENT_PRIVATE="$(wg genkey)"
-CLIENT_PUBLIC="$(printf '%s' "$CLIENT_PRIVATE" | wg pubkey)"
-SECOND_CLIENT_PRIVATE="$(wg genkey)"
-SECOND_CLIENT_PUBLIC="$(printf '%s' "$SECOND_CLIENT_PRIVATE" | wg pubkey)"
-ROUTER_INGRESS_PRIVATE="$(wg genkey)"
-ROUTER_INGRESS_PUBLIC="$(printf '%s' "$ROUTER_INGRESS_PRIVATE" | wg pubkey)"
-ROUTER_PRIMARY_PRIVATE="$(wg genkey)"
-ROUTER_PRIMARY_PUBLIC="$(printf '%s' "$ROUTER_PRIMARY_PRIVATE" | wg pubkey)"
-PRIMARY_PRIVATE="$(wg genkey)"
-PRIMARY_PUBLIC="$(printf '%s' "$PRIMARY_PRIVATE" | wg pubkey)"
-ROUTER_SECONDARY_PRIVATE="$(wg genkey)"
-ROUTER_SECONDARY_PUBLIC="$(printf '%s' "$ROUTER_SECONDARY_PRIVATE" | wg pubkey)"
-SECONDARY_PRIVATE="$(wg genkey)"
-SECONDARY_PUBLIC="$(printf '%s' "$SECONDARY_PRIVATE" | wg pubkey)"
+python3 - "$TMP/keys.env" <<'PY'
+import base64, sys
+from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat, PublicFormat
+names=("CLIENT","SECOND_CLIENT","ROUTER_INGRESS","ROUTER_PRIMARY","PRIMARY","ROUTER_SECONDARY","SECONDARY")
+with open(sys.argv[1],"w",encoding="ascii") as out:
+    for name in names:
+        key=X25519PrivateKey.generate()
+        private=base64.b64encode(key.private_bytes(Encoding.Raw,PrivateFormat.Raw,NoEncryption())).decode()
+        public=base64.b64encode(key.public_key().public_bytes(Encoding.Raw,PublicFormat.Raw)).decode()
+        out.write(f"{name}_PRIVATE={private}\\n{name}_PUBLIC={public}\\n")
+PY
+source "$TMP/keys.env"
 
 for ns in "$CLIENT_NS" "$SECOND_CLIENT_NS" "$ROUTER_NS" "$PRIMARY_NS" "$SECONDARY_NS"; do
     ip netns add "$ns"
@@ -862,76 +861,131 @@ if ip netns exec "$SECONDARY_NS" ping -n -I 10.30.0.2 -c 2 -W 1 10.77.0.2 >/dev/
     fail "AWG-secondary initiated traffic reached a WG client without a routing rule"
 fi
 
-# Add TCP listeners behind each uplink and verify forward and reverse streams.
-ip netns exec "$PRIMARY_NS" iperf3 -s -B 203.0.113.1 -p 5201 >"$TMP/iperf-primary.log" 2>&1 &
-IPERF_PIDS+=("$!")
-ip netns exec "$SECONDARY_NS" iperf3 -s -B 195.142.1.1 -p 5202 >"$TMP/iperf-secondary-16.log" 2>&1 &
-IPERF_PIDS+=("$!")
-ip netns exec "$SECONDARY_NS" iperf3 -s -B 79.100.22.1 -p 5203 >"$TMP/iperf-secondary-24.log" 2>&1 &
-IPERF_PIDS+=("$!")
-ip netns exec "$PRIMARY_NS" iperf3 -s -6 -B 2001:db8:1::1 -p 5204 >"$TMP/iperf-primary-v6.log" 2>&1 &
-IPERF_PIDS+=("$!")
-ip netns exec "$SECONDARY_NS" iperf3 -s -6 -B 2001:db8:195:1::1 -p 5205 >"$TMP/iperf-secondary-v6.log" 2>&1 &
-IPERF_PIDS+=("$!")
-sleep 1
-
-run_tcp() {
-    local label="$1" target="$2" port="$3"
-    for direction in forward reverse; do
-        local output="$TMP/$label-$direction.json"
-        local args=(-c "$target" -p "$port" -n 1M --json)
-        [[ "$direction" == reverse ]] && args+=(-R)
-        timeout 15s ip netns exec "$CLIENT_NS" iperf3 "${args[@]}" >"$output" \
-            || fail "$label $direction TCP stream failed or timed out"
-        python3 - "$output" "$label $direction" <<'PY'
-import json
-import sys
-with open(sys.argv[1], encoding="utf-8") as stream:
-    result = json.load(stream)
-received = result.get("end", {}).get("sum_received", {}).get("bytes", 0)
-if received < 500_000:
-    raise SystemExit(f"{sys.argv[2]} received only {received} TCP bytes")
-print(f"{sys.argv[2]}: received={received} bytes")
+# Bidirectional TCP/UDP probes use Python's standard library, not iperf3.
+cat >"$TMP/throughput.py" <<'PY'
+import argparse, socket, struct, sys, time
+CHUNK=b"v"*65536
+COUNT=900
+SIZE=1200
+INTERVAL=SIZE*8/3_000_000
+def sock(family,kind):
+    return socket.socket(socket.AF_INET6 if family==6 else socket.AF_INET,kind)
+def addr(family,port):
+    return ("::",port) if family==6 else ("0.0.0.0",port)
+def exact(s,n):
+    b=bytearray()
+    while len(b)<n:
+        x=s.recv(min(65536,n-len(b)))
+        if not x: raise RuntimeError("short TCP stream")
+        b.extend(x)
+    return bytes(b)
+def tcp_server(port,fam):
+    s=sock(fam,socket.SOCK_STREAM); s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1); s.bind(addr(fam,port)); s.listen(8)
+    while True:
+        conn,_=s.accept()
+        with conn:
+            conn.settimeout(15); mode,size=struct.unpack("!cQ",exact(conn,9))
+            if mode==b"S":
+                got=0
+                while got<size:
+                    x=conn.recv(min(65536,size-got))
+                    if not x: break
+                    got+=len(x)
+                conn.sendall(struct.pack("!Q",got))
+                if got!=size: raise RuntimeError("short TCP receive")
+            elif mode==b"R":
+                sent=0
+                while sent<size:
+                    x=CHUNK[:min(len(CHUNK),size-sent)]; conn.sendall(x); sent+=len(x)
+            else: raise RuntimeError("bad TCP mode")
+def tcp_client(target,port,fam,direction):
+    size=8*1024*1024
+    with sock(fam,socket.SOCK_STREAM) as s:
+        s.settimeout(15); s.connect((target,port)); mode=b"S" if direction=="forward" else b"R"
+        s.sendall(struct.pack("!cQ",mode,size))
+        if mode==b"S":
+            sent=0
+            while sent<size:
+                x=CHUNK[:min(len(CHUNK),size-sent)]; s.sendall(x); sent+=len(x)
+            got=struct.unpack("!Q",exact(s,8))[0]
+        else: got=len(exact(s,size))
+    if got!=size: raise RuntimeError(f"TCP {direction}: {got}/{size}")
+    print(f"TCP {direction}: {got} bytes")
+def udp_server(port,fam):
+    s=sock(fam,socket.SOCK_DGRAM); s.bind(addr(fam,port))
+    while True:
+        header,peer=s.recvfrom(128)
+        if len(header)!=9 or header[:4]!=b"VRTP": continue
+        mode,count=header[4:5],struct.unpack("!I",header[5:])[0]
+        if mode==b"S":
+            seen=set(); deadline=time.monotonic()+6
+            while len(seen)<count and time.monotonic()<deadline:
+                s.settimeout(max(.1,deadline-time.monotonic()))
+                try: packet,source=s.recvfrom(2048)
+                except socket.timeout: break
+                if source==peer and len(packet)==SIZE: seen.add(struct.unpack("!I",packet[:4])[0])
+            s.sendto(struct.pack("!I",len(seen)),peer)
+        elif mode==b"R":
+            payload=b"x"*(SIZE-4); start=time.monotonic()
+            for i in range(count):
+                s.sendto(struct.pack("!I",i)+payload,peer)
+                delay=start+(i+1)*INTERVAL-time.monotonic()
+                if delay>0: time.sleep(delay)
+def udp_client(target,port,fam,direction):
+    s=sock(fam,socket.SOCK_DGRAM); s.bind(addr(fam,port)); s.settimeout(8); peer=(target,port)
+    mode=b"S" if direction=="forward" else b"R"; s.sendto(b"VRTP"+mode+struct.pack("!I",COUNT),peer)
+    if mode==b"S":
+        payload=b"x"*(SIZE-4); start=time.monotonic()
+        for i in range(COUNT):
+            s.sendto(struct.pack("!I",i)+payload,peer)
+            delay=start+(i+1)*INTERVAL-time.monotonic()
+            if delay>0: time.sleep(delay)
+        got=struct.unpack("!I",s.recvfrom(32)[0])[0]
+    else:
+        seen=set(); deadline=time.monotonic()+6
+        while len(seen)<COUNT and time.monotonic()<deadline:
+            try: packet,_=s.recvfrom(2048)
+            except socket.timeout: break
+            if len(packet)==SIZE: seen.add(struct.unpack("!I",packet[:4])[0])
+        got=len(seen)
+    s.close(); loss=(COUNT-got)*100/COUNT
+    if got*SIZE<100000 or loss>2: raise RuntimeError(f"UDP {direction}: {got}/{COUNT}, loss {loss:.2f}%")
+    print(f"UDP {direction}: {got*SIZE} bytes, loss {loss:.2f}%")
+p=argparse.ArgumentParser(); p.add_argument("role",choices=("server","client")); p.add_argument("--protocol",choices=("tcp","udp"),required=True); p.add_argument("--port",type=int,required=True); p.add_argument("--family",type=int,choices=(4,6),required=True); p.add_argument("--target"); p.add_argument("--direction",choices=("forward","reverse")); a=p.parse_args()
+try:
+    if a.role=="server": (tcp_server if a.protocol=="tcp" else udp_server)(a.port,a.family)
+    elif not a.target or not a.direction: p.error("client needs target and direction")
+    elif a.protocol=="tcp": tcp_client(a.target,a.port,a.family,a.direction)
+    else: udp_client(a.target,a.port,a.family,a.direction)
+except Exception as e: print(e,file=sys.stderr); raise SystemExit(1)
 PY
+start_listener() {
+    local ns="$1" proto="$2" port="$3" family="$4" label="$5"
+    ip netns exec "$ns" python3 "$TMP/throughput.py" server --protocol "$proto" --port "$port" --family "$family" >"$TMP/$label.log" 2>&1 &
+    IPERF_PIDS+=("$!")
+}
+for spec in "PRIMARY_NS tcp 5201 4 p-tcp" "PRIMARY_NS udp 5201 4 p-udp" "SECONDARY_NS tcp 5202 4 s16-tcp" "SECONDARY_NS udp 5202 4 s16-udp" "SECONDARY_NS tcp 5203 4 s24-tcp" "SECONDARY_NS udp 5203 4 s24-udp" "PRIMARY_NS tcp 5204 6 p6-tcp" "PRIMARY_NS udp 5204 6 p6-udp" "SECONDARY_NS tcp 5205 6 s6-tcp" "SECONDARY_NS udp 5205 6 s6-udp"; do
+    read -r ns proto port family label <<<"$spec"
+    start_listener "${!ns}" "$proto" "$port" "$family" "$label"
+done
+sleep 0.5
+for pid in "${IPERF_PIDS[@]}"; do kill -0 "$pid" 2>/dev/null || fail "throughput listener failed to start"; done
+run_stream() {
+    local proto="$1" label="$2" target="$3" port="$4" family="$5"
+    for direction in forward reverse; do
+        timeout 15s ip netns exec "$CLIENT_NS" python3 "$TMP/throughput.py" client --protocol "$proto" --target "$target" --port "$port" --family "$family" --direction "$direction" || fail "$label $direction $proto stream failed"
     done
 }
-
-run_tcp primary-default 203.0.113.1 5201
-run_tcp secondary-16 195.142.1.1 5202
-run_tcp secondary-24 79.100.22.1 5203
-run_tcp primary-v6 2001:db8:1::1 5204
-run_tcp secondary-v6 2001:db8:195:1::1 5205
-
-run_udp() {
-    local label="$1" target="$2" port="$3"
-    for direction in forward reverse; do
-        local output="$TMP/$label-$direction-udp.json"
-        local args=(-c "$target" -p "$port" -u -b 1M -t 2 -l 1200 --json)
-        [[ "$direction" == reverse ]] && args+=(-R)
-        timeout 15s ip netns exec "$CLIENT_NS" iperf3 "${args[@]}" >"$output" \
-            || fail "$label $direction UDP stream failed or timed out"
-        python3 - "$output" "$label $direction" <<'PY'
-import json
-import sys
-with open(sys.argv[1], encoding="utf-8") as stream:
-    result = json.load(stream)
-received = result.get("end", {}).get("sum_received", {})
-byte_count = received.get("bytes", 0)
-loss = received.get("lost_percent", 0.0)
-if byte_count < 100_000:
-    raise SystemExit(f"{sys.argv[2]} received only {byte_count} UDP bytes")
-if loss > 5.0:
-    raise SystemExit(f"{sys.argv[2]} UDP loss too high: {loss:.2f}%")
-print(f"{sys.argv[2]} UDP: received={byte_count} bytes, loss={loss:.2f}%")
-PY
-    done
-}
-
-run_udp primary-default 203.0.113.1 5201
-run_udp secondary-16 195.142.1.1 5202
-run_udp secondary-24 79.100.22.1 5203
-run_udp primary-v6 2001:db8:1::1 5204
-run_udp secondary-v6 2001:db8:195:1::1 5205
+run_stream tcp primary-default 203.0.113.1 5201 4
+run_stream udp primary-default 203.0.113.1 5201 4
+run_stream tcp secondary-16 195.142.1.1 5202 4
+run_stream udp secondary-16 195.142.1.1 5202 4
+run_stream tcp secondary-24 79.100.22.1 5203 4
+run_stream udp secondary-24 79.100.22.1 5203 4
+run_stream tcp primary-v6 2001:db8:1::1 5204 6
+run_stream udp primary-v6 2001:db8:1::1 5204 6
+run_stream tcp secondary-v6 2001:db8:195:1::1 5205 6
+run_stream udp secondary-v6 2001:db8:195:1::1 5205 6
 
 # Encrypted outer UDP must use each underlay veth and must never appear on
 # either AWG TUN. Keepalives and the traffic above keep the sockets active.
