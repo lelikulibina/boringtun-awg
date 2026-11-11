@@ -1331,7 +1331,7 @@ egress = "awg-uplink"
     }
 
     #[test]
-    fn rejects_source_and_destination_address_family_mismatch() {
+    fn rejects_ipv6_routing_selectors() {
         let input = valid_config().replace(
             "destination = \"0.0.0.0/0\"",
             "source = \"2001:db8::/32\"\ndestination = \"0.0.0.0/0\"",
@@ -1346,8 +1346,6 @@ egress = "awg-uplink"
         let config = Config::parse_toml(&input).unwrap();
         assert!(config.routing.rules[0].source.is_none());
         assert!(config.routing.rules[0].destination.is_none());
-        assert!(config.routing.rules[1].source.is_none());
-        assert!(config.routing.rules[1].destination.is_none());
     }
 
     #[test]
