@@ -1,5 +1,7 @@
 //! Import standard WireGuard and AmneziaWG INI configurations.
-use crate::config::{Config, InterfaceConfig, PeerConfig, PersistentKeepaliveConfig, TunnelType};
+use crate::config::{
+    Config, InterfaceConfig, PeerConfig, PersistentKeepaliveConfig, TunnelType,
+};
 use boringtun::noise::amnezia::AmneziaWgConfig;
 use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
@@ -463,7 +465,9 @@ fn parse_persistent_keepalive(
                 "invalid PersistentKeepalive range '{value}': expected 1 <= min <= max"
             )));
         }
-        return Ok(Some(PersistentKeepaliveConfig::Range(format!("{min}-{max}"))));
+        return Ok(Some(PersistentKeepaliveConfig::Range(format!(
+            "{min}-{max}"
+        ))));
     }
     let seconds = parse_number::<u16>(value, "PersistentKeepalive")?;
     if seconds == 0 {
