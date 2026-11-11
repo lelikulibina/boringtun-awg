@@ -950,6 +950,36 @@ grep -Eq '20 packets transmitted, 20 received, 0% packet loss' "$TMP/peer-update
     || fail "server-to-client packet loss detected during peer AllowedIPs updates"
 kill -0 "$SERVER_PID" 2>/dev/null || fail "server daemon exited after peer AllowedIPs reload"
 
+# A newly added peer with an unresolvable endpoint must fail during preflight,
+# before the live peer set is touched. The established peer must keep passing
+# traffic in both directions after the rejected reload.
+cp "$TMP/server.toml" "$TMP/server-before-dns-failure.toml"
+BAD_PEER_PUBLIC="$(python3 - <<'PY'
+import base64
+from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+key = X25519PrivateKey.generate()
+print(base64.b64encode(key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)).decode())
+PY
+)"
+cat >>"$TMP/server.toml" <<TOML
+
+[[interfaces.wg-peer-test.peers]]
+public_key = "$BAD_PEER_PUBLIC"
+endpoint = "vpn-relay-dns-failure.invalid:51871"
+allowed_ips = ["10.77.0.33/32"]
+TOML
+if ip netns exec "$SERVER_NS" "$BIN" --config "$TMP/server.toml" --reload \
+    >"$TMP/reload-dns-failure.log" 2>&1; then
+    fail "runtime reload unexpectedly accepted an unresolvable peer endpoint"
+fi
+cp "$TMP/server-before-dns-failure.toml" "$TMP/server.toml"
+ip netns exec "$CLIENT_NS" ping -n -c 3 -W 2 10.77.0.1 \
+    || fail "existing client-to-server session was disrupted by DNS preflight failure"
+ip netns exec "$SERVER_NS" ping -n -c 3 -W 2 10.77.0.2 \
+    || fail "existing server-to-client session was disrupted by DNS preflight failure"
+kill -0 "$SERVER_PID" 2>/dev/null || fail "server daemon exited after DNS preflight failure"
+
 sleep 2
 
 assert_peer_counters() {
