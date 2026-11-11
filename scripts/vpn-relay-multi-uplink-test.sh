@@ -38,7 +38,7 @@ cleanup() {
     ip netns del "$ROUTER_NS" 2>/dev/null || true
     ip netns del "$PRIMARY_NS" 2>/dev/null || true
     ip netns del "$SECONDARY_NS" 2>/dev/null || true
-    for inode in "\${NETNS_INODES[@]}"; do
+    for inode in "${NETNS_INODES[@]}"; do
         rm -f "/run/vpn-relay-netns-$inode.marks"
     done
     rm -rf "$TMP"
