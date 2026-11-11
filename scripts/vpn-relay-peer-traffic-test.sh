@@ -791,6 +791,9 @@ def udp_server(port):
 
 def udp_client(target, port, direction):
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    # Match iperf3's reverse-mode receive port so the peer's UDP/5201
+    # firewall allowance remains the exact destination under test.
+    sock.bind(("0.0.0.0", port))
     sock.settimeout(8)
     peer = (target, port)
     mode = b"S" if direction == "forward" else b"R"
