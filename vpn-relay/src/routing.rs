@@ -982,6 +982,10 @@ egress = "awg-primary"
         assert!(script.contains("postrouting iifname \"wg-server\" oifname \"awg-secondary\""));
         assert!(script.contains("meta nfproto ipv4 masquerade"));
         assert!(!script.contains("meta nfproto ipv6 masquerade"));
+        assert!(script
+            .lines()
+            .filter(|line| line.starts_with("add rule inet vpn_relay postrouting"))
+            .all(|line| line.contains("meta nfproto ipv4")));
     }
 
     #[test]
