@@ -536,12 +536,18 @@ impl Config {
                 if let Some(psk) = &peer.preshared_key {
                     decode_key(psk, &format!("{peer_path}.preshared_key"))?;
                 }
-                if peer.persistent_keepalive_secs.is_some() && peer.persistent_keepalive_range.is_some() {
-                    return invalid(format!("{peer_path} must not set both persistent_keepalive_secs and persistent_keepalive_range"));
+                if peer.persistent_keepalive_secs.is_some()
+                    && peer.persistent_keepalive_range.is_some()
+                {
+                    return invalid(format!(
+                        "{peer_path} must not set both persistent_keepalive_secs and persistent_keepalive_range"
+                    ));
                 }
                 if let Some((min, max)) = peer.persistent_keepalive_range {
                     if min == 0 || max == 0 || min > max {
-                        return invalid(format!("{peer_path}.persistent_keepalive_range must satisfy 1 <= min <= max"));
+                        return invalid(format!(
+                            "{peer_path}.persistent_keepalive_range must satisfy 1 <= min <= max"
+                        ));
                     }
                 }
                 if let Some(endpoint) = &peer.endpoint {
@@ -1518,21 +1524,30 @@ egress = "awg-uplink"
             "persistent_keepalive_range = [25, 35]",
         );
         let config = Config::parse_toml(&ranged).unwrap();
-        assert_eq!(config.interfaces["awg-uplink"].peers[0].persistent_keepalive_range, Some((25, 35)));
+        assert_eq!(
+            config.interfaces["awg-uplink"].peers[0].persistent_keepalive_range,
+            Some((25, 35))
+        );
 
         for range in ["[35, 25]", "[0, 25]", "[25, 0]"] {
             let input = valid_config().replace(
                 "persistent_keepalive_secs = 25",
                 &format!("persistent_keepalive_range = {range}"),
             );
-            assert!(Config::parse_toml(&input).is_err(), "accepted range {range}");
+            assert!(
+                Config::parse_toml(&input).is_err(),
+                "accepted range {range}"
+            );
         }
 
         let both = valid_config().replace(
             "persistent_keepalive_secs = 25",
             "persistent_keepalive_secs = 25\npersistent_keepalive_range = [25, 35]",
         );
-        assert!(Config::parse_toml(&both).unwrap_err().to_string().contains("must not set both"));
+        assert!(Config::parse_toml(&both)
+            .unwrap_err()
+            .to_string()
+            .contains("must not set both"));
     }
 
     #[test]
