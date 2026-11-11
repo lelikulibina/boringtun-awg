@@ -2031,9 +2031,10 @@ fn recover_forwarding_state(
     // was killed before restoring IPv6 forwarding, preserve the journal and
     // refuse startup rather than silently leave namespace-wide forwarding on.
     if !ipv6_enabled && has_pending_ipv6_recovery(&state) {
-        return Err(RuntimeError::Forwarding(
-            "IPv6 forwarding recovery is pending in the previous runtime journal; refusing IPv4-only startup without touching IPv6 sysctls. Restore once with daemon.ipv6_enabled=true or restore the recorded IPv6 forwarding values manually".to_owned(),
-        ));
+        return Err(RuntimeError::Forwarding(format!(
+            "IPv6 forwarding recovery is pending in the previous runtime journal at {}; refusing IPv4-only startup without touching IPv6 sysctls. Restore once with daemon.ipv6_enabled=true or restore the recorded IPv6 forwarding values manually",
+            path.display()
+        )));
     }
     let recovery_state = forwarding_state_for_recovery(&state, ipv6_enabled);
     restore_forwarding_state_with_mode(
@@ -2146,28 +2147,20 @@ mod tests {
 
     #[test]
     fn ipv4_only_startup_detects_pending_legacy_ipv6_recovery() {
-        let state = ForwardingState {
-            ipv4: "0".to_owned(),
-            ipv6: "1".to_owned(),
-            ipv4_changed: false,
-            ipv6_changed: true,
-            interfaces: vec![InterfaceForwardingState {
-                name: "awg0".to_owned(),
-                ifindex: 7,
-                daemon_owned: false,
-                ipv4: "0".to_owned(),
-                ipv6: "0".to_owned(),
-                ipv4_changed: false,
-                ipv6_changed: true,
-                ipv6_enabled: true,
-            }],
-        };
+        let path = forwarding_state_test_path("ipv4-only-pending-ipv6");
+        let state = sample_forwarding_state();
         assert!(has_pending_ipv6_recovery(&state));
+        persist_forwarding_state(&path, 1234, &state).unwrap();
 
-        let mut clean = state.clone();
-        clean.ipv6_changed = false;
-        clean.interfaces[0].ipv6_changed = false;
-        assert!(!has_pending_ipv6_recovery(&clean));
+        let error = recover_forwarding_state(&path, 1234, false).unwrap_err();
+        assert!(matches!(
+            error,
+            RuntimeError::Forwarding(message)
+                if message.contains("IPv6 forwarding recovery is pending")
+                    && message.contains(path.to_string_lossy().as_ref())
+        ));
+        assert_eq!(load_forwarding_state(&path, 1234).unwrap(), Some(state));
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]
@@ -2176,7 +2169,7 @@ mod tests {
             ipv4: "0".to_owned(),
             ipv6: "1".to_owned(),
             ipv4_changed: false,
-            ipv6_changed: true,
+            ipv6_changed: false,
             interfaces: vec![InterfaceForwardingState {
                 name: "awg0".to_owned(),
                 ifindex: 7,
@@ -2184,10 +2177,11 @@ mod tests {
                 ipv4: "0".to_owned(),
                 ipv6: "0".to_owned(),
                 ipv4_changed: false,
-                ipv6_changed: true,
+                ipv6_changed: false,
                 ipv6_enabled: true,
             }],
         };
+        assert!(!has_pending_ipv6_recovery(&state));
         let recovery = forwarding_state_for_recovery(&state, false);
         assert!(!recovery.ipv6_changed);
         assert!(recovery
