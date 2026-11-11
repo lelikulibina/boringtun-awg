@@ -187,7 +187,7 @@ impl RoutingPlan {
                 mark: routing_marks[index],
                 table_id: FIRST_ROUTING_TABLE + index as u32,
                 ip_rule_priority: FIRST_IP_RULE_PRIORITY + index as u32,
-                })
+            })
             .collect();
 
         let egress_marks: BTreeMap<_, _> = egresses
