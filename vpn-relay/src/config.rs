@@ -677,6 +677,9 @@ impl Config {
                     let Some(address) = rule.nat_to else {
                         return invalid("routing.rules.nat_to is required when nat = \"snat\"");
                     };
+                    if !address.is_ipv4() {
+                        return invalid("routing.rules.nat_to supports IPv4 addresses only");
+                    }
                     let family_matches = match (&source_prefixes, &destination_prefixes) {
                         (Some(sources), Some(destinations)) => sources.iter().any(|(source, _)| {
                             source.is_ipv4()
@@ -734,7 +737,6 @@ impl Config {
                 if !is_input && rule.source.is_some() {
                     return invalid(format!("{path}.source is not valid for OUTPUT rules"));
                 }
-                let mut has_ipv4_selector = false;
                 for (field, prefixes) in [
                     ("source", rule.source.as_ref()),
                     ("destination", rule.destination.as_ref()),
@@ -754,7 +756,6 @@ impl Config {
                         }
                         for prefix in prefixes {
                             let (address, _) = parse_prefix(prefix, &format!("{path}.{field}"))?;
-                            has_ipv4_selector |= address.is_ipv4();
                         }
                     }
                 }
