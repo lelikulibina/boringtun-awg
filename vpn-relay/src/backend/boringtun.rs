@@ -68,12 +68,8 @@ impl TunnelBackend for BoringTunBackend {
             amnezia,
             probe_reply_bytes_per_sec: None,
         };
-        let device = if interface.ipv6_enabled {
-            DeviceHandle::new(name, config)
-        } else {
-            DeviceHandle::new_ipv4_only(name, config)
-        }
-        .map_err(|error| BackendError::new(error.to_string()))?;
+        let device = DeviceHandle::new(name, config)
+            .map_err(|error| BackendError::new(error.to_string()))?;
         device.set_private_key(x25519::StaticSecret::from(
             decode_key(&interface.private_key, "private_key")
                 .map_err(|error| BackendError::new(error.to_string()))?,
