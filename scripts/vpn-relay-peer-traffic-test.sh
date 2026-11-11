@@ -78,14 +78,37 @@ fail() {
 [[ $EUID -eq 0 ]] || fail "must run as root"
 [[ -x "$BIN" ]] || fail "vpn-relay binary not found at $BIN"
 [[ -c /dev/net/tun ]] || fail "/dev/net/tun is unavailable"
-for command in ip nft wg ping iperf3 python3 tcpdump timeout; do
+for command in ip nft ping python3 tcpdump timeout; do
     command -v "$command" >/dev/null || fail "$command is required"
 done
 
-SERVER_PRIVATE="$(wg genkey)"
-SERVER_PUBLIC="$(printf '%s' "$SERVER_PRIVATE" | wg pubkey)"
-CLIENT_PRIVATE="$(wg genkey)"
-CLIENT_PUBLIC="$(printf '%s' "$CLIENT_PRIVATE" | wg pubkey)"
+# Generate WireGuard-compatible X25519 keys with the runner's Python
+# cryptography package. This avoids requiring the separate wireguard-tools
+# package just to run wg genkey/wg pubkey in this isolated test.
+readarray -t SERVER_KEYS < <(python3 - <<'PY'
+import base64
+from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat, PublicFormat
+
+private = X25519PrivateKey.generate()
+print(base64.b64encode(private.private_bytes(Encoding.Raw, PrivateFormat.Raw, NoEncryption())).decode())
+print(base64.b64encode(private.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)).decode())
+PY
+)
+readarray -t CLIENT_KEYS < <(python3 - <<'PY'
+import base64
+from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat, PublicFormat
+
+private = X25519PrivateKey.generate()
+print(base64.b64encode(private.private_bytes(Encoding.Raw, PrivateFormat.Raw, NoEncryption())).decode())
+print(base64.b64encode(private.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)).decode())
+PY
+)
+SERVER_PRIVATE="${SERVER_KEYS[0]}"
+SERVER_PUBLIC="${SERVER_KEYS[1]}"
+CLIENT_PRIVATE="${CLIENT_KEYS[0]}"
+CLIENT_PUBLIC="${CLIENT_KEYS[1]}"
 
 ip netns add "$SERVER_NS"
 SERVER_NS_INODE="$(ip netns exec "$SERVER_NS" stat -Lc '%i' /proc/self/ns/net)"
@@ -662,43 +685,177 @@ set -e
 
 
 # Exercise TCP streams and UDP datagrams over the encrypted TUN path.
-ip netns exec "$SERVER_NS" iperf3 -s >"$TMP/server-iperf.log" 2>&1 &
-SERVER_IPERF_PID=$!
-ip netns exec "$CLIENT_NS" iperf3 -s >"$TMP/client-iperf.log" 2>&1 &
-CLIENT_IPERF_PID=$!
-sleep 1
-kill -0 "$SERVER_IPERF_PID" 2>/dev/null || fail "server iperf3 did not start"
-kill -0 "$CLIENT_IPERF_PID" 2>/dev/null || fail "client iperf3 did not start"
-
-run_iperf() {
-    local label="$1"
-    local minimum_bytes="$2"
-    shift 2
-    local output="$TMP/$label.json"
-    ip netns exec "$CLIENT_NS" iperf3 "$@" --json >"$output" || fail "$label failed"
-    python3 - "$output" "$label" "$minimum_bytes" <<'PY'
-import json
+# A small stdlib-based probe keeps the test independent of the optional iperf3
+# and wireguard-tools packages, which are not preinstalled on every runner.
+cat >"$TMP/throughput.py" <<'PY'
+import argparse
+import socket
+import struct
 import sys
-with open(sys.argv[1], encoding="utf-8") as stream:
-    result = json.load(stream)
-received = result.get("end", {}).get("sum_received", {})
-byte_count = received.get("bytes", 0)
-minimum_bytes = int(sys.argv[3])
-if byte_count < minimum_bytes:
-    raise SystemExit(f"{sys.argv[2]} received only {byte_count} bytes; expected at least {minimum_bytes}")
-if "lost_percent" in received and received["lost_percent"] > 2.0:
-    raise SystemExit(f"{sys.argv[2]} UDP loss too high: {received['lost_percent']:.2f}%")
-print(f"{sys.argv[2]}: received={byte_count} bytes" + (f", UDP loss={received['lost_percent']:.2f}%" if "lost_percent" in received else ""))
+import time
+
+CHUNK = b"v" * 65536
+UDP_SIZE = 1200
+UDP_COUNT = 900
+UDP_INTERVAL = UDP_SIZE * 8 / 3_000_000
+
+def recv_exact(sock, size):
+    data = bytearray()
+    while len(data) < size:
+        chunk = sock.recv(min(65536, size - len(data)))
+        if not chunk:
+            raise RuntimeError(f"connection closed after {len(data)} of {size} bytes")
+        data.extend(chunk)
+    return bytes(data)
+
+def tcp_server(port):
+    listener = socket.socket()
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    listener.bind(("0.0.0.0", port))
+    listener.listen(8)
+    while True:
+        conn, _ = listener.accept()
+        with conn:
+            conn.settimeout(15)
+            mode, size = struct.unpack("!cQ", recv_exact(conn, 9))
+            if mode == b"S":
+                received = 0
+                while received < size:
+                    chunk = conn.recv(min(65536, size - received))
+                    if not chunk:
+                        break
+                    received += len(chunk)
+                conn.sendall(struct.pack("!Q", received))
+                if received != size:
+                    raise RuntimeError(f"TCP receiver got {received} of {size} bytes")
+            elif mode == b"R":
+                sent = 0
+                while sent < size:
+                    chunk = CHUNK[:min(len(CHUNK), size - sent)]
+                    conn.sendall(chunk)
+                    sent += len(chunk)
+            else:
+                raise RuntimeError(f"unknown TCP mode {mode!r}")
+
+def tcp_client(target, port, direction, size):
+    with socket.create_connection((target, port), timeout=10) as conn:
+        conn.settimeout(15)
+        mode = b"S" if direction == "forward" else b"R"
+        conn.sendall(struct.pack("!cQ", mode, size))
+        if mode == b"S":
+            sent = 0
+            while sent < size:
+                chunk = CHUNK[:min(len(CHUNK), size - sent)]
+                conn.sendall(chunk)
+                sent += len(chunk)
+            received = struct.unpack("!Q", recv_exact(conn, 8))[0]
+            if received != size:
+                raise RuntimeError(f"TCP receiver got {received} of {size} bytes")
+        else:
+            received = len(recv_exact(conn, size))
+            if received != size:
+                raise RuntimeError(f"TCP client got {received} of {size} bytes")
+    print(f"TCP {direction}: transferred={received} bytes")
+
+def udp_server(port):
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.bind(("0.0.0.0", port))
+    while True:
+        header, peer = sock.recvfrom(128)
+        if len(header) != 9 or header[:4] != b"VRTP":
+            continue
+        mode, count = header[4:5], struct.unpack("!I", header[5:])[0]
+        if mode == b"S":
+            seen = set()
+            deadline = time.monotonic() + 6
+            while len(seen) < count and time.monotonic() < deadline:
+                sock.settimeout(max(0.1, deadline - time.monotonic()))
+                try:
+                    packet, source = sock.recvfrom(2048)
+                except socket.timeout:
+                    break
+                if source == peer and len(packet) == UDP_SIZE:
+                    seen.add(struct.unpack("!I", packet[:4])[0])
+            sock.sendto(struct.pack("!I", len(seen)), peer)
+        elif mode == b"R":
+            payload = b"x" * (UDP_SIZE - 4)
+            started = time.monotonic()
+            for sequence in range(count):
+                sock.sendto(struct.pack("!I", sequence) + payload, peer)
+                target_time = started + (sequence + 1) * UDP_INTERVAL
+                delay = target_time - time.monotonic()
+                if delay > 0:
+                    time.sleep(delay)
+        else:
+            raise RuntimeError(f"unknown UDP mode {mode!r}")
+
+def udp_client(target, port, direction):
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.settimeout(8)
+    peer = (target, port)
+    mode = b"S" if direction == "forward" else b"R"
+    sock.sendto(b"VRTP" + mode + struct.pack("!I", UDP_COUNT), peer)
+    if mode == b"S":
+        payload = b"x" * (UDP_SIZE - 4)
+        started = time.monotonic()
+        for sequence in range(UDP_COUNT):
+            sock.sendto(struct.pack("!I", sequence) + payload, peer)
+            target_time = started + (sequence + 1) * UDP_INTERVAL
+            delay = target_time - time.monotonic()
+            if delay > 0:
+                time.sleep(delay)
+        received = struct.unpack("!I", sock.recvfrom(32)[0])[0]
+    else:
+        seen = set()
+        deadline = time.monotonic() + 6
+        while len(seen) < UDP_COUNT and time.monotonic() < deadline:
+            try:
+                packet, _ = sock.recvfrom(2048)
+            except socket.timeout:
+                break
+            if len(packet) == UDP_SIZE:
+                seen.add(struct.unpack("!I", packet[:4])[0])
+        received = len(seen)
+    sock.close()
+    loss = (UDP_COUNT - received) * 100 / UDP_COUNT
+    if received * UDP_SIZE < 1000 or loss > 2:
+        raise RuntimeError(f"UDP {direction}: received={received}/{UDP_COUNT}, loss={loss:.2f}%")
+    print(f"UDP {direction}: received={received * UDP_SIZE} bytes, loss={loss:.2f}%")
+
+parser = argparse.ArgumentParser()
+parser.add_argument("role", choices=("server", "client"))
+parser.add_argument("--protocol", choices=("tcp", "udp"), required=True)
+parser.add_argument("--port", type=int, default=5201)
+parser.add_argument("--target")
+parser.add_argument("--direction", choices=("forward", "reverse"))
+parser.add_argument("--bytes", type=int, default=8 * 1024 * 1024)
+args = parser.parse_args()
+try:
+    if args.role == "server":
+        (tcp_server if args.protocol == "tcp" else udp_server)(args.port)
+    elif not args.target or not args.direction:
+        parser.error("client requires --target and --direction")
+    elif args.protocol == "tcp":
+        tcp_client(args.target, args.port, args.direction, args.bytes)
+    else:
+        udp_client(args.target, args.port, args.direction)
+except Exception as error:
+    print(error, file=sys.stderr)
+    raise SystemExit(1)
 PY
-}
 
-# TCP: transfer 8 MiB in each direction with parallel streams.
-run_iperf tcp-client-to-server 8388608 -c 10.77.0.1 -n 8M -P 2
-run_iperf tcp-server-to-client 8388608 -c 10.77.0.1 -n 8M -P 2 -R
+ip netns exec "$SERVER_NS" python3 "$TMP/throughput.py" server --protocol tcp >"$TMP/server-tcp.log" 2>&1 &
+SERVER_IPERF_PID=$!
+ip netns exec "$SERVER_NS" python3 "$TMP/throughput.py" server --protocol udp >"$TMP/server-udp.log" 2>&1 &
+CLIENT_IPERF_PID=$!
+sleep 0.5
+kill -0 "$SERVER_IPERF_PID" 2>/dev/null || fail "server TCP throughput listener did not start"
+kill -0 "$CLIENT_IPERF_PID" 2>/dev/null || fail "server UDP throughput listener did not start"
 
-# UDP: sustained datagrams with 1200-byte payloads in both directions.
-run_iperf udp-client-to-server 1000 -c 10.77.0.1 -u -b 3M -t 3 -l 1200
-run_iperf udp-server-to-client 1000 -c 10.77.0.1 -u -b 3M -t 3 -l 1200 -R
+ip netns exec "$CLIENT_NS" python3 "$TMP/throughput.py" client --protocol tcp --target 10.77.0.1 --direction forward || fail "TCP client-to-server transfer failed"
+ip netns exec "$CLIENT_NS" python3 "$TMP/throughput.py" client --protocol tcp --target 10.77.0.1 --direction reverse || fail "TCP server-to-client transfer failed"
+ip netns exec "$CLIENT_NS" python3 "$TMP/throughput.py" client --protocol udp --target 10.77.0.1 --direction forward || fail "UDP client-to-server transfer failed"
+ip netns exec "$CLIENT_NS" python3 "$TMP/throughput.py" client --protocol udp --target 10.77.0.1 --direction reverse || fail "UDP server-to-client transfer failed"
 
 # Keep authenticated tunnel traffic flowing while the server atomically
 # switches its nftables policy repeatedly. Toggle an unrelated INPUT exception
