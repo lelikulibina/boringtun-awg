@@ -16,6 +16,154 @@ use rand_core::RngCore;
 use std::convert::{TryFrom, TryInto};
 use std::time::Duration;
 
+pub mod config;
+pub use config::{AmneziaWgConfig, AmneziaWgConfigError};
+
+/// AmneziaWG protocol generation implemented by this BoringTun build.
+///
+/// This describes the protocol profile, not a negotiated handshake field.
+/// AmneziaWG peers must be configured for compatible profiles independently.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum AmneziaWgVersion {
+    V1,
+    V1_5,
+    V2,
+    V3,
+    V3_1,
+}
+
+impl AmneziaWgVersion {
+    /// Every AmneziaWG generation supported by this BoringTun build.
+    pub const ALL: [Self; 5] = [Self::V1, Self::V1_5, Self::V2, Self::V3, Self::V3_1];
+
+    /// Stable protocol version string.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::V1 => "1.0",
+            Self::V1_5 => "1.5",
+            Self::V2 => "2.0",
+            Self::V3 => "3.0",
+            Self::V3_1 => "3.1",
+        }
+    }
+
+    /// Parse a stable protocol version string (for example, "3.1").
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "1.0" => Some(Self::V1),
+            "1.5" => Some(Self::V1_5),
+            "2.0" => Some(Self::V2),
+            "3.0" => Some(Self::V3),
+            "3.1" => Some(Self::V3_1),
+            _ => None,
+        }
+    }
+
+    /// Infer the minimum generation required by the supplied parameter set.
+    ///
+    /// Newer generations extend earlier profiles, so cumulative parameters
+    /// select the newest generation marker that is actually present.
+    pub(crate) fn detect_from_parameters(parameters: &[(&str, &str)]) -> Option<Self> {
+        let has = |names: &[&str]| parameters.iter().any(|(name, _)| names.contains(name));
+        let ranged_headers = parameters
+            .iter()
+            .any(|(name, value)| matches!(*name, "h1" | "h2" | "h3" | "h4") && value.contains('-'));
+
+        if has(&["randomtrailers", "disablecookies"]) {
+            return Some(Self::V3_1);
+        }
+        if has(&[
+            "headerprotectionkey",
+            "contentpaddingaddition",
+            "rekeyaftertime",
+            "rekeytimeout",
+            "rejectaftertime",
+            "keepalivetimeout",
+            "maxhandshakeattempts",
+        ]) {
+            return Some(Self::V3);
+        }
+        if ranged_headers || has(&["s3", "s4"]) {
+            return Some(Self::V2);
+        }
+        if has(&["i1", "i2", "i3", "i4", "i5"]) {
+            return Some(Self::V1_5);
+        }
+        if has(&["jc", "jmin", "jmax", "s1", "s2", "h1", "h2", "h3", "h4"]) {
+            return Some(Self::V1);
+        }
+        None
+    }
+}
+
+#[cfg(test)]
+mod version_tests {
+    use super::AmneziaWgVersion as Version;
+
+    #[test]
+    fn detects_each_supported_generation() {
+        let cases: &[(&[(&str, &str)], Version)] = &[
+            (&[("jc", "4")], Version::V1),
+            (&[("i1", "<tls>")], Version::V1_5),
+            (&[("s3", "0")], Version::V2),
+            (&[("headerprotectionkey", "00")], Version::V3),
+            (&[("randomtrailers", "false")], Version::V3_1),
+            (&[("disablecookies", "false")], Version::V3_1),
+        ];
+
+        for (parameters, expected) in cases {
+            assert_eq!(Version::detect_from_parameters(parameters), Some(*expected));
+        }
+    }
+
+    #[test]
+    fn cumulative_parameters_select_the_newest_generation() {
+        assert_eq!(
+            Version::detect_from_parameters(&[("i1", "<t>"), ("s3", "0")]),
+            Some(Version::V2)
+        );
+        assert_eq!(
+            Version::detect_from_parameters(&[
+                ("s3", "0"),
+                ("headerprotectionkey", "key"),
+                ("rekey_timeout", "3-7"),
+            ]),
+            Some(Version::V3)
+        );
+        assert_eq!(
+            Version::detect_from_parameters(&[
+                ("headerprotectionkey", "key"),
+                ("randomtrailers", "false"),
+            ]),
+            Some(Version::V3_1)
+        );
+    }
+
+    #[test]
+    fn ranged_header_values_identify_awg_v2() {
+        assert_eq!(
+            Version::detect_from_parameters(&[("h1", "100-200")]),
+            Some(Version::V2)
+        );
+        assert_eq!(
+            Version::detect_from_parameters(&[("h1", "100")]),
+            Some(Version::V1)
+        );
+    }
+
+    #[test]
+    fn no_amnezia_parameters_means_wireguard() {
+        assert_eq!(Version::detect_from_parameters(&[("mtu", "1380")]), None);
+    }
+
+    #[test]
+    fn detected_generation_is_carried_by_the_normalized_config() {
+        let config = super::AmneziaConfig::new(12, 12, 12, 12).with_protocol_version(Version::V3);
+        assert_eq!(config.protocol_version(), Some(Version::V3));
+        assert!(config.content_padding_uses_mtu);
+    }
+}
+
 const DNS_OPT_FIXED_LEN: usize = 11;
 const DNS_OPT_MIN_WIRE_SIZE: usize = DNS_OPT_FIXED_LEN + 4;
 const DEFAULT_JUNK_PACKET_SIZE_MIN: u16 = 50;
@@ -274,14 +422,15 @@ pub struct AmneziaConfig {
     /// Disable the under-load MAC2/cookie challenge (upstream AWG semantics).
     /// MAC1 validation and incoming Cookie Reply handling remain enabled.
     pub(crate) disable_cookies: bool,
-    /// 32-byte raw ChaCha20 key for AmneziaWG 3.1 header protection.
+    /// 32-byte raw ChaCha20 key for AmneziaWG 3.0+ header protection.
     /// An all-zero key disables header protection, matching upstream.
     pub(crate) header_protection_key: [u8; 32],
     /// Inclusive range of extra zero bytes appended to the encrypted IP payload.
     /// `(0, 0)` disables ContentPaddingAddition.
     pub(crate) content_padding_addition: (u32, u32),
     /// Use AWG 3.0's MTU-bounded CPA algorithm instead of AWG 3.1's peer UDP-window algorithm.
-    pub(crate) legacy_content_padding: bool,
+    pub(crate) content_padding_uses_mtu: bool,
+    protocol_version: Option<AmneziaWgVersion>,
     /// Inclusive timer ranges in seconds; (0, 0) preserves WireGuard defaults.
     pub(crate) rekey_after_time: (u32, u32),
     pub(crate) rekey_timeout: (u32, u32),
@@ -430,7 +579,8 @@ impl AmneziaConfig {
             disable_cookies: false,
             header_protection_key: [0u8; 32],
             content_padding_addition: (0, 0),
-            legacy_content_padding: false,
+            content_padding_uses_mtu: false,
+            protocol_version: None,
             rekey_after_time: (0, 0),
             rekey_timeout: (0, 0),
             reject_after_time: (0, 0),
@@ -442,6 +592,28 @@ impl AmneziaConfig {
         }
     }
 
+    /// Set the validated AmneziaWG generation. AWG 3.0 uses MTU-bounded
+    /// ContentPaddingAddition; AWG 3.1 uses the peer UDP-window algorithm.
+    pub(crate) fn with_protocol_version(mut self, version: AmneziaWgVersion) -> Self {
+        self.protocol_version = Some(version);
+        self.content_padding_uses_mtu = version == AmneziaWgVersion::V3;
+        self
+    }
+
+    /// Preserve version inference for configurations applied through the
+    /// existing device control API (UAPI/typed updates).
+    pub(crate) fn with_detected_version(mut self, parameters: &[(&str, &str)]) -> Self {
+        if let Some(version) = AmneziaWgVersion::detect_from_parameters(parameters) {
+            self = self.with_protocol_version(version);
+        }
+        self
+    }
+
+    /// The generation inferred from the supplied AmneziaWG parameters.
+    pub fn protocol_version(&self) -> Option<AmneziaWgVersion> {
+        self.protocol_version
+    }
+
     /// Disable the under-load cookie challenge, matching AmneziaWG 3.1.
     /// When enabled, MAC1 is still verified, but the under-load MAC2/rate-limit
     /// challenge is bypassed and no Cookie Reply is sent. Incoming Cookie Reply
@@ -451,7 +623,7 @@ impl AmneziaConfig {
         self
     }
 
-    /// Enable AmneziaWG 3.1 header protection with a 32-byte ChaCha20 key.
+    /// Enable AmneziaWG 3.0+ header protection with a 32-byte ChaCha20 key.
     /// Passing an all-zero key disables protection, as in amneziawg-go.
     pub fn with_header_protection_key(mut self, key: [u8; 32]) -> Self {
         self.header_protection_key = key;
@@ -465,17 +637,12 @@ impl AmneziaConfig {
     /// Set the inclusive ContentPaddingAddition range in bytes.
     /// Use `(0, 0)` to disable additional content padding.
     pub fn with_content_padding_addition(mut self, min: u16, max: u16) -> Self {
-        self.content_padding_addition = (u32::from(min), u32::from(max));
-        self
+        self.with_content_padding_addition_range(u32::from(min), u32::from(max))
     }
 
-    /// Select AWG 3.0's legacy MTU-bounded ContentPaddingAddition semantics.
-    ///
-    /// The default (`false`) matches AWG 3.1, which clamps CPA to the peer UDP
-    /// high-water mark. AWG 3.0 instead clamps it to the inner TUN MTU.
-    /// This is a local compatibility setting; AWG does not negotiate versions.
-    pub fn with_legacy_content_padding(mut self, enabled: bool) -> Self {
-        self.legacy_content_padding = enabled;
+    /// Set the full uint32 ContentPaddingAddition range used by the AWG UAPI.
+    pub fn with_content_padding_addition_range(mut self, min: u32, max: u32) -> Self {
+        self.content_padding_addition = (min, max);
         self
     }
 
@@ -557,7 +724,7 @@ impl AmneziaConfig {
         rng: &mut impl RngCore,
     ) -> usize {
         let (min, max) = self.content_padding_addition;
-        let available = if self.legacy_content_padding {
+        let available = if self.content_padding_uses_mtu {
             if mtu == 0 {
                 usize::MAX
             } else {
@@ -609,7 +776,7 @@ impl AmneziaConfig {
         self
     }
 
-    pub(crate) fn try_with_pre_handshake_junk(
+    pub fn try_with_pre_handshake_junk(
         mut self,
         packet_count: u16,
         packet_size_min: u16,
@@ -695,7 +862,7 @@ impl AmneziaConfig {
     /// classification unambiguous. Upstream currently accepts unequal values,
     /// but its own documentation recommends equal S values; we enforce that
     /// safe subset rather than silently accepting a lossy configuration.
-    pub(crate) fn validate_random_trailers(&self, _obf: ObfuscationRanges) -> Result<(), String> {
+    pub fn validate_random_trailers(&self, _obf: ObfuscationRanges) -> Result<(), String> {
         if self.random_trailers {
             let s = [
                 self.init_packet_junk_size,
@@ -2187,13 +2354,26 @@ mod tests {
             7,
             "ContentPaddingAddition takes precedence over RandomTrailers"
         );
+
+        let explicit_without_trailers =
+            AmneziaConfig::new(0, 0, 0, 0).with_content_padding_addition(7, 7);
+        assert_eq!(
+            explicit_without_trailers.transport_padding_size(101, 133, 133, 1420, &mut rng),
+            0,
+            "enabled CPA with no remaining UDP window must not fall through to MTU alignment"
+        );
     }
 
     #[test]
     fn content_padding_legacy_mode_matches_awg30_mtu_clamping() {
-        let legacy = AmneziaConfig::new(0, 0, 0, 0)
-            .with_content_padding_addition(100, 100)
-            .with_legacy_content_padding(true);
+        let legacy = AmneziaWgConfig {
+            header_protection_key: Some("00".repeat(32)),
+            content_padding_addition: Some("100".into()),
+            ..Default::default()
+        }
+        .build()
+        .unwrap()
+        .1;
         let mut rng = ChaCha8Rng::seed_from_u64(0xA030);
 
         // AWG 3.0 clamps against MTU - (packet_size % MTU), not UDP window.
@@ -2211,7 +2391,14 @@ mod tests {
             100
         );
 
-        let modern = AmneziaConfig::new(0, 0, 0, 0).with_content_padding_addition(100, 100);
+        let modern = AmneziaWgConfig {
+            random_trailers: Some(true),
+            content_padding_addition: Some("100".into()),
+            ..Default::default()
+        }
+        .build()
+        .unwrap()
+        .1;
         assert_eq!(
             modern.content_padding_size(1400, 1432, 1450, 1420, &mut rng),
             18,

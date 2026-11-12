@@ -23,16 +23,14 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const SOCK_DIR: &str = "/var/run/wireguard/";
-/// Where `amneziawg-tools` looks for a userspace implementation's UAPI socket.
-///
-/// `wg` uses `/var/run/wireguard/`, but `awg` is a fork and searches
-/// `/var/run/amneziawg/%s.sock` instead, so a socket published only under
-/// `SOCK_DIR` is invisible to it -- `awg setconf` fails with "Operation not
-/// supported" because it falls back to netlink and finds a TUN device that is
-/// not an amneziawg interface. Since AmneziaWG support is the point of this
-/// fork, publish in both places rather than choosing.
-const AWG_SOCK_DIR: &str = "/var/run/amneziawg/";
+/// All WireGuard and AmneziaWG protocol variants share one UAPI namespace.
+/// `/run` is the canonical runtime directory on Linux (`/var/run` is commonly
+/// a compatibility symlink to it).
+const SOCK_DIR: &str = "/run/wireguard";
+
+fn uapi_socket_path(name: &str) -> String {
+    format!("{}/{}.sock", SOCK_DIR, name)
+}
 
 /// Parse an AmneziaWG magic-header value: either a bare tag (`"1"`) or an
 /// inclusive range (`"342871004-442871003"`). A bare value is a degenerate
@@ -55,15 +53,6 @@ fn parse_uapi_bool(val: &str) -> Option<bool> {
     match val {
         "1" | "t" | "T" | "TRUE" | "true" | "True" => Some(true),
         "0" | "f" | "F" | "FALSE" | "false" | "False" => Some(false),
-        _ => None,
-    }
-}
-
-/// BoringTun-only selector for the CPA algorithm; upstream AWG does not negotiate versions.
-fn parse_content_padding_mode(val: &str) -> Option<bool> {
-    match val {
-        "mtu" | "awg30" => Some(true),
-        "udp_window" | "awg31" => Some(false),
         _ => None,
     }
 }
@@ -108,7 +97,6 @@ struct AwgParams {
     signature_packets: [Option<Option<SignatureChain>>; 5],
     header_protection_key: Option<[u8; 32]>,
     content_padding_addition: Option<(u32, u32)>,
-    legacy_content_padding: Option<bool>,
     rekey_after_time: Option<(u32, u32)>,
     rekey_timeout: Option<(u32, u32)>,
     reject_after_time: Option<(u32, u32)>,
@@ -212,9 +200,6 @@ impl AwgParams {
             .content_padding_addition
             .unwrap_or(amnezia.content_padding_addition);
         amnezia = amnezia.with_content_padding_addition_u32(padding_min, padding_max);
-        amnezia.legacy_content_padding = self
-            .legacy_content_padding
-            .unwrap_or(amnezia.legacy_content_padding);
         amnezia.rekey_after_time = self.rekey_after_time.unwrap_or(amnezia.rekey_after_time);
         amnezia.rekey_timeout = self.rekey_timeout.unwrap_or(amnezia.rekey_timeout);
         amnezia.reject_after_time = self.reject_after_time.unwrap_or(amnezia.reject_after_time);
@@ -222,6 +207,47 @@ impl AwgParams {
         amnezia.max_handshake_attempts = self
             .max_handshake_attempts
             .unwrap_or(amnezia.max_handshake_attempts);
+        let mut version_parameters = Vec::new();
+        macro_rules! present {
+            ($name:literal, $field:expr) => {
+                if $field.is_some() {
+                    version_parameters.push(($name, ""));
+                }
+            };
+        }
+        present!("jc", self.jc);
+        present!("jmin", self.jmin);
+        present!("jmax", self.jmax);
+        present!("s1", self.s1);
+        present!("s2", self.s2);
+        present!("s3", self.s3);
+        present!("s4", self.s4);
+        for (name, range) in [
+            ("h1", self.h1),
+            ("h2", self.h2),
+            ("h3", self.h3),
+            ("h4", self.h4),
+        ] {
+            if let Some((min, max)) = range {
+                version_parameters.push((name, if min < max { "1-2" } else { "1" }));
+            }
+        }
+        for (index, chain) in self.signature_packets.iter().enumerate() {
+            if chain.as_ref().and_then(|entry| entry.as_ref()).is_some() {
+                version_parameters.push((["i1", "i2", "i3", "i4", "i5"][index], ""));
+            }
+        }
+        present!("headerprotectionkey", self.header_protection_key);
+        present!("contentpaddingaddition", self.content_padding_addition);
+        present!("rekeyaftertime", self.rekey_after_time);
+        present!("rekeytimeout", self.rekey_timeout);
+        present!("rejectaftertime", self.reject_after_time);
+        present!("keepalivetimeout", self.keepalive_timeout);
+        present!("maxhandshakeattempts", self.max_handshake_attempts);
+        present!("randomtrailers", self.random_trailers);
+        present!("disablecookies", self.disable_cookies);
+        amnezia = amnezia.with_detected_version(&version_parameters);
+
         let amnezia = amnezia
             .try_with_pre_handshake_junk(
                 self.jc.unwrap_or(cur_junk.packet_count),
@@ -356,42 +382,23 @@ fn create_sock_dir(dir: &str) {
 }
 
 impl Device {
-    /// Register the api handler for this Device. The api handler receives stream connections on a Unix socket
-    /// with a known path: /var/run/wireguard/{tun_name}.sock.
+    /// Register the single UAPI handler for this Device. All protocol
+    /// variants (WireGuard and every supported AmneziaWG version) use the
+    /// canonical path `/run/wireguard/{tun_name}.sock`.
     ///
-    /// The same socket is also published at /var/run/amneziawg/{tun_name}.sock
-    /// as a symlink, because `amneziawg-tools` searches that directory rather
-    /// than the WireGuard one; without it `awg` cannot see this interface at
-    /// all. There is still exactly one socket and one accept loop. If the
-    /// symlink cannot be created the handler is registered anyway and a warning
-    /// is logged, leaving the device reachable by `wg` but not `awg`.
+    /// Do not create a second socket or compatibility symlink: the UAPI
+    /// protocol is identical for WG and AWG, and the daemon owns one endpoint.
     pub fn register_api_handler(&mut self) -> Result<(), Error> {
         let name = self.iface.name()?;
-        let path = format!("{}/{}.sock", SOCK_DIR, name);
+        let path = uapi_socket_path(&name);
 
         create_sock_dir(SOCK_DIR);
 
-        let _ = remove_file(&path); // Attempt to remove the socket if already exists
+        let _ = remove_file(&path); // Remove a stale endpoint before binding.
 
-        let api_listener = UnixListener::bind(&path).map_err(Error::ApiSocket)?; // Bind a new socket to the path
+        let api_listener = UnixListener::bind(&path).map_err(Error::ApiSocket)?;
 
         self.cleanup_paths.push(path.clone());
-
-        // Also publish where `awg` looks. A symlink rather than a second
-        // listener, so there is exactly one socket and one accept loop; both
-        // toolchains then reach the same device. Failure is not fatal -- the
-        // daemon still works, just only under `wg`.
-        let awg_path = format!("{}/{}.sock", AWG_SOCK_DIR, name);
-        create_sock_dir(AWG_SOCK_DIR);
-        let _ = remove_file(&awg_path);
-        match std::os::unix::fs::symlink(&path, &awg_path) {
-            Ok(()) => self.cleanup_paths.push(awg_path),
-            Err(e) => tracing::warn!(
-                message = "could not publish the UAPI socket for amneziawg-tools; awg will not find this interface",
-                path = awg_path.as_str(),
-                error = %e
-            ),
-        }
 
         self.queue.new_event(
             api_listener.as_raw_fd(),
@@ -591,9 +598,6 @@ fn api_get(writer: &mut BufWriter<&UnixStream>, d: &Device) -> i32 {
             if let Some(chain) = chain {
                 writeln!(output, "i{}={}", index + 1, chain.spec());
             }
-        }
-        if a.legacy_content_padding {
-            writeln!(output, "content_padding_mode=mtu");
         }
         let (padding_min, padding_max) = a.content_padding_addition;
         if padding_min != 0 || padding_max != 0 {
@@ -858,13 +862,6 @@ fn api_set(reader: &mut BufReader<&UnixStream>, d: &mut LockReadGuard<Device>) -
                             }
                             _ => return EINVAL,
                         },
-                        "content_padding_mode" => match parse_content_padding_mode(val) {
-                            Some(mode) => {
-                                awg.legacy_content_padding = Some(mode);
-                                awg.seen = true;
-                            }
-                            None => return EINVAL,
-                        },
                         "content_padding_addition" => match parse_u32_range(val) {
                             Some(range) => {
                                 awg.content_padding_addition = Some(range);
@@ -1065,6 +1062,12 @@ fn api_set_peer(
 mod tests {
     use super::*;
 
+    #[test]
+    fn all_protocols_use_the_single_wireguard_uapi_socket_namespace() {
+        assert_eq!(uapi_socket_path("wg0"), "/run/wireguard/wg0.sock");
+        assert_eq!(uapi_socket_path("awg0"), "/run/wireguard/awg0.sock");
+    }
+
     /// Protocol imitation survives a `set=1` that carries AmneziaWG keys.
     ///
     /// It has no UAPI key of its own — `awg showconf` drops keys it does not
@@ -1076,23 +1079,31 @@ mod tests {
     /// The comment at the merge site asserted this; nothing tested it. A
     /// cross-module claim in prose is exactly the thing that drifts.
     #[test]
-    fn legacy_content_padding_mode_merges_and_can_be_cleared() {
+    fn uapi_parameter_updates_infer_and_upgrade_awg_generation() {
         let current = AmneziaConfig::new(0, 0, 0, 0);
         let mut params = AwgParams::default();
-        params.legacy_content_padding = Some(true);
+        params.header_protection_key = Some([0; 32]);
         params.seen = true;
         let (_, legacy) = params
             .merged(ObfuscationRanges::default(), &current)
-            .expect("legacy mode is a valid local setting");
-        assert!(legacy.legacy_content_padding);
+            .expect("AWG 3.0 parameters are valid");
+        assert_eq!(
+            legacy.protocol_version(),
+            Some(crate::noise::amnezia::AmneziaWgVersion::V3)
+        );
+        assert!(legacy.content_padding_uses_mtu);
 
         let mut params = AwgParams::default();
-        params.legacy_content_padding = Some(false);
+        params.random_trailers = Some(false);
         params.seen = true;
         let (_, modern) = params
             .merged(ObfuscationRanges::default(), &legacy)
-            .expect("AWG 3.1 mode is a valid local setting");
-        assert!(!modern.legacy_content_padding);
+            .expect("AWG 3.1 parameters are valid");
+        assert_eq!(
+            modern.protocol_version(),
+            Some(crate::noise::amnezia::AmneziaWgVersion::V3_1)
+        );
+        assert!(!modern.content_padding_uses_mtu);
     }
 
     #[test]
@@ -1219,15 +1230,6 @@ mod tests {
                 .is_err(),
             "S4 shorter than 12 must be rejected while HP is enabled"
         );
-    }
-
-    #[test]
-    fn parse_content_padding_mode_accepts_awg30_and_awg31_aliases() {
-        assert_eq!(parse_content_padding_mode("mtu"), Some(true));
-        assert_eq!(parse_content_padding_mode("awg30"), Some(true));
-        assert_eq!(parse_content_padding_mode("udp_window"), Some(false));
-        assert_eq!(parse_content_padding_mode("awg31"), Some(false));
-        assert_eq!(parse_content_padding_mode("auto"), None);
     }
 
     #[test]

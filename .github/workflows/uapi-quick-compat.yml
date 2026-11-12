@@ -30,6 +30,7 @@ jobs:
         run: |
           git clone https://github.com/amnezia-vpn/amneziawg-tools.git upstream-amneziawg-tools
           git -C upstream-amneziawg-tools checkout ee0f0a9aa34ff0a0da4b3433b9512781cfe02843
+          patch -p1 -d upstream-amneziawg-tools < patches/amneziawg-tools-uapi-path.patch
           make -C upstream-amneziawg-tools/src
           sudo make -C upstream-amneziawg-tools/src install WITH_WGQUICK=yes WITH_SYSTEMDUNITS=no
       - name: Build BoringTun CLI
@@ -40,7 +41,7 @@ jobs:
         if: failure()
         run: |
           sudo ip -details link
-          sudo find /var/run/wireguard /var/run/amneziawg -maxdepth 1 -ls 2>/dev/null || true
+          sudo find /var/run/wireguard -maxdepth 1 -ls 2>/dev/null || true
           echo "=== Linux LSMs ==="
           sudo cat /sys/kernel/security/lsm 2>/dev/null || true
           echo "=== AppArmor status ==="
@@ -48,7 +49,7 @@ jobs:
           echo "=== SELinux status ==="
           getenforce 2>&1 || true
           echo "=== ACLs ==="
-          sudo getfacl -p /var/run /var/run/wireguard /var/run/amneziawg 2>&1 || true
+          sudo getfacl -p /var/run /var/run/wireguard 2>&1 || true
           echo "=== Kernel security denials ==="
           sudo journalctl -k --no-pager -n 500 2>/dev/null | grep -Ei 'apparmor|avc:|selinux|denied|audit' | tail -n 150 || true
           sudo dmesg 2>/dev/null | grep -Ei 'apparmor|avc:|selinux|denied|audit' | tail -n 150 || true

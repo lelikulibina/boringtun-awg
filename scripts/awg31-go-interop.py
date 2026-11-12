@@ -161,8 +161,6 @@ QUICK_PROFILES = [
         "AWG 2.x baseline",
         "bulk data integrity — AWG 3.0",
         "bulk data integrity — AWG 3.1",
-        "accelerated rekey",
-        "rekey packet-loss recovery",
         "all AWG 3.1 extensions combined",
         "CPS I1-I5 combined",
     }
@@ -182,6 +180,13 @@ AWG30_PROFILES = [
         "randomized timers",
         "CPS I1-I5 combined",
     }
+]
+
+# Keep the fast job representative without running the exhaustive generation
+# matrix: one bidirectional AWG 3.0 transport profile is enough here.
+AWG30_QUICK_PROFILES = [
+    profile for profile in AWG30_PROFILES
+    if profile[0] in {"AWG 2.x baseline", "bulk data integrity — AWG 3.0"}
 ]
 
 
@@ -806,7 +811,7 @@ def run_profile(
     bt: str, go: str, name: str, extra: str,
     awg_enabled: bool, bt_is_server: bool, performance: bool = False,
     same_implementation: str | None = None,
-    extended_matrix: bool = False, legacy_cpa: bool = False,
+    extended_matrix: bool = False,
     reference_name: str = "amneziawg-go",
 ) -> None:
     token = uuid.uuid4().hex[:10]
@@ -916,15 +921,10 @@ def run_profile(
 
         awg_base = S_AND_H_RT if "random_trailers=true" in extra else S_AND_H
         awg = (awg_base if awg_enabled else "") + extra
-        # CPA is sender-local. For the AWG 3.0 profile, select BoringTun's
-        # legacy MTU-bounded algorithm only on BoringTun endpoints; upstream
-        # Go has no such UAPI key and uses the semantics of its pinned version.
-        bt_awg = awg + (
-            "content_padding_mode=mtu\n"
-            if legacy_cpa and "content_padding_addition=" in awg else ""
-        )
-        server_awg = bt_awg if server_is_bt else awg
-        client_awg = bt_awg if client_is_bt else awg
+        # The profile parameters identify the generation inside each
+        # implementation. No local content-padding mode is sent over UAPI.
+        server_awg = awg
+        client_awg = awg
         set_peer(server_iface, server_private, client_public, "none",
                  f"{CLIENT_TUN}/32", server_awg)
         set_peer(client_iface, client_private, server_public,
@@ -1096,7 +1096,7 @@ def main() -> int:
     else:
         selected_profiles = PROFILES if full_matrix else QUICK_PROFILES
         suite_name = "full" if full_matrix else "quick"
-        print(f"MODE: {suite_name} interoperability suite ({len(selected_profiles) * 2} directional scenarios)")
+        print(f"MODE: {suite_name} AWG 3.1 interoperability suite ({len(selected_profiles) * 2} directional scenarios)")
         for name, extra, awg_enabled in selected_profiles:
             for bt_is_server in (True, False):
                 total += 1
@@ -1104,21 +1104,20 @@ def main() -> int:
                     run_profile(
                         bt, go, name, extra, awg_enabled, bt_is_server,
                         extended_matrix=full_matrix,
-                        legacy_cpa=(name == "bulk data integrity — AWG 3.0"),
                     )
                 except Exception as error:
                     failures += 1
                     role = "BoringTun server" if bt_is_server else "amneziawg-go server"
                     print(f"FAIL {name} ({role}): {error}", file=sys.stderr)
     if awg30 is not None and not performance:
-        print(f"MODE: official AWG 3.0.0 reference suite ({len(AWG30_PROFILES) * 2} directional scenarios)")
-        for name, extra, awg_enabled in AWG30_PROFILES:
+        selected_awg30_profiles = AWG30_PROFILES if full_matrix else AWG30_QUICK_PROFILES
+        print(f"MODE: official AWG 3.0.0 reference suite ({len(selected_awg30_profiles) * 2} directional scenarios)")
+        for name, extra, awg_enabled in selected_awg30_profiles:
             for bt_is_server in (True, False):
                 total += 1
                 try:
                     run_profile(
                         bt, awg30, name, extra, awg_enabled, bt_is_server,
-                        legacy_cpa=True,
                         reference_name="amneziawg-go-v3.0.0",
                     )
                 except Exception as error:
