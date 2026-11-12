@@ -904,7 +904,7 @@ egress = "awg-primary"
         config.routing.rules.truncate(1);
         let script = RoutingPlan::from_config(&config).nft_script();
         assert!(script.contains(
-            "prerouting iifname \"wg-server\" ct state new meta mark set 0x80000000 ct mark set (ct mark & 0x0000ffff) | 0x50010000 return"
+            "prerouting iifname \"wg-server\" ct state new meta nfproto ipv4 meta mark set 0x80000000 ct mark set (ct mark & 0x0000ffff) | 0x50010000 return"
         ));
         assert!(!script.contains("prerouting iifname \"wg-server\" ct state new ip saddr"));
         assert!(!script.contains("prerouting iifname \"wg-server\" ct state new ip daddr"));
@@ -1146,13 +1146,13 @@ egress = "awg-primary"
         );
         let script = plan.nft_script();
         assert!(script.contains(
-            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark & 0xffff0000 == 0x50010000 return"
+            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark & 0xffff0000 == 0x50010000 meta nfproto ipv4 return"
         ));
         assert!(script.contains(
             "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark & 0xffff0000 == 0x50020000 meta nfproto ipv4 masquerade"
         ));
         assert!(!script.contains(
-            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark & 0xffff0000 == 0x50010000 masquerade"
+            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark & 0xffff0000 == 0x50010000 meta nfproto ipv4 masquerade"
         ));
     }
     #[test]
