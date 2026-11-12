@@ -1538,10 +1538,8 @@ fn write_forwarding_state_value(
                     ))
                 }
             };
-            verify_forwarding_interface(&entry.name, entry.ifindex)?;
-            linux::set_ipv4_interface_forwarding(entry.ifindex, enabled)
+            linux::set_ipv4_interface_forwarding(&entry.name, entry.ifindex, enabled)
                 .map_err(|error| RuntimeError::Forwarding(error.to_string()))?;
-            verify_forwarding_interface(&entry.name, entry.ifindex)?;
             return Ok(());
         }
     }
