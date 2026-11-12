@@ -1342,7 +1342,9 @@ fn load_forwarding_state(
     let version = document
         .get("version")
         .and_then(serde_json::Value::as_u64)
-        .ok_or_else(|| RuntimeError::Forwarding("forwarding state has no valid version".to_owned()))?;
+        .ok_or_else(|| {
+            RuntimeError::Forwarding("forwarding state has no valid version".to_owned())
+        })?;
     if version != 1 {
         return Err(RuntimeError::Forwarding(format!(
             "unsupported forwarding state version {version}"
