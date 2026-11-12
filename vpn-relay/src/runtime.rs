@@ -2526,6 +2526,4 @@ mod tests {
         drop(socket);
         assert!(!path.exists());
     }
-
-
 }
