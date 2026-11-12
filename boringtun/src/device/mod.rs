@@ -8,9 +8,11 @@ pub mod drop_privileges;
 #[cfg(test)]
 mod integration_tests;
 pub mod peer;
+mod peer_batch;
 mod probe_budget;
 mod probe_reply;
 mod reply_policy;
+pub use peer_batch::PeerConfig;
 
 #[cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos"))]
 #[path = "kqueue.rs"]
@@ -47,7 +49,8 @@ use crate::noise::{Packet, Tunn, TunnResult};
 use crate::x25519;
 use allowed_ips::AllowedIps;
 use parking_lot::Mutex;
-use peer::{AllowedIP, Peer};
+pub use peer::AllowedIP;
+use peer::Peer;
 use poll::{EventPoll, EventRef, WaitResult};
 use probe_reply::ProbeResponder;
 use rand_chacha::ChaCha8Rng;
@@ -115,6 +118,30 @@ pub struct DeviceHandle {
     threads: Vec<JoinHandle<()>>,
 }
 
+/// Read-only interface state returned by the typed control API.
+#[derive(Clone, Debug)]
+pub struct DeviceSnapshot {
+    pub name: String,
+    pub listen_port: u16,
+    pub mtu: usize,
+    pub fwmark: Option<u32>,
+    pub peers: Vec<PeerSnapshot>,
+}
+
+/// Read-only peer state. Byte counters and handshake age are taken directly
+/// from the live Noise tunnel; no UAPI serialization or socket is involved.
+#[derive(Clone, Debug)]
+pub struct PeerSnapshot {
+    pub public_key: [u8; 32],
+    pub index: u32,
+    pub endpoint: Option<SocketAddr>,
+    pub allowed_ips: Vec<AllowedIP>,
+    pub persistent_keepalive: Option<(u32, u32)>,
+    pub time_since_last_handshake: Option<std::time::Duration>,
+    pub tx_bytes: u64,
+    pub rx_bytes: u64,
+}
+
 // Not `Copy`: `amnezia` owns an optional imitation domain.
 #[derive(Debug, Clone)]
 pub struct DeviceConfig {
@@ -124,6 +151,14 @@ pub struct DeviceConfig {
     pub use_multi_queue: bool,
     #[cfg(target_os = "linux")]
     pub uapi_fd: i32,
+    /// Whether UAPI is enabled for this device. Defaults to true for
+    /// compatibility with wg/awg tooling. When false, no UAPI handler is
+    /// registered and any configured UAPI file descriptor is ignored.
+    /// Embedding applications such as btrouted must set this to false and
+    /// manage the device exclusively through the typed control API instead.
+    pub enable_uapi: bool,
+    /// Optional UDP listen port. None preserves the historical ephemeral port.
+    pub listen_port: Option<u16>,
     /// Interface-wide AmneziaWG H1-H4 message-type tag ranges.
     ///
     /// These are device-scoped rather than per-peer because ingress must
@@ -188,6 +223,8 @@ impl Default for DeviceConfig {
             use_multi_queue: true,
             #[cfg(target_os = "linux")]
             uapi_fd: -1,
+            enable_uapi: true,
+            listen_port: None,
             // Vanilla WireGuard: no obfuscation, no junk. Exactly the behaviour
             // before AmneziaWG support existed.
             obf: ObfuscationRanges::default(),
@@ -333,8 +370,10 @@ fn require_key_pair(
 impl DeviceHandle {
     pub fn new(name: &str, config: DeviceConfig) -> Result<DeviceHandle, Error> {
         let n_threads = config.n_threads;
+        let listen_port = config.listen_port.unwrap_or(0);
         let mut wg_interface = Device::new(name, config)?;
-        wg_interface.open_listen_socket(0)?; // Start listening on a random port
+        // Port 0 retains the historical behaviour: let the OS choose one.
+        wg_interface.open_listen_socket(listen_port)?;
 
         let interface_lock = Arc::new(Lock::new(wg_interface));
 
@@ -353,9 +392,139 @@ impl DeviceHandle {
         })
     }
 
+    /// Run a control-plane operation while the datapath cooperatively yields
+    /// its read locks. This is the same synchronization used by UAPI set=1.
+    fn with_device_mut<R>(&self, operation: impl FnOnce(&mut Device) -> R) -> R {
+        let mut device = self.device.read();
+        device
+            .try_writeable(
+                |device| device.trigger_yield(),
+                |device| {
+                    device.cancel_yield();
+                    operation(device)
+                },
+            )
+            .expect("device write operation always returns a result")
+    }
+
+    /// Configure the interface private key without going through UAPI.
+    pub fn set_private_key(&self, private_key: x25519::StaticSecret) {
+        self.with_device_mut(|device| device.set_key(private_key));
+    }
+
+    /// Add, update, or remove a peer through the typed device API.
+    ///
+    /// When `remove` is false, `allowed_ips` are either appended or replace
+    /// the existing set according to `replace_allowed_ips`. Optional fields
+    /// preserve their current values when omitted.
+    #[allow(clippy::too_many_arguments)]
+    pub fn update_peer(
+        &self,
+        public_key: x25519::PublicKey,
+        remove: bool,
+        replace_allowed_ips: bool,
+        endpoint: Option<SocketAddr>,
+        allowed_ips: &[AllowedIP],
+        persistent_keepalive: Option<(u32, u32)>,
+        preshared_key: Option<[u8; 32]>,
+    ) -> Result<(), Error> {
+        self.with_device_mut(|device| {
+            device.update_peer(
+                public_key,
+                remove,
+                replace_allowed_ips,
+                endpoint,
+                allowed_ips,
+                persistent_keepalive,
+                preshared_key,
+            )
+        })
+    }
+
+    /// Apply interface-wide AmneziaWG framing and obfuscation settings.
+    pub fn set_obfuscation(&self, obfuscation: ObfuscationRanges, amnezia: AmneziaConfig) -> bool {
+        self.with_device_mut(|device| device.set_obfuscation(obfuscation, amnezia))
+    }
+
+    /// Change the UDP listen port without going through UAPI.
+    pub fn set_listen_port(&self, port: u16) -> Result<(), Error> {
+        self.with_device_mut(|device| device.open_listen_socket(port))
+    }
+
+    /// Current UDP listen port selected for this interface.
+    pub fn listen_port(&self) -> u16 {
+        self.device.read().listen_port
+    }
+
+    /// Verify that the original Linux TUN descriptor is still attached to
+    /// the interface created by this device. A same-name replacement is not
+    /// considered the same device.
+    #[cfg(target_os = "linux")]
+    pub fn verify_interface_identity(&self) -> Result<(), Error> {
+        self.device.read().iface.verify_identity()
+    }
+
+    /// Return a consistent read-only snapshot of the interface and its peers.
+    ///
+    /// This reads the live Device/Noise state directly. It deliberately does
+    /// not query or serialize UAPI, so it is available in daemon mode where
+    /// UAPI is completely disabled.
+    pub fn snapshot(&self) -> Result<DeviceSnapshot, Error> {
+        let device = self.device.read();
+        let mut peers = Vec::with_capacity(device.peers.len());
+
+        for (public_key, peer_ref) in &device.peers {
+            let allowed_ips = device
+                .peer_allowed_ips(peer_ref)
+                .into_iter()
+                .map(|(addr, cidr)| AllowedIP { addr, cidr })
+                .collect();
+            let peer = peer_ref.lock();
+            let endpoint = peer.endpoint().addr;
+            let keepalive = peer.persistent_keepalive_range();
+            let (last_handshake, tx_bytes, rx_bytes, _, _) = peer.tunnel.stats();
+
+            peers.push(PeerSnapshot {
+                public_key: *public_key.as_bytes(),
+                index: peer.index(),
+                endpoint,
+                allowed_ips,
+                persistent_keepalive: keepalive,
+                time_since_last_handshake: last_handshake,
+                tx_bytes: tx_bytes as u64,
+                rx_bytes: rx_bytes as u64,
+            });
+        }
+
+        // HashMap iteration order is intentionally unspecified. Stable order
+        // makes snapshots suitable for monitoring, tests, and config diffs.
+        peers.sort_by_key(|peer| peer.public_key);
+
+        Ok(DeviceSnapshot {
+            name: device.iface.name()?,
+            listen_port: device.listen_port,
+            mtu: device.mtu.load(Ordering::Relaxed),
+            fwmark: device.fwmark,
+            peers,
+        })
+    }
+
+    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+    /// Set the socket fwmark used by this interface and its connected peers.
+    pub fn set_fwmark(&self, mark: u32) -> Result<(), Error> {
+        self.with_device_mut(|device| device.set_fwmark(mark))
+    }
+
+    /// Request a graceful stop of all datapath worker threads.
+    pub fn shutdown(&self) {
+        self.device.read().trigger_exit();
+    }
+
     pub fn wait(&mut self) {
         while let Some(thread) = self.threads.pop() {
-            thread.join().unwrap();
+            if thread.join().is_err() {
+                tracing::error!("BoringTun datapath worker panicked during shutdown");
+            }
         }
     }
 
@@ -443,6 +612,14 @@ impl DeviceHandle {
 impl Drop for DeviceHandle {
     fn drop(&mut self) {
         self.device.read().trigger_exit();
+        // Do not detach datapath workers: they own TUN queues and UDP event
+        // loops. Joining here makes partial daemon startup rollback bounded
+        // and prevents background threads surviving a failed configuration.
+        while let Some(thread) = self.threads.pop() {
+            if thread.join().is_err() {
+                tracing::error!("BoringTun datapath worker panicked during shutdown");
+            }
+        }
         self.clean();
     }
 }
@@ -661,10 +838,13 @@ impl Device {
         let iface = Arc::new(TunSocket::new(name)?.set_non_blocking()?);
         let mtu = iface.mtu()?;
 
+        let enable_uapi = config.enable_uapi;
         #[cfg(not(target_os = "linux"))]
         let uapi_fd = -1;
         #[cfg(target_os = "linux")]
-        let uapi_fd = config.uapi_fd;
+        // Disabling UAPI is an absolute opt-out: do not register, poll, or
+        // otherwise attach even a caller-supplied UAPI descriptor.
+        let uapi_fd = if enable_uapi { config.uapi_fd } else { -1 };
 
         // Before `config` is moved into the device.
         // `filter(> 0)` so `Some(0)` and `None` cannot mean different things:
@@ -700,7 +880,7 @@ impl Device {
 
         if uapi_fd >= 0 {
             device.register_api_fd(uapi_fd)?;
-        } else {
+        } else if enable_uapi {
             device.register_api_handler()?;
         }
         device.register_iface_handler(Arc::clone(&device.iface))?;
@@ -1406,6 +1586,21 @@ mod ingress_tests {
     //! an anonymous datagram.
 
     use super::*;
+
+    #[test]
+    fn device_config_keeps_uapi_compatibility_and_allows_daemon_mode() {
+        let legacy = DeviceConfig::default();
+        assert!(legacy.enable_uapi);
+        assert_eq!(legacy.listen_port, None);
+
+        let daemon = DeviceConfig {
+            enable_uapi: false,
+            listen_port: Some(51820),
+            ..DeviceConfig::default()
+        };
+        assert!(!daemon.enable_uapi);
+        assert_eq!(daemon.listen_port, Some(51820));
+    }
 
     /// Moving a prefix from one peer to another must transfer ownership
     /// completely. The old owner keeping its own copy is what let it carry on
