@@ -1391,7 +1391,7 @@ mod tests {
         let mut plan = cleanup_test_plan();
         plan.socket_marks = vec![0x1000_0001, 0x1000_0002];
 
-        for failure_position in 1..=4 {
+        for failure_position in 1..=2 {
             let mut calls = Vec::new();
             let mut stale_cleanup_attempts = 0;
             let mut failure_injected = false;
@@ -1488,7 +1488,7 @@ mod tests {
     fn egress_stale_rule_cleanup_failure_aborts_install_and_rolls_back() {
         let plan = cleanup_test_plan();
 
-        for failure_position in 1..=3 {
+        for failure_position in 1..=2 {
             let mut calls = Vec::new();
             let mut stale_cleanup_attempts = 0;
             let mut failure_injected = false;
@@ -1537,8 +1537,8 @@ mod tests {
                 .count();
             assert_eq!(
                 cleanup,
-                failure_position + 4,
-                "failed pre-cleanup plus rollback must attempt all four egress resources"
+                failure_position + 2,
+                "failed pre-cleanup plus rollback must attempt all IPv4 egress resources"
             );
         }
     }
@@ -1717,7 +1717,7 @@ mod tests {
             "IPv4 route and rule cleanup must both be attempted"
         );
         assert!(matches!(result, Err(LinuxError::Cleanup(message))
-            if message.matches("Operation not permitted").count() == 4));
+            if message.matches("Operation not permitted").count() == 2));
         assert!(calls
             .iter()
             .any(|args| args.first().is_some_and(|family| family == "-4")));
@@ -1743,7 +1743,7 @@ mod tests {
         });
 
         assert!(result.is_ok());
-        assert_eq!(calls, 4, "cleanup must inspect every owned resource");
+        assert_eq!(calls, 2, "cleanup must inspect both IPv4 resources");
     }
 
     #[test]
@@ -1767,11 +1767,11 @@ mod tests {
 
         assert_eq!(
             calls.len(),
-            8,
-            "all resources on both interfaces must be attempted"
+            4,
+            "both IPv4 resources on both interfaces must be attempted"
         );
         assert!(matches!(result, Err(LinuxError::Cleanup(message))
-            if message.matches("injected cleanup failure").count() == 8));
+            if message.matches("injected cleanup failure").count() == 4));
         for interface in ["awg0", "wg1"] {
             let expected_mark = if interface == "awg0" {
                 "0x80000001"
@@ -1849,8 +1849,8 @@ mod tests {
             .count();
 
         assert_eq!(
-            egress_cleanup, 4,
-            "nested egress rollback must complete first"
+            egress_cleanup, 2,
+            "nested IPv4 egress rollback must complete first"
         );
         assert_eq!(
             socket_cleanup, 2,
@@ -1909,8 +1909,8 @@ mod tests {
             })
             .count();
         assert_eq!(
-            egress_cleanup_calls, 4,
-            "egress rollback must run exactly once"
+            egress_cleanup_calls, 2,
+            "IPv4 egress rollback must run exactly once"
         );
         let socket_cleanup_calls = calls[failure_index.expect("install failure injected")..]
             .iter()
@@ -1920,7 +1920,7 @@ mod tests {
             .count();
         assert_eq!(
             socket_cleanup_calls, 2,
-            "outer rollback must still clean both socket families"
+            "outer rollback must still clean both socket marks"
         );
     }
 
@@ -1970,12 +1970,12 @@ mod tests {
             "all socket marks must be attempted"
         );
         assert_eq!(
-            egress_calls, 4,
-            "both egress route and rule resources must be attempted"
+            egress_calls, 2,
+            "the IPv4 egress route and rule must both be attempted"
         );
         assert!(matches!(result, Err(LinuxError::Cleanup(message))
             if message.matches("injected socket cleanup failure").count() == 2
-                && message.matches("injected egress cleanup failure").count() == 4));
+                && message.matches("injected egress cleanup failure").count() == 2));
     }
 
     #[test]
