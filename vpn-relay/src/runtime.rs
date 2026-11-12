@@ -1362,10 +1362,69 @@ fn load_forwarding_state(
     Ok(Some(saved.state))
 }
 
+trait ForwardingJournalIo {
+    fn create_new_file(&mut self, path: &Path) -> std::io::Result<File>;
+    fn write_state(
+        &mut self,
+        file: &mut File,
+        saved: &ForwardingStateFile,
+    ) -> std::io::Result<()>;
+    fn sync_file(&mut self, file: &File) -> std::io::Result<()>;
+    fn rename(&mut self, source: &Path, destination: &Path) -> std::io::Result<()>;
+    fn remove_file(&mut self, path: &Path) -> std::io::Result<()>;
+    fn sync_directory(&mut self, path: &Path) -> std::io::Result<()>;
+}
+
+struct StdForwardingJournalIo;
+
+impl ForwardingJournalIo for StdForwardingJournalIo {
+    fn create_new_file(&mut self, path: &Path) -> std::io::Result<File> {
+        OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .open(path)
+    }
+
+    fn write_state(
+        &mut self,
+        file: &mut File,
+        saved: &ForwardingStateFile,
+    ) -> std::io::Result<()> {
+        serde_json::to_writer(file, saved).map_err(std::io::Error::other)
+    }
+
+    fn sync_file(&mut self, file: &File) -> std::io::Result<()> {
+        file.sync_all()
+    }
+
+    fn rename(&mut self, source: &Path, destination: &Path) -> std::io::Result<()> {
+        fs::rename(source, destination)
+    }
+
+    fn remove_file(&mut self, path: &Path) -> std::io::Result<()> {
+        fs::remove_file(path)
+    }
+
+    fn sync_directory(&mut self, path: &Path) -> std::io::Result<()> {
+        File::open(path).and_then(|directory| directory.sync_all())
+    }
+}
+
 fn persist_forwarding_state(
     path: &Path,
     namespace_inode: u64,
     state: &ForwardingState,
+) -> Result<(), RuntimeError> {
+    persist_forwarding_state_with(path, namespace_inode, state, &mut StdForwardingJournalIo)
+}
+
+fn persist_forwarding_state_with(
+    path: &Path,
+    namespace_inode: u64,
+    state: &ForwardingState,
+    io: &mut impl ForwardingJournalIo,
 ) -> Result<(), RuntimeError> {
     validate_forwarding_state(state)?;
     match fs::symlink_metadata(path) {
@@ -1380,42 +1439,45 @@ fn persist_forwarding_state(
         Err(error) => return Err(RuntimeError::Forwarding(error.to_string())),
     }
     let temporary_path = path.with_extension(format!("forwarding.tmp-{}", std::process::id()));
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
-        .open(&temporary_path)
+    let mut file = io
+        .create_new_file(&temporary_path)
         .map_err(|error| RuntimeError::Forwarding(error.to_string()))?;
     let saved = ForwardingStateFile {
         version: 1,
         namespace_inode,
         state: state.clone(),
     };
-    let result = serde_json::to_writer(&mut file, &saved)
+    let result = io
+        .write_state(&mut file, &saved)
         .map_err(|error| RuntimeError::Forwarding(error.to_string()))
         .and_then(|()| {
-            file.sync_all()
+            io.sync_file(&file)
                 .map_err(|error| RuntimeError::Forwarding(error.to_string()))
         });
     drop(file);
     if let Err(error) = result {
-        let _ = fs::remove_file(&temporary_path);
+        let _ = io.remove_file(&temporary_path);
         return Err(error);
     }
-    if let Err(error) = fs::rename(&temporary_path, path) {
-        let _ = fs::remove_file(&temporary_path);
+    if let Err(error) = io.rename(&temporary_path, path) {
+        let _ = io.remove_file(&temporary_path);
         return Err(RuntimeError::Forwarding(error.to_string()));
     }
     let parent = path.parent().ok_or_else(|| {
         RuntimeError::Forwarding("forwarding state path has no parent directory".to_owned())
     })?;
-    File::open(parent)
-        .and_then(|directory| directory.sync_all())
+    io.sync_directory(parent)
         .map_err(|error| RuntimeError::Forwarding(error.to_string()))
 }
 
 fn remove_forwarding_state_file(path: &Path) -> Result<(), RuntimeError> {
+    remove_forwarding_state_file_with(path, &mut StdForwardingJournalIo)
+}
+
+fn remove_forwarding_state_file_with(
+    path: &Path,
+    io: &mut impl ForwardingJournalIo,
+) -> Result<(), RuntimeError> {
     match fs::symlink_metadata(path) {
         Ok(metadata)
             if metadata.file_type().is_file()
@@ -1423,12 +1485,11 @@ fn remove_forwarding_state_file(path: &Path) -> Result<(), RuntimeError> {
                 && metadata.permissions().mode() & 0o777 == 0o600
                 && metadata.nlink() == 1 =>
         {
-            fs::remove_file(path).map_err(|error| RuntimeError::Forwarding(error.to_string()))?;
+            io.remove_file(path).map_err(|error| RuntimeError::Forwarding(error.to_string()))?;
             let parent = path.parent().ok_or_else(|| {
                 RuntimeError::Forwarding("forwarding state path has no parent directory".to_owned())
             })?;
-            File::open(parent)
-                .and_then(|directory| directory.sync_all())
+            io.sync_directory(parent)
                 .map_err(|error| RuntimeError::Forwarding(error.to_string()))
         }
         Ok(_) => Err(RuntimeError::Forwarding(format!(
