@@ -42,6 +42,12 @@ fail() {
     echo "vpn-relay per-interface forwarding test: $*" >&2
     [[ ! -f "$TMP/daemon.log" ]] || cat "$TMP/daemon.log" >&2
     [[ ! -f "$TMP/reject.log" ]] || cat "$TMP/reject.log" >&2
+    if ip netns exec "$NS" nft list table inet vpn_relay_per_if_test >/dev/null 2>&1; then
+        echo "--- nft table (text) ---" >&2
+        ip netns exec "$NS" nft list table inet vpn_relay_per_if_test >&2 || true
+        echo "--- nft table (JSON) ---" >&2
+        ip netns exec "$NS" nft -j list table inet vpn_relay_per_if_test >&2 || true
+    fi
     exit 1
 }
 
