@@ -1309,7 +1309,20 @@ egress = "awg-primary"
     }
 
     #[test]
-    fn source_only_and_destination_only_rules_generate_family_specific_matches() {
+    fn policy_routing_commands_use_ipv4_family() {
+        let plan = RoutingPlan::from_config(&sample_config());
+
+        assert_eq!(plan.ip_policy_families(), &["-4"]);
+        for egress in &plan.egresses {
+            assert_eq!(plan.ip_families_for_egress(egress), &["-4"]);
+        }
+        assert!(plan.ip_commands().iter().all(|command| {
+            command.first().is_some_and(|family| family == "-4")
+        }));
+    }
+
+    #[test]
+    fn source_only_and_destination_only_rules_generate_ipv4_matches() {
         let mut config = sample_config();
         config.routing.rules.truncate(2);
         config.routing.rules[0].source = Some(vec!["10.10.0.0/24".to_owned()]);
