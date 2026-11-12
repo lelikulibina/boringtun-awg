@@ -842,7 +842,7 @@ import re
 import sys
 with open(sys.argv[1], encoding="utf-8", errors="replace") as stream:
     for line in stream:
-        line = re.sub(r"\x1B\[[0-?]*[ -/]*[@-~]", line)
+        line = re.sub(r"\x1B\[[0-?]*[ -/]*[@-~]", "", line)
         if "peer statistics" in line:
             print(line, end="")
 PY
