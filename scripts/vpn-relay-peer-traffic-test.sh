@@ -650,7 +650,7 @@ if action == "add":
 elif action == "remove":
     if config.count(rule) != 1:
         raise SystemExit("cannot safely remove runtime-reload probe rule")
-    config = config.replace(rule, 1)
+    config = config.replace(rule, "", 1)
 else:
     raise SystemExit(f"unknown action: {action}")
 with open(path, "w", encoding="utf-8") as stream:
