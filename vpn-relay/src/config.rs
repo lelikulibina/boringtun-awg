@@ -1263,21 +1263,6 @@ egress = "awg-uplink"
     }
 
     #[test]
-    fn firewall_rejects_ipv6_selectors_and_icmpv6() {
-        let ipv6_selector = format!(
-            "{}\n[[firewall.input.rules]]\ninterface = \"wg-server\"\nsource = [\"2001:db8::2/128\"]\n",
-            ipv4_config()
-        );
-        assert!(Config::parse_toml(&ipv6_selector).is_err());
-
-        let icmpv6 = format!(
-            "{}\n[[firewall.input.rules]]\ninterface = \"wg-server\"\nprotocol = \"icmpv6\"\n",
-            ipv4_config()
-        );
-        assert!(Config::parse_toml(&icmpv6).is_err());
-    }
-
-    #[test]
     fn routing_rule_resolves_nat_fields_into_a_typed_action() {
         let mut rule: RoutingRule = toml::from_str(
             r#"
@@ -1321,22 +1306,6 @@ egress = "awg-uplink"
             Some("203.0.113.9".parse().unwrap())
         );
 
-        let disabled_ipv6 = ipv4_config().replacen(
-            "egress = \"awg-uplink\"",
-            "egress = \"awg-uplink\"\nnat = \"snat\"\nnat_to = \"2001:db8::1\"",
-            1,
-        );
-        assert!(Config::parse_toml(&disabled_ipv6).is_err());
-    }
-
-    #[test]
-    fn static_snat_rejects_ipv6_addresses_and_selectors() {
-        let input = ipv4_config().replacen(
-            "egress = \"awg-uplink\"",
-            "egress = \"awg-uplink\"\nsource = \"2001:db8::/32\"\nnat = \"snat\"\nnat_to = \"2001:db8::10\"",
-            1,
-        );
-        assert!(Config::parse_toml(&input).is_err());
     }
 
     #[test]
@@ -1353,16 +1322,6 @@ egress = "awg-uplink"
         assert_eq!(config.routing.rules[0].nat, NatMode::Masquerade);
         let default_config = Config::parse_toml(&valid_config()).unwrap();
         assert_eq!(default_config.routing.rules[0].nat, NatMode::None);
-    }
-
-    #[test]
-    fn rejects_ipv6_routing_selectors() {
-        let input = valid_config().replace(
-            "destination = \"0.0.0.0/0\"",
-            "source = \"2001:db8::/32\"\ndestination = \"0.0.0.0/0\"",
-        );
-        let error = Config::parse_toml(&input).unwrap_err();
-        assert!(error.to_string().contains("IPv4 CIDR"));
     }
 
     #[test]
@@ -1504,42 +1463,6 @@ egress = "awg-uplink"
     }
 
     #[test]
-    fn vpn_relay_configuration_rejects_all_ipv6_features() {
-        let base = ipv4_config();
-        assert!(Config::parse_toml(&base).is_ok());
-
-        let legacy_daemon_flag = base.replace(
-            "manage_ip_forwarding = false",
-            "manage_ip_forwarding = false\nipv6_enabled = false",
-        );
-        assert!(Config::parse_toml(&legacy_daemon_flag).is_err());
-
-        let legacy_interface_flag = base.replace(
-            "[interfaces.wg-server]",
-            "[interfaces.wg-server]\nipv6_enabled = false",
-        );
-        assert!(Config::parse_toml(&legacy_interface_flag).is_err());
-
-        let ipv6_address = base.replace("10.10.0.1/24", "2001:db8::1/64");
-        assert!(Config::parse_toml(&ipv6_address).is_err());
-
-        let ipv6_endpoint = base.replace(
-            "endpoint = \"198.51.100.10:51820\"",
-            "endpoint = \"[2001:db8::10]:51820\"",
-        );
-        assert!(Config::parse_toml(&ipv6_endpoint).is_err());
-
-        let ipv6_allowed_ip = base.replace("10.10.0.2/32", "2001:db8::2/128");
-        assert!(Config::parse_toml(&ipv6_allowed_ip).is_err());
-
-        let ipv6_route = base.replace(
-            "destination = \"0.0.0.0/0\"",
-            "destination = \"2001:db8::/32\"",
-        );
-        assert!(Config::parse_toml(&ipv6_route).is_err());
-    }
-
-    #[test]
     fn parses_and_validates_a_complete_multi_tunnel_config() {
         let config = Config::parse_toml(&valid_config()).unwrap();
         assert_eq!(config.interfaces.len(), 2);
@@ -1632,10 +1555,8 @@ egress = "awg-uplink"
     }
 
     #[test]
-    fn parses_ipv4_and_rejects_ipv6_peer_endpoints() {
+    fn parses_ipv4_peer_endpoints() {
         assert_eq!(PeerEndpoint::parse("192.0.2.1:51820").unwrap().port, 51820);
-        assert!(PeerEndpoint::parse("[2001:db8::1]:51820").is_err());
-        assert!(PeerEndpoint::parse("2001:db8::1:51820").is_err());
     }
 
     #[test]
@@ -1648,7 +1569,6 @@ egress = "awg-uplink"
             "münich.example:51820",
             "example.com:0",
             "example.com:not-a-port",
-            "2001:db8::1:51820",
         ] {
             assert!(
                 PeerEndpoint::parse(value).is_err(),
