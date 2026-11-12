@@ -2819,6 +2819,174 @@ mod tests {
     }
 
     #[test]
+    fn forwarding_journal_persistence_failure_matrix_preserves_atomicity() {
+        let namespace_inode = 1234;
+        let state = sample_forwarding_state();
+
+        for stage in ["create", "write", "file_sync", "rename", "directory_sync"] {
+            let path = forwarding_state_test_path(&format!("persist-{stage}"));
+            let temporary_path =
+                path.with_extension(format!("forwarding.tmp-{}", std::process::id()));
+            let mut io = FaultInjectingForwardingJournalIo { fail_at: stage };
+
+            let result = persist_forwarding_state_with(
+                &path,
+                namespace_inode,
+                &state,
+                &mut io,
+            );
+            assert!(
+                matches!(result, Err(RuntimeError::Forwarding(message))
+                    if message.contains(&format!("injected {stage} failure"))),
+                "failure at {stage} returned an unexpected result: {result:?}"
+            );
+            assert!(
+                !temporary_path.exists(),
+                "temporary journal remained after {stage} failure"
+            );
+
+            if stage == "directory_sync" {
+                // Rename already committed the new journal. A failed parent
+                // fsync must report uncertainty but must not discard recovery data.
+                assert!(path.exists(), "renamed journal was lost after directory fsync failure");
+                assert!(load_forwarding_state(&path, namespace_inode)
+                    .unwrap()
+                    .is_some());
+                fs::remove_file(&path).unwrap();
+            } else {
+                assert!(
+                    !path.exists(),
+                    "final journal appeared after pre-rename {stage} failure"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn forwarding_journal_remove_failure_matrix_reports_unlink_and_directory_sync() {
+        let path = forwarding_state_test_path("remove-failure-matrix");
+        persist_forwarding_state(&path, 4321, &sample_forwarding_state()).unwrap();
+
+        let mut unlink_io = FaultInjectingForwardingJournalIo { fail_at: "remove" };
+        assert!(matches!(
+            remove_forwarding_state_file_with(&path, &mut unlink_io),
+            Err(RuntimeError::Forwarding(message)) if message.contains("injected remove failure")
+        ));
+        assert!(path.exists(), "failed unlink must retain the recovery journal");
+
+        let mut directory_sync_io =
+            FaultInjectingForwardingJournalIo { fail_at: "directory_sync" };
+        assert!(matches!(
+            remove_forwarding_state_file_with(&path, &mut directory_sync_io),
+            Err(RuntimeError::Forwarding(message))
+                if message.contains("injected directory_sync failure")
+        ));
+        assert!(
+            !path.exists(),
+            "directory fsync failure occurs after unlink; the journal must remain removed"
+        );
+    }
+
+    #[test]
+    fn interface_forwarding_restore_failure_matrix_stops_at_failed_boundary() {
+        for stage in ["read", "second_verify", "write"] {
+            let entry = test_forwarding_entry("eth0", 7);
+            let mut verify_calls = 0usize;
+            let mut write_calls = 0usize;
+            let result = restore_interface_forwarding_entry_with(
+                &entry,
+                "0",
+                true,
+                |_| {
+                    if stage == "read" {
+                        Err(RuntimeError::Forwarding("injected read failure".to_owned()))
+                    } else {
+                        Ok("1".to_owned())
+                    }
+                },
+                |_, _| {
+                    write_calls += 1;
+                    if stage == "write" {
+                        Err(RuntimeError::Forwarding("injected write failure".to_owned()))
+                    } else {
+                        Ok(())
+                    }
+                },
+                |_, _| {
+                    verify_calls += 1;
+                    if stage == "second_verify" && verify_calls == 2 {
+                        Err(RuntimeError::Forwarding(
+                            "injected second identity failure".to_owned(),
+                        ))
+                    } else {
+                        Ok(())
+                    }
+                },
+            );
+
+            assert!(result.is_err(), "{stage} failure was not propagated");
+            assert_eq!(
+                verify_calls,
+                if stage == "read" { 1 } else { 2 },
+                "unexpected identity verification count for {stage}"
+            );
+            assert_eq!(
+                write_calls,
+                usize::from(stage == "write"),
+                "unsafe write attempt count for {stage}"
+            );
+        }
+    }
+
+    #[test]
+    fn namespace_restore_failures_do_not_skip_per_interface_recovery() {
+        for stage in ["namespace_read", "namespace_write"] {
+            let state = ForwardingState {
+                ipv4: "0".to_owned(),
+                ipv4_changed: true,
+                interfaces: vec![
+                    test_forwarding_entry("eth0", 7),
+                    test_forwarding_entry("eth1", 8),
+                ],
+            };
+            let mut interface_writes = Vec::new();
+            let result = restore_forwarding_state_with_mode_and_verify(
+                &state,
+                |key| {
+                    if key == "net.ipv4.ip_forward" && stage == "namespace_read" {
+                        Err(RuntimeError::Forwarding(
+                            "injected namespace read failure".to_owned(),
+                        ))
+                    } else {
+                        Ok("1".to_owned())
+                    }
+                },
+                |key, value| {
+                    if key == "net.ipv4.ip_forward" && stage == "namespace_write" {
+                        return Err(RuntimeError::Forwarding(
+                            "injected namespace write failure".to_owned(),
+                        ));
+                    }
+                    interface_writes.push((key.to_owned(), value.to_owned()));
+                    Ok(())
+                },
+                |_, _| Ok(()),
+            );
+
+            assert!(matches!(result, Err(RuntimeError::FatalTransition(message))
+                if message.contains(&format!("injected {stage} failure"))));
+            assert_eq!(
+                interface_writes,
+                vec![
+                    ("net.ipv4.conf.eth0.forwarding".to_owned(), "0".to_owned()),
+                    ("net.ipv4.conf.eth1.forwarding".to_owned(), "0".to_owned()),
+                ],
+                "namespace {stage} failure skipped an interface restore"
+            );
+        }
+    }
+
+    #[test]
     fn forwarding_state_recovery_restores_and_is_idempotent() {
         let state = ForwardingState {
             ipv4: "0".to_owned(),
@@ -2898,6 +3066,73 @@ mod tests {
             "vpn-relay-forwarding-{label}-{}-{nonce}.json",
             std::process::id()
         ))
+    }
+
+    struct FaultInjectingForwardingJournalIo {
+        fail_at: &'static str,
+    }
+
+    impl FaultInjectingForwardingJournalIo {
+        fn error(stage: &str) -> std::io::Error {
+            std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("injected {stage} failure"),
+            )
+        }
+    }
+
+    impl ForwardingJournalIo for FaultInjectingForwardingJournalIo {
+        fn create_new_file(&mut self, path: &Path) -> std::io::Result<File> {
+            if self.fail_at == "create" {
+                return Err(Self::error("create"));
+            }
+            OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+                .open(path)
+        }
+
+        fn write_state(
+            &mut self,
+            file: &mut File,
+            saved: &ForwardingStateFile,
+        ) -> std::io::Result<()> {
+            if self.fail_at == "write" {
+                file.write_all(b"{")?;
+                return Err(Self::error("write"));
+            }
+            serde_json::to_writer(file, saved).map_err(std::io::Error::other)
+        }
+
+        fn sync_file(&mut self, file: &File) -> std::io::Result<()> {
+            if self.fail_at == "file_sync" {
+                return Err(Self::error("file_sync"));
+            }
+            file.sync_all()
+        }
+
+        fn rename(&mut self, source: &Path, destination: &Path) -> std::io::Result<()> {
+            if self.fail_at == "rename" {
+                return Err(Self::error("rename"));
+            }
+            fs::rename(source, destination)
+        }
+
+        fn remove_file(&mut self, path: &Path) -> std::io::Result<()> {
+            if self.fail_at == "remove" {
+                return Err(Self::error("remove"));
+            }
+            fs::remove_file(path)
+        }
+
+        fn sync_directory(&mut self, path: &Path) -> std::io::Result<()> {
+            if self.fail_at == "directory_sync" {
+                return Err(Self::error("directory_sync"));
+            }
+            File::open(path).and_then(|directory| directory.sync_all())
+        }
     }
 
     fn sample_forwarding_state() -> ForwardingState {
