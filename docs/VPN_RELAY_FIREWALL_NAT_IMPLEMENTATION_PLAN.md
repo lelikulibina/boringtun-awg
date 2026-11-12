@@ -362,10 +362,10 @@ unmanaged output остаётся неизменным.
   policy routes и nftables table.
 - [x] Проверить startup rollback при конфликте nft table, ip rule и route,
   включая сохранность чужих ресурсов (CI 42665725191).
-- [~] Rollback покрывает setup TUN, interface configuration, nftables activation, policy-routing staging, forwarding enable, durable forwarding recovery и graceful shutdown. Bootstrap/indexed nft activation и двойные cleanup-failure сценарии прошли CI 42982784239; forwarding journal persistence/removal и restore failure matrices расширены и прошли unit CI 43227640779. Полный перебор startup cleanup failures на каждой границе системного вызова остаётся открытым.
+- [~] Rollback покрывает setup TUN, interface configuration, nftables activation, policy-routing staging, forwarding enable, durable forwarding recovery и graceful shutdown. Bootstrap/indexed nft activation и двойные cleanup-failure сценарии прошли CI 42982784239; forwarding journal persistence/removal, restore и rtnetlink setter failure matrices прошли unit CI 43230421355. Полный перебор startup cleanup failures на каждой границе системного вызова остаётся открытым.
 - [x] Не удалять чужие ip rules/routes/nftables objects; проверены foreign
   nftables table/base chains, masked ip rules и IPv4/IPv6 routes.
-- [~] Частичные ошибки проверяются на реально используемом IPv4 пути: setup TUN, interface configuration, nftables inspection/transaction, IPv4 policy route, forwarding enable/restore, journal persistence/removal и staged stale-rule cleanup имеют failure-injection сценарии. IPv6 policy-route failure больше не является требованием. Остаётся расширить startup cleanup matrix и добавить fault injection на rtnetlink send/ACK/readback.
+- [~] Частичные ошибки проверяются на реально используемом IPv4 пути: setup TUN, interface configuration, nftables inspection/transaction, IPv4 policy route, forwarding enable/restore, journal persistence/removal, rtnetlink request/ACK/readback и staged stale-rule cleanup имеют failure-injection сценарии. IPv6 policy-route failure больше не является требованием. Остаётся расширить startup cleanup matrix на каждую границу системного вызова.
 - [x] Проверить shutdown, повторный запуск, lock и network namespace lifecycle: graceful shutdown, duplicate lock и SIGKILL/restart проверены. Versioned forwarding journal сохраняется до изменения sysctl, привязан к inode network namespace, проверяется по owner/mode/nlink/size/schema и восстанавливается до повторного включения forwarding. Journal удаляется только после успешного восстановления; при ошибке остаётся для следующего запуска. Полный lifecycle прошёл CI 42849072652.
   (CI 42665725191).
 - [x] Проверить удаление/переименование TUN во время работы: исходный FD
@@ -485,8 +485,8 @@ vpn-relay управляет только IPv4 forwarding. IPv6 forwarding/sysct
   Проверены private bridge network namespace (не host netns), CAP_NET_ADMIN,
   /dev/net/tun, nftables, rtnetlink, IPv4 sysctl prerequisite, per-interface
   forwarding и graceful restore. Job `podman-deployment` включён в
-  обязательный `all-systems-go`; повторно пройден в CI run `43227640779`
-  на HEAD `b2011fafae5a72155213ac03e788aa560faf1038`.
+  обязательный `all-systems-go`; повторно пройден в CI run `43230421355`
+  на HEAD `e1c2903f5596f7f88395236d0bd6bb3cd8451a7c`.
 - [x] Исторические dual-stack критерии отделены от текущего плана:
   верхний архитектурный banner объявляет старые IPv6 transport/routing/NAT/
   forwarding/sysctl и IPv6 allow/deny проверки архивными; разделы 883+ явно
@@ -494,10 +494,10 @@ vpn-relay управляет только IPv4 forwarding. IPv6 forwarding/sysct
   уточняет, что IPv6-пункты в этапах 1–7 не являются текущими acceptance
   criteria. Текущая IPv6-проверка ограничена drop на managed TUN.
 
-Полный CI на HEAD `b2011fafae5a72155213ac03e788aa560faf1038` завершился
-success (run `43227640779`): rustfmt, clippy, feature checks, unit tests,
-integration tests, IPv4 forwarding/IPv6 drop packet probe, WG/AWG peer traffic,
-multi-uplink routing, kernel compatibility matrix Ubuntu 22.04/24.04,
+Полный CI на HEAD `e1c2903f5596f7f88395236d0bd6bb3cd8451a7c` завершился
+success (run `43230421355`): rustfmt, clippy, feature checks, unit tests,
+integration tests, IPv4 forwarding/IPv6 output-drop packet probe, WG/AWG peer
+traffic, multi-uplink routing, kernel compatibility matrix Ubuntu 22.04/24.04,
 rootful Podman deployment и `all-systems-go` успешны. Windows job пропущен
 условиями workflow.
 ## 12. Этап 9 — документация и CI
@@ -525,7 +525,7 @@ rootful Podman deployment и `all-systems-go` успешны. Windows job про
 |---|---|---|---|
 | 2026-11-12 | Rootful Podman deployment smoke test прошёл | `scripts/vpn-relay-podman.Containerfile`, `scripts/vpn-relay-podman-container-test.sh`; rootful Podman с private bridge netns, `NET_ADMIN`, `/dev/net/tun`, nftables, rtnetlink и namespace IPv4 sysctl. Подтверждены запуск daemon, per-interface forwarding и graceful restore. CI run `43225642699`, HEAD `734c7fd2a20d76848313ea89821fb54bea1ab524`; job success и входит в `all-systems-go`. | Проверено CI |
 | 2026-11-12 | Закрыта kernel compatibility matrix и исправлена совместимость nftables 1.0.2 | Ubuntu 22.04.5/kernel 6.8.0-1070-azure/iproute2 5.15.0/nftables 1.0.2 и Ubuntu 24.04.5/kernel 7.0.0-1017-azure/iproute2 6.1.0/nftables 1.0.9 прошли forwarding/recovery и packet-level probes. Ubuntu 22.04 выявила tab-indented table comment в текстовом nft output; ownership parser теперь принимает только точный top-level comment с табом или четырьмя пробелами, nested comment отвергается. CI run `43223428772`, HEAD `3ba58f2a52bd2d3f8a704a61bb4edbd7883de381`: все jobs и `all-systems-go` success; Windows skipped. | Проверено CI |
-| 2026-11-12 | Сужено окно IPv4 forwarding ifindex TOCTOU; обновлена failure matrix и архивная маркировка dual-stack требований | Name↔ifindex guard перенесён внутрь rtnetlink setter: выполняется после сборки атрибутов непосредственно перед RTM_NEWLINK и повторно после ACK/readback. Это уменьшает окно гонки, но не устраняет отсутствие kernel generation token. Добавлены failure-injection tests для journal create/write/file fsync/rename/directory fsync, unlink/directory fsync, restore read/identity/write и namespace restore continuation. Dual-stack IPv6 пункты этапов 1–7 явно помечены архивными. Полный CI run `43227640779`, HEAD `b2011fafae5a72155213ac03e788aa560faf1038`: все обязательные jobs, Podman, kernel matrix и `all-systems-go` success; Windows skipped. | Проверено CI; startup cleanup и rtnetlink fault injection остаются открытыми |
+| 2026-11-12 | Сужено окно IPv4 forwarding ifindex TOCTOU; закрыты unit failure-injection границы rtnetlink setter | Name↔ifindex guard выполняется после сборки атрибутов непосредственно перед RTM_NEWLINK и повторно после ACK/readback. Добавлены fault-injection tests на identity-before-send, request/ACK failure, RTM_GETLINK readback failure, identity-after-readback и mismatch подтверждённого значения. Это сужает race window, но не устраняет отсутствие kernel generation token. Полный CI run `43230421355`, HEAD `e1c2903f5596f7f88395236d0bd6bb3cd8451a7c`: все jobs, включая kernel matrix, Podman, WG/AWG, multi-uplink и `all-systems-go`, success; Windows skipped. Startup cleanup matrix остаётся открытой. | Проверено CI |
 | 2026-11-12 | Добавлена kernel compatibility matrix для IPv4 rtnetlink | Матрица Ubuntu 22.04/24.04 с kernel logging, RTM_NEWLINK/ACK/readback, recovery и packet-level checks; результат закрыт CI run `43223428772` (детали строкой выше). | Проверено CI |
 | 2026-11-11 | Добавлен failure-injection тест восстановления per-interface forwarding | Два managed-интерфейса с IPv4/IPv6 forwarding: запись восстановления искусственно завершается ошибкой во всех четырёх случаях; отдельный сценарий теряет identity первого интерфейса и проверяет, что восстановление второго всё равно выполняется. Тесты проверяют продолжение попыток для остальных семейств и интерфейсов, identity verification до/после чтения и агрегацию причин в fatal error. Код добавлен; rustfmt, unit tests и CI для нового commit ещё не подтверждены. | Ожидает CI |
 | 2026-11-09 | Создана ветка `feature/vpn-relay-firewall-nat` от `ad3f35d2790e7e47c8d050fb7b3c206c69ac2aa4` | GitHub branch ref проверен | Завершено |
@@ -972,7 +972,11 @@ IPv4/IPv6 forwarding и lifecycle/recovery suites уже существуют и
 - [x] Runtime проверяет global prerequisites, состояние unmanaged links и allowlisted links; при drift выполняется fatal shutdown с сохранением firewall.
 - [x] Добавлены unit tests для валидации allowlist, identity mismatch, внешних изменений sysctl, partial-write rollback и TUN recovery.
 - [x] Добавлены root-only network namespace suites: daemon lifecycle/recovery, unmanaged interface rejection, runtime drift, а также реальные IPv4/IPv6 packet probes для allowlisted и blocked ingress interfaces.
-- [ ] Остаточный риск TOCTOU не закрыт полностью. IPv4 sysctl write заменён на RTM_NEWLINK по ifindex с ACK и RTM_GETLINK readback, но повторное использование ifindex между userspace guard и обработкой запроса теоретически возможно. IPv6 force_forwarding записывается через заранее открытый procfs FD после проверки name/ifindex; это предотвращает повторное разрешение имени при write и позволяет ядру отклонить устаревший inode после unregister. Stale-FD race test выполнен и прошёл в CI `43007873964`; это подтверждает конкретный сценарий unregister/recreate, но не является общей generation token и не доказывает устранение всех TOCTOU.
+- [x] Архивная заметка о TOCTOU прежней dual-stack реализации сохранена
+  только как историческая запись. Она не описывает текущие IPv6 sysctl
+  операции: в актуальном vpn-relay IPv6 forwarding/sysctl полностью удалены.
+  Текущий остаточный IPv4 ifindex-reuse TOCTOU и меры сужения окна описаны
+  в актуальном разделе «IPv4 forwarding» выше.
 
 net.ipv4.ip_forward=1 и net.ipv6.conf.all.forwarding=0 должны быть выставлены до запуска daemon и оставаться неизменными на протяжении его работы. Если global IPv6 forwarding включить, ядро переключит Host/Router setting всех интерфейсов и сбросит force_forwarding; runtime monitor завершит daemon и сохранит fail-closed firewall. Внешние интерфейсы, на которых forwarding уже включён, должны быть включены в allowlist; иначе startup отклоняется.
 

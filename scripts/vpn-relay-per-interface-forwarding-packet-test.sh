@@ -95,6 +95,11 @@ for iface in lo r-in0 r-out0 r-bad0; do
     ip netns exec "$ROUTER" sysctl -qw "net.ipv4.conf.$iface.forwarding=0"
 done
 
+# Test-only setup: enable IPv6 forwarding in this disposable router namespace
+# so a real forwarded IPv6 packet reaches the managed-TUN egress drop hook.
+# vpn-relay must leave this externally-owned IPv6 setting untouched.
+ip netns exec "$ROUTER" sysctl -qw net.ipv6.conf.all.forwarding=1
+
 cat >"$TMP/router.toml" <<TOML
 [daemon]
 log_level = "debug"
@@ -127,6 +132,7 @@ for _ in $(seq 1 40); do
     sleep 0.25
 done
 [[ "$ready" == true ]] || fail "vpn-relay did not enable selected per-interface forwarding"
+[[ "$(ip netns exec "$ROUTER" sysctl -n net.ipv6.conf.all.forwarding)" == "1" ]] || fail "daemon changed externally-owned IPv6 forwarding"
 
 [[ "$(ip netns exec "$ROUTER" sysctl -n net.ipv4.conf.r-bad0.forwarding)" == "0" ]] || fail "daemon enabled untrusted IPv4 ingress"
 
@@ -148,6 +154,16 @@ if ip netns exec "$ROUTER" ping -6 -n -I wg0 -c 1 -W 1 2001:db8:ffff::2 >/dev/nu
 fi
 ip netns exec "$ROUTER" nft list chain inet "$TABLE" output | grep -Eq 'oif @ipv6_drop_interfaces meta nfproto ipv6 counter packets [1-9][0-9]*' || fail "managed-TUN IPv6 output drop counter did not increase"
 
+# Also drive a packet through FORWARD with wg0 as its selected egress. IPv6
+# forwarding is enabled only in this disposable namespace by the test harness.
+ip -n "$ROUTER" -6 address add 2001:db8:ffff:1::1/64 dev r-in0 nodad || fail "could not add router IPv6 ingress address"
+ip -n "$CLIENT_A" -6 address add 2001:db8:ffff:1::2/64 dev a0 nodad || fail "could not add client IPv6 source address"
+ip -n "$CLIENT_A" -6 route add 2001:db8:ffff::2/128 via 2001:db8:ffff:1::1 dev a0 || fail "could not route IPv6 forward probe to router"
+if ip netns exec "$CLIENT_A" ping -6 -n -I a0 -c 1 -W 1 2001:db8:ffff::2 >/dev/null 2>&1; then
+    fail "IPv6 packet was forwarded out through managed TUN wg0"
+fi
+ip netns exec "$ROUTER" nft list chain inet "$TABLE" forward | grep -Eq 'oif @ipv6_drop_interfaces meta nfproto ipv6 counter packets [1-9][0-9]*' || fail "managed-TUN IPv6 forward drop counter did not increase"
+
 # Graceful shutdown must restore only the values owned by vpn-relay.
 kill -TERM "$PID"
 wait "$PID" || fail "vpn-relay failed during graceful shutdown"
@@ -156,6 +172,7 @@ for iface in r-in0 r-out0; do
     [[ "$(ip netns exec "$ROUTER" sysctl -n "net.ipv4.conf.$iface.forwarding")" == "0" ]] || fail "IPv4 forwarding was not restored on $iface"
 done
 [[ "$(ip netns exec "$ROUTER" sysctl -n net.ipv4.ip_forward)" == "1" ]] || fail "daemon changed externally-owned IPv4 global forwarding"
+[[ "$(ip netns exec "$ROUTER" sysctl -n net.ipv6.conf.all.forwarding)" == "1" ]] || fail "daemon changed externally-owned IPv6 forwarding during shutdown"
 ip netns exec "$ROUTER" nft list table inet "$TABLE" >/dev/null 2>&1 && fail "firewall table survived graceful shutdown"
 
 echo "vpn-relay per-interface forwarding packet test passed"
