@@ -711,8 +711,20 @@ PY
 ip netns exec "$ROUTER_NS" "$BIN" --config "$TMP/router.toml" --reload \
     >"$TMP/runtime-peer-restoration-reload.log" 2>&1 \
     || fail "runtime reload failed while restoring the ingress peer"
-ip netns exec "$SECOND_CLIENT_NS" ping -n -I 10.77.0.3 -c 3 -W 2 10.77.0.1 \
-    || fail "restored ingress peer did not regain connectivity"
+# Re-adding a removed peer creates a fresh cryptographic peer instance.
+# Let the client's 1-second persistent keepalive establish the new session
+# before asserting data-plane recovery; do not treat the expected handshake
+# interval as a failed restoration.
+restored_peer_ready=0
+for _ in $(seq 1 10); do
+    if ip netns exec "$SECOND_CLIENT_NS" ping -n -I 10.77.0.3 -c 1 -W 1 10.77.0.1 \
+        >"$TMP/restored-peer-connectivity.log" 2>&1; then
+        restored_peer_ready=1
+        break
+    fi
+    sleep 1
+done
+[[ "$restored_peer_ready" -eq 1 ]] || fail "restored ingress peer did not regain connectivity after fresh handshake"
 
 # Update the same peer's AllowedIPs from .3/32 to .4/32 without changing its
 # public key. While the router commits that peer update, keep .2 traffic live,
