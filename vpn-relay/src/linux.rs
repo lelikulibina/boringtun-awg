@@ -1267,7 +1267,17 @@ pub fn ipv4_interface_forwarding(ifindex: u32) -> Result<bool, LinuxError> {
 }
 
 /// Set IPv4 forwarding by ifindex using RTM_NEWLINK and verify it with RTM_GETLINK.
-pub fn set_ipv4_interface_forwarding(ifindex: u32, enabled: bool) -> Result<(), LinuxError> {
+///
+/// The name/index identity guard is deliberately performed after constructing
+/// the netlink attributes and immediately before RTM_NEWLINK. It narrows the
+/// userspace race window but cannot make the identity check atomic with the
+/// kernel's later ifindex lookup. The post-ACK readback is followed by another
+/// identity check so a replacement link is not silently accepted as the owner.
+pub fn set_ipv4_interface_forwarding(
+    name: &str,
+    ifindex: u32,
+    enabled: bool,
+) -> Result<(), LinuxError> {
     if ifindex == 0 {
         return Err(LinuxError::Conflict {
             resource: "IPv4 forwarding interface".into(),
@@ -1283,8 +1293,11 @@ pub fn set_ipv4_interface_forwarding(ifindex: u32, enabled: bool) -> Result<(), 
     append_netlink_attribute(&mut af_spec, AF_INET_ATTR | NLA_F_NESTED, &inet);
     let mut attributes = Vec::new();
     append_netlink_attribute(&mut attributes, IFLA_AF_SPEC | NLA_F_NESTED, &af_spec);
+
+    verify_interface_identity(name, ifindex)?;
     netlink_request(ifindex, RTM_NEWLINK, NLM_F_REQUEST | NLM_F_ACK, &attributes)?;
     let actual = ipv4_interface_forwarding(ifindex)?;
+    verify_interface_identity(name, ifindex)?;
     if actual != enabled {
         return Err(LinuxError::Conflict {
             resource: format!("IPv4 forwarding on ifindex {ifindex}"),
