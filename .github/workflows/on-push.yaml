@@ -182,13 +182,13 @@ jobs:
   # Ubuntu LTS runner generations. The runner's actual kernel is logged because
   # GitHub-hosted image labels do not pin a specific kernel build.
   kernel-compatibility:
-    name: kernel compatibility (\${{ matrix.os }})
+    name: kernel compatibility (${{ matrix.os }})
     timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
         os: [ ubuntu-22.04, ubuntu-24.04 ]
-    runs-on: \${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions-rs/toolchain@v1
@@ -198,15 +198,15 @@ jobs:
         run: |
           packages=(iproute2 nftables iputils-ping)
           missing=()
-          for package in "\${packages[@]}"; do
-            status=$(dpkg-query -W -f='\${db:Status-Status}' "$package" 2>/dev/null || true)
+          for package in "${packages[@]}"; do
+            status=$(dpkg-query -W -f='${db:Status-Status}' "$package" 2>/dev/null || true)
             if [ "$status" != "installed" ]; then
               missing+=("$package")
             fi
           done
-          if [ "\${#missing[@]}" -gt 0 ]; then
+          if [ "${#missing[@]}" -gt 0 ]; then
             sudo apt-get update
-            sudo apt-get install -y "\${missing[@]}"
+            sudo apt-get install -y "${missing[@]}"
           fi
       - name: Record kernel and distribution
         run: |
