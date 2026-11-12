@@ -714,6 +714,97 @@ ip netns exec "$ROUTER_NS" "$BIN" --config "$TMP/router.toml" --reload \
 ip netns exec "$SECOND_CLIENT_NS" ping -n -I 10.77.0.3 -c 3 -W 2 10.77.0.1 \
     || fail "restored ingress peer did not regain connectivity"
 
+# Update the same peer's AllowedIPs from .3/32 to .4/32 without changing its
+# public key. While the router commits that peer update, keep .2 traffic live,
+# verify .4 moves to the updated peer, and verify .3 falls back to the broader
+# prefix owned by the first peer.
+ip -n "$SECOND_CLIENT_NS" address add 10.77.0.4/32 dev wg-client-2
+python3 - "$TMP/router.toml" "$SECOND_CLIENT_PUBLIC" <<'PY'
+import sys
+path = sys.argv[1]
+with open(path, encoding="utf-8") as stream:
+    config = stream.read()
+old_peer = f'''[[interfaces.wg-ingress.peers]]
+public_key = "{sys.argv[2]}"
+allowed_ips = ["10.77.0.3/32"]'''
+new_peer = f'''[[interfaces.wg-ingress.peers]]
+public_key = "{sys.argv[2]}"
+allowed_ips = ["10.77.0.4/32"]'''
+if config.count(old_peer) != 1:
+    raise SystemExit("cannot find unique second ingress peer for AllowedIPs update")
+config = config.replace(old_peer, new_peer, 1)
+old_source = 'source = ["10.77.0.2/32", "10.77.0.3/32"]'
+new_source = 'source = ["10.77.0.2/32", "10.77.0.4/32"]'
+old_destination = 'destination = ["10.77.0.2/32", "10.77.0.3/32"]'
+new_destination = 'destination = ["10.77.0.2/32", "10.77.0.4/32"]'
+if config.count(old_source) != 2 or config.count(old_destination) != 1:
+    raise SystemExit("unexpected router firewall/routing source selectors for AllowedIPs update")
+config = config.replace(old_source, new_source)
+config = config.replace(old_destination, new_destination)
+with open(path, "w", encoding="utf-8") as stream:
+    stream.write(config)
+PY
+"$BIN" --config "$TMP/router.toml" --check >/dev/null \
+    || fail "AllowedIPs update reload candidate did not validate"
+ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -i 0.05 -c 100 -W 2 203.0.113.1 \
+    >"$TMP/allowedips-update-continuous-ping.log" 2>&1 &
+PEER_REMOVAL_PING_PID=$!
+sleep 0.2
+ip netns exec "$ROUTER_NS" "$BIN" --config "$TMP/router.toml" --reload \
+    >"$TMP/runtime-allowedips-update-reload.log" 2>&1 \
+    || fail "runtime reload failed while updating peer AllowedIPs"
+ip netns exec "$SECOND_CLIENT_NS" ping -n -I 10.77.0.4 -c 3 -W 2 10.77.0.1 \
+    || fail "updated peer did not acquire its new 10.77.0.4/32 AllowedIPs address"
+set +e
+ip netns exec "$SECOND_CLIENT_NS" ping -n -I 10.77.0.3 -c 2 -W 1 10.77.0.1 \
+    >"$TMP/allowedips-old-address-rejected.log" 2>&1
+old_allowedip_status=$?
+set -e
+[[ "$old_allowedip_status" -ne 0 ]] || fail "updated peer retained its former 10.77.0.3/32 ownership"
+ip -n "$CLIENT_NS" address add 10.77.0.3/32 dev wg-client
+ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.3 -c 3 -W 2 10.77.0.1 \
+    || fail "former .3/32 address did not hand off to the broader-prefix peer"
+ip -n "$CLIENT_NS" address del 10.77.0.3/32 dev wg-client
+if wait "$PEER_REMOVAL_PING_PID"; then
+    PEER_REMOVAL_PING_PID=""
+else
+    fail "unaffected peer traffic failed during AllowedIPs update"
+fi
+grep -Eq '100 packets transmitted, 100 received, 0% packet loss' "$TMP/allowedips-update-continuous-ping.log" \
+    || fail "packet loss detected on the unaffected peer during AllowedIPs update"
+
+# Restore the original .3/32 ownership and source selectors for the remaining
+# multi-uplink checks, then remove the temporary .4 address from the client.
+python3 - "$TMP/router.toml" "$SECOND_CLIENT_PUBLIC" <<'PY'
+import sys
+path = sys.argv[1]
+with open(path, encoding="utf-8") as stream:
+    config = stream.read()
+old_peer = f'''[[interfaces.wg-ingress.peers]]
+public_key = "{sys.argv[2]}"
+allowed_ips = ["10.77.0.4/32"]'''
+new_peer = f'''[[interfaces.wg-ingress.peers]]
+public_key = "{sys.argv[2]}"
+allowed_ips = ["10.77.0.3/32"]'''
+if config.count(old_peer) != 1:
+    raise SystemExit("cannot find unique updated ingress peer for restoration")
+config = config.replace(old_peer, new_peer, 1)
+config = config.replace('source = ["10.77.0.2/32", "10.77.0.4/32"]',
+                        'source = ["10.77.0.2/32", "10.77.0.3/32"]')
+config = config.replace('destination = ["10.77.0.2/32", "10.77.0.4/32"]',
+                        'destination = ["10.77.0.2/32", "10.77.0.3/32"]')
+with open(path, "w", encoding="utf-8") as stream:
+    stream.write(config)
+PY
+"$BIN" --config "$TMP/router.toml" --check >/dev/null \
+    || fail "AllowedIPs restoration reload candidate did not validate"
+ip netns exec "$ROUTER_NS" "$BIN" --config "$TMP/router.toml" --reload \
+    >"$TMP/runtime-allowedips-restoration-reload.log" 2>&1 \
+    || fail "runtime reload failed while restoring peer AllowedIPs"
+ip -n "$SECOND_CLIENT_NS" address del 10.77.0.4/32 dev wg-client-2
+ip netns exec "$SECOND_CLIENT_NS" ping -n -I 10.77.0.3 -c 3 -W 2 10.77.0.1 \
+    || fail "restored peer AllowedIPs did not restore .3/32 connectivity"
+
 # The second WG peer is included in the secondary source CIDR array but not in
 ip netns exec "$SECOND_CLIENT_NS" ping -n -I 10.77.0.3 -c 4 -W 2 195.142.1.1 \
     || fail "second IPv4 source-array member was not routed through awg-secondary"
