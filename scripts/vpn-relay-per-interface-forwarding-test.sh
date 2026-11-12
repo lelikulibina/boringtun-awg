@@ -101,7 +101,11 @@ start_daemon() {
     ip netns exec "$NS" "$BIN" --config "$TMP/config.toml" >"$TMP/daemon.log" 2>&1 &
     PID=$!
     for _ in $(seq 1 30); do
-        if ip netns exec "$NS" nft list table inet vpn_relay_per_if_test >/dev/null 2>&1 \
+        # After SIGKILL the previous nftables table and forwarding values
+        # intentionally remain. They are not proof that the replacement daemon
+        # has completed startup; require its newly-created TUN as well.
+        if ip -n "$NS" link show dev wg0 >/dev/null 2>&1 \
+            && ip netns exec "$NS" nft list table inet vpn_relay_per_if_test >/dev/null 2>&1 \
             && [[ "$(ip netns exec "$NS" sysctl -n net.ipv4.conf.uplink0.forwarding)" == "1" ]] \
 ; then
             return 0
