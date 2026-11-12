@@ -1801,8 +1801,22 @@ fn restore_forwarding_state_with(
 
 fn restore_forwarding_state_with_mode(
     state: &ForwardingState,
+    read: impl FnMut(&str) -> Result<String, RuntimeError>,
+    write: impl FnMut(&str, &str) -> Result<(), RuntimeError>,
+) -> Result<(), RuntimeError> {
+    restore_forwarding_state_with_mode_and_verify(
+        state,
+        read,
+        write,
+        verify_forwarding_interface,
+    )
+}
+
+fn restore_forwarding_state_with_mode_and_verify(
+    state: &ForwardingState,
     mut read: impl FnMut(&str) -> Result<String, RuntimeError>,
     mut write: impl FnMut(&str, &str) -> Result<(), RuntimeError>,
+    mut verify: impl FnMut(&str, u32) -> Result<(), RuntimeError>,
 ) -> Result<(), RuntimeError> {
     let mut failures = Vec::new();
     if state.ipv4_changed {
@@ -1820,7 +1834,7 @@ fn restore_forwarding_state_with_mode(
         state,
         &mut read,
         &mut write,
-        verify_forwarding_interface,
+        &mut verify,
     ) {
         failures.push(error.to_string());
     }
