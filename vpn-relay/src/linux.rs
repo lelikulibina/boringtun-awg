@@ -1256,10 +1256,7 @@ pub fn set_ipv4_interface_forwarding(ifindex: u32, enabled: bool) -> Result<(), 
     Ok(())
 }
 
-fn validate_ipv4_interface_addresses(
-    name: &str,
-    addresses: &[String],
-) -> Result<(), LinuxError> {
+fn validate_ipv4_interface_addresses(name: &str, addresses: &[String]) -> Result<(), LinuxError> {
     for address in addresses {
         if address.contains(':') {
             return Err(LinuxError::Conflict {
@@ -1606,16 +1603,16 @@ mod tests {
 
             let cleanup = &calls[calls.len() - 2..];
             assert_eq!(cleanup.len(), 2);
-            assert!(cleanup.iter().any(|args| args
-                .first()
-                .is_some_and(|value| value == "-4")
-                && args.get(1).is_some_and(|value| value == "rule")
-                && args.get(2).is_some_and(|value| value == "del")));
-            assert!(cleanup.iter().any(|args| args
-                .first()
-                .is_some_and(|value| value == "-4")
-                && args.get(1).is_some_and(|value| value == "route")
-                && args.get(2).is_some_and(|value| value == "del")));
+            assert!(cleanup
+                .iter()
+                .any(|args| args.first().is_some_and(|value| value == "-4")
+                    && args.get(1).is_some_and(|value| value == "rule")
+                    && args.get(2).is_some_and(|value| value == "del")));
+            assert!(cleanup
+                .iter()
+                .any(|args| args.first().is_some_and(|value| value == "-4")
+                    && args.get(1).is_some_and(|value| value == "route")
+                    && args.get(2).is_some_and(|value| value == "del")));
         }
     }
 
@@ -1990,10 +1987,7 @@ mod tests {
             })
             .count();
 
-        assert_eq!(
-            socket_calls, 2,
-            "all socket marks must be attempted"
-        );
+        assert_eq!(socket_calls, 2, "all socket marks must be attempted");
         assert_eq!(
             egress_calls, 2,
             "the IPv4 egress route and rule must both be attempted"
