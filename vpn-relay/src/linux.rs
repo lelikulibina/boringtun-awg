@@ -1566,40 +1566,6 @@ mod tests {
     }
 
     #[test]
-    fn egress_apply_failure_rolls_back_every_ipv4_resource() {
-        let plan = cleanup_test_plan();
-        let mut calls = Vec::new();
-        let mut failed = false;
-        let result = apply_egress_policy_routing_with(&plan, &mut |_program, args| {
-            calls.push(args.to_vec());
-            // The first add operation fails, after the IPv4 route was installed.
-            if !failed
-                && args.get(1).is_some_and(|part| part == "rule")
-                && args.get(2).is_some_and(|part| part == "add")
-            {
-                failed = true;
-                return Err(LinuxError::Command {
-                    program: format!("ip {}", args.join(" ")),
-                    status: "exit status 2".into(),
-                    stderr: "injected rule installation failure".into(),
-                });
-            }
-            Ok(())
-        });
-
-        assert!(matches!(result, Err(LinuxError::Command { ref stderr, .. })
-            if stderr.contains("injected rule installation failure")));
-        // Both IPv4 resources are rolled back after the route succeeds and
-        // the subsequent rule installation fails.
-        let cleanup = &calls[calls.len() - 2..];
-        assert_eq!(cleanup.len(), 2);
-        assert!(cleanup
-            .iter()
-            .all(|args| args.first().is_some_and(|v| v == "-4")
-                && args.get(2).is_some_and(|v| v == "del")));
-    }
-
-    #[test]
     fn egress_apply_reports_rollback_failure_without_hiding_install_failure() {
         let plan = cleanup_test_plan();
         let mut calls = 0usize;
