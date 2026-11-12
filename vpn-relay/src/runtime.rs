@@ -2688,7 +2688,7 @@ mod tests {
         let mut writes = Vec::new();
         let result = restore_interface_forwarding_entries_with(
             &state,
-            |key| Ok(if key.ends_with("eth0.forwarding") { "1" } else { "1" }.to_owned()),
+            |_| Ok("1".to_owned()),
             |key, value| {
                 writes.push((key.to_owned(), value.to_owned()));
                 Ok(())
