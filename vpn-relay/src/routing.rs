@@ -985,7 +985,9 @@ egress = "awg-primary"
         assert!(
             script.contains("ipv6_drop_interfaces { type iface_index; elements = { 18, 19, 17 }")
         );
-        assert!(script.contains("prerouting iif @ipv6_drop_interfaces meta nfproto ipv6 counter drop"));
+        assert!(
+            script.contains("prerouting iif @ipv6_drop_interfaces meta nfproto ipv6 counter drop")
+        );
         assert!(script.contains("forward oif @ipv6_drop_interfaces meta nfproto ipv6 counter drop"));
         assert!(script.contains("output oif @ipv6_drop_interfaces meta nfproto ipv6 counter drop"));
         assert_eq!(script.matches("meta nfproto ipv6").count(), 3);
