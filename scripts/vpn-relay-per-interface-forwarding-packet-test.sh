@@ -136,6 +136,18 @@ if ip netns exec "$CLIENT_BAD" ping -n -c 1 -W 1 10.10.1.2 >/dev/null 2>&1; then
     fail "IPv4 packet was forwarded from an interface outside the allowlist"
 fi
 
+# Exercise the IPv6 output guard with a real packet routed through the
+# daemon-managed TUN. IPv6 remains enabled in this isolated namespace; the
+# test only adds a synthetic address/route to prove nftables drops the packet.
+[[ "$(ip netns exec "$ROUTER" sysctl -n net.ipv6.conf.all.disable_ipv6)" == "0" ]] || fail "IPv6 is disabled in the router namespace; cannot exercise the managed-TUN IPv6 guard"
+ip -n "$ROUTER" -6 address add 2001:db8:ffff::1/128 dev wg0 || fail "could not add the synthetic IPv6 source address to wg0"
+ip -n "$ROUTER" -6 route add 2001:db8:ffff::2/128 dev wg0 || fail "could not route the IPv6 probe through managed TUN wg0"
+ip -n "$ROUTER" -6 route get 2001:db8:ffff::2 | grep -q "dev wg0" || fail "IPv6 probe route does not use managed TUN wg0"
+if ip netns exec "$ROUTER" ping -6 -n -I wg0 -c 1 -W 1 2001:db8:ffff::2 >/dev/null 2>&1; then
+    fail "IPv6 packet escaped through managed TUN wg0"
+fi
+ip netns exec "$ROUTER" nft list chain inet "$TABLE" output | grep -Eq 'oif @ipv6_drop_interfaces meta nfproto ipv6 counter packets [1-9][0-9]*' || fail "managed-TUN IPv6 output drop counter did not increase"
+
 # Graceful shutdown must restore only the values owned by vpn-relay.
 kill -TERM "$PID"
 wait "$PID" || fail "vpn-relay failed during graceful shutdown"
