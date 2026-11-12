@@ -3040,10 +3040,31 @@ mod tests {
 
     #[test]
     fn cpa_awg30_and_awg31_modes_apply_their_distinct_limits_end_to_end() {
-        for (legacy, expected_ip_plaintext_len) in [(true, 30usize), (false, 129usize)] {
-            let config = AmneziaConfig::new(0, 0, 0, 0)
-                .with_content_padding_addition(100, 100)
-                .with_legacy_content_padding(legacy);
+        let configurations = [
+            (
+                amnezia::AmneziaWgConfig {
+                    header_protection_key: Some("00".repeat(32)),
+                    content_padding_addition: Some("100".into()),
+                    ..Default::default()
+                }
+                .build()
+                .unwrap()
+                .1,
+                30usize,
+            ),
+            (
+                amnezia::AmneziaWgConfig {
+                    random_trailers: Some(true),
+                    content_padding_addition: Some("100".into()),
+                    ..Default::default()
+                }
+                .build()
+                .unwrap()
+                .1,
+                129usize,
+            ),
+        ];
+        for (config, expected_ip_plaintext_len) in configurations {
             let (mut sender, mut receiver) = create_two_tuns_and_handshake_with_amnezia(config);
             sender.set_mtu(30);
 
@@ -3951,6 +3972,39 @@ mod tests {
             }
             other => panic!("expected restored IPv6 packet, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn handshake_confirmation_keepalive_updates_udp_window_with_upstream_accounting() {
+        // S4 is part of the outer datagram on send and receive. The sender's
+        // high-water mark includes the AEAD tag; the receiver's upstream
+        // accounting intentionally measures the decrypted plaintext and omits it.
+        let s4 = 9;
+        let cfg = AmneziaConfig::new(0, 0, 0, s4);
+        let (mut sender, mut receiver) = create_two_tuns_with_amnezia(cfg);
+
+        // The UDP window is a high-water mark initialized to the default
+        // window. Start at zero here so this test can observe the exact
+        // handshake-confirmation keepalive accounting.
+        sender.udp_window = 0;
+        receiver.udp_window = 0;
+
+        let init = create_handshake_init(&mut sender);
+        let response = create_handshake_response(&mut receiver, &init);
+        let keepalive = parse_handshake_resp(&mut sender, &response);
+
+        assert_eq!(
+            sender.udp_window,
+            s4 as usize + DATA_OVERHEAD_SZ,
+            "outbound handshake-confirmation keepalive must include S4, header, and AEAD tag"
+        );
+
+        parse_keepalive(&mut receiver, &keepalive);
+        assert_eq!(
+            receiver.udp_window,
+            s4 as usize + DATA_HEADER_SZ,
+            "inbound keepalive must use upstream's S4 + header + decrypted-plaintext accounting"
+        );
     }
 
     #[test]
