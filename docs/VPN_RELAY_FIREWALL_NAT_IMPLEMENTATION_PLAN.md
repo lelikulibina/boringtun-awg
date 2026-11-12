@@ -424,61 +424,57 @@ Backend `DeviceHandle::snapshot` не содержит PSK и поэтому н�
 обычной ошибки — прежний Config и прежняя policy; при невозможности rollback
 runtime останавливает управление и сохраняет fail-closed firewall.
 
-### Per-interface forwarding: реализованная архитектура и остаточные проверки
+### IPv4 forwarding: реализованная архитектура и остаточные проверки
 
-Per-interface режим добавлен отдельно от legacy namespace-wide режима через
-`manage_ip_forwarding=true` и непустой `forwarding_interfaces`. Пустой список
-сохраняет прежнее поведение; `manage_ip_forwarding=false` не меняет sysctl.
+vpn-relay управляет только IPv4 forwarding. IPv6 forwarding/sysctl не читаются,
+не изменяются и не восстанавливаются. Есть три режима:
 
-Реализовано:
+- manage_ip_forwarding=false — демон не меняет forwarding sysctl.
+- manage_ip_forwarding=true с пустым forwarding_interfaces — legacy
+  namespace-wide IPv4 режим через net.ipv4.ip_forward.
+- manage_ip_forwarding=true с непустым forwarding_interfaces — per-interface
+  IPv4 режим. Глобальный net.ipv4.ip_forward=1 должен быть заранее включён
+  оператором; демон управляет выбранными links через rtnetlink.
 
-- IPv4: daemon управляет только per-link forwarding через rtnetlink
-  `RTM_NEWLINK` по ifindex, проверяет kernel ACK и выполняет
-  `RTM_GETLINK` readback. Глобальный `net.ipv4.ip_forward=1` является
-  prerequisite Linux forwarding и должен быть заранее включён оператором;
-  daemon не должен переключать его в per-interface режиме, поскольку запись
-  глобального switch сбрасывает IPv4 параметры.
-- IPv6: daemon использует `net.ipv6.conf.<if>.force_forwarding` при
-  `net.ipv6.conf.all.forwarding=0`. Конкретный procfs entry открывается до
-  проверки identity, а read/write выполняется через тот же FD. В upstream
-  netconf UAPI не найден setter `RTM_NEWNETCONF` для этого атрибута.
+Реализовано и проверено:
+
 - Allowlist валидируется до изменения системного состояния; startup и runtime
   проверяют unmanaged interfaces и identity управляемых интерфейсов.
+- Per-interface IPv4 forwarding изменяется через RTM_NEWLINK по ifindex,
+  kernel ACK проверяется, затем RTM_GETLINK подтверждает значение для того же
+  ifindex.
 - Durable versioned journal хранит namespace inode, имя/ifindex, исходные
-  значения и флаги изменений. Recovery не записывает сохранённые значения
-  по имени в daemon-owned ephemeral TUN и не перезаписывает операторские
-  изменения.
-- Startup, rollback, recovery и graceful shutdown учитывают per-interface
-  forwarding. Firewall остаётся fail-closed при неопределённом результате
-  восстановления.
-
-Подтверждено daemon-driven packet-level network namespace тестом: IPv4/IPv6
-forwarding на allowlisted links, отсутствие forwarding на unmanaged link,
-двусторонняя передача пакетов, сохранение `accept_ra` и восстановление
-исходных значений. Базовый сценарий прошёл CI run `42992213621`.
+  IPv4 значения и ownership flags. Recovery не применяет сохранённые значения
+  к исчезнувшим daemon-owned TUN и не перезаписывает операторские изменения.
+- Startup, rollback, SIGKILL recovery и graceful shutdown покрыты unit и
+  network-namespace tests. Ошибки восстановления сохраняют fail-closed firewall.
+- Интеграционный сценарий проверяет unmanaged-interface rejection, runtime drift,
+  graceful restore и восстановление после SIGKILL; диагностические снимки
+  фиксируют IPv4 forwarding до/после recovery.
 
 Остаётся:
 
-- [x] Выполнить stale IPv6 procfs FD race test: удалить интерфейс и создать
-  новый с тем же именем; CI подтвердил отказ записи через старый FD и отсутствие
-  изменений replacement link (run `43007873964`, job `integration-tests`).
-- [ ] Закрыть/документировать остаточный IPv4 ifindex reuse TOCTOU между
-  identity guard и rtnetlink обработкой; ACK/readback не являются generation
-  token.
-- [ ] Выполнить kernel compatibility matrix для минимально поддерживаемого и
-  актуальных ядер, включая дистрибутивные backport `force_forwarding`.
-- [~] Failure-injection частично подтверждён: CI `43007873964` выполнил
-  `per_interface_restore_attempts_every_family_after_failures` и
-  `per_interface_restore_continues_after_identity_mismatch`. Полная матрица
-  отказов каждого read/write/persist/fsync/restore boundary ещё не закрыта.
-- [ ] Проверить Podman rootful/private-network-namespace deployment на целевой
-  матрице: `CAP_NET_ADMIN`, `/dev/net/tun`, netlink и sysctl доступ.
+- [ ] Остаточный IPv4 ifindex-reuse TOCTOU: между userspace identity guard и
+  обработкой RTM_NEWLINK ядром теоретически возможно удаление и повторное
+  создание link с повторным использованием ifindex. ACK/readback не являются
+  generation token. Полное устранение не заявляется; требуется зафиксировать
+  границы гарантии и проверить доступные kernel-side способы уменьшить окно.
+- [ ] Выполнить kernel compatibility matrix для RTM_NEWLINK, IFLA_INET_CONF,
+  ACK/extack и readback на минимально поддерживаемом, актуальном upstream и
+  целевых дистрибутивных ядрах.
+- [~] Failure-injection покрывает ряд rollback/recovery границ, но полная
+  матрица отказов каждого read/write/persist/fsync/restore boundary ещё не
+  закрыта. Продолжить только для реально используемого IPv4 пути.
+- [ ] Проверить rootful Podman с private network namespace на целевой матрице:
+  CAP_NET_ADMIN, /dev/net/tun, rtnetlink, nftables и IPv4 sysctl.
+- [ ] Синхронизировать оставшиеся исторические разделы этого документа с
+  пометкой «архив»: старые IPv6 forwarding/dual-stack проверки не являются
+  текущими acceptance criteria.
 
-До завершения kernel compatibility matrix и race validation per-interface
-режим нельзя объявлять универсально совместимым со всеми ядрами. Для общего
-host namespace legacy `manage_ip_forwarding=true` по-прежнему не рекомендуется;
-использовать dedicated network namespace либо `false` с внешним управлением.
-
+Текущий CI на HEAD d18a00d537265d8a691d12a9cfce66006326f703 подтвердил
+rustfmt, clippy, feature checks, unit tests, integration tests, IPv4 packet-level
+forwarding, WG/AWG peer traffic и multi-uplink routing. Windows job пропущен
+условиями workflow.
 ## 12. Этап 9 — документация и CI
 
 - [x] Обновить `docs/VPN_RELAY_NFTABLES.md` по фактической реализации.
@@ -873,7 +869,7 @@ successful shutdown removes the firewall.
 
 Поддерживаемая базовая схема развёртывания — rootful Podman с private network namespace (bridge), CAP_NET_ADMIN и доступом к /dev/net/tun. Имена интерфейсов и ifindex разрешаются внутри namespace процесса vpn-relay. --network host не рекомендуется; rootless Podman не объявляется поддерживаемым режимом полного relay до проверки TUN, netlink, nftables и sysctl capabilities.
 
-### Netlink и устранение TOCTOU — проверка ABI
+### Архив: netlink и TOCTOU в прежней dual-stack реализации (не текущие требования)
 
 Проверка выполнена по upstream Linux snapshot
 `cdb3033e191fd03da2d7da23b9cd448dfa180a8e` (исходники:
@@ -934,7 +930,7 @@ successful shutdown removes the firewall.
 IPv4/IPv6 forwarding и lifecycle/recovery suites уже существуют и повторно
 проверяются CI. Полное устранение TOCTOU не заявляется.
 
-### Per-interface forwarding — реализация
+### Архив: прежняя dual-stack per-interface forwarding реализация
 
 - [x] Добавлен конфигурационный allowlist daemon.forwarding_interfaces; имена валидируются, дубликаты отклоняются, изменение списка через reload запрещено.
 - [x] Per-interface режим включается только при manage_ip_forwarding=true и непустом allowlist. Пустой список сохраняет прежний namespace-wide режим для обратной совместимости.
