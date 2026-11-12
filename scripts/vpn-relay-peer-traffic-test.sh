@@ -364,26 +364,6 @@ start_tcp_listener "$SERVER_NS" 8080 server-tcp-8080.log
 start_tcp_listener "$SERVER_NS" 8081 server-tcp-8081.log
 start_tcp_listener "$CLIENT_NS" 8080 client-tcp-8080.log
 start_tcp_listener "$CLIENT_NS" 8081 client-tcp-8081.log
-start_tcp_listener6() {
-    local ns="$1" port="$2" log="$3"
-    ip netns exec "$ns" python3 -u -c '
-import socket, sys
-sock = socket.socket(socket.AF_INET6)
-sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-sock.bind(("::", int(sys.argv[1])))
-sock.listen()
-while True:
-    conn, _ = sock.accept()
-    with conn:
-        conn.sendall(b"ok")
-' "$port" >"$TMP/$log" 2>&1 &
-    TCP_PIDS+=("$!")
-}
-start_tcp_listener6 "$SERVER_NS" 8082 server-tcp6-8082.log
-start_tcp_listener6 "$SERVER_NS" 8083 server-tcp6-8083.log
-start_tcp_listener6 "$CLIENT_NS" 8082 client-tcp6-8082.log
-start_tcp_listener6 "$CLIENT_NS" 8083 client-tcp6-8083.log
-sleep 0.5
 
 # Local loopback traffic must remain outside managed-TUN INPUT/OUTPUT policy.
 ip netns exec "$SERVER_NS" python3 - <<'PY'
