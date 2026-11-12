@@ -468,8 +468,11 @@ vpn-relay управляет только IPv4 forwarding. IPv6 forwarding/sysct
 - [~] Failure-injection покрывает ряд rollback/recovery границ, но полная
   матрица отказов каждого read/write/persist/fsync/restore boundary ещё не
   закрыта. Продолжить только для реально используемого IPv4 пути.
-- [ ] Проверить rootful Podman с private network namespace на целевой матрице:
-  CAP_NET_ADMIN, /dev/net/tun, rtnetlink, nftables и IPv4 sysctl.
+- [~] Добавлены Containerfile, smoke test и обязательный rootful Podman CI job
+  на Ubuntu 24.04. Проверяются private bridge network namespace, отсутствие
+  host-netns sharing, CAP_NET_ADMIN, /dev/net/tun, nftables, rtnetlink,
+  namespace IPv4 prerequisite, per-interface forwarding и graceful restore.
+  Результат первого CI запуска ожидается; до него deployment test не закрыт.
 - [ ] Синхронизировать оставшиеся исторические разделы этого документа с
   пометкой «архив»: старые IPv6 forwarding/dual-stack проверки не являются
   текущими acceptance criteria.
@@ -502,6 +505,7 @@ multi-uplink routing, kernel compatibility matrix Ubuntu 22.04/24.04 и
 
 | Дата | Изменение | Проверки | Статус |
 |---|---|---|---|
+| 2026-11-12 | Добавлен rootful Podman deployment smoke test | `scripts/vpn-relay-podman.Containerfile`, `scripts/vpn-relay-podman-container-test.sh` и job `podman-deployment` в обязательном `all-systems-go`. Проверяет private bridge netns, `NET_ADMIN`, `/dev/net/tun`, nftables, IPv4 sysctl, rtnetlink forwarding и восстановление. CI для HEAD `a4756d59e27bc691d1b044df290dc6fed3e744b8` ожидается. | В работе; ожидает CI |
 | 2026-11-12 | Закрыта kernel compatibility matrix и исправлена совместимость nftables 1.0.2 | Ubuntu 22.04.5/kernel 6.8.0-1070-azure/iproute2 5.15.0/nftables 1.0.2 и Ubuntu 24.04.5/kernel 7.0.0-1017-azure/iproute2 6.1.0/nftables 1.0.9 прошли forwarding/recovery и packet-level probes. Ubuntu 22.04 выявила tab-indented table comment в текстовом nft output; ownership parser теперь принимает только точный top-level comment с табом или четырьмя пробелами, nested comment отвергается. CI run `43223428772`, HEAD `3ba58f2a52bd2d3f8a704a61bb4edbd7883de381`: все jobs и `all-systems-go` success; Windows skipped. | Проверено CI |
 | 2026-11-12 | Добавлена kernel compatibility matrix для IPv4 rtnetlink | CI run `43220963880` подтвердил предыдущий HEAD `d89a088` полностью; новый workflow `712e7f60f3c95e1aa5d482f4c4c62e505294842b` добавляет Ubuntu 22.04/24.04 с kernel logging, RTM_NEWLINK/ACK/readback, recovery и packet-level checks. Ожидается запуск и фактические kernel versions. | В работе; ожидает CI |
 | 2026-11-11 | Добавлен failure-injection тест восстановления per-interface forwarding | Два managed-интерфейса с IPv4/IPv6 forwarding: запись восстановления искусственно завершается ошибкой во всех четырёх случаях; отдельный сценарий теряет identity первого интерфейса и проверяет, что восстановление второго всё равно выполняется. Тесты проверяют продолжение попыток для остальных семейств и интерфейсов, identity verification до/после чтения и агрегацию причин в fatal error. Код добавлен; rustfmt, unit tests и CI для нового commit ещё не подтверждены. | Ожидает CI |
