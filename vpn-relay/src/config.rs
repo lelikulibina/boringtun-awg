@@ -578,7 +578,7 @@ impl Config {
                     }
                 }
                 if let Some(endpoint) = &peer.endpoint {
-                    let parsed = PeerEndpoint::parse(endpoint).map_err(|error| {
+                    PeerEndpoint::parse(endpoint).map_err(|error| {
                         ConfigError::Validation(format!(
                             "{peer_path}.endpoint is invalid: {}",
                             error
