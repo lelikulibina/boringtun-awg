@@ -2417,7 +2417,9 @@ mod tests {
             |key| Ok(values.borrow().get(key).cloned().unwrap()),
             |key, value| {
                 if key == "net.ipv4.conf.eth1.forwarding" && value == "1" {
-                    return Err(RuntimeError::Forwarding("injected setup failure".to_owned()));
+                    return Err(RuntimeError::Forwarding(
+                        "injected setup failure".to_owned(),
+                    ));
                 }
                 values.borrow_mut().insert(key.to_owned(), value.to_owned());
                 Ok(())
@@ -2445,7 +2447,9 @@ mod tests {
                     *current.borrow_mut() = "1".to_owned();
                     return Err(RuntimeError::Forwarding("injected setup failure".to_owned()));
                 }
-                Err(RuntimeError::Forwarding("injected rollback failure".to_owned()))
+                Err(RuntimeError::Forwarding(
+                    "injected rollback failure".to_owned(),
+                ))
             },
             |_, _| Ok(()),
         );
@@ -2664,9 +2668,13 @@ mod tests {
         };
         let result = enable_forwarding_state_with(state, |_, value| {
             if value == "1" {
-                Err(RuntimeError::Forwarding("injected enable failure".to_owned()))
+                Err(RuntimeError::Forwarding(
+                    "injected enable failure".to_owned(),
+                ))
             } else {
-                Err(RuntimeError::Forwarding("injected restore failure".to_owned()))
+                Err(RuntimeError::Forwarding(
+                    "injected restore failure".to_owned(),
+                ))
             }
         });
         assert!(matches!(result, Err(RuntimeError::FatalTransition(message))
