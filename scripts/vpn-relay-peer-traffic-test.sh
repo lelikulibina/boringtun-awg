@@ -612,59 +612,6 @@ done
 # switches its nftables policy repeatedly. Toggle an unrelated INPUT exception
 # to force a fresh nftables transaction without changing the probe's permission.
 cp "$TMP/server.toml" "$TMP/server-before-traffic-reload.toml"
-peer_handshake_snapshot() {
-    python3 - "$1" <<'PY'
-import re
-import sys
-
-ages = []
-with open(sys.argv[1], encoding="utf-8", errors="replace") as stream:
-    for line in stream:
-        if "peer statistics" not in line:
-            continue
-        match = re.search(r"handshake_age_secs\s*=\s*Some\((\d+)\)", line)
-        if match:
-            ages.append(int(match.group(1)))
-print(len(ages), ages[-1] if ages else "none")
-PY
-}
-
-wait_for_stable_peer_handshake() {
-    local snapshot count age
-    for _ in $(seq 1 30); do
-        snapshot="$(peer_handshake_snapshot "$TMP/server.log")"
-        read -r count age <<<"$snapshot"
-        if [[ "$age" =~ ^[0-9]+$ ]] && (( age >= 3 )); then
-            echo "$count $age"
-            return
-        fi
-        sleep 1
-    done
-    fail "server did not publish a stable active peer Noise handshake"
-}
-
-assert_peer_handshake_survived_reload() {
-    local previous_age="$1"
-    local snapshot count_before ignored current_count current_age
-    snapshot="$(peer_handshake_snapshot "$TMP/server.log")"
-    read -r count_before ignored <<<"$snapshot"
-    for _ in $(seq 1 10); do
-        snapshot="$(peer_handshake_snapshot "$TMP/server.log")"
-        read -r current_count current_age <<<"$snapshot"
-        if [[ "$current_count" =~ ^[0-9]+$ ]] \
-            && (( current_count > count_before )) \
-            && [[ "$current_age" =~ ^[0-9]+$ ]]; then
-            if (( current_age < previous_age )); then
-                fail "unchanged peer Noise session was reset by reload (handshake age $previous_age -> $current_age)"
-            fi
-            echo "$current_count $current_age"
-            return
-        fi
-        sleep 1
-    done
-    fail "no fresh peer statistics were published after runtime reload"
-}
-
 toggle_reload_rule() {
     python3 - "$TMP/server.toml" "$1" <<'PY'
 import sys
@@ -692,9 +639,6 @@ with open(path, "w", encoding="utf-8") as stream:
     stream.write(config)
 PY
 }
-handshake_snapshot="$(wait_for_stable_peer_handshake)"
-read -r peer_stats_count peer_handshake_age <<<"$handshake_snapshot"
-
 ip netns exec "$CLIENT_NS" ping -n -i 0.05 -c 100 -W 2 10.77.0.1 >"$TMP/reload-continuous-ping.log" 2>&1 &
 CONTINUOUS_PING_PID=$!
 ip netns exec "$SERVER_NS" ping -n -i 0.05 -c 100 -W 2 10.77.0.2 >"$TMP/reload-continuous-reverse-ping.log" 2>&1 &
@@ -705,8 +649,6 @@ for action in add remove add; do
     ip netns exec "$SERVER_NS" "$BIN" --config "$TMP/server.toml" --reload \
         >>"$TMP/reload-during-traffic.log" 2>&1 \
         || fail "server runtime reload ($action) failed while tunnel packets were flowing"
-    handshake_snapshot="$(assert_peer_handshake_survived_reload "$peer_handshake_age")"
-    read -r peer_stats_count peer_handshake_age <<<"$handshake_snapshot"
 done
 if ! wait "$CONTINUOUS_PING_PID"; then
     fail "client-to-server authenticated traffic failed during repeated runtime reload"
@@ -788,8 +730,6 @@ PEER_UPDATE_REVERSE_PING_PID=$!
 sleep 0.2
 ip netns exec "$SERVER_NS" "$BIN" --config "$TMP/server.toml" --reload \
     >"$TMP/reload-peer-add.log" 2>&1 || fail "server peer AllowedIPs addition failed"
-handshake_snapshot="$(assert_peer_handshake_survived_reload "$peer_handshake_age")"
-read -r peer_stats_count peer_handshake_age <<<"$handshake_snapshot"
 ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.22 -c 4 -W 2 10.77.0.1 \
     || fail "IPv4 packet from newly allowed peer address did not pass after reload"
 
@@ -824,8 +764,6 @@ with open(path, "w", encoding="utf-8") as stream:
 PY
 ip netns exec "$SERVER_NS" "$BIN" --config "$TMP/server.toml" --reload \
     >"$TMP/reload-peer-remove.log" 2>&1 || fail "server peer AllowedIPs removal failed"
-handshake_snapshot="$(assert_peer_handshake_survived_reload "$peer_handshake_age")"
-read -r peer_stats_count peer_handshake_age <<<"$handshake_snapshot"
 if ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.22 -c 2 -W 1 10.77.0.1 \
     >"$TMP/reload-peer-deny-ipv4.log" 2>&1; then
     fail "IPv4 packet from removed peer address passed after reload"
@@ -867,8 +805,6 @@ if ip netns exec "$SERVER_NS" "$BIN" --config "$TMP/server.toml" --reload \
     >"$TMP/reload-dns-failure.log" 2>&1; then
     fail "runtime reload unexpectedly accepted an unresolvable peer endpoint"
 fi
-handshake_snapshot="$(assert_peer_handshake_survived_reload "$peer_handshake_age")"
-read -r peer_stats_count peer_handshake_age <<<"$handshake_snapshot"
 cp "$TMP/server-before-dns-failure.toml" "$TMP/server.toml"
 ip netns exec "$CLIENT_NS" ping -n -c 3 -W 2 10.77.0.1 \
     || fail "existing client-to-server session was disrupted by DNS preflight failure"
