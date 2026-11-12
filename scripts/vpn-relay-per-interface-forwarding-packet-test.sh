@@ -98,7 +98,9 @@ done
 # Test-only setup: enable IPv6 forwarding in this disposable router namespace
 # so a real forwarded IPv6 packet reaches the managed-TUN egress drop hook.
 # vpn-relay must leave this externally-owned IPv6 setting untouched.
+ip netns exec "$ROUTER" sysctl -qw net.ipv6.conf.default.forwarding=1
 ip netns exec "$ROUTER" sysctl -qw net.ipv6.conf.all.forwarding=1
+ip netns exec "$ROUTER" sysctl -qw net.ipv6.conf.r-in0.forwarding=1
 
 cat >"$TMP/router.toml" <<TOML
 [daemon]
@@ -133,6 +135,8 @@ for _ in $(seq 1 40); do
 done
 [[ "$ready" == true ]] || fail "vpn-relay did not enable selected per-interface forwarding"
 [[ "$(ip netns exec "$ROUTER" sysctl -n net.ipv6.conf.all.forwarding)" == "1" ]] || fail "daemon changed externally-owned IPv6 forwarding"
+[[ "$(ip netns exec "$ROUTER" sysctl -n net.ipv6.conf.r-in0.forwarding)" == "1" ]] || fail "IPv6 ingress forwarding baseline was not preserved"
+[[ "$(ip netns exec "$ROUTER" sysctl -n net.ipv6.conf.wg0.forwarding)" == "1" ]] || fail "new managed TUN did not inherit the test IPv6 forwarding baseline"
 
 [[ "$(ip netns exec "$ROUTER" sysctl -n net.ipv4.conf.r-bad0.forwarding)" == "0" ]] || fail "daemon enabled untrusted IPv4 ingress"
 
@@ -159,7 +163,9 @@ ip netns exec "$ROUTER" nft list chain inet "$TABLE" output | grep -Eq 'oif @ipv
 ip -n "$ROUTER" -6 address add 2001:db8:ffff:1::1/64 dev r-in0 nodad || fail "could not add router IPv6 ingress address"
 ip -n "$CLIENT_A" -6 address add 2001:db8:ffff:1::2/64 dev a0 nodad || fail "could not add client IPv6 source address"
 ip -n "$CLIENT_A" -6 route add 2001:db8:ffff::2/128 via 2001:db8:ffff:1::1 dev a0 || fail "could not route IPv6 forward probe to router"
-if ip netns exec "$CLIENT_A" ping -6 -n -I a0 -c 1 -W 1 2001:db8:ffff::2 >/dev/null 2>&1; then
+ip -n "$CLIENT_A" -6 route get 2001:db8:ffff::2 | grep -q "dev a0" || fail "client IPv6 forward probe does not use a0"
+ip -n "$ROUTER" -6 route get 2001:db8:ffff::2 from 2001:db8:ffff:1::2 iif r-in0 | grep -q "dev wg0" || fail "router IPv6 forward probe does not select managed TUN wg0"
+if ip netns exec "$CLIENT_A" ping -6 -n -I a0 -c 1 -W 1 2001:db8:ffff::2 >"$TMP/ipv6-forward-ping.log" 2>&1; then
     fail "IPv6 packet was forwarded out through managed TUN wg0"
 fi
 ip netns exec "$ROUTER" nft list chain inet "$TABLE" forward | grep -Eq 'oif @ipv6_drop_interfaces meta nfproto ipv6 counter packets [1-9][0-9]*' || fail "managed-TUN IPv6 forward drop counter did not increase"
