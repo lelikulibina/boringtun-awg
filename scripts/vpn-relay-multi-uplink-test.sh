@@ -853,8 +853,8 @@ wait_interface "$PRIMARY_NS" up-primary "$PRIMARY_PID" "vpn_relay_mu_primary_$SU
 ip -n "$PRIMARY_NS" route replace 10.77.0.2/32 dev up-primary
 primary_recovered=0
 for _ in $(seq 1 40); do
-    if ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -c 1 -W 1 203.0.113.1 >/dev/null 2>&1 \
-        &&         primary_recovered=1
+    if ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -c 1 -W 1 203.0.113.1 >/dev/null 2>&1; then
+        primary_recovered=1
         break
     fi
     sleep 0.25
@@ -871,8 +871,8 @@ ip -n "$SECONDARY_NS" route replace 10.77.0.2/32 dev up-secondary
 secondary_recovered=0
 for _ in $(seq 1 40); do
     if ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -c 1 -W 1 195.142.1.1 >/dev/null 2>&1 \
-        && ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -c 1 -W 1 79.100.22.1 >/dev/null 2>&1 \
-        &&         secondary_recovered=1
+        && ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -c 1 -W 1 79.100.22.1 >/dev/null 2>&1; then
+        secondary_recovered=1
         break
     fi
     sleep 0.25
