@@ -472,6 +472,52 @@ chmod +x "$TMP/fail-ipv4-enable-sysctl/sysctl"
 expect_startup_failure partial-ipv4-forwarding.log "IPv4 forwarding enable-after-write failure" "$TMP/fail-ipv4-enable-sysctl"
 grep -Fq "injected IPv4 forwarding enable-after-write failure" "$TMP/partial-ipv4-forwarding.log" || fail "IPv4 enable-after-write failure was not observed"
 
+# If forwarding activation fails after changing the sysctl and route cleanup
+# then also fails, startup must preserve the fail-closed firewall. The sysctl
+# restore itself succeeds, so only the policy-routing cleanup is uncertain.
+mkdir -p "$TMP/fail-forwarding-and-route-cleanup"
+cat >"$TMP/fail-forwarding-and-route-cleanup/ip" <<EOF
+#!/bin/sh
+if [ "\$1" = "-4" ] && [ "\$2" = "route" ] && [ "\$3" = "del" ] \\
+    && [ "\$4" = "default" ] && [ "\$6" = "awg-primary" ] && [ "\$8" = "10000" ]; then
+    echo "injected startup policy-route cleanup failure after forwarding error" >&2
+    exit 43
+fi
+exec "$REAL_IP" "\$@"
+EOF
+cat >"$TMP/fail-forwarding-and-route-cleanup/sysctl" <<EOF
+#!/bin/sh
+if [ "\$1" = "-w" ] && [ "\$2" = "net.ipv4.ip_forward=1" ]; then
+    "$REAL_SYSCTL_STARTUP" "\$@" || exit "\$?"
+    echo "injected IPv4 forwarding enable-after-write failure before route cleanup" >&2
+    exit 42
+fi
+exec "$REAL_SYSCTL_STARTUP" "\$@"
+EOF
+chmod +x "$TMP/fail-forwarding-and-route-cleanup/ip" "$TMP/fail-forwarding-and-route-cleanup/sysctl"
+if ip netns exec "$NS" env PATH="$TMP/fail-forwarding-and-route-cleanup:$PATH" "$BIN" --config "$TMP/config.toml" >"$TMP/startup-forwarding-route-cleanup-failure.log" 2>&1; then
+    fail "daemon accepted startup after forwarding and policy-route cleanup failures"
+fi
+grep -Fq "injected IPv4 forwarding enable-after-write failure before route cleanup" "$TMP/startup-forwarding-route-cleanup-failure.log" || fail "forwarding activation failure was not observed in combined rollback scenario"
+grep -Fq "injected startup policy-route cleanup failure after forwarding error" "$TMP/startup-forwarding-route-cleanup-failure.log" || fail "policy-route cleanup failure after forwarding error was not observed"
+grep -Fq "policy-routing cleanup failed" "$TMP/startup-forwarding-route-cleanup-failure.log" || fail "startup did not report policy-routing cleanup failure after forwarding error"
+ip netns exec "$NS" nft list table inet vpn_relay_it >/dev/null 2>&1 || fail "fail-closed firewall was removed after forwarding rollback could not clean policy routes"
+for iface in wg-server awg-primary awg-secondary; do
+    if ip netns exec "$NS" ip link show dev "$iface" >/dev/null 2>&1; then
+        fail "TUN interface $iface leaked after forwarding/policy-route rollback failure"
+    fi
+done
+[[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "0" ]] || fail "IPv4 forwarding was not restored after combined startup rollback failure"
+if ip -n "$NS" -4 rule show | grep -q 'proto 242'; then
+    fail "policy rules leaked after combined startup rollback failure"
+fi
+for table in 10000 10001; do
+    if ip -n "$NS" -4 route show table "$table" | grep -q .; then
+        fail "policy routes leaked from table $table after combined startup rollback failure"
+    fi
+done
+ip netns exec "$NS" nft delete table inet vpn_relay_it
+
 REAL_NFT="$(command -v nft)"
 mkdir -p "$TMP/fail-nft-bin"
 cat >"$TMP/fail-nft-bin/ip" <<EOF
