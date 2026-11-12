@@ -1340,27 +1340,6 @@ fn load_forwarding_state(
     let document: serde_json::Value = serde_json::from_slice(&bytes)
         .map_err(|error| RuntimeError::Forwarding(error.to_string()))?;
     let state = document.get("state").unwrap_or(&document);
-    let global_ipv6_pending = state
-        .get("ipv6_changed")
-        .and_then(serde_json::Value::as_bool)
-        .unwrap_or(false);
-    let interface_ipv6_pending = state
-        .get("interfaces")
-        .and_then(serde_json::Value::as_array)
-        .is_some_and(|entries| {
-            entries.iter().any(|entry| {
-                entry
-                    .get("ipv6_changed")
-                    .and_then(serde_json::Value::as_bool)
-                    .unwrap_or(false)
-            })
-        });
-    if global_ipv6_pending || interface_ipv6_pending {
-        return Err(RuntimeError::Forwarding(format!(
-            "legacy forwarding journal '{}' contains pending IPv6 sysctl recovery; vpn-relay no longer manages IPv6, restore the recorded IPv6 values manually before removing this journal",
-            path.display()
-        )));
-    }
     let saved: ForwardingStateFile = serde_json::from_value(document)
         .map_err(|error| RuntimeError::Forwarding(error.to_string()))?;
     if saved.version != 1 {
@@ -1873,31 +1852,16 @@ mod tests {
     }
 
     #[test]
-    fn recovery_rejects_legacy_ipv6_journal_without_accessing_sysctls() {
+    fn recovery_rejects_unsupported_legacy_journal_version() {
         let path = std::env::temp_dir().join(format!(
-            "vpn-relay-legacy-ipv6-pending-{}.json",
+            "vpn-relay-legacy-journal-{}.json",
             std::process::id()
         ));
         let _ = fs::remove_file(&path);
         let document = serde_json::json!({
             "version": 2,
             "namespace_inode": 4242,
-            "state": {
-                "ipv4": "0",
-                "ipv4_changed": false,
-                "ipv6": "1",
-                "ipv6_changed": true,
-                "interfaces": [{
-                    "name": "wg0",
-                    "ifindex": 7,
-                    "daemon_owned": false,
-                    "ipv4": "0",
-                    "ipv4_changed": false,
-                    "ipv6": "1",
-                    "ipv6_changed": true,
-                    "ipv6_enabled": true
-                }]
-            }
+            "state": {}
         });
         let bytes = serde_json::to_vec(&document).unwrap();
         let mut file = OpenOptions::new()
@@ -1910,8 +1874,8 @@ mod tests {
         file.sync_all().unwrap();
 
         let error = recover_forwarding_state(&path, 4242).unwrap_err();
-        assert!(error.to_string().contains("pending IPv6 sysctl recovery"));
-        assert!(path.exists(), "legacy recovery journal must be retained");
+        assert!(error.to_string().contains("unsupported forwarding state version 2"));
+        assert!(path.exists(), "unsupported recovery journal must be retained");
         let _ = fs::remove_file(path);
     }
 
