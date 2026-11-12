@@ -1364,11 +1364,7 @@ fn load_forwarding_state(
 
 trait ForwardingJournalIo {
     fn create_new_file(&mut self, path: &Path) -> std::io::Result<File>;
-    fn write_state(
-        &mut self,
-        file: &mut File,
-        saved: &ForwardingStateFile,
-    ) -> std::io::Result<()>;
+    fn write_state(&mut self, file: &mut File, saved: &ForwardingStateFile) -> std::io::Result<()>;
     fn sync_file(&mut self, file: &File) -> std::io::Result<()>;
     fn rename(&mut self, source: &Path, destination: &Path) -> std::io::Result<()>;
     fn remove_file(&mut self, path: &Path) -> std::io::Result<()>;
@@ -1387,11 +1383,7 @@ impl ForwardingJournalIo for StdForwardingJournalIo {
             .open(path)
     }
 
-    fn write_state(
-        &mut self,
-        file: &mut File,
-        saved: &ForwardingStateFile,
-    ) -> std::io::Result<()> {
+    fn write_state(&mut self, file: &mut File, saved: &ForwardingStateFile) -> std::io::Result<()> {
         serde_json::to_writer(file, saved).map_err(std::io::Error::other)
     }
 
@@ -1485,7 +1477,8 @@ fn remove_forwarding_state_file_with(
                 && metadata.permissions().mode() & 0o777 == 0o600
                 && metadata.nlink() == 1 =>
         {
-            io.remove_file(path).map_err(|error| RuntimeError::Forwarding(error.to_string()))?;
+            io.remove_file(path)
+                .map_err(|error| RuntimeError::Forwarding(error.to_string()))?;
             let parent = path.parent().ok_or_else(|| {
                 RuntimeError::Forwarding("forwarding state path has no parent directory".to_owned())
             })?;
@@ -1804,12 +1797,7 @@ fn restore_forwarding_state_with_mode(
     read: impl FnMut(&str) -> Result<String, RuntimeError>,
     write: impl FnMut(&str, &str) -> Result<(), RuntimeError>,
 ) -> Result<(), RuntimeError> {
-    restore_forwarding_state_with_mode_and_verify(
-        state,
-        read,
-        write,
-        verify_forwarding_interface,
-    )
+    restore_forwarding_state_with_mode_and_verify(state, read, write, verify_forwarding_interface)
 }
 
 fn restore_forwarding_state_with_mode_and_verify(
@@ -1830,12 +1818,9 @@ fn restore_forwarding_state_with_mode_and_verify(
             Err(error) => failures.push(format!("IPv4 read: {error}")),
         }
     }
-    if let Err(error) = restore_interface_forwarding_entries_with(
-        state,
-        &mut read,
-        &mut write,
-        &mut verify,
-    ) {
+    if let Err(error) =
+        restore_interface_forwarding_entries_with(state, &mut read, &mut write, &mut verify)
+    {
         failures.push(error.to_string());
     }
     if failures.is_empty() {
@@ -2829,12 +2814,7 @@ mod tests {
                 path.with_extension(format!("forwarding.tmp-{}", std::process::id()));
             let mut io = FaultInjectingForwardingJournalIo { fail_at: stage };
 
-            let result = persist_forwarding_state_with(
-                &path,
-                namespace_inode,
-                &state,
-                &mut io,
-            );
+            let result = persist_forwarding_state_with(&path, namespace_inode, &state, &mut io);
             assert!(
                 matches!(result, Err(RuntimeError::Forwarding(message))
                     if message.contains(&format!("injected {stage} failure"))),
@@ -2848,7 +2828,10 @@ mod tests {
             if stage == "directory_sync" {
                 // Rename already committed the new journal. A failed parent
                 // fsync must report uncertainty but must not discard recovery data.
-                assert!(path.exists(), "renamed journal was lost after directory fsync failure");
+                assert!(
+                    path.exists(),
+                    "renamed journal was lost after directory fsync failure"
+                );
                 assert!(load_forwarding_state(&path, namespace_inode)
                     .unwrap()
                     .is_some());
@@ -2872,10 +2855,14 @@ mod tests {
             remove_forwarding_state_file_with(&path, &mut unlink_io),
             Err(RuntimeError::Forwarding(message)) if message.contains("injected remove failure")
         ));
-        assert!(path.exists(), "failed unlink must retain the recovery journal");
+        assert!(
+            path.exists(),
+            "failed unlink must retain the recovery journal"
+        );
 
-        let mut directory_sync_io =
-            FaultInjectingForwardingJournalIo { fail_at: "directory_sync" };
+        let mut directory_sync_io = FaultInjectingForwardingJournalIo {
+            fail_at: "directory_sync",
+        };
         assert!(matches!(
             remove_forwarding_state_file_with(&path, &mut directory_sync_io),
             Err(RuntimeError::Forwarding(message))
@@ -2907,7 +2894,9 @@ mod tests {
                 |_, _| {
                     write_calls += 1;
                     if stage == "write" {
-                        Err(RuntimeError::Forwarding("injected write failure".to_owned()))
+                        Err(RuntimeError::Forwarding(
+                            "injected write failure".to_owned(),
+                        ))
                     } else {
                         Ok(())
                     }
