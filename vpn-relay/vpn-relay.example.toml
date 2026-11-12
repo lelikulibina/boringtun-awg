@@ -1,28 +1,54 @@
-# Пример: WG-сервер и два AWG uplink.
-# Перед запуском замените ключи и адреса конечных узлов. Endpoint использует TEST-NET IP как пример. Файл должен иметь права 0600.
-# socket_fwmark необязателен: без него демон назначает уникальную метку автоматически (начиная с 0x1000).
+# Полный пример поддерживаемой конфигурации vpn-relay.
+# Перед запуском замените все ключи, адреса, AllowedIPs и имена интерфейсов
+# на значения вашей сети. Файл содержит секреты: права доступа должны быть 0600.
+#
+# Конфигурация принимает только IPv4. IPv6-адреса, endpoint и CIDR не поддерживаются.
+# Неиспользуемые опциональные параметры оставлены в комментариях.
 
 [daemon]
+# Уровень логирования: trace | debug | info | warn | error
 log_level = "info"
+# Интервал публикации статистики интерфейсов, секунд (должен быть > 0).
 stats_interval_secs = 10
+# Имя собственной nftables-таблицы (ASCII-буквы, цифры и "_", до 64 символов).
 nft_table = "vpn_relay"
-# Демон управляет только IPv4 forwarding. IPv6 forwarding не настраивается.
-# true используйте только в изолированном сетевом пространстве имён:
-# демон меняет forwarding для всего пространства и может повлиять на пересылку
-# пакетов и Router Advertisement на всех интерфейсах.
+
+# Управление namespace-wide IPv4 forwarding. По умолчанию выключено.
+# Включайте только если vpn-relay должен управлять этим sysctl в namespace.
 manage_ip_forwarding = false
+# Дополнительный список link-scoped forwarding sysctl.
+# Требует manage_ip_forwarding = true; namespace-wide forwarding при этом
+# должен быть заранее включён контейнером/системой. Укажите только нужные links.
+# forwarding_interfaces = ["eth0", "wg-server"]
 
 [interfaces.wg-server]
+# Тип интерфейса: "wg" или "awg".
 type = "wg"
+# Только IPv4 CIDR; можно указать несколько адресов.
 address = ["10.10.0.1/24"]
+# MTU: 576..=65535; default 1380.
 mtu = 1380
+# Необязательный UDP listen port; должен быть уникален среди интерфейсов.
 listen_port = 51820
+# Стандартный Base64, ровно 32 байта после декодирования.
 private_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+# Метка внешних зашифрованных UDP-сокетов. Необязательно: без неё
+# vpn-relay назначает уникальное ненулевое значение автоматически.
+# Явные значения должны быть уникальны и не пересекаться с routing.mark_base.
+# socket_fwmark = 0x1001
 
 [[interfaces.wg-server.peers]]
+# Public key обязателен; ключи peer должны быть уникальны в пределах интерфейса.
 public_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+# Необязательный preshared key: стандартный Base64, ровно 32 байта.
+# preshared_key = "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB="
+# Endpoint необязателен; IPv4 literal или DNS-имя в формате host:port.
+# endpoint = "vpn.example.net:51820"
 allowed_ips = ["10.10.0.2/32"]
+# Необязательно. Поддерживается целое число секунд или строковый диапазон "min-max".
 persistent_keepalive_secs = 25
+# Альтернативная форма: пара [min, max], взаимоисключающая с persistent_keepalive_secs.
+# persistent_keepalive_range = [25, 35]
 
 [interfaces.awg-primary]
 type = "awg"
@@ -30,10 +56,12 @@ address = ["10.20.0.2/32"]
 mtu = 1380
 listen_port = 51821
 private_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
-# socket_fwmark не задан: демон назначит его автоматически
+# socket_fwmark = 0x1002
 
-# Необязательно: явный выбор поколения. Если опустить, BoringTun определит
-# минимальное совместимое поколение по параметрам ниже.
+# AWG-параметры задаются непосредственно в [interfaces.<имя>], без [awg].
+# Поля ниже формируют профиль AWG 1.0. Не задавайте disable_cookies или
+# random_trailers даже со значением false: само присутствие этих ключей
+# является признаком AWG 3.1 при автоматическом определении поколения.
 jc = 4
 jmin = 40
 jmax = 80
@@ -41,30 +69,31 @@ s1 = 0
 s2 = 0
 s3 = 0
 s4 = 0
+# H1-H4 принимают uint32 или диапазон "min-max".
 h1 = "1"
 h2 = "2"
 h3 = "3"
 h4 = "4"
-disable_cookies = false
-random_trailers = false
-# Параметры AWG 3.1. Раскомментируйте их и согласуйте значения на обоих узлах.
+
+# Расширения AWG 3.1. Раскомментируйте нужные параметры и согласуйте
+# протокольные значения/ключи на обеих сторонах соединения.
 # i1 = "<b 0x4142><r 8>"
 # i2 = "<t>"
 # i3 = "<rc 4>"
 # i4 = "<rd 4>"
 # i5 = "<dz 2>"
-# Ключ HP: ровно 64 шестнадцатеричных символа; одинаковый на обоих узлах.
-# При включении HP задайте S1-S4 не менее 12 байт.
-# Ключ Header Protection: 32 байта в стандартном Base64, как private_key/public_key.
-# Сгенерируйте отдельный ключ командой awg genkey и задайте одинаковое значение на обеих сторонах.
+# header_protection_key — отдельный 32-байтовый ключ в стандартном Base64.
+# При использовании HP задайте S1-S4 не менее 12 байт.
 # header_protection_key = "QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI="
 # content_padding_addition = "10-100"
-# Режим дополнения выбирается автоматически: AWG 3.0 — по MTU, AWG 3.1 — по UDP window.
 # rekey_after_time = "100-120"
 # rekey_timeout = "3-8"
 # reject_after_time = "150-180"
 # keepalive_timeout = "7-13"
 # max_handshake_attempts = "15-20"
+# Эти два флага также распознаются как параметры AWG 3.1.
+# disable_cookies = true
+# random_trailers = true
 
 [[interfaces.awg-primary.peers]]
 public_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
@@ -78,8 +107,7 @@ address = ["10.30.0.2/32"]
 mtu = 1380
 listen_port = 51822
 private_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
-# socket_fwmark не задан: демон назначит его автоматически
-
+# При отсутствии socket_fwmark значение назначается автоматически.
 jc = 4
 jmin = 40
 jmax = 80
@@ -96,18 +124,33 @@ endpoint = "198.51.100.10:51820"
 allowed_ips = ["0.0.0.0/0"]
 persistent_keepalive_secs = 25
 
+[routing]
+# База меток для внутренних клиентских пакетов. Default: 0x80000000.
+# Отдельна от socket_fwmark, который маркирует внешние UDP-сокеты.
+# Значение должно быть ненулевым; диапазон выделяемых меток не должен
+# пересекаться с явно заданными socket_fwmark.
+mark_base = 0x80000000
+
+# Правила проверяются по возрастанию priority в пределах одного ingress.
+# ingress/egress должны ссылаться на интерфейсы из [interfaces].
+# source и destination необязательны; каждый принимает один IPv4 CIDR
+# или список IPv4 CIDR. Первое совпавшее правило классифицирует новый flow.
+
+# Пример более специфичного назначения без NAT.
 [[routing.rules]]
 priority = 10
 ingress = "wg-server"
 destination = "195.142.0.0/16"
 egress = "awg-secondary"
+# nat = "none" — значение по умолчанию, NAT не выполняется.
 
 [[routing.rules]]
 priority = 20
 ingress = "wg-server"
-destination = "79.100.22.0/24"
+destination = ["79.100.22.0/24", "203.0.113.0/24"]
 egress = "awg-secondary"
 
+# Пример маршрута по умолчанию с masquerade.
 [[routing.rules]]
 priority = 100
 ingress = "wg-server"
@@ -116,22 +159,31 @@ destination = "0.0.0.0/0"
 egress = "awg-primary"
 nat = "masquerade"
 
-
-# INPUT и OUTPUT по умолчанию запрещают трафик через управляемые TUN-интерфейсы.
-# Разрешения задаются только явно. Раскомментируйте при необходимости:
-#
-# [[firewall.input.rules]]
-# interface = "wg-server"
-# source = ["10.10.0.2/32"]
-# protocol = "tcp"
-# ports = [22]
-#
-# [[firewall.output.rules]]
-# interface = "awg-primary"
-# destination = ["10.10.0.0/24"]
-# protocol = "udp"
-# ports = [53]
-#
-# Для статического SNAT вместо masquerade в соответствующем routing rule:
+# Для статического SNAT вместо masquerade укажите:
 # nat = "snat"
 # nat_to = "203.0.113.10"
+# nat_to допустим и обязателен только при nat = "snat".
+
+# Firewall INPUT/OUTPUT — дополнительные allow-исключения для host traffic.
+# Остальной трафик через managed TUN в этих направлениях блокируется.
+# INPUT поддерживает source, OUTPUT — destination. Селекторы необязательны.
+# CIDR можно задавать строкой или списком. Протокол: tcp | udp | icmp.
+# ports — необязательный непустой список портов 1..=65535 и требует tcp/udp.
+
+[[firewall.input.rules]]
+interface = "wg-server"
+source = ["10.10.0.2/32"]
+protocol = "tcp"
+ports = [22]
+
+[[firewall.output.rules]]
+interface = "awg-primary"
+destination = ["10.10.0.0/24"]
+protocol = "udp"
+ports = [53]
+
+# Пример ICMP allow без портов:
+# [[firewall.input.rules]]
+# interface = "wg-server"
+# source = "10.10.0.0/24"
+# protocol = "icmp"
