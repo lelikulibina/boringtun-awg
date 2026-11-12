@@ -603,7 +603,7 @@ impl Config {
         self.resolved_socket_fwmarks()?;
 
         let mut route_priorities = HashSet::new();
-        for rule in &self.routing.rules {
+        for (index, rule) in self.routing.rules.iter().enumerate() {
             if !route_priorities.insert((rule.ingress.as_str(), rule.priority)) {
                 return invalid(format!(
                     "routing contains duplicate priority {} for ingress '{}'",
@@ -627,6 +627,25 @@ impl Config {
                     "routing rule cannot use '{}' as both ingress and egress",
                     rule.ingress
                 ));
+            }
+            let path = format!("routing.rules[{index}]");
+            for (field, prefixes) in [
+                ("source", rule.source.as_ref()),
+                ("destination", rule.destination.as_ref()),
+            ] {
+                if let Some(prefixes) = prefixes {
+                    if prefixes.is_empty() {
+                        return invalid(format!("{path}.{field} must not be an empty list"));
+                    }
+                    let mut unique = HashSet::new();
+                    for prefix in prefixes {
+                        if !unique.insert(canonical_prefix(prefix, &format!("{path}.{field}"))?) {
+                            return invalid(format!(
+                                "{path}.{field} must not contain duplicate CIDR selectors (including equivalent CIDR networks)"
+                            ));
+                        }
+                    }
+                }
             }
             match rule.nat {
                 NatMode::Snat => {
