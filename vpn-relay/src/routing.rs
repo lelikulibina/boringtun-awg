@@ -578,37 +578,32 @@ impl RoutingPlan {
                 .replace("iifname", "iif")
                 .replace("oifname", "oif");
 
-            // A same-name replacement has a different ifindex and must be
-            // explicitly dropped, not merely omitted from the numeric sets.
-            // These guards run before every configured allow/drop decision.
+            // Reject both identity mismatch directions before any allow/drop
+            // policy: the configured name resolving to another index, and a
+            // different link reusing the configured numeric ifindex.
             let mut guards = String::new();
             for (name, index) in indices {
                 guards.push_str(&format!(
-                    "add rule {} {} prerouting iifname \"{}\" iif != {} counter drop\n\
-                     add rule {} {} input iifname \"{}\" iif != {} counter drop\n\
-                     add rule {} {} forward iifname \"{}\" iif != {} counter drop\n\
-                     add rule {} {} forward oifname \"{}\" oif != {} counter drop\n\
-                     add rule {} {} output oifname \"{}\" oif != {} counter drop\n",
-                    self.nft_family,
-                    self.nft_table,
-                    name,
-                    index,
-                    self.nft_family,
-                    self.nft_table,
-                    name,
-                    index,
-                    self.nft_family,
-                    self.nft_table,
-                    name,
-                    index,
-                    self.nft_family,
-                    self.nft_table,
-                    name,
-                    index,
-                    self.nft_family,
-                    self.nft_table,
-                    name,
-                    index,
+                    "add rule {} {} prerouting iifname \"{}\" iif != {} counter drop\\n\\
+                     add rule {} {} prerouting iif {} iifname != \"{}\" counter drop\\n\\
+                     add rule {} {} input iifname \"{}\" iif != {} counter drop\\n\\
+                     add rule {} {} input iif {} iifname != \"{}\" counter drop\\n\\
+                     add rule {} {} forward iifname \"{}\" iif != {} counter drop\\n\\
+                     add rule {} {} forward iif {} iifname != \"{}\" counter drop\\n\\
+                     add rule {} {} forward oifname \"{}\" oif != {} counter drop\\n\\
+                     add rule {} {} forward oif {} oifname != \"{}\" counter drop\\n\\
+                     add rule {} {} output oifname \"{}\" oif != {} counter drop\\n\\
+                     add rule {} {} output oif {} oifname != \"{}\" counter drop\\n",
+                    self.nft_family, self.nft_table, name, index,
+                    self.nft_family, self.nft_table, index, name,
+                    self.nft_family, self.nft_table, name, index,
+                    self.nft_family, self.nft_table, index, name,
+                    self.nft_family, self.nft_table, name, index,
+                    self.nft_family, self.nft_table, index, name,
+                    self.nft_family, self.nft_table, name, index,
+                    self.nft_family, self.nft_table, index, name,
+                    self.nft_family, self.nft_table, name, index,
+                    self.nft_family, self.nft_table, index, name,
                 ));
             }
             let first_rule = output.find("add rule ").unwrap_or(output.len());
@@ -961,10 +956,15 @@ egress = "awg-primary"
         assert!(script.contains("forward iif 17 oif 18"));
         assert!(script.contains("postrouting iif 17 oif 18"));
         assert!(script.contains("prerouting iifname \"wg-server\" iif != 17 counter drop"));
+        assert!(script.contains("prerouting iif 17 iifname != \"wg-server\" counter drop"));
         assert!(script.contains("input iifname \"wg-server\" iif != 17 counter drop"));
+        assert!(script.contains("input iif 17 iifname != \"wg-server\" counter drop"));
         assert!(script.contains("forward iifname \"wg-server\" iif != 17 counter drop"));
+        assert!(script.contains("forward iif 17 iifname != \"wg-server\" counter drop"));
         assert!(script.contains("forward oifname \"awg-primary\" oif != 18 counter drop"));
+        assert!(script.contains("forward oif 18 oifname != \"awg-primary\" counter drop"));
         assert!(script.contains("output oifname \"awg-secondary\" oif != 19 counter drop"));
+        assert!(script.contains("output oif 19 oifname != \"awg-secondary\" counter drop"));
         assert!(!script.contains("type ifname"));
     }
 
