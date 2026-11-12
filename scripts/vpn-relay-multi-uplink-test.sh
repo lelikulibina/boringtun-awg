@@ -24,12 +24,12 @@ ROUTER_PID=""
 PRIMARY_PID=""
 SECONDARY_PID=""
 ROUTE_RELOAD_PING_PID=""
-PEER_REMOVAL_PING_PID=""
+PEER_RELOAD_PING_PID=""
 IPERF_PIDS=()
 NETNS_INODES=()
 
 cleanup() {
-    for pid in "${IPERF_PIDS[@]}" "$CLIENT_PID" "$SECOND_CLIENT_PID" "$ROUTER_PID" "$PRIMARY_PID" "$SECONDARY_PID" "$ROUTE_RELOAD_PING_PID" "$PEER_REMOVAL_PING_PID"; do
+    for pid in "${IPERF_PIDS[@]}" "$CLIENT_PID" "$SECOND_CLIENT_PID" "$ROUTER_PID" "$PRIMARY_PID" "$SECONDARY_PID" "$ROUTE_RELOAD_PING_PID" "$PEER_RELOAD_PING_PID"; do
         if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
             kill -TERM "$pid" 2>/dev/null || true
             wait "$pid" 2>/dev/null || true
@@ -659,7 +659,7 @@ PY
     || fail "peer-removal reload candidate did not validate"
 ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -i 0.05 -c 100 -W 2 203.0.113.1 \
     >"$TMP/peer-removal-continuous-ping.log" 2>&1 &
-PEER_REMOVAL_PING_PID=$!
+PEER_RELOAD_PING_PID=$!
 sleep 0.2
 ip netns exec "$ROUTER_NS" "$BIN" --config "$TMP/router.toml" --reload \
     >"$TMP/runtime-peer-removal-reload.log" 2>&1 \
@@ -673,8 +673,8 @@ ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.3 -c 3 -W 2 10.77.0.1 \
     || fail "AllowedIPs ownership did not hand off to the surviving broader-prefix peer"
 ip -n "$CLIENT_NS" address del 10.77.0.3/32 dev wg-client
 
-if wait "$PEER_REMOVAL_PING_PID"; then
-    PEER_REMOVAL_PING_PID=""
+if wait "$PEER_RELOAD_PING_PID"; then
+    PEER_RELOAD_PING_PID=""
 else
     fail "unaffected peer traffic failed while another ingress peer was removed"
 fi
@@ -748,7 +748,7 @@ PY
     || fail "AllowedIPs update reload candidate did not validate"
 ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -i 0.05 -c 100 -W 2 203.0.113.1 \
     >"$TMP/allowedips-update-continuous-ping.log" 2>&1 &
-PEER_REMOVAL_PING_PID=$!
+PEER_RELOAD_PING_PID=$!
 sleep 0.2
 ip netns exec "$ROUTER_NS" "$BIN" --config "$TMP/router.toml" --reload \
     >"$TMP/runtime-allowedips-update-reload.log" 2>&1 \
@@ -765,8 +765,8 @@ ip -n "$CLIENT_NS" address add 10.77.0.3/32 dev wg-client
 ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.3 -c 3 -W 2 10.77.0.1 \
     || fail "former .3/32 address did not hand off to the broader-prefix peer"
 ip -n "$CLIENT_NS" address del 10.77.0.3/32 dev wg-client
-if wait "$PEER_REMOVAL_PING_PID"; then
-    PEER_REMOVAL_PING_PID=""
+if wait "$PEER_RELOAD_PING_PID"; then
+    PEER_RELOAD_PING_PID=""
 else
     fail "unaffected peer traffic failed during AllowedIPs update"
 fi
@@ -789,10 +789,14 @@ allowed_ips = ["10.77.0.3/32"]'''
 if config.count(old_peer) != 1:
     raise SystemExit("cannot find unique updated ingress peer for restoration")
 config = config.replace(old_peer, new_peer, 1)
-config = config.replace('source = ["10.77.0.2/32", "10.77.0.4/32"]',
-                        'source = ["10.77.0.2/32", "10.77.0.3/32"]')
-config = config.replace('destination = ["10.77.0.2/32", "10.77.0.4/32"]',
-                        'destination = ["10.77.0.2/32", "10.77.0.3/32"]')
+old_source = 'source = ["10.77.0.2/32", "10.77.0.4/32"]'
+new_source = 'source = ["10.77.0.2/32", "10.77.0.3/32"]'
+old_destination = 'destination = ["10.77.0.2/32", "10.77.0.4/32"]'
+new_destination = 'destination = ["10.77.0.2/32", "10.77.0.3/32"]'
+if config.count(old_source) != 2 or config.count(old_destination) != 1:
+    raise SystemExit("unexpected router firewall/routing selectors during AllowedIPs restoration")
+config = config.replace(old_source, new_source)
+config = config.replace(old_destination, new_destination)
 with open(path, "w", encoding="utf-8") as stream:
     stream.write(config)
 PY
@@ -1065,4 +1069,4 @@ overlap_v4_status=$?
 set -e
 [[ "$overlap_v4_status" -eq 124 ]] || fail "IPv4 source spoofing reached router TUN despite more-specific AllowedIPs ownership (tcpdump status $overlap_v4_status)"
 
-echo "vpn-relay multi-uplink test passed: IPv4 routing/NAT, bidirectional ICMP/TCP/UDP, continuous traffic during routing/NAT reload and peer removal, AllowedIPs ownership handoff under load, outer UDP underlay isolation, independent uplink handshake recovery"
+echo "vpn-relay multi-uplink test passed: IPv4 routing/NAT, bidirectional ICMP/TCP/UDP, continuous traffic during routing/NAT reload and peer removal, AllowedIPs update and ownership handoff under load, outer UDP underlay isolation, independent uplink handshake recovery"
