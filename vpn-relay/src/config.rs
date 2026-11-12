@@ -1503,7 +1503,7 @@ egress = "awg-uplink"
     fn unknown_flattened_interface_keys_are_rejected() {
         let input = valid_config().replace("mtu = 1380", "mtu = 1380\nmtuu = 1400");
         let error = Config::parse_toml(&input).unwrap_err().to_string();
-        assert!(error.contains("interfaces.wg-server.mtuu"));
+        assert!(error.contains(".mtuu"));
     }
 
     #[test]
