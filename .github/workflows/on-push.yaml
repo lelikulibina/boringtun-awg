@@ -33,6 +33,7 @@ jobs:
       - rustfmt
       - tests
       - integration-tests
+      - kernel-compatibility
       - awg31-interoperability
     steps:
       - run: exit 0
@@ -176,6 +177,51 @@ jobs:
           path: target/awg31-wire-pcaps/*.pcap
           if-no-files-found: warn
           retention-days: 14
+
+  # Exercise the raw rtnetlink IPv4 forwarding path on both supported
+  # Ubuntu LTS runner generations. The runner's actual kernel is logged because
+  # GitHub-hosted image labels do not pin a specific kernel build.
+  kernel-compatibility:
+    name: kernel compatibility (\${{ matrix.os }})
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-22.04, ubuntu-24.04 ]
+    runs-on: \${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+      - name: Install Linux networking tools
+        run: |
+          packages=(iproute2 nftables iputils-ping)
+          missing=()
+          for package in "\${packages[@]}"; do
+            status=$(dpkg-query -W -f='\${db:Status-Status}' "$package" 2>/dev/null || true)
+            if [ "$status" != "installed" ]; then
+              missing+=("$package")
+            fi
+          done
+          if [ "\${#missing[@]}" -gt 0 ]; then
+            sudo apt-get update
+            sudo apt-get install -y "\${missing[@]}"
+          fi
+      - name: Record kernel and distribution
+        run: |
+          uname -a
+          cat /etc/os-release
+          ip -Version
+          nft --version
+      - name: Build vpn-relay
+        run: cargo build -p vpn-relay --bin vpn-relay
+      - name: Verify rtnetlink forwarding ACK, readback and recovery
+        timeout-minutes: 6
+        run: timeout --signal=TERM --kill-after=15s 5m sudo bash scripts/vpn-relay-per-interface-forwarding-test.sh
+      - name: Verify packet-level forwarding and managed-TUN IPv6 drop
+        timeout-minutes: 6
+        run: timeout --signal=TERM --kill-after=15s 5m sudo bash scripts/vpn-relay-per-interface-forwarding-packet-test.sh
 
   integration-tests:
     timeout-minutes: 45
