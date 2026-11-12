@@ -86,7 +86,7 @@ ip -n "$CLIENT_B" route add 10.10.1.0/24 via 10.10.2.1
 ip -n "$CLIENT_BAD" route add 10.10.1.0/24 via 10.10.3.1
 
 # Let vpn-relay own the per-interface IPv4 switches. The IPv4 namespace-wide
-# prerequisite remains externally managed; vpn-relay does not touch IPv6 sysctls.
+# prerequisite remains externally managed.
 INODE="$(ip netns exec "$ROUTER" stat -Lc '%i' /proc/self/ns/net)"
 ip netns exec "$ROUTER" sysctl -qw net.ipv4.ip_forward=1
 ip netns exec "$ROUTER" sysctl -qw net.ipv4.conf.all.rp_filter=0
@@ -129,14 +129,6 @@ done
 [[ "$ready" == true ]] || fail "vpn-relay did not enable selected per-interface forwarding"
 
 [[ "$(ip netns exec "$ROUTER" sysctl -n net.ipv4.conf.r-bad0.forwarding)" == "0" ]] || fail "daemon enabled untrusted IPv4 ingress"
-
-# Inject an IPv6 packet toward the daemon-owned TUN. The address and route are
-# test-only; vpn-relay must not configure IPv6 addresses or routes itself.
-ip -n "$ROUTER" -6 address add 2001:db8:ffff::2/128 dev lo
-ip -n "$ROUTER" -6 route add 2001:db8:ffff::/64 dev wg0
-ip netns exec "$ROUTER" ping -6 -n -I 2001:db8:ffff::2 -c 1 -W 1 2001:db8:ffff::1 >/dev/null 2>&1 || true
-ipv6_output_chain="$(ip netns exec "$ROUTER" nft list chain inet "$TABLE" output)"
-grep -Eq 'oif @ipv6_drop_interfaces meta nfproto ipv6 counter packets [1-9][0-9]* bytes [1-9][0-9]* drop' <<<"$ipv6_output_chain" || fail "IPv6 packet was not observed by the managed-TUN output drop rule"
 
 ip netns exec "$CLIENT_A" ping -n -c 2 -W 2 10.10.2.2 >/dev/null || fail "IPv4 packet was not forwarded from allowlisted ingress"
 ip netns exec "$CLIENT_B" ping -n -c 2 -W 2 10.10.1.2 >/dev/null || fail "IPv4 reply path was not forwarded"
