@@ -664,6 +664,15 @@ sleep 0.2
 ip netns exec "$ROUTER_NS" "$BIN" --config "$TMP/router.toml" --reload \
     >"$TMP/runtime-peer-removal-reload.log" 2>&1 \
     || fail "runtime reload failed while removing an unrelated ingress peer"
+
+# The removed peer's more-specific 10.77.0.3/32 ownership must fall back to
+# the surviving peer's 10.77.0.0/24 prefix. Exercise that handoff while the
+# unaffected .2 flow above is still sending packets.
+ip -n "$CLIENT_NS" address add 10.77.0.3/32 dev wg-client
+ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.3 -c 3 -W 2 10.77.0.1 \
+    || fail "AllowedIPs ownership did not hand off to the surviving broader-prefix peer"
+ip -n "$CLIENT_NS" address del 10.77.0.3/32 dev wg-client
+
 if wait "$PEER_REMOVAL_PING_PID"; then
     PEER_REMOVAL_PING_PID=""
 else
