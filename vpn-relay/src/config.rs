@@ -1305,7 +1305,6 @@ egress = "awg-uplink"
             parsed.routing.rules[0].nat_to,
             Some("203.0.113.9".parse().unwrap())
         );
-
     }
 
     #[test]
