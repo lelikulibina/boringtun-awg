@@ -2374,6 +2374,411 @@ mod tests {
             InstanceLock::current_netns_path().unwrap()
         );
     }
+
+    #[test]
+    fn unmanaged_forwarding_interfaces_must_remain_disabled() {
+        let allowed = std::collections::BTreeSet::from(["wg0".to_owned()]);
+        let interfaces = vec!["eth0".to_owned(), "wg0".to_owned()];
+        validate_unmanaged_forwarding_with(&allowed, &interfaces, |key| {
+            if key == "net.ipv4.conf.eth0.forwarding" {
+                Ok(Some("1".to_owned()))
+            } else {
+                Ok(Some("0".to_owned()))
+            }
+        })
+        .unwrap_err();
+    }
+
+    fn test_forwarding_entry(name: &str, ifindex: u32) -> InterfaceForwardingState {
+        InterfaceForwardingState {
+            name: name.to_owned(),
+            ifindex,
+            daemon_owned: false,
+            ipv4: "0".to_owned(),
+            ipv4_changed: true,
+        }
+    }
+
+    #[test]
+    fn interface_forwarding_enable_rolls_back_partial_writes() {
+        let state = ForwardingState {
+            ipv4: "1".to_owned(),
+            ipv4_changed: false,
+            interfaces: vec![
+                test_forwarding_entry("eth0", 7),
+                test_forwarding_entry("eth1", 8),
+            ],
+        };
+        let values = std::cell::RefCell::new(std::collections::BTreeMap::from([
+            ("net.ipv4.conf.eth0.forwarding".to_owned(), "0".to_owned()),
+            ("net.ipv4.conf.eth1.forwarding".to_owned(), "0".to_owned()),
+        ]));
+        let result = enable_interface_forwarding_entries_with(
+            &state,
+            |key| Ok(values.borrow().get(key).cloned().unwrap()),
+            |key, value| {
+                if key == "net.ipv4.conf.eth1.forwarding" && value == "1" {
+                    return Err(RuntimeError::Forwarding("injected setup failure".to_owned()));
+                }
+                values.borrow_mut().insert(key.to_owned(), value.to_owned());
+                Ok(())
+            },
+            |_, _| Ok(()),
+        );
+        assert!(matches!(result, Err(RuntimeError::Forwarding(_))));
+        assert_eq!(values.borrow()["net.ipv4.conf.eth0.forwarding"], "0");
+        assert_eq!(values.borrow()["net.ipv4.conf.eth1.forwarding"], "0");
+    }
+
+    #[test]
+    fn interface_forwarding_enable_reports_fatal_when_rollback_fails() {
+        let state = ForwardingState {
+            ipv4: "1".to_owned(),
+            ipv4_changed: false,
+            interfaces: vec![test_forwarding_entry("eth0", 7)],
+        };
+        let current = std::cell::RefCell::new("0".to_owned());
+        let result = enable_interface_forwarding_entries_with(
+            &state,
+            |_| Ok(current.borrow().clone()),
+            |_, value| {
+                if value == "1" {
+                    *current.borrow_mut() = "1".to_owned();
+                    return Err(RuntimeError::Forwarding("injected setup failure".to_owned()));
+                }
+                Err(RuntimeError::Forwarding("injected rollback failure".to_owned()))
+            },
+            |_, _| Ok(()),
+        );
+        assert!(matches!(result, Err(RuntimeError::FatalTransition(message))
+            if message.contains("injected setup failure")
+                && message.contains("injected rollback failure")));
+    }
+
+    #[test]
+    fn interface_forwarding_enable_fails_closed_if_identity_is_lost() {
+        let state = ForwardingState {
+            ipv4: "1".to_owned(),
+            ipv4_changed: false,
+            interfaces: vec![test_forwarding_entry("eth0", 7)],
+        };
+        let mut writes = 0;
+        let result = enable_interface_forwarding_entries_with(
+            &state,
+            |_| Ok("0".to_owned()),
+            |_, _| {
+                writes += 1;
+                Ok(())
+            },
+            |_, _| Err(RuntimeError::Forwarding("identity changed".to_owned())),
+        );
+        assert!(matches!(result, Err(RuntimeError::FatalTransition(_))));
+        assert_eq!(writes, 0);
+    }
+
+    #[test]
+    fn daemon_owned_tun_sysctls_are_never_restored_by_saved_identity() {
+        let mut entry = test_forwarding_entry("wg0", 17);
+        entry.daemon_owned = true;
+        let state = ForwardingState {
+            ipv4: "1".to_owned(),
+            ipv4_changed: false,
+            interfaces: vec![entry],
+        };
+        let mut reads = 0;
+        let mut writes = 0;
+        restore_interface_forwarding_entries_with(
+            &state,
+            |_| {
+                reads += 1;
+                Ok("1".to_owned())
+            },
+            |_, _| {
+                writes += 1;
+                Ok(())
+            },
+            |_, _| Ok(()),
+        )
+        .unwrap();
+        assert_eq!(reads, 0);
+        assert_eq!(writes, 0);
+    }
+
+    #[test]
+    fn interface_forwarding_restore_checks_identity_and_daemon_value() {
+        let entry = test_forwarding_entry("eth0", 7);
+        let calls = std::cell::RefCell::new(Vec::new());
+        restore_interface_forwarding_entry_with(
+            &entry,
+            "0",
+            true,
+            |key| {
+                calls.borrow_mut().push(format!("read:{key}"));
+                Ok("1".to_owned())
+            },
+            |key, value| {
+                calls.borrow_mut().push(format!("write:{key}={value}"));
+                Ok(())
+            },
+            |name, index| {
+                calls.borrow_mut().push(format!("verify:{name}:{index}"));
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            calls.into_inner(),
+            vec![
+                "verify:eth0:7",
+                "read:net.ipv4.conf.eth0.forwarding",
+                "verify:eth0:7",
+                "write:net.ipv4.conf.eth0.forwarding=0",
+            ]
+        );
+    }
+
+    #[test]
+    fn interface_forwarding_restore_never_writes_after_identity_mismatch() {
+        let entry = test_forwarding_entry("eth0", 7);
+        let mut reads = 0;
+        let mut writes = 0;
+        let result = restore_interface_forwarding_entry_with(
+            &entry,
+            "0",
+            true,
+            |_| {
+                reads += 1;
+                Ok("1".to_owned())
+            },
+            |_, _| {
+                writes += 1;
+                Ok(())
+            },
+            |_, _| Err(RuntimeError::Forwarding("identity changed".to_owned())),
+        );
+        assert!(result.is_err());
+        assert_eq!(reads, 0);
+        assert_eq!(writes, 0);
+    }
+
+    #[test]
+    fn interface_forwarding_restore_preserves_operator_value() {
+        let entry = test_forwarding_entry("eth0", 7);
+        let mut writes = 0;
+        restore_interface_forwarding_entry_with(
+            &entry,
+            "0",
+            true,
+            |_| Ok("2".to_owned()),
+            |_, _| {
+                writes += 1;
+                Ok(())
+            },
+            |_, _| Ok(()),
+        )
+        .unwrap();
+        assert_eq!(writes, 0);
+    }
+
+    #[test]
+    fn forwarding_journal_accepts_legacy_namespace_only_state() {
+        let legacy = r#"{"ipv4":"0","ipv4_changed":true,"interfaces":[]}"#;
+        let state: ForwardingState = serde_json::from_str(legacy).unwrap();
+        assert!(state.interfaces.is_empty());
+        validate_forwarding_state(&state).unwrap();
+    }
+
+    #[test]
+    fn forwarding_journal_validates_link_identity_and_values() {
+        let mut state = sample_forwarding_state();
+        state.interfaces.push(test_forwarding_entry("awg0", 17));
+        validate_forwarding_state(&state).unwrap();
+
+        state.interfaces[0].ifindex = 0;
+        assert!(validate_forwarding_state(&state).is_err());
+        state.interfaces[0].ifindex = 17;
+        state.interfaces[0].name = "../net/eth0".to_owned();
+        assert!(validate_forwarding_state(&state).is_err());
+        state.interfaces[0].name = "awg0".to_owned();
+        state.interfaces[0].ipv4 = "2".to_owned();
+        assert!(validate_forwarding_state(&state).is_err());
+    }
+
+    #[test]
+    fn forwarding_journal_rejects_duplicate_link_identity() {
+        let mut state = sample_forwarding_state();
+        let entry = test_forwarding_entry("awg0", 17);
+        state.interfaces = vec![entry.clone(), entry];
+        assert!(validate_forwarding_state(&state).is_err());
+    }
+
+    #[test]
+    fn forwarding_enable_does_not_rewrite_already_enabled_ipv4() {
+        let state = ForwardingState {
+            ipv4: "1".to_owned(),
+            ipv4_changed: false,
+            interfaces: Vec::new(),
+        };
+        let enabled = enable_forwarding_state_with(state.clone(), |_, _| {
+            panic!("already-enabled IPv4 forwarding must not be rewritten")
+        })
+        .unwrap();
+        assert_eq!(enabled, state);
+    }
+
+    #[test]
+    fn forwarding_enable_changes_and_restores_ipv4_state() {
+        let state = ForwardingState {
+            ipv4: "0".to_owned(),
+            ipv4_changed: false,
+            interfaces: Vec::new(),
+        };
+        let mut writes = Vec::new();
+        let enabled = enable_forwarding_state_with(state, |key, value| {
+            writes.push((key.to_owned(), value.to_owned()));
+            Ok(())
+        })
+        .unwrap();
+        assert!(enabled.ipv4_changed);
+        assert_eq!(
+            writes,
+            vec![("net.ipv4.ip_forward".to_owned(), "1".to_owned())]
+        );
+
+        restore_forwarding_with(&enabled, |key, value| {
+            writes.push((key.to_owned(), value.to_owned()));
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(
+            writes.last(),
+            Some(&("net.ipv4.ip_forward".to_owned(), "0".to_owned()))
+        );
+    }
+
+    #[test]
+    fn forwarding_enable_keeps_fail_closed_policy_when_restore_fails() {
+        let state = ForwardingState {
+            ipv4: "0".to_owned(),
+            ipv4_changed: false,
+            interfaces: Vec::new(),
+        };
+        let result = enable_forwarding_state_with(state, |_, value| {
+            if value == "1" {
+                Err(RuntimeError::Forwarding("injected enable failure".to_owned()))
+            } else {
+                Err(RuntimeError::Forwarding("injected restore failure".to_owned()))
+            }
+        });
+        assert!(matches!(result, Err(RuntimeError::FatalTransition(message))
+            if message.contains("injected enable failure")
+                && message.contains("injected restore failure")));
+    }
+
+    #[test]
+    fn per_interface_restore_attempts_every_entry_after_failures() {
+        let state = ForwardingState {
+            ipv4: "1".to_owned(),
+            ipv4_changed: false,
+            interfaces: vec![
+                test_forwarding_entry("eth0", 7),
+                test_forwarding_entry("eth1", 8),
+            ],
+        };
+        let mut writes = Vec::new();
+        let result = restore_interface_forwarding_entries_with(
+            &state,
+            |key| Ok(if key.ends_with("eth0.forwarding") { "1" } else { "1" }.to_owned()),
+            |key, value| {
+                writes.push((key.to_owned(), value.to_owned()));
+                Ok(())
+            },
+            |name, _| {
+                if name == "eth0" {
+                    Err(RuntimeError::Forwarding("identity changed".to_owned()))
+                } else {
+                    Ok(())
+                }
+            },
+        );
+        assert!(matches!(result, Err(RuntimeError::FatalTransition(_))));
+        assert_eq!(
+            writes,
+            vec![("net.ipv4.conf.eth1.forwarding".to_owned(), "0".to_owned())]
+        );
+    }
+
+    #[test]
+    fn forwarding_state_recovery_restores_and_is_idempotent() {
+        let state = ForwardingState {
+            ipv4: "0".to_owned(),
+            ipv4_changed: true,
+            interfaces: Vec::new(),
+        };
+        let mut writes = Vec::new();
+        restore_forwarding_state_with_mode(
+            &state,
+            |_| Ok("1".to_owned()),
+            |key, value| {
+                writes.push((key.to_owned(), value.to_owned()));
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            writes,
+            vec![("net.ipv4.ip_forward".to_owned(), "0".to_owned())]
+        );
+
+        writes.clear();
+        restore_forwarding_state_with_mode(
+            &state,
+            |_| Ok("0".to_owned()),
+            |key, value| {
+                writes.push((key.to_owned(), value.to_owned()));
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert!(writes.is_empty());
+    }
+
+    #[test]
+    fn multi_device_peer_rollback_failure_is_reported_for_fatal_shutdown() {
+        let previous = peer_test_config("old-a", "old-b");
+        let candidate = peer_test_config("new-a", "new-b");
+        let prepared = peer_test_prepared();
+        let mut devices: Vec<Box<dyn TunnelHandle>> = vec![
+            Box::new(FaultInjectingTunnel {
+                name: "wg0".to_owned(),
+                peers: vec!["old-a".to_owned()],
+                calls: 0,
+                fail_calls: [2].into_iter().collect(),
+            }),
+            Box::new(FaultInjectingTunnel {
+                name: "wg1".to_owned(),
+                peers: vec!["old-b".to_owned()],
+                calls: 0,
+                fail_calls: [1].into_iter().collect(),
+            }),
+        ];
+        let changed = vec![(0, "wg0".to_owned()), (1, "wg1".to_owned())];
+
+        let (committed, _) =
+            commit_peer_replacements(&mut devices, &changed, &candidate, &prepared)
+                .expect_err("second device must fail");
+        assert_eq!(committed, vec![0]);
+        let failures = rollback_peer_replacements(&mut devices, &committed, &previous, &prepared);
+        assert_eq!(failures.len(), 1);
+        assert!(failures[0].contains("wg0"));
+        assert!(failures[0].contains("injected peer replacement failure"));
+
+        let partially_committed = devices[0].snapshot().unwrap();
+        assert_eq!(partially_committed.peers[0].public_key[0], b'n');
+        let never_committed = devices[1].snapshot().unwrap();
+        assert_eq!(never_committed.peers[0].public_key[0], b'o');
+    }
+
     fn forwarding_state_test_path(label: &str) -> PathBuf {
         let nonce = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
