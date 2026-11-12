@@ -1483,11 +1483,17 @@ egress = "awg-uplink"
         let base = ipv4_config();
         assert!(Config::parse_toml(&base).is_ok());
 
-        let legacy_flag = base.replace(
+        let legacy_daemon_flag = base.replace(
             "manage_ip_forwarding = false",
             "manage_ip_forwarding = false\nipv6_enabled = false",
         );
-        assert!(Config::parse_toml(&legacy_flag).is_err());
+        assert!(Config::parse_toml(&legacy_daemon_flag).is_err());
+
+        let legacy_interface_flag = base.replace(
+            "[interfaces.wg-server]",
+            "[interfaces.wg-server]\nipv6_enabled = false",
+        );
+        assert!(Config::parse_toml(&legacy_interface_flag).is_err());
 
         let ipv6_address = base.replace("10.10.0.1/24", "2001:db8::1/64");
         assert!(Config::parse_toml(&ipv6_address).is_err());
