@@ -229,6 +229,16 @@ TUN. Физические интерфейсы и UDP-сокеты BoringTun э�
 IPv6 sysctl. `boringtun/` остаётся неизменённым; IPv4-only ограничение
 реализовано на уровне конфигурации, маршрутизации и firewall `vpn-relay`.
 
+**Граница packet-level coverage для IPv6:** реальные пакеты и nft counters
+проверяют drop в output и forward при выборе managed TUN как egress.
+Правило prerouting для managed-TUN ingress проверяется по сгенерированному
+ruleset и unit assertions; отдельный packet-level ingress probe не заявляется.
+Это ограничение явно сохраняется: IPv6 peers/AllowedIPs и IPv6 transport в
+vpn-relay не поддерживаются, поэтому штатного IPv6 ingress datapath через
+managed tunnel нет. PREROUTING drop остаётся дополнительной защитой от
+неожиданно поступивших IPv6-пакетов, а не основанием утверждать, что
+packet-level ingress тест уже выполнен.
+
 ## Peer identity и anti-spoofing
 
 После расшифрования пакет поступает в TUN как обычный IP пакет. nftables

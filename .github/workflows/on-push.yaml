@@ -319,6 +319,10 @@ jobs:
         run: timeout --signal=TERM --kill-after=30s 15m cargo test -- --ignored
       - name: Build router daemon
         run: cargo build -p vpn-relay --bin vpn-relay
+      - name: Validate vpn-relay example configuration
+        run: cargo run -p vpn-relay --bin vpn-relay -- --config vpn-relay/vpn-relay.example.toml --check
+      - name: Build vpn-relay release binary
+        run: cargo build -p vpn-relay --bin vpn-relay --release
       - name: Exercise daemon routing in isolated network namespace
         timeout-minutes: 12
         run: timeout --signal=TERM --kill-after=15s 5m sudo bash scripts/vpn-relay-netns-test.sh
