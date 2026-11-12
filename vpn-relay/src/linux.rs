@@ -1315,12 +1315,7 @@ fn set_ipv4_interface_forwarding_with(
     // RTM_NEWLINK is addressed by ifindex, so check the saved name/index pair
     // as late as possible before the kernel resolves that index.
     verify(name, ifindex)?;
-    request(
-        ifindex,
-        RTM_NEWLINK,
-        NLM_F_REQUEST | NLM_F_ACK,
-        &attributes,
-    )?;
+    request(ifindex, RTM_NEWLINK, NLM_F_REQUEST | NLM_F_ACK, &attributes)?;
     let actual = readback(ifindex)?;
     verify(name, ifindex)?;
     if actual != enabled {
@@ -2249,7 +2244,12 @@ mod tests {
 
     #[test]
     fn rtnetlink_forwarding_set_failure_matrix_stops_at_each_boundary() {
-        for stage in ["identity_before_send", "send_or_ack", "readback", "identity_after_readback"] {
+        for stage in [
+            "identity_before_send",
+            "send_or_ack",
+            "readback",
+            "identity_after_readback",
+        ] {
             let mut verify_calls = 0usize;
             let mut request_calls = 0usize;
             let mut readback_calls = 0usize;
@@ -2301,17 +2301,29 @@ mod tests {
             assert!(result.is_err(), "{stage} failure was not propagated");
             assert_eq!(
                 verify_calls,
-                if stage == "identity_after_readback" { 2 } else { 1 },
+                if stage == "identity_after_readback" {
+                    2
+                } else {
+                    1
+                },
                 "unexpected identity check count for {stage}"
             );
             assert_eq!(
                 request_calls,
-                if stage == "identity_before_send" { 0 } else { 1 },
+                if stage == "identity_before_send" {
+                    0
+                } else {
+                    1
+                },
                 "unsafe or missing RTM_NEWLINK request for {stage}"
             );
             assert_eq!(
                 readback_calls,
-                if matches!(stage, "readback" | "identity_after_readback") { 1 } else { 0 },
+                if matches!(stage, "readback" | "identity_after_readback") {
+                    1
+                } else {
+                    0
+                },
                 "unexpected RTM_GETLINK readback count for {stage}"
             );
         }
