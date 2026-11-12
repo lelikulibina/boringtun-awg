@@ -94,8 +94,10 @@ fn table_is_owned_text(output: &str, family: &str, name: &str) -> bool {
             return false;
         }
 
-        let indentation = line.len() - line.trim_start().len();
-        if indentation == 4 && line.trim() == expected_comment {
+        // nftables 1.0.2 prints tabs; newer releases commonly print spaces.
+        let top_level_indentation = (line.starts_with('\\t') && !line.starts_with("\\t\\t"))
+            || (line.starts_with("    ") && !line.starts_with("        "));
+        if top_level_indentation && line.trim() == expected_comment {
             return true;
         }
     }
@@ -1968,6 +1970,9 @@ mod tests {
         let owned = "table inet vpn_relay {\n    comment \"managed by vpn-relay\"\n    chain input {\n        type filter hook input priority filter; policy accept;\n    }\n}\n";
         assert!(table_is_owned_text(owned, "inet", "vpn_relay"));
         assert!(!table_is_owned_text(owned, "inet", "other_table"));
+
+        let tab_indented = "table inet vpn_relay {\n\\tcomment \"managed by vpn-relay\"\n\\tchain input {\n\\t\\ttype filter hook input priority filter; policy accept;\n\\t}\n}\n";
+        assert!(table_is_owned_text(tab_indented, "inet", "vpn_relay"));
 
         let nested_only = "table inet vpn_relay {\n    chain input {\n        comment \"managed by vpn-relay\"\n    }\n}\n";
         assert!(!table_is_owned_text(nested_only, "inet", "vpn_relay"));
