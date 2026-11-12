@@ -333,6 +333,7 @@ ip netns exec "$NS" nft delete table inet vpn_relay_it
 # The first batch is the drop-only bootstrap; the second atomically activates
 # the indexed policy after all TUN descriptors have been created and checked.
 REAL_NFT_STARTUP="$(command -v nft)"
+REAL_IP="$(command -v ip)"
 mkdir -p "$TMP/fail-bootstrap-nft" "$TMP/fail-indexed-nft"
 cat >"$TMP/fail-bootstrap-nft/nft" <<EOF
 #!/bin/sh
@@ -446,7 +447,6 @@ expect_startup_failure partial-ipv4-forwarding.log "IPv4 forwarding enable-after
 grep -Fq "injected IPv4 forwarding enable-after-write failure" "$TMP/partial-ipv4-forwarding.log" || fail "IPv4 enable-after-write failure was not observed"
 
 REAL_NFT="$(command -v nft)"
-REAL_IP="$(command -v ip)"
 mkdir -p "$TMP/fail-nft-bin"
 cat >"$TMP/fail-nft-bin/ip" <<EOF
 #!/bin/sh
