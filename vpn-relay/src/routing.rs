@@ -341,27 +341,40 @@ impl RoutingPlan {
         );
 
         if !self.ipv6_drop_interfaces.is_empty() {
-            let elements = self
-                .ipv6_drop_interfaces
-                .iter()
-                .map(|name| format!("\"{}\"", name))
-                .collect::<Vec<_>>()
-                .join(", ");
+            let (set_type, elements, input_selector, output_selector) =
+                if let Some(indices) = &self.interface_indices {
+                    let elements = self
+                        .ipv6_drop_interfaces
+                        .iter()
+                        .filter_map(|name| indices.get(name))
+                        .map(u32::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    ("iface_index", elements, "iif", "oif")
+                } else {
+                    let elements = self
+                        .ipv6_drop_interfaces
+                        .iter()
+                        .map(|name| format!("\"{}\"", name))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    ("ifname", elements, "iifname", "oifname")
+                };
             output.push_str(&format!(
-                "add set {} {} ipv6_drop_interfaces {{ type ifname; elements = {{ {} }}; }}\n",
-                self.nft_family, self.nft_table, elements
+                "add set {} {} ipv6_drop_interfaces {{ type {}; elements = {{ {} }}; }}\n",
+                self.nft_family, self.nft_table, set_type, elements
             ));
             output.push_str(&format!(
-                "add rule {} {} prerouting iifname @ipv6_drop_interfaces meta nfproto ipv6 drop\n",
-                self.nft_family, self.nft_table
+                "add rule {} {} prerouting {} @ipv6_drop_interfaces meta nfproto ipv6 drop\n",
+                self.nft_family, self.nft_table, input_selector
             ));
             output.push_str(&format!(
-                "add rule {} {} forward oifname @ipv6_drop_interfaces meta nfproto ipv6 drop\n",
-                self.nft_family, self.nft_table
+                "add rule {} {} forward {} @ipv6_drop_interfaces meta nfproto ipv6 drop\n",
+                self.nft_family, self.nft_table, output_selector
             ));
             output.push_str(&format!(
-                "add rule {} {} output oifname @ipv6_drop_interfaces meta nfproto ipv6 drop\n",
-                self.nft_family, self.nft_table
+                "add rule {} {} output {} @ipv6_drop_interfaces meta nfproto ipv6 drop\n",
+                self.nft_family, self.nft_table, output_selector
             ));
         }
 
