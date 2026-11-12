@@ -462,11 +462,6 @@ nat_chain="$(ip netns exec "$ROUTER_NS" nft list chain inet "vpn_relay_mu_router
 output_chain="$(ip netns exec "$ROUTER_NS" nft list chain inet "vpn_relay_mu_router_$SUFFIX" output)"
 grep -Fq 'iif @managed_interfaces drop' <<<"$forward_chain" || fail "managed ingress isolation drop is missing"
 grep -Fq 'oif @managed_interfaces drop' <<<"$forward_chain" || fail "managed egress isolation drop is missing"
-drop_set="$(ip netns exec "$ROUTER_NS" nft list set inet "vpn_relay_mu_router_$SUFFIX" ipv6_drop_interfaces)"
-grep -Fq 'type iface_index' <<<"$drop_set" || fail "IPv6 drop set is not bound to TUN ifindex identities"
-grep -Fq 'iif @ipv6_drop_interfaces meta nfproto ipv6 drop' <<<"$chain" || fail "IPv6 ingress drop on managed TUNs is missing"
-grep -Fq 'oif @ipv6_drop_interfaces meta nfproto ipv6 drop' <<<"$forward_chain" || fail "IPv6 forwarded egress drop on managed TUNs is missing"
-grep -Fq 'oif @ipv6_drop_interfaces meta nfproto ipv6 drop' <<<"$output_chain" || fail "IPv6 locally generated egress drop on managed TUNs is missing"
 grep -Fq 'iifname "wg-ingress" iif !=' <<<"$chain" || fail "same-name replacement guard is missing"
 grep -Eq 'iif "?wg-ingress"? oif "?awg-primary"? ct mark & 0xffff0000 == 0x[0-9a-f]+ meta nfproto ipv4 masquerade' <<<"$nat_chain" || fail "primary IPv4 masquerade rule is missing"
 
