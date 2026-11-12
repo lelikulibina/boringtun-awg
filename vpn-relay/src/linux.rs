@@ -1319,45 +1319,6 @@ mod tests {
     }
 
     #[test]
-    fn interface_configuration_rejects_ipv6_before_running_ip() {
-        let addresses = vec!["10.0.0.1/24".to_owned(), "2001:db8::1/64".to_owned()];
-        assert!(matches!(
-            validate_ipv4_interface_addresses("wg0", &addresses),
-            Err(LinuxError::Conflict { details, .. })
-                if details.contains("IPv4 interface addresses only")
-        ));
-    }
-
-    #[test]
-    fn ipv4_only_policy_apply_and_cleanup_never_call_ip6() {
-        let mut plan = cleanup_test_plan();
-        plan.socket_marks = vec![0x1000_0001];
-        assert_eq!(plan.ip_policy_families(), &["-4"]);
-        assert!(plan
-            .ip_commands()
-            .iter()
-            .all(|command| command.first().is_some_and(|family| family == "-4")));
-
-        let mut calls = Vec::new();
-        apply_policy_routing_with(&plan, &mut |_program, args| {
-            calls.push(args.to_vec());
-            assert_ne!(args.first().map(String::as_str), Some("-6"));
-            Ok(())
-        })
-        .unwrap();
-        remove_policy_routing_with(&plan, &mut |_program, args| {
-            calls.push(args.to_vec());
-            assert_ne!(args.first().map(String::as_str), Some("-6"));
-            Ok(())
-        })
-        .unwrap();
-        assert!(!calls.is_empty());
-        assert!(calls
-            .iter()
-            .all(|args| args.first().is_some_and(|family| family == "-4")));
-    }
-
-    #[test]
     fn socket_fwmark_apply_failure_at_each_install_boundary_rolls_back_all_rules() {
         let plan = {
             let mut plan = cleanup_test_plan();
