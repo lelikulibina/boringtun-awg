@@ -23,6 +23,21 @@ cleanup() {
 }
 trap cleanup EXIT
 
+dump_forwarding_state() {
+    echo "vpn-relay per-interface forwarding test: forwarding snapshot ($1)"
+    ip netns exec "$NS" sh -c '
+        for iface in all default lo uplink0 untrusted0 wg0; do
+            path="/proc/sys/net/ipv4/conf/$iface/forwarding"
+            if [ -r "$path" ]; then
+                printf "%s=%s\\n" "$iface" "$(cat "$path")"
+            else
+                printf "%s=<absent>\\n" "$iface"
+            fi
+        done
+        printf "ip_forward=%s\\n" "$(cat /proc/sys/net/ipv4/ip_forward)"
+    '
+}
+
 fail() {
     echo "vpn-relay per-interface forwarding test: $*" >&2
     [[ ! -f "$TMP/daemon.log" ]] || cat "$TMP/daemon.log" >&2
@@ -119,6 +134,7 @@ PID=""
 ip netns exec "$NS" nft list table inet vpn_relay_per_if_test >/dev/null 2>&1 || fail "fail-closed firewall was removed after forwarding isolation drift"
 grep -Fq "per-interface forwarding invariants changed at runtime" "$TMP/daemon.log" || fail "daemon did not report runtime forwarding isolation drift"
 ip netns exec "$NS" sysctl -qw net.ipv4.conf.untrusted0.forwarding=0
+dump_forwarding_state "after drift reset"
 ip netns exec "$NS" nft delete table inet vpn_relay_per_if_test
 
 start_daemon || fail "daemon did not restart after forwarding drift recovery"
@@ -126,12 +142,14 @@ kill -TERM "$PID"
 wait "$PID" || fail "daemon failed during graceful per-interface restore"
 PID=""
 [[ "$(ip netns exec "$NS" sysctl -n net.ipv4.conf.uplink0.forwarding)" == "0" ]] || fail "IPv4 interface forwarding was not restored"
+dump_forwarding_state "after graceful shutdown before SIGKILL test"
 [[ "$(ip netns exec "$NS" sysctl -n net.ipv4.ip_forward)" == "1" ]] || fail "daemon changed externally-owned IPv4 global forwarding"
 ip netns exec "$NS" nft list table inet vpn_relay_per_if_test >/dev/null 2>&1 && fail "firewall survived graceful shutdown"
 
 # SIGKILL leaves the durable journal but closes the TUN descriptor. Recovery
 # restores persistent links and never applies a daemon-owned TUN entry to a
 # replacement, even if the kernel recycles the old name and ifindex.
+dump_forwarding_state "immediately before SIGKILL recovery startup"
 start_daemon || fail "daemon did not restart for SIGKILL recovery test"
 kill -KILL "$PID"
 wait "$PID" 2>/dev/null || true
