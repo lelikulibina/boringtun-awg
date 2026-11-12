@@ -2428,7 +2428,7 @@ mod tests {
                 ]));
                 let mut verify_position = 0usize;
                 let mut write_position = 0usize;
-                let mut injected = false;
+                let injected = std::cell::Cell::new(false);
 
                 let result = enable_interface_forwarding_entries_with(
                     &state,
@@ -2442,9 +2442,9 @@ mod tests {
                             values.borrow_mut().insert(key.to_owned(), value.to_owned());
                             if failure_kind == "write"
                                 && position == failure_position
-                                && !injected
+                                && !injected.get()
                             {
-                                injected = true;
+                                injected.set(true);
                                 return Err(RuntimeError::Forwarding(format!(
                                     "injected write failure at interface {position}"
                                 )));
@@ -2459,9 +2459,9 @@ mod tests {
                         verify_position += 1;
                         if failure_kind == "verify"
                             && position == failure_position
-                            && !injected
+                            && !injected.get()
                         {
-                            injected = true;
+                            injected.set(true);
                             return Err(RuntimeError::Forwarding(format!(
                                 "injected identity failure at {name}"
                             )));
@@ -2470,7 +2470,7 @@ mod tests {
                     },
                 );
 
-                assert!(injected, "{failure_kind} failure point {failure_position} was not reached");
+                assert!(injected.get(), "{failure_kind} failure point {failure_position} was not reached");
                 assert!(matches!(result, Err(RuntimeError::Forwarding(_))),
                     "{failure_kind} failure point {failure_position} returned an unexpected result: {result:?}");
                 let values = values.into_inner();
