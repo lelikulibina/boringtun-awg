@@ -7,6 +7,7 @@ use std::io;
 use std::os::unix::io::{AsRawFd, RawFd};
 
 const TUNSETIFF: u64 = 0x4004_54ca;
+const TUNGETIFF: u64 = 0x8004_54d2;
 
 #[repr(C)]
 union IfrIfru {
@@ -112,6 +113,37 @@ impl TunSocket {
         Ok(self.name.clone())
     }
 
+    /// Verify that this descriptor is still attached to the interface it
+    /// originally created. Looking up the name in the network namespace is
+    /// insufficient: Linux can delete the link and create an unrelated link
+    /// with the same name while this descriptor remains detached.
+    pub fn verify_identity(&self) -> Result<(), Error> {
+        if self.name.parse::<i32>().is_ok() {
+            return Err(Error::InvalidTunnelName);
+        }
+
+        let mut ifr = ifreq {
+            ifr_name: [0; IFNAMSIZ],
+            ifr_ifru: IfrIfru { ifru_flags: 0 },
+        };
+        if unsafe { ioctl(self.fd, TUNGETIFF as _, &mut ifr) } < 0 {
+            return Err(Error::IOCtl(io::Error::last_os_error()));
+        }
+
+        let actual = unsafe { std::ffi::CStr::from_ptr(ifr.ifr_name.as_ptr() as *const c_char) }
+            .to_string_lossy();
+        if actual != self.name {
+            return Err(Error::IOCtl(io::Error::new(
+                io::ErrorKind::NotConnected,
+                format!(
+                    "TUN descriptor identity changed: expected '{}', got '{}'",
+                    self.name, actual
+                ),
+            )));
+        }
+        Ok(())
+    }
+
     /// Get the current MTU value
     pub fn mtu(&self) -> Result<usize, Error> {
         let provided_fd = self.name.parse::<i32>();
@@ -155,5 +187,38 @@ impl TunSocket {
             -1 => Err(Error::IfaceRead(io::Error::last_os_error())),
             n => Ok(&mut dst[..n as usize]),
         }
+    }
+}
+
+#[cfg(test)]
+mod identity_tests {
+    use super::*;
+    use std::process::Command;
+
+    /// Exercises the kernel lifecycle, not just name lookup: a replacement
+    /// TUN with the same name must never make the old descriptor valid again.
+    #[test]
+    #[ignore = "requires root, /dev/net/tun and iproute2"]
+    fn detached_tun_descriptor_does_not_attach_to_same_name_replacement() {
+        let name = format!("btid{:x}", std::process::id());
+        let original = TunSocket::new(&name).expect("create original TUN");
+        original
+            .verify_identity()
+            .expect("original descriptor should identify its interface");
+
+        let deleted = Command::new("ip")
+            .args(["link", "delete", "dev", &name])
+            .status()
+            .expect("run ip link delete");
+        assert!(deleted.success(), "failed to delete original TUN");
+
+        let replacement = TunSocket::new(&name).expect("create replacement TUN");
+        replacement
+            .verify_identity()
+            .expect("replacement descriptor should identify replacement");
+        assert!(
+            original.verify_identity().is_err(),
+            "detached descriptor must not inherit a same-name replacement"
+        );
     }
 }

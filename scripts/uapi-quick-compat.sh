@@ -122,15 +122,15 @@ for _ in \$(seq 1 50); do
 done
 if [[ ! -S "\$socket" ]]; then
   echo "BoringTun did not publish its UAPI socket: \$socket" >&2
-  ls -ld /var/run/wireguard /var/run/amneziawg 2>&1 || true
+  ls -ld /var/run/wireguard 2>&1 || true
   exit 1
 fi
-chmod 0777 /var/run/wireguard /var/run/amneziawg
+chmod 0777 /var/run/wireguard
 chmod 0666 "\$socket"
 echo "UAPI launcher diagnostics for \$iface:" >&2
 id >&2
-ls -ldn /var/run/wireguard /var/run/amneziawg >&2
-ls -ln "\$socket" "/var/run/amneziawg/\${iface}.sock" >&2
+ls -ldn /var/run/wireguard >&2
+ls -ln "\$socket" >&2
 ps -eo pid,uid,gid,stat,args | grep '[b]oringtun-cli' >&2 || true
 python3 - "\$socket" <<'PY'
 import socket, sys

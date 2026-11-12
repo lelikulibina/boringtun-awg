@@ -1,0 +1,6 @@
+diff --git a/src/ipc-uapi-unix.h b/src/ipc-uapi-unix.h
+--- a/src/ipc-uapi-unix.h
++++ b/src/ipc-uapi-unix.h
+@@ -17 +17 @@
+-#define SOCK_PATH RUNSTATEDIR "/amneziawg/"
++#define SOCK_PATH RUNSTATEDIR "/wireguard/"
