@@ -310,11 +310,38 @@ where
 /// this explicit check preserves the daemon's fail-closed typo handling.
 fn validate_interface_table_keys(value: &toml::Value) -> Result<(), ConfigError> {
     const ALLOWED: &[&str] = &[
-        "type", "address", "mtu", "listen_port", "private_key", "socket_fwmark", "peers",
-        "jc", "jmin", "jmax", "s1", "s2", "s3", "s4", "h1", "h2", "h3", "h4",
-        "disable_cookies", "random_trailers", "i1", "i2", "i3", "i4", "i5",
-        "header_protection_key", "content_padding_addition", "rekey_after_time",
-        "rekey_timeout", "reject_after_time", "keepalive_timeout", "max_handshake_attempts",
+        "type",
+        "address",
+        "mtu",
+        "listen_port",
+        "private_key",
+        "socket_fwmark",
+        "peers",
+        "jc",
+        "jmin",
+        "jmax",
+        "s1",
+        "s2",
+        "s3",
+        "s4",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "disable_cookies",
+        "random_trailers",
+        "i1",
+        "i2",
+        "i3",
+        "i4",
+        "i5",
+        "header_protection_key",
+        "content_padding_addition",
+        "rekey_after_time",
+        "rekey_timeout",
+        "reject_after_time",
+        "keepalive_timeout",
+        "max_handshake_attempts",
     ];
 
     let Some(interfaces) = value.get("interfaces").and_then(toml::Value::as_table) else {
@@ -1467,9 +1494,8 @@ egress = "awg-uplink"
         assert!(serialized.contains("jc = 5"));
         assert!(!serialized.contains("[awg]"));
 
-        let legacy = valid_config()
-            .replace("jc = 5\n", "")
-            + "\n[interfaces.awg-uplink.awg]\njc = 5\n";
+        let legacy =
+            valid_config().replace("jc = 5\n", "") + "\n[interfaces.awg-uplink.awg]\njc = 5\n";
         let error = Config::parse_toml(&legacy).unwrap_err().to_string();
         assert!(error.contains("move AWG parameters directly into [interfaces.awg-uplink]"));
     }
