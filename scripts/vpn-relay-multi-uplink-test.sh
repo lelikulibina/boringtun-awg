@@ -746,11 +746,11 @@ if config.count(old_peer) != 1:
     raise SystemExit("cannot find unique second ingress peer for AllowedIPs update")
 config = config.replace(old_peer, new_peer, 1)
 old_source = 'source = ["10.77.0.2/32", "10.77.0.3/32"]'
-new_source = 'source = ["10.77.0.2/32", "10.77.0.4/32"]'
+new_source = 'source = ["10.77.0.2/32", "10.77.0.3/32", "10.77.0.4/32"]'
 old_destination = 'destination = ["10.77.0.2/32", "10.77.0.3/32"]'
-new_destination = 'destination = ["10.77.0.2/32", "10.77.0.4/32"]'
+new_destination = 'destination = ["10.77.0.2/32", "10.77.0.3/32", "10.77.0.4/32"]'
 if config.count(old_source) != 2 or config.count(old_destination) != 1:
-    raise SystemExit("unexpected router firewall/routing source selectors for AllowedIPs update")
+    raise SystemExit("unexpected router firewall/routing selectors for AllowedIPs update")
 config = config.replace(old_source, new_source)
 config = config.replace(old_destination, new_destination)
 with open(path, "w", encoding="utf-8") as stream:
@@ -801,9 +801,9 @@ allowed_ips = ["10.77.0.3/32"]'''
 if config.count(old_peer) != 1:
     raise SystemExit("cannot find unique updated ingress peer for restoration")
 config = config.replace(old_peer, new_peer, 1)
-old_source = 'source = ["10.77.0.2/32", "10.77.0.4/32"]'
+old_source = 'source = ["10.77.0.2/32", "10.77.0.3/32", "10.77.0.4/32"]'
 new_source = 'source = ["10.77.0.2/32", "10.77.0.3/32"]'
-old_destination = 'destination = ["10.77.0.2/32", "10.77.0.4/32"]'
+old_destination = 'destination = ["10.77.0.2/32", "10.77.0.3/32", "10.77.0.4/32"]'
 new_destination = 'destination = ["10.77.0.2/32", "10.77.0.3/32"]'
 if config.count(old_source) != 2 or config.count(old_destination) != 1:
     raise SystemExit("unexpected router firewall/routing selectors during AllowedIPs restoration")
