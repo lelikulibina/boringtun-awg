@@ -6,6 +6,8 @@
 
 ### Добавлено
 
+- AWG-параметры конфигурации задаются непосредственно в `[interfaces.<имя>]`, без вложенной секции `[interfaces.<имя>.awg]`.
+
 - Linux daemon для маршрутизации между несколькими WireGuard/AmneziaWG TUN.
 - IPv4 routing rules с приоритетами, source/destination CIDR selectors и multi-uplink.
 - nftables INPUT/OUTPUT/FORWARD isolation с fail-closed поведением и защитой от подмены managed-интерфейсов.
