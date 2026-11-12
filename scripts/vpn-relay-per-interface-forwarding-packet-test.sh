@@ -130,6 +130,14 @@ done
 
 [[ "$(ip netns exec "$ROUTER" sysctl -n net.ipv4.conf.r-bad0.forwarding)" == "0" ]] || fail "daemon enabled untrusted IPv4 ingress"
 
+# Inject an IPv6 packet toward the daemon-owned TUN. The address and route are
+# test-only; vpn-relay must not configure IPv6 addresses or routes itself.
+ip -n "$ROUTER" -6 address add 2001:db8:ffff::2/128 dev lo
+ip -n "$ROUTER" -6 route add 2001:db8:ffff::/64 dev wg0
+ip netns exec "$ROUTER" ping -6 -n -I 2001:db8:ffff::2 -c 1 -W 1 2001:db8:ffff::1 >/dev/null 2>&1 || true
+ipv6_output_chain="$(ip netns exec "$ROUTER" nft list chain inet "$TABLE" output)"
+grep -Eq 'oif @ipv6_drop_interfaces meta nfproto ipv6 counter packets [1-9][0-9]* bytes [1-9][0-9]* drop' <<<"$ipv6_output_chain" || fail "IPv6 packet was not observed by the managed-TUN output drop rule"
+
 ip netns exec "$CLIENT_A" ping -n -c 2 -W 2 10.10.2.2 >/dev/null || fail "IPv4 packet was not forwarded from allowlisted ingress"
 ip netns exec "$CLIENT_B" ping -n -c 2 -W 2 10.10.1.2 >/dev/null || fail "IPv4 reply path was not forwarded"
 if ip netns exec "$CLIENT_BAD" ping -n -c 1 -W 1 10.10.1.2 >/dev/null 2>&1; then
