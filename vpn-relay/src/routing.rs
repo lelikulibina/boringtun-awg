@@ -1316,9 +1316,9 @@ egress = "awg-primary"
         for egress in &plan.egresses {
             assert_eq!(plan.ip_families_for_egress(egress), &["-4"]);
         }
-        assert!(plan.ip_commands().iter().all(|command| {
-            command.first().is_some_and(|family| family == "-4")
-        }));
+        for command in plan.ip_commands() {
+            assert_eq!(command.first().map(String::as_str), Some("-4"));
+        }
     }
 
     #[test]
