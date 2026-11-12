@@ -947,6 +947,12 @@ ingress = "wg-server"
 destination = "0.0.0.0/0"
 egress = "awg-uplink"
 
+[[routing.rules]]
+priority = 110
+ingress = "wg-server"
+destination = "203.0.113.0/24"
+egress = "awg-uplink"
+
 "#
         )
     }
@@ -1954,7 +1960,7 @@ egress = "awg-uplink"
         assert!(Config::parse_toml(&input)
             .unwrap_err()
             .to_string()
-            .contains("routing.rules.destination must not be an empty list"));
+            .contains("routing.rules[0].destination must not be an empty list"));
     }
 
     #[test]
