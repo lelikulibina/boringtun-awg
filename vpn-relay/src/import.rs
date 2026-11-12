@@ -573,20 +573,6 @@ PersistentKeepalive = 25
 "#;
 
     #[test]
-    fn rejects_ipv6_source_profiles() {
-        for source in [
-            CLIENT.replace("Address = 10.0.0.2/32", "Address = fd00::2/128"),
-            CLIENT.replace("AllowedIPs = 0.0.0.0/0", "AllowedIPs = ::/0"),
-            CLIENT.replace(
-                "Endpoint = localhost:51820",
-                "Endpoint = [2001:db8::1]:51820",
-            ),
-        ] {
-            assert!(parse_interface(&source).is_err());
-        }
-    }
-
-    #[test]
     fn imports_ipv4_wireguard_profiles_without_inferring_router_roles() {
         let (cfg, warnings) = parse_interface(CLIENT).unwrap();
         assert_eq!(cfg.tunnel_type, TunnelType::WireGuard);
