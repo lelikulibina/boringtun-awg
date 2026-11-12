@@ -3203,7 +3203,7 @@ mod tests {
                 persistent_keepalive_secs: None,
                 persistent_keepalive_range: None,
             }],
-            awg: None,
+            awg: AmneziaWgConfig::default(),
         }
     }
 

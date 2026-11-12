@@ -337,7 +337,7 @@ fn parse_interface(source: &str) -> Result<(InterfaceConfig, Vec<String>), Impor
         private_key,
         socket_fwmark,
         peers: parsed_peers,
-        awg,
+        awg: awg.unwrap_or_default(),
     };
     Ok((config, warnings))
 }

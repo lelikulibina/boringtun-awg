@@ -204,7 +204,7 @@ fn build_awg_config(
         return Ok((ObfuscationRanges::default(), AmneziaConfig::default()));
     }
 
-    let mut config = interface.awg.clone().unwrap_or_default();
+    let mut config = interface.awg.clone();
     if let Some(key) = config.header_protection_key.as_deref() {
         // User-facing configuration follows WireGuard: standard Base64.
         // BoringTun's AmneziaWG config builder consumes the hex UAPI form.

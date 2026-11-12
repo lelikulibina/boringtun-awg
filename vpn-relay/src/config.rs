@@ -129,8 +129,8 @@ pub struct InterfaceConfig {
     pub peers: Vec<PeerConfig>,
     /// AWG protocol parameters share the interface table with the standard
     /// tunnel fields, matching AmneziaWG's [Interface] configuration model.
-    #[serde(flatten, default, skip_serializing_if = "Option::is_none")]
-    pub awg: Option<AmneziaWgConfig>,
+    #[serde(flatten, default)]
+    pub awg: AmneziaWgConfig,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
@@ -334,6 +334,40 @@ fn validate_interface_table_keys(value: &toml::Value) -> Result<(), ConfigError>
         }
     }
     Ok(())
+}
+
+impl InterfaceConfig {
+    /// Whether this interface has any explicit AmneziaWG parameter.
+    /// A default (empty) AWG config is stored for every interface because
+    /// serde's flattened struct cannot distinguish an absent Option reliably.
+    fn has_awg_parameters(&self) -> bool {
+        let awg = &self.awg;
+        awg.jc.is_some()
+            || awg.jmin.is_some()
+            || awg.jmax.is_some()
+            || awg.s1.is_some()
+            || awg.s2.is_some()
+            || awg.s3.is_some()
+            || awg.s4.is_some()
+            || awg.h1.is_some()
+            || awg.h2.is_some()
+            || awg.h3.is_some()
+            || awg.h4.is_some()
+            || awg.disable_cookies.is_some()
+            || awg.random_trailers.is_some()
+            || awg.i1.is_some()
+            || awg.i2.is_some()
+            || awg.i3.is_some()
+            || awg.i4.is_some()
+            || awg.i5.is_some()
+            || awg.header_protection_key.is_some()
+            || awg.content_padding_addition.is_some()
+            || awg.rekey_after_time.is_some()
+            || awg.rekey_timeout.is_some()
+            || awg.reject_after_time.is_some()
+            || awg.keepalive_timeout.is_some()
+            || awg.max_handshake_attempts.is_some()
+    }
 }
 
 impl Config {
@@ -571,7 +605,7 @@ impl Config {
                 parse_prefix(address, &format!("interfaces.{}.address", interface_name))?;
             }
 
-            if interface.tunnel_type == TunnelType::WireGuard && interface.awg.is_some() {
+            if interface.tunnel_type == TunnelType::WireGuard && interface.has_awg_parameters() {
                 return invalid(format!(
                     "AWG parameters on interface '{}' are not valid for tunnel type 'wg'",
                     interface_name
@@ -1242,7 +1276,7 @@ egress = "awg-uplink"
             .get_mut("awg-uplink")
             .unwrap();
         awg_uplink.tunnel_type = TunnelType::WireGuard;
-        awg_uplink.awg = None;
+        awg_uplink.awg = AmneziaWgConfig::default();
         changed_tunnel_type.validate().unwrap();
         assert!(current
             .validate_reload_compatibility(&changed_tunnel_type)
@@ -1427,7 +1461,7 @@ egress = "awg-uplink"
     fn awg_parameters_are_flattened_and_legacy_nested_table_is_rejected() {
         let config = Config::parse_toml(&valid_config()).unwrap();
         let awg = &config.interfaces["awg-uplink"];
-        assert_eq!(awg.awg.as_ref().and_then(|value| value.jc), Some(5));
+        assert_eq!(awg.awg.jc, Some(5));
 
         let serialized = toml::to_string(awg).unwrap();
         assert!(serialized.contains("jc = 5"));
