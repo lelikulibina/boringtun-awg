@@ -1339,15 +1339,17 @@ fn load_forwarding_state(
     }
     let document: serde_json::Value = serde_json::from_slice(&bytes)
         .map_err(|error| RuntimeError::Forwarding(error.to_string()))?;
-    let state = document.get("state").unwrap_or(&document);
-    let saved: ForwardingStateFile = serde_json::from_value(document)
-        .map_err(|error| RuntimeError::Forwarding(error.to_string()))?;
-    if saved.version != 1 {
+    let version = document
+        .get("version")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| RuntimeError::Forwarding("forwarding state has no valid version".to_owned()))?;
+    if version != 1 {
         return Err(RuntimeError::Forwarding(format!(
-            "unsupported forwarding state version {}",
-            saved.version
+            "unsupported forwarding state version {version}"
         )));
     }
+    let saved: ForwardingStateFile = serde_json::from_value(document)
+        .map_err(|error| RuntimeError::Forwarding(error.to_string()))?;
     if saved.namespace_inode != namespace_inode {
         return Err(RuntimeError::Forwarding(format!(
             "forwarding state belongs to network namespace {}, current namespace is {}",
