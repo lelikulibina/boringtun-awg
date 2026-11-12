@@ -1805,8 +1805,8 @@ egress = "awg-uplink"
     #[test]
     fn interfaces_can_be_used_in_both_routing_directions() {
         let input = valid_config().replace(
-            "priority = 110\ningress = \"wg-server\"\ndestination = \"0.0.0.0/0\"\negress = \"awg-uplink\"",
-            "priority = 110\ningress = \"wg-server\"\ndestination = \"0.0.0.0/0\"\negress = \"awg-uplink\"\n\n[[routing.rules]]\npriority = 120\ningress = \"awg-uplink\"\ndestination = \"10.0.0.0/24\"\negress = \"wg-server\""
+            "priority = 110\ningress = \"wg-server\"\ndestination = \"203.0.113.0/24\"\negress = \"awg-uplink\"",
+            "priority = 110\ningress = \"awg-uplink\"\ndestination = \"10.0.0.0/24\"\negress = \"wg-server\""
         );
         let config = Config::parse_toml(&input).unwrap();
         assert_eq!(config.resolved_routing_fwmarks().unwrap().len(), 2);
