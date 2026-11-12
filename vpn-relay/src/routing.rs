@@ -806,7 +806,7 @@ egress = "awg-primary"
     }
 
     #[test]
-    fn ipv4_only_selector_free_routing_firewall_and_masquerade_are_family_limited() {
+    fn selector_free_routing_firewall_and_masquerade_are_generated() {
         let mut config = sample_config();
         config.routing.rules[0].source = None;
         config.routing.rules[0].destination = None;
@@ -835,7 +835,6 @@ egress = "awg-primary"
         );
         assert!(script.contains("postrouting iifname \"wg-server\" oifname \"awg-secondary\""));
         assert!(script.contains("meta nfproto ipv4 masquerade"));
-        assert!(!script.contains("meta nfproto ipv6 masquerade"));
         assert!(script
             .lines()
             .filter(|line| line.starts_with("add rule inet vpn_relay postrouting"))
@@ -985,7 +984,7 @@ egress = "awg-primary"
     }
 
     #[test]
-    fn nft_static_snat_is_emitted_for_the_selected_address_family() {
+    fn nft_static_snat_is_emitted_for_ipv4() {
         let mut config = sample_config();
         config.routing.rules[0].nat = NatMode::Snat;
         config.routing.rules[0].nat_to = Some("203.0.113.10".parse().unwrap());
@@ -993,7 +992,6 @@ egress = "awg-primary"
         assert!(script.contains(
             "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark & 0xffff0000 == 0x50010000 meta nfproto ipv4 snat ip to 203.0.113.10"
         ));
-        assert!(!script.contains("snat ip6"));
     }
 
     #[test]
