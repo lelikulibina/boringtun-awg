@@ -1240,7 +1240,6 @@ fn write_sysctl(key: &str, value: &str) -> Result<(), RuntimeError> {
     Ok(())
 }
 
-#[cfg(test)]
 fn enable_forwarding_state_with(
     mut state: ForwardingState,
     mut write: impl FnMut(&str, &str) -> Result<(), RuntimeError>,
