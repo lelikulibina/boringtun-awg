@@ -1050,10 +1050,6 @@ egress = "awg-uplink"
         )
     }
 
-    fn ipv4_config() -> String {
-        valid_config()
-    }
-
     #[test]
     fn shipped_example_configuration_parses_and_uses_only_supported_fields() {
         let config = Config::parse_toml(include_str!("../vpn-relay.example.toml")).unwrap();
