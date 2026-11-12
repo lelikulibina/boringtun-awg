@@ -103,13 +103,10 @@ listen_port = 51821
 private_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 socket_fwmark = 4098
 
-[interfaces.awg-primary.awg]
 h1 = "1"
 h2 = "2"
 h3 = "3"
 h4 = "4"
-random_trailers = false
-disable_cookies = false
 
 [interfaces.awg-secondary]
 type = "awg"
@@ -118,7 +115,6 @@ listen_port = 51822
 private_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 socket_fwmark = 4099
 
-[interfaces.awg-secondary.awg]
 s3 = 0
 s4 = 0
 h1 = "1-100"
