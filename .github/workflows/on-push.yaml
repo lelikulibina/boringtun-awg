@@ -246,7 +246,7 @@ jobs:
           [[ "$rootless" == "false" ]] || { echo "Podman is not running rootful" >&2; exit 1; }
           sudo podman network exists podman || sudo podman network create podman
       - name: Build minimal vpn-relay test image
-        run: sudo podman build --storage-driver=vfs --file scripts/vpn-relay-podman.Containerfile --tag vpn-relay-podman-test .
+        run: sudo podman --storage-driver=vfs build --file scripts/vpn-relay-podman.Containerfile --tag vpn-relay-podman-test .
       - name: Verify private namespace, NET_ADMIN, TUN, nftables and IPv4 sysctl
         run: |
           host_netns_inode="$(stat -Lc '%i' /proc/self/ns/net)"
