@@ -429,8 +429,8 @@ Backend `DeviceHandle::snapshot` не содержит PSK и поэтому н�
   после ошибки восстановления одного из них;
 - непрерывный двусторонний packet-level трафик при peer update, удалении peer,
   AllowedIPs handoff и policy reload;
-- [~] Добавлен network-namespace failure probe: endpoint на зарезервированном `.invalid` домене должен завершить preflight ошибкой до commit; проверяются сохранность старого nft classifier, старого egress route, отсутствие candidate policy rule и работоспособность daemon. Изменение `c72e60d`/`4d3305e`; ожидает CI.
-- проверка, что неизменённые peers сохраняют активные Noise sessions.
+- [x] Network-namespace failure probe endpoint DNS preflight: endpoint на зарезервированном `.invalid` домене завершает preflight ошибкой до commit; проверяются сохранность старого nft classifier и egress route, отсутствие candidate policy rule и работоспособность daemon. Подтверждено integration-tests в полном CI run `43250020641` на HEAD `9866d64f5e571ad8c1fbfd61646b9ef6d9dedc86`.
+- проверка, что неизменённые peers сохраняют активные Noise sessions, остаётся вне подтверждённых гарантий: доступный runtime status API не предоставляет надёжного идентификатора/состояния Noise session. Не использовать log parsing как замену структурированному API; не заявлять сохранение конкретной session.
 
 Критерий приёмки: после успешного reload работает только новый Config; после
 обычной ошибки — прежний Config и прежняя policy; при невозможности rollback
@@ -502,7 +502,7 @@ vpn-relay управляет только IPv4 forwarding. IPv6 forwarding/sysct
   уточняет, что IPv6-пункты в этапах 1–7 не являются текущими acceptance
   criteria. Текущая IPv6-проверка ограничена drop на managed TUN.
 
-Полный CI на HEAD `a4f58dbbdeff84efc73ad1dbeada6fae2d5586b6` завершился
+Полный CI на HEAD `9866d64f5e571ad8c1fbfd61646b9ef6d9dedc86` завершился success (run `43250020641`): integration-tests подтвердил DNS preflight failure probe; rustfmt, clippy, feature checks, unit tests, kernel compatibility Ubuntu 22.04/24.04, rootful Podman, AWG 3.1 interoperability и `all-systems-go` успешны. Windows job пропущен условиями workflow. В том же run подтверждены ранее добавленные startup rollback probes. Предыдущий CI на HEAD `a4f58db...` — историческая запись, не актуальная вершина.Полный CI на HEAD `a4f58dbbdeff84efc73ad1dbeada6fae2d5586b6` завершился
 success (run `43244252567`): rustfmt, clippy, feature checks, unit tests,
 integration tests, IPv4 forwarding, IPv6 OUTPUT и FORWARD packet-level drop
 probes, bidirectional WG/AWG peer traffic, multi-uplink routing, kernel
