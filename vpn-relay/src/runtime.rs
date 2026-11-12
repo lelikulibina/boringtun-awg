@@ -2372,39 +2372,6 @@ mod tests {
     }
 
     #[test]
-    fn interface_forwarding_enable_rolls_back_partial_writes() {
-        let state = ForwardingState {
-            ipv4: "1".to_owned(),
-            ipv4_changed: false,
-            interfaces: vec![
-                test_forwarding_entry("eth0", 7),
-                test_forwarding_entry("eth1", 8),
-            ],
-        };
-        let values = std::cell::RefCell::new(std::collections::BTreeMap::from([
-            ("net.ipv4.conf.eth0.forwarding".to_owned(), "0".to_owned()),
-            ("net.ipv4.conf.eth1.forwarding".to_owned(), "0".to_owned()),
-        ]));
-        let result = enable_interface_forwarding_entries_with(
-            &state,
-            |key| Ok(values.borrow().get(key).cloned().unwrap()),
-            |key, value| {
-                if key == "net.ipv4.conf.eth1.forwarding" && value == "1" {
-                    return Err(RuntimeError::Forwarding(
-                        "injected setup failure".to_owned(),
-                    ));
-                }
-                values.borrow_mut().insert(key.to_owned(), value.to_owned());
-                Ok(())
-            },
-            |_, _| Ok(()),
-        );
-        assert!(matches!(result, Err(RuntimeError::Forwarding(_))));
-        assert_eq!(values.borrow()["net.ipv4.conf.eth0.forwarding"], "0");
-        assert_eq!(values.borrow()["net.ipv4.conf.eth1.forwarding"], "0");
-    }
-
-    #[test]
     fn interface_forwarding_enable_failure_matrix_restores_every_interface() {
         // Exercise every identity-check and write boundary. A failed write may
         // have changed the kernel value before reporting an error, so rollback
