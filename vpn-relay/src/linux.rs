@@ -1347,7 +1347,7 @@ mod tests {
             plan
         };
 
-        for failure_position in 1..=4 {
+        for failure_position in 1..=2 {
             let mut calls = Vec::new();
             let mut add_count = 0;
             let mut failure_index = None;
@@ -1380,8 +1380,8 @@ mod tests {
                 })
                 .count();
             assert_eq!(
-                cleanup, 4,
-                "failure at socket install step {failure_position} must roll back every mark/family"
+                cleanup, 2,
+                "failure at socket install step {failure_position} must roll back every socket mark"
             );
         }
     }
@@ -1454,8 +1454,8 @@ mod tests {
                 .count();
             assert_eq!(
                 rollback,
-                failure_position + 4,
-                "failed pre-cleanup plus rollback must attempt all four socket rules"
+                failure_position + 2,
+                "failed pre-cleanup plus rollback must attempt every socket mark"
             );
         }
     }
@@ -1544,14 +1544,9 @@ mod tests {
     }
 
     #[test]
-    fn egress_apply_failure_at_each_install_boundary_rolls_back_all_resources() {
+    fn egress_apply_failure_at_each_ipv4_install_boundary_rolls_back_all_resources() {
         let plan = cleanup_test_plan();
-        let failure_points = [
-            ("-4", "route", "replace"),
-            ("-4", "rule", "add"),
-            ("-6", "route", "replace"),
-            ("-6", "rule", "add"),
-        ];
+        let failure_points = [("-4", "route", "replace"), ("-4", "rule", "add")];
 
         for (failed_family, failed_kind, failed_operation) in failure_points {
             let mut calls = Vec::new();
@@ -1584,25 +1579,23 @@ mod tests {
             assert!(matches!(result, Err(LinuxError::Command { ref stderr, .. })
                 if stderr.contains(&format!("injected {failed_family} {failed_kind} {failed_operation} failure"))));
 
-            let cleanup = &calls[calls.len() - 4..];
-            assert_eq!(cleanup.len(), 4);
-            for &family in plan.ip_policy_families() {
-                assert!(cleanup.iter().any(|args| args
-                    .first()
-                    .is_some_and(|value| value == family)
-                    && args.get(1).is_some_and(|value| value == "rule")
-                    && args.get(2).is_some_and(|value| value == "del")));
-                assert!(cleanup.iter().any(|args| args
-                    .first()
-                    .is_some_and(|value| value == family)
-                    && args.get(1).is_some_and(|value| value == "route")
-                    && args.get(2).is_some_and(|value| value == "del")));
-            }
+            let cleanup = &calls[calls.len() - 2..];
+            assert_eq!(cleanup.len(), 2);
+            assert!(cleanup.iter().any(|args| args
+                .first()
+                .is_some_and(|value| value == "-4")
+                && args.get(1).is_some_and(|value| value == "rule")
+                && args.get(2).is_some_and(|value| value == "del")));
+            assert!(cleanup.iter().any(|args| args
+                .first()
+                .is_some_and(|value| value == "-4")
+                && args.get(1).is_some_and(|value| value == "route")
+                && args.get(2).is_some_and(|value| value == "del")));
         }
     }
 
     #[test]
-    fn egress_apply_failure_rolls_back_every_family_and_resource() {
+    fn egress_apply_failure_rolls_back_every_ipv4_resource() {
         let plan = cleanup_test_plan();
         let mut calls = Vec::new();
         let mut failed = false;
@@ -1625,18 +1618,14 @@ mod tests {
 
         assert!(matches!(result, Err(LinuxError::Command { ref stderr, .. })
             if stderr.contains("injected rule installation failure")));
-        // Cleanup is attempted for both families and both resource types,
-        // including the family whose installation had not yet started.
-        let cleanup = &calls[calls.len() - 4..];
-        assert_eq!(cleanup.len(), 4);
+        // Both IPv4 resources are rolled back after the route succeeds and
+        // the subsequent rule installation fails.
+        let cleanup = &calls[calls.len() - 2..];
+        assert_eq!(cleanup.len(), 2);
         assert!(cleanup
             .iter()
-            .any(|args| args.first().is_some_and(|v| v == "-4")
-                && args.get(1).is_some_and(|v| v == "rule")));
-        assert!(cleanup
-            .iter()
-            .any(|args| args.first().is_some_and(|v| v == "-6")
-                && args.get(1).is_some_and(|v| v == "route")));
+            .all(|args| args.first().is_some_and(|v| v == "-4")
+                && args.get(2).is_some_and(|v| v == "del")));
     }
 
     #[test]
@@ -1698,19 +1687,19 @@ mod tests {
         });
 
         let cleanup = &calls[failure_index.expect("install failure injected") + 1..];
-        assert_eq!(cleanup.len(), 4, "every family/resource cleanup must run");
+        assert_eq!(cleanup.len(), 2, "every IPv4 resource cleanup must run");
         assert!(cleanup
             .iter()
             .all(|args| args.get(2).is_some_and(|op| op == "del")));
         assert!(
             matches!(result, Err(LinuxError::Rollback { operation, rollback })
                 if operation.contains("injected primary install failure")
-                    && rollback.matches("injected rollback cleanup failure").count() == 4)
+                    && rollback.matches("injected rollback cleanup failure").count() == 2)
         );
     }
 
     #[test]
-    fn egress_cleanup_attempts_every_resource_after_command_failures() {
+    fn egress_cleanup_attempts_both_ipv4_resources_after_command_failures() {
         let plan = cleanup_test_plan();
         let mut calls = Vec::new();
         let result = remove_egress_policy_routing_with(&plan, &mut |_program, args| {
@@ -1724,17 +1713,14 @@ mod tests {
 
         assert_eq!(
             calls.len(),
-            4,
-            "both families and resource types must be attempted"
+            2,
+            "IPv4 route and rule cleanup must both be attempted"
         );
         assert!(matches!(result, Err(LinuxError::Cleanup(message))
             if message.matches("Operation not permitted").count() == 4));
         assert!(calls
             .iter()
             .any(|args| args.first().is_some_and(|family| family == "-4")));
-        assert!(calls
-            .iter()
-            .any(|args| args.first().is_some_and(|family| family == "-6")));
         assert!(calls
             .iter()
             .any(|args| args.get(1).is_some_and(|kind| kind == "rule")));
@@ -1867,13 +1853,13 @@ mod tests {
             "nested egress rollback must complete first"
         );
         assert_eq!(
-            socket_cleanup, 4,
-            "outer rollback must attempt every socket rule"
+            socket_cleanup, 2,
+            "outer rollback must attempt every socket mark"
         );
         assert!(
             matches!(result, Err(LinuxError::Rollback { operation, rollback })
                 if operation.contains("injected egress installation failure")
-                    && rollback.matches("injected socket rollback failure").count() == 4)
+                    && rollback.matches("injected socket rollback failure").count() == 2)
         );
     }
 
@@ -1980,15 +1966,15 @@ mod tests {
             .count();
 
         assert_eq!(
-            socket_calls, 4,
-            "all socket marks and families must be attempted"
+            socket_calls, 2,
+            "all socket marks must be attempted"
         );
         assert_eq!(
             egress_calls, 4,
-            "both egress families and resource types must be attempted"
+            "both egress route and rule resources must be attempted"
         );
         assert!(matches!(result, Err(LinuxError::Cleanup(message))
-            if message.matches("injected socket cleanup failure").count() == 4
+            if message.matches("injected socket cleanup failure").count() == 2
                 && message.matches("injected egress cleanup failure").count() == 4));
     }
 
