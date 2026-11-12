@@ -1055,7 +1055,10 @@ egress = "awg-uplink"
         let config = Config::parse_toml(include_str!("../vpn-relay.example.toml")).unwrap();
         let legacy_location_example =
             Config::parse_toml(include_str!("../../examples/router-config.toml")).unwrap();
-        assert_eq!(legacy_location_example.interfaces.len(), config.interfaces.len());
+        assert_eq!(
+            legacy_location_example.interfaces.len(),
+            config.interfaces.len()
+        );
         assert_eq!(config.interfaces.len(), 3);
         assert_eq!(config.routing.rules.len(), 3);
         assert_eq!(config.routing.mark_base, 0x8000_0000);
