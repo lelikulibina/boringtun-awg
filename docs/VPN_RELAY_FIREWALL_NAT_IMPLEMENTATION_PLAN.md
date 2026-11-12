@@ -421,15 +421,45 @@ Backend `DeviceHandle::snapshot` не содержит PSK и поэтому н�
 глобально атомарной, поэтому при ошибке используется reverse-order rollback,
 а его отказ приводит к fatal shutdown.
 
-Оставшиеся acceptance tests:
+Acceptance tests транзакции runtime reload:
 
-- failure injection на каждом шаге staging routes → peer commit → nft switch →
-  old-route cleanup, с проверкой точного active/retired resource set;
-- доказательство, что rollback продолжает восстанавливать остальные интерфейсы
-  после ошибки восстановления одного из них;
-- [~] Непрерывный packet-level трафик во время routing/NAT policy reload уже подтверждён `scripts/vpn-relay-multi-uplink-test.sh`: параллельный 100-пакетный поток на неизменённом маршруте должен завершиться с 0% потерь; отдельные capture/ping подтверждают применение нового egress и NAT. Это не закрывает peer update/removal и AllowedIPs handoff под нагрузкой — они остаются отдельными acceptance gaps;
-- [x] Network-namespace failure probe endpoint DNS preflight: endpoint на зарезервированном `.invalid` домене завершает preflight ошибкой до commit; проверяются сохранность старого nft classifier и egress route, отсутствие candidate policy rule и работоспособность daemon. Подтверждено integration-tests в полном CI run `43250020641` на HEAD `9866d64f5e571ad8c1fbfd61646b9ef6d9dedc86`.
-- проверка, что неизменённые peers сохраняют активные Noise sessions, остаётся вне подтверждённых гарантий: доступный runtime status API не предоставляет надёжного идентификатора/состояния Noise session. Не использовать log parsing как замену структурированному API; не заявлять сохранение конкретной session.
+- [x] Failure injection на каждом шаге staging routes → peer commit → nft
+  switch → old-route cleanup. Netns probes проверяют отказ staging и очистку
+  candidate resources при сохранении прежних classifier/routes; отказ nft
+  после peer commit проверяет rollback peer set и сохранение старой policy;
+  ошибка удаления old routes после nft switch переводит daemon в fatal state.
+  Peer commit failure и reverse-order rollback покрыты unit tests
+  `multi_device_peer_commit_failure_rolls_back_previously_committed_device`,
+  `multi_device_peer_rollback_continues_after_one_device_fails` и
+  `multi_device_peer_rollback_failure_is_reported_for_fatal_shutdown`.
+- [x] Rollback продолжает восстанавливать остальные интерфейсы после ошибки
+  восстановления одного интерфейса; отдельно проверяется fatal результат,
+  если восстановить committed peer set не удалось.
+- [x] Непрерывный packet-level трафик во время routing/NAT policy reload:
+  100/100 ping без потерь на неизменённом маршруте, packet captures подтверждают
+  новый egress и NAT.
+- [x] Peer removal под нагрузкой: во время удаления второго ingress peer
+  первый peer передаёт 100/100 ping без потерь; удалённый peer теряет доступ,
+  а адрес `.3/32` успешно переходит к оставшемуся peer с более широким
+  `.0/24` AllowedIPs.
+- [x] Peer AllowedIPs update под нагрузкой: у работающего peer `.3/32`
+  заменяется на `.4/32`; проверяются доступность нового адреса, отказ старого
+  адреса у обновлённого peer, handoff старого адреса к широкому peer и
+  100/100 ping без потерь у независимого peer.
+- [x] DNS preflight failure: endpoint на зарезервированном `.invalid` домене
+  завершается ошибкой до commit; проверяются сохранность старого nft classifier
+  и egress route, отсутствие candidate policy rule и работоспособность daemon.
+  Подтверждено CI run `43250020641`.
+- [ ] Сохранение конкретной активной Noise session не входит в подтверждённые
+  гарантии: runtime status API не предоставляет надёжного идентификатора/
+  состояния session. Не использовать log parsing как замену структурированному
+  API и не заявлять сохранение конкретной session.
+
+Peer update/removal, AllowedIPs handoff и reload failure matrix подтверждены
+integration-tests полного CI run `43253628399` на HEAD
+`ffb33ce6ef860a63fa3d23939fb5ab5b17e89a02`; все обязательные jobs и
+`all-systems-go` завершились success, Windows job skipped. Shell-сценарии
+в этой рабочей среде отдельно не запускались; подтверждение относится к CI.
 
 Критерий приёмки: после успешного reload работает только новый Config; после
 обычной ошибки — прежний Config и прежняя policy; при невозможности rollback
