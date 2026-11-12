@@ -1486,7 +1486,7 @@ mod tests {
 
     #[test]
     fn egress_stale_rule_cleanup_failure_aborts_install_and_rolls_back() {
-        let mut plan = cleanup_test_plan();
+        let plan = cleanup_test_plan();
 
         for failure_position in 1..=3 {
             let mut calls = Vec::new();
