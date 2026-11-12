@@ -34,7 +34,7 @@ impl TunnelBackend for BoringTunBackend {
             .map(|(index, peer)| {
                 peer.endpoint
                     .as_deref()
-                    .map(|endpoint| resolve_endpoint(endpoint))
+                    .map(resolve_endpoint)
                     .transpose()
                     .map_err(|error| {
                         BackendError::new(format!(
