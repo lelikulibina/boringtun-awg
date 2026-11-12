@@ -75,6 +75,34 @@ fn table_is_owned(json: &str, family: &str, name: &str) -> bool {
         })
 }
 
+/// Older nftables releases omit table comments from JSON output. Fall back to
+/// the human-readable representation, but accept only the table-level comment
+/// (four-space indentation), never a similarly named comment inside a chain.
+fn table_is_owned_text(output: &str, family: &str, name: &str) -> bool {
+    let expected_header = format!("table {family} {name} {{");
+    let expected_comment = "comment \"managed by vpn-relay\"";
+    let mut in_table = false;
+
+    for line in output.lines() {
+        if !in_table {
+            in_table = line.trim() == expected_header;
+            continue;
+        }
+
+        // The table's closing brace is the only closing brace at column zero.
+        if line.starts_with('}') {
+            return false;
+        }
+
+        let indentation = line.len() - line.trim_start().len();
+        if indentation == 4 && line.trim() == expected_comment {
+            return true;
+        }
+    }
+
+    false
+}
+
 fn inspect_nft_table(plan: &RoutingPlan) -> Result<bool, LinuxError> {
     let existing = Command::new("nft")
         .args(["-j", "list", "table", &plan.nft_family, &plan.nft_table])
@@ -94,8 +122,31 @@ fn inspect_nft_table(plan: &RoutingPlan) -> Result<bool, LinuxError> {
             stderr: stderr.trim().into(),
         });
     }
-    if table_is_owned(
-        &String::from_utf8_lossy(&existing.stdout),
+
+    let json = String::from_utf8_lossy(&existing.stdout);
+    if table_is_owned(&json, &plan.nft_family, &plan.nft_table) {
+        return Ok(true);
+    }
+
+    // nftables 1.0.2 (Ubuntu 22.04) accepts table comments but does not expose
+    // them in JSON. Require the exact table header and a top-level comment
+    // before considering the table daemon-owned.
+    let textual = Command::new("nft")
+        .args(["list", "table", &plan.nft_family, &plan.nft_table])
+        .output()
+        .map_err(|source| LinuxError::Spawn {
+            program: "nft".into(),
+            source,
+        })?;
+    if !textual.status.success() {
+        return Err(LinuxError::Command {
+            program: "nft list table".into(),
+            status: textual.status.to_string(),
+            stderr: String::from_utf8_lossy(&textual.stderr).trim().into(),
+        });
+    }
+    if table_is_owned_text(
+        &String::from_utf8_lossy(&textual.stdout),
         &plan.nft_family,
         &plan.nft_table,
     ) {
@@ -1910,6 +1961,19 @@ mod tests {
         assert!(matches!(result, Err(LinuxError::Cleanup(message))
             if message.matches("injected socket cleanup failure").count() == 2
                 && message.matches("injected egress cleanup failure").count() == 2));
+    }
+
+    #[test]
+    fn nft_text_ownership_accepts_only_the_exact_table_level_comment() {
+        let owned = "table inet vpn_relay {\n    comment \"managed by vpn-relay\"\n    chain input {\n        type filter hook input priority filter; policy accept;\n    }\n}\n";
+        assert!(table_is_owned_text(owned, "inet", "vpn_relay"));
+        assert!(!table_is_owned_text(owned, "inet", "other_table"));
+
+        let nested_only = "table inet vpn_relay {\n    chain input {\n        comment \"managed by vpn-relay\"\n    }\n}\n";
+        assert!(!table_is_owned_text(nested_only, "inet", "vpn_relay"));
+
+        let foreign = "table inet vpn_relay {\n    comment \"owned by someone else\"\n}\n";
+        assert!(!table_is_owned_text(foreign, "inet", "vpn_relay"));
     }
 
     #[test]
