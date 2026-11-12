@@ -459,9 +459,11 @@ vpn-relay управляет только IPv4 forwarding. IPv6 forwarding/sysct
   создание link с повторным использованием ifindex. ACK/readback не являются
   generation token. Полное устранение не заявляется; требуется зафиксировать
   границы гарантии и проверить доступные kernel-side способы уменьшить окно.
-- [ ] Выполнить kernel compatibility matrix для RTM_NEWLINK, IFLA_INET_CONF,
-  ACK/extack и readback на минимально поддерживаемом, актуальном upstream и
-  целевых дистрибутивных ядрах.
+- [~] Добавлена обязательная CI kernel compatibility matrix на Ubuntu
+  22.04 и 24.04: сборка vpn-relay, логирование фактического kernel release,
+  RTM_NEWLINK/IFLA_INET_CONF, ACK и RTM_GETLINK readback через per-interface
+  forwarding/recovery test, а также packet-level сценарий. Результаты обоих
+  runner kernels ожидаются в CI; до их прохождения матрица не считается закрытой.
 - [~] Failure-injection покрывает ряд rollback/recovery границ, но полная
   матрица отказов каждого read/write/persist/fsync/restore boundary ещё не
   закрыта. Продолжить только для реально используемого IPv4 пути.
@@ -471,10 +473,12 @@ vpn-relay управляет только IPv4 forwarding. IPv6 forwarding/sysct
   пометкой «архив»: старые IPv6 forwarding/dual-stack проверки не являются
   текущими acceptance criteria.
 
-Текущий CI на HEAD d18a00d537265d8a691d12a9cfce66006326f703 подтвердил
-rustfmt, clippy, feature checks, unit tests, integration tests, IPv4 packet-level
-forwarding, WG/AWG peer traffic и multi-uplink routing. Windows job пропущен
-условиями workflow.
+Полный CI на HEAD d89a08887c7ae4e29770f5f336d5465af4c5b2e завершился
+success (run `43220963880`): rustfmt, clippy, feature checks, unit tests,
+integration tests, IPv4 forwarding/IPv6 drop packet probe, WG/AWG peer traffic,
+multi-uplink routing и `all-systems-go` успешны. Windows job пропущен
+условиями workflow. Следующий CI добавляет отдельную kernel matrix для Ubuntu
+22.04/24.04; её результат пока не получен.
 ## 12. Этап 9 — документация и CI
 
 - [x] Обновить `docs/VPN_RELAY_NFTABLES.md` по фактической реализации.
@@ -498,6 +502,7 @@ forwarding, WG/AWG peer traffic и multi-uplink routing. Windows job пропу�
 
 | Дата | Изменение | Проверки | Статус |
 |---|---|---|---|
+| 2026-11-12 | Добавлена kernel compatibility matrix для IPv4 rtnetlink | CI run `43220963880` подтвердил предыдущий HEAD `d89a088` полностью; новый workflow `712e7f60f3c95e1aa5d482f4c4c62e505294842b` добавляет Ubuntu 22.04/24.04 с kernel logging, RTM_NEWLINK/ACK/readback, recovery и packet-level checks. Ожидается запуск и фактические kernel versions. | В работе; ожидает CI |
 | 2026-11-11 | Добавлен failure-injection тест восстановления per-interface forwarding | Два managed-интерфейса с IPv4/IPv6 forwarding: запись восстановления искусственно завершается ошибкой во всех четырёх случаях; отдельный сценарий теряет identity первого интерфейса и проверяет, что восстановление второго всё равно выполняется. Тесты проверяют продолжение попыток для остальных семейств и интерфейсов, identity verification до/после чтения и агрегацию причин в fatal error. Код добавлен; rustfmt, unit tests и CI для нового commit ещё не подтверждены. | Ожидает CI |
 | 2026-11-09 | Создана ветка `feature/vpn-relay-firewall-nat` от `ad3f35d2790e7e47c8d050fb7b3c206c69ac2aa4` | GitHub branch ref проверен | Завершено |
 | 2026-11-09 | Добавлен рабочий план реализации | Commit 93244b354acef1344c9ab9ec2600372633de3ea6 | Завершено |
