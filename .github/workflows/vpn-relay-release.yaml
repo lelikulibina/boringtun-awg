@@ -1,0 +1,68 @@
+name: vpn-relay release
+
+on:
+  push:
+    tags:
+      - "vpn-relay-v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and draft vpn-relay release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Verify release tag matches Cargo version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(cargo metadata --locked --no-deps --format-version 1 | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "vpn-relay"))')"
+          expected="vpn-relay-v${version}"
+          if [[ "${GITHUB_REF_NAME}" != "${expected}" ]]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match package version ${version}" >&2
+            exit 1
+          fi
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
+      - name: Build release binary
+        run: cargo build --locked -p vpn-relay --bin vpn-relay --release
+
+      - name: Package binary, example config and release notes
+        id: package
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          archive="vpn-relay-${VERSION}-linux-x86_64.tar.gz"
+          checksum="${archive}.sha256"
+          package_dir="dist/vpn-relay-${VERSION}-linux-x86_64"
+          install -Dm755 target/release/vpn-relay "${package_dir}/vpn-relay"
+          install -Dm644 vpn-relay/vpn-relay.example.toml "${package_dir}/vpn-relay.example.toml"
+          install -Dm644 vpn-relay/CHANGELOG.md "${package_dir}/CHANGELOG.md"
+          install -Dm644 docs/VPN_RELAY_NFTABLES.md "${package_dir}/VPN_RELAY_NFTABLES.md"
+          tar -C dist -czf "${archive}" "vpn-relay-${VERSION}-linux-x86_64"
+          sha256sum "${archive}" > "${checksum}"
+          echo "archive=${archive}" >> "${GITHUB_OUTPUT}"
+          echo "checksum=${checksum}" >> "${GITHUB_OUTPUT}"
+
+      - name: Create draft GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: vpn-relay ${{ steps.version.outputs.version }}
+          body_path: vpn-relay/CHANGELOG.md
+          draft: true
+          prerelease: false
+          fail_on_unmatched_files: true
+          files: |
+            ${{ steps.package.outputs.archive }}
+            ${{ steps.package.outputs.checksum }}

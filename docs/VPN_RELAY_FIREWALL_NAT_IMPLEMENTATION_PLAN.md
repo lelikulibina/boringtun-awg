@@ -50,15 +50,16 @@ validation и release build также прошли. Финальный diff/dep
 | R7 | Финальная runtime acceptance | Multi-uplink, peer removal/restoration, AllowedIPs handoff, policy/NAT reload, DNS preflight и WG/AWG bidirectional traffic прошли в integration job 43264956528. Noise session persistence не заявляется. | Все acceptance tests проходят на актуальном CI |
 | R8 | Синхронизировать документацию и failure matrix | Firewall/runtime reload docs сверены; IPv4-only архитектура и граница IPv6 PREROUTING packet coverage явно описаны; исторический dual-stack журнал помечен как архив. | Актуальные разделы соответствуют коду и фактическим CI |
 | R9 | Проверить конфигурационные примеры и deployment-инструкции | vpn-relay.example.toml --check и Podman deployment прошли в run 43264956528. | Пример валиден, инструкции воспроизводимы |
-| R10 | Release build и финальный review | cargo build -p vpn-relay --bin vpn-relay --release прошёл в run 43264956528. Diff review завершён: изменения ограничены двумя test scripts, workflow и docs; Cargo manifests/dependencies и boringtun/ не менялись. | Release build успешен; diff и зависимости проверены |
-| R11 | Changelog и версия | Подготовлен vpn-relay/CHANGELOG.md для версии 0.1.0; Cargo manifest содержит 0.1.0. Changelog оставлен Unreleased до фактической публикации. | Changelog и version metadata соответствуют релизному commit |
-| R12 | Выпустить vpn-relay | Ожидает публикации: проверенный commit 239b619, changelog 0.1.0 и release build готовы. Доступные GitHub actions в этой сессии не предоставляют операцию создания GitHub Release/tag. | Опубликованы исходники/артефакты из зафиксированного релизного commit |
+| R10 | Release build и финальный review | Release binary собран в CI; подготовлен tag-triggered release workflow, который сверяет tag с Cargo version, собирает архив Linux x86_64, добавляет example config/CHANGELOG и SHA-256, затем создаёт draft GitHub Release. После добавления workflow требуется CI на новом HEAD. | Release build и воспроизводимая упаковка подтверждены CI |
+| R11 | Changelog и версия | Cargo package version 0.1.0 и CHANGELOG.md синхронизированы; дата релиза зафиксирована 2026-11-12. | Метаданные версии и release notes готовы |
+| R12 | Выпустить vpn-relay | Автоматизация готова: push tag `vpn-relay-v0.1.0` создаст draft GitHub Release с архивом и SHA-256. Осталось поставить тег на CI-проверенный HEAD и проверить/опубликовать draft. Доступные GitHub tools не предоставляют create-tag/release write operation. | Draft release создан и проверен; затем опубликован вручную |
 
 ### Следующий шаг
 
-Опубликовать GitHub Release 0.1.0 из проверенного commit 239b619, когда
-операция создания release/tag будет доступна. Выделение в отдельный
-репозиторий не входит в текущий план и остаётся отложенным.
+После зелёного CI на актуальном HEAD поставить тег vpn-relay-v0.1.0.
+Tag-triggered workflow создаст draft GitHub Release с Linux x86_64 архивом,
+примером конфигурации, changelog и SHA-256. Проверить draft и опубликовать
+его вручную. Выделение в отдельный репозиторий не входит в текущий план.
 
 ---
 
