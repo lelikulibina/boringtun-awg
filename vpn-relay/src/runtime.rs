@@ -2392,4 +2392,158 @@ mod tests {
             InstanceLock::current_netns_path().unwrap()
         );
     }
+    fn forwarding_state_test_path(label: &str) -> PathBuf {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "vpn-relay-forwarding-{label}-{}-{nonce}.json",
+            std::process::id()
+        ))
+    }
+
+    fn sample_forwarding_state() -> ForwardingState {
+        ForwardingState {
+            ipv4: "0".to_owned(),
+            ipv4_changed: true,
+            interfaces: Vec::new(),
+        }
+    }
+
+    struct FaultInjectingTunnel {
+        name: String,
+        peers: Vec<String>,
+        calls: usize,
+        fail_calls: std::collections::HashSet<usize>,
+    }
+
+    impl TunnelHandle for FaultInjectingTunnel {
+        fn snapshot(&self) -> Result<TunnelSnapshot, BackendError> {
+            Ok(TunnelSnapshot {
+                name: self.name.clone(),
+                peers: self
+                    .peers
+                    .iter()
+                    .map(|key| {
+                        let mut public_key = [0u8; 32];
+                        public_key[0] = key.as_bytes().first().copied().unwrap_or_default();
+                        crate::backend::TunnelPeerSnapshot {
+                            public_key,
+                            tx_bytes: 0,
+                            rx_bytes: 0,
+                            time_since_last_handshake: None,
+                        }
+                    })
+                    .collect(),
+            })
+        }
+
+        fn replace_peers(
+            &mut self,
+            interface: &crate::config::InterfaceConfig,
+            _prepared: &PreparedInterface,
+        ) -> Result<(), BackendError> {
+            self.calls += 1;
+            if self.fail_calls.contains(&self.calls) {
+                return Err(BackendError::new(format!(
+                    "injected peer replacement failure on {} call {}",
+                    self.name, self.calls
+                )));
+            }
+            self.peers = interface
+                .peers
+                .iter()
+                .map(|peer| peer.public_key.clone())
+                .collect();
+            Ok(())
+        }
+
+        fn shutdown(&self) {}
+        fn wait(&mut self) {}
+    }
+
+    fn peer_interface(peer_key: &str) -> crate::config::InterfaceConfig {
+        crate::config::InterfaceConfig {
+            tunnel_type: crate::config::TunnelType::WireGuard,
+            address: vec!["10.0.0.1/24".to_owned()],
+            mtu: 1380,
+            listen_port: None,
+            private_key: "private".to_owned(),
+            socket_fwmark: None,
+            peers: vec![PeerConfig {
+                public_key: peer_key.to_owned(),
+                preshared_key: None,
+                endpoint: None,
+                allowed_ips: vec!["10.0.0.2/32".to_owned()],
+                persistent_keepalive_secs: None,
+                persistent_keepalive_range: None,
+            }],
+            awg: None,
+        }
+    }
+
+    fn peer_test_config(wg0: &str, wg1: &str) -> Config {
+        Config {
+            daemon: crate::config::DaemonConfig::default(),
+            interfaces: [
+                ("wg0".to_owned(), peer_interface(wg0)),
+                ("wg1".to_owned(), peer_interface(wg1)),
+            ]
+            .into_iter()
+            .collect(),
+            routing: crate::config::RoutingConfig::default(),
+            firewall: crate::config::FirewallConfig::default(),
+        }
+    }
+
+    fn peer_test_prepared() -> std::collections::BTreeMap<String, PreparedInterface> {
+        [
+            (
+                "wg0".to_owned(),
+                PreparedInterface {
+                    peer_endpoints: vec![None],
+                },
+            ),
+            (
+                "wg1".to_owned(),
+                PreparedInterface {
+                    peer_endpoints: vec![None],
+                },
+            ),
+        ]
+        .into_iter()
+        .collect()
+    }
+
+    fn sample_conntrack_decision() -> crate::routing::RoutingDecision {
+        crate::routing::RoutingDecision {
+            priority: 10,
+            ingress: "wg-ingress".to_owned(),
+            source: Some(vec!["10.0.0.2/32".to_owned()]),
+            destination: Some(vec!["0.0.0.0/0".to_owned()]),
+            egress: "awg-uplink".to_owned(),
+            routing_mark: 0x8000_0001,
+            conntrack_mark: 0x5001_0000,
+            nat: crate::config::NatMode::None,
+            nat_to: None,
+        }
+    }
+
+    #[test]
+    fn control_socket_recovers_stale_socket_files() {
+        let path = std::env::temp_dir().join(format!(
+            "vpn-relay-control-stale-{}.sock",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        let stale = UnixListener::bind(&path).unwrap();
+        drop(stale);
+        let socket = ControlSocket::bind(path.clone()).unwrap();
+        assert!(path.exists());
+        drop(socket);
+        assert!(!path.exists());
+    }
+
+
 }
