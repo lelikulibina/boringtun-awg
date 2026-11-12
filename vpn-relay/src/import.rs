@@ -578,7 +578,7 @@ PersistentKeepalive = 25
             CLIENT.replace("Address = 10.0.0.2/32", "Address = fd00::2/128"),
             CLIENT.replace("AllowedIPs = 0.0.0.0/0", "AllowedIPs = ::/0"),
             CLIENT.replace(
-                "Endpoint = vpn.example.com:51820",
+                "Endpoint = localhost:51820",
                 "Endpoint = [2001:db8::1]:51820",
             ),
         ] {
