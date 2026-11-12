@@ -2816,7 +2816,7 @@ mod tests {
 
             let result = persist_forwarding_state_with(&path, namespace_inode, &state, &mut io);
             assert!(
-                matches!(result, Err(RuntimeError::Forwarding(message))
+                matches!(result, Err(RuntimeError::Forwarding(ref message))
                     if message.contains(&format!("injected {stage} failure"))),
                 "failure at {stage} returned an unexpected result: {result:?}"
             );
