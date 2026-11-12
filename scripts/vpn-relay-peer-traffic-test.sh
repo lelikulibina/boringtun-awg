@@ -364,6 +364,8 @@ start_tcp_listener "$SERVER_NS" 8080 server-tcp-8080.log
 start_tcp_listener "$SERVER_NS" 8081 server-tcp-8081.log
 start_tcp_listener "$CLIENT_NS" 8080 client-tcp-8080.log
 start_tcp_listener "$CLIENT_NS" 8081 client-tcp-8081.log
+# Allow the IPv4 listeners to bind before the first connection probe.
+sleep 0.5
 
 # Local loopback traffic must remain outside managed-TUN INPUT/OUTPUT policy.
 ip netns exec "$SERVER_NS" python3 - <<'PY'
