@@ -385,7 +385,7 @@ impl RoutingPlan {
                 self.nft_family, self.nft_table, output_selector
             ));
             output.push_str(&format!(
-                "add rule {} {} output {} @ipv6_drop_interfaces meta nfproto ipv6 drop\n",
+                "add rule {} {} output {} @ipv6_drop_interfaces meta nfproto ipv6 counter drop\n",
                 self.nft_family, self.nft_table, output_selector
             ));
         }
