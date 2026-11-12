@@ -190,13 +190,6 @@ protocol = "udp"
 ports = [5201]
 TOML
 
-if [[ "$PROTO" == "awg" ]]; then
-    cat >>"$TMP/server.toml" <<'AWG'
-[interfaces.wg-peer-test.awg]
-random_trailers = false
-disable_cookies = false
-AWG
-fi
 
 cat >"$TMP/client.toml" <<TOML
 [daemon]
@@ -261,13 +254,6 @@ protocol = "udp"
 ports = [18080]
 TOML
 
-if [[ "$PROTO" == "awg" ]]; then
-    cat >>"$TMP/client.toml" <<'AWG'
-[interfaces.wg-peer-test.awg]
-random_trailers = false
-disable_cookies = false
-AWG
-fi
 
 "$BIN" --config "$TMP/server.toml" --check >/dev/null
 "$BIN" --config "$TMP/client.toml" --check >/dev/null
