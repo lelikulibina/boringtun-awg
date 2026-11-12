@@ -690,7 +690,7 @@ TOML
 if ip netns exec "$NS" "$BIN" --config "$TMP/config.toml" --reload >"$TMP/reload-dns-failure.log" 2>&1; then
     fail "runtime reload unexpectedly succeeded with an unresolvable peer endpoint"
 fi
-grep -Eqi 'resolve|dns|lookup|name or service not known|failed to resolve' "$TMP/reload-dns-failure.log" || fail "endpoint DNS preflight failure was not reported"
+grep -Fq 'peers[0].endpoint' "$TMP/reload-dns-failure.log" || fail "endpoint DNS preflight failure was not reported"
 kill -0 "$DAEMON_PID" 2>/dev/null || fail "daemon exited after endpoint DNS preflight failure"
 chain_after_dns_failure="$(ip netns exec "$NS" nft list chain inet vpn_relay_it prerouting)"
 grep -Fq 'ip daddr 195.142.0.0/16' <<<"$chain_after_dns_failure" || fail "DNS preflight failure changed the active nftables classifier"
