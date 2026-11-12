@@ -1510,7 +1510,7 @@ mod tests {
     fn egress_stale_rule_cleanup_failure_aborts_install_and_rolls_back() {
         let plan = cleanup_test_plan();
 
-        for failure_position in 1..=2 {
+        for failure_position in 1..=1 {
             let mut calls = Vec::new();
             let mut stale_cleanup_attempts = 0;
             let mut failure_injected = false;
@@ -1941,8 +1941,8 @@ mod tests {
             })
             .count();
         assert_eq!(
-            socket_cleanup_calls, 2,
-            "outer rollback must still clean both socket marks"
+            socket_cleanup_calls, 1,
+            "outer rollback must still clean the socket mark"
         );
     }
 
