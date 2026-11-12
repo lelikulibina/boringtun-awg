@@ -634,6 +634,76 @@ ROUTE_RELOAD_PING_PID=""
 grep -Eq '100 packets transmitted, 100 received, 0% packet loss' "$TMP/runtime-reload-continuous-ping.log" \
     || fail "packet loss detected on the unchanged primary route during routing/NAT reload"
 
+# Remove the second ingress peer while the first peer carries a continuous
+# bidirectional flow. This exercises the live peer-set commit independently
+# from routing/NAT policy changes: the unaffected peer must lose no packets,
+# while the removed peer must stop reaching the router.
+python3 - "$TMP/router.toml" <<'PY'
+import sys
+path = sys.argv[1]
+with open(path, encoding="utf-8") as stream:
+    config = stream.read()
+peer = '''[[interfaces.wg-ingress.peers]]
+public_key = "$SECOND_CLIENT_PUBLIC"
+allowed_ips = ["10.77.0.3/32"]
+
+'''
+if config.count(peer) != 1:
+    raise SystemExit("cannot find unique second ingress peer for removal probe")
+config = config.replace(peer, "", 1)
+with open(path, "w", encoding="utf-8") as stream:
+    stream.write(config)
+PY
+"$BIN" --config "$TMP/router.toml" --check >/dev/null \
+    || fail "peer-removal reload candidate did not validate"
+ip netns exec "$CLIENT_NS" ping -n -I 10.77.0.2 -i 0.05 -c 100 -W 2 203.0.113.1 \
+    >"$TMP/peer-removal-continuous-ping.log" 2>&1 &
+PEER_REMOVAL_PING_PID=$!
+sleep 0.2
+ip netns exec "$ROUTER_NS" "$BIN" --config "$TMP/router.toml" --reload \
+    >"$TMP/runtime-peer-removal-reload.log" 2>&1 \
+    || fail "runtime reload failed while removing an unrelated ingress peer"
+if wait "$PEER_REMOVAL_PING_PID"; then
+    PEER_REMOVAL_PING_PID=""
+else
+    fail "unaffected peer traffic failed while another ingress peer was removed"
+fi
+grep -Eq '100 packets transmitted, 100 received, 0% packet loss' "$TMP/peer-removal-continuous-ping.log" \
+    || fail "packet loss detected on the unaffected peer during peer removal"
+set +e
+ip netns exec "$SECOND_CLIENT_NS" ping -n -I 10.77.0.3 -c 3 -W 1 10.77.0.1 \
+    >"$TMP/removed-peer-connectivity.log" 2>&1
+removed_peer_status=$?
+set -e
+[[ "$removed_peer_status" -ne 0 ]] || fail "removed ingress peer still reached the router"
+
+# Restore the peer so the remaining multi-uplink checks can continue to cover
+# its source selectors and overlapping AllowedIPs behavior.
+python3 - "$TMP/router.toml" <<'PY'
+import sys
+path = sys.argv[1]
+with open(path, encoding="utf-8") as stream:
+    config = stream.read()
+anchor = "[interfaces.awg-primary]"
+peer = '''[[interfaces.wg-ingress.peers]]
+public_key = "$SECOND_CLIENT_PUBLIC"
+allowed_ips = ["10.77.0.3/32"]
+
+'''
+if config.count(anchor) != 1 or "$SECOND_CLIENT_PUBLIC" in config:
+    raise SystemExit("cannot safely restore the removed ingress peer")
+config = config.replace(anchor, peer + anchor, 1)
+with open(path, "w", encoding="utf-8") as stream:
+    stream.write(config)
+PY
+"$BIN" --config "$TMP/router.toml" --check >/dev/null \
+    || fail "peer-restoration reload candidate did not validate"
+ip netns exec "$ROUTER_NS" "$BIN" --config "$TMP/router.toml" --reload \
+    >"$TMP/runtime-peer-restoration-reload.log" 2>&1 \
+    || fail "runtime reload failed while restoring the ingress peer"
+ip netns exec "$SECOND_CLIENT_NS" ping -n -I 10.77.0.3 -c 3 -W 2 10.77.0.1 \
+    || fail "restored ingress peer did not regain connectivity"
+
 # The second WG peer is included in the secondary source CIDR array but not in
 ip netns exec "$SECOND_CLIENT_NS" ping -n -I 10.77.0.3 -c 4 -W 2 195.142.1.1 \
     || fail "second IPv4 source-array member was not routed through awg-secondary"
