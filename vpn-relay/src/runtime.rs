@@ -2445,7 +2445,9 @@ mod tests {
             |_, value| {
                 if value == "1" {
                     *current.borrow_mut() = "1".to_owned();
-                    return Err(RuntimeError::Forwarding("injected setup failure".to_owned()));
+                    return Err(RuntimeError::Forwarding(
+                        "injected setup failure".to_owned(),
+                    ));
                 }
                 Err(RuntimeError::Forwarding(
                     "injected rollback failure".to_owned(),
