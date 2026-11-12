@@ -1,5 +1,5 @@
 # Пример: WG-сервер и два AWG uplink.
-# Перед запуском замените ключи и адреса конечных узлов. Файл должен иметь права 0600.
+# Перед запуском замените ключи и адреса конечных узлов. Endpoint использует TEST-NET IP как пример. Файл должен иметь права 0600.
 # socket_fwmark необязателен: без него демон назначает уникальную метку автоматически (начиная с 0x1000).
 
 [daemon]
@@ -69,7 +69,7 @@ random_trailers = false
 
 [[interfaces.awg-primary.peers]]
 public_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
-endpoint = "vpn-primary.example.net:51820"
+endpoint = "192.0.2.10:51820"
 allowed_ips = ["0.0.0.0/0"]
 persistent_keepalive_secs = "25-35"
 
@@ -94,7 +94,7 @@ h4 = "4"
 
 [[interfaces.awg-secondary.peers]]
 public_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
-endpoint = "vpn-secondary.example.net:51820"
+endpoint = "198.51.100.10:51820"
 allowed_ips = ["0.0.0.0/0"]
 persistent_keepalive_secs = 25
 
