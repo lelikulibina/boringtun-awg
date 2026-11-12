@@ -260,10 +260,10 @@ Policy routing использует зарезервированный iproute2 
 Удаляются только ресурсы с ожидаемой identity.
 
 Startup: instance lock для network namespace → nftables fail-closed policy →
-создание TUN → policy routes → forwarding ownership. Legacy mode управляет
-namespace-wide sysctl; per-interface mode сначала проверяет глобальные
-prerequisites и unmanaged links, затем сохраняет journal и включает только
-allowlisted links.
+создание TUN → IPv4 policy routes → IPv4 forwarding ownership. Legacy mode
+управляет только namespace-wide IPv4 sysctl; per-interface mode сначала
+проверяет IPv4 prerequisites и unmanaged links, затем сохраняет journal и
+включает только allowlisted links.
 
 Shutdown: остановка и join backend workers → удаление policy routes →
 восстановление sysctl внешних интерфейсов при совпадении name/ifindex и
