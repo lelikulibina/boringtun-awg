@@ -584,16 +584,16 @@ impl RoutingPlan {
             let mut guards = String::new();
             for (name, index) in indices {
                 guards.push_str(&format!(
-                    "add rule {} {} prerouting iifname \"{}\" iif != {} counter drop\\n\\
-                     add rule {} {} prerouting iif {} iifname != \"{}\" counter drop\\n\\
-                     add rule {} {} input iifname \"{}\" iif != {} counter drop\\n\\
-                     add rule {} {} input iif {} iifname != \"{}\" counter drop\\n\\
-                     add rule {} {} forward iifname \"{}\" iif != {} counter drop\\n\\
-                     add rule {} {} forward iif {} iifname != \"{}\" counter drop\\n\\
-                     add rule {} {} forward oifname \"{}\" oif != {} counter drop\\n\\
-                     add rule {} {} forward oif {} oifname != \"{}\" counter drop\\n\\
-                     add rule {} {} output oifname \"{}\" oif != {} counter drop\\n\\
-                     add rule {} {} output oif {} oifname != \"{}\" counter drop\\n",
+                    "add rule {} {} prerouting iifname \"{}\" iif != {} counter drop\n\
+                     add rule {} {} prerouting iif {} iifname != \"{}\" counter drop\n\
+                     add rule {} {} input iifname \"{}\" iif != {} counter drop\n\
+                     add rule {} {} input iif {} iifname != \"{}\" counter drop\n\
+                     add rule {} {} forward iifname \"{}\" iif != {} counter drop\n\
+                     add rule {} {} forward iif {} iifname != \"{}\" counter drop\n\
+                     add rule {} {} forward oifname \"{}\" oif != {} counter drop\n\
+                     add rule {} {} forward oif {} oifname != \"{}\" counter drop\n\
+                     add rule {} {} output oifname \"{}\" oif != {} counter drop\n\
+                     add rule {} {} output oif {} oifname != \"{}\" counter drop\n",
                     self.nft_family,
                     self.nft_table,
                     name,
