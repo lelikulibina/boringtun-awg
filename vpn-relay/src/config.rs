@@ -304,7 +304,6 @@ where
     })
 }
 
-
 /// Validate interface keys before deserializing the flattened AWG parameter
 /// set. Serde's flatten cannot be combined with deny_unknown_fields, so
 /// this explicit check preserves the daemon's fail-closed typo handling.
