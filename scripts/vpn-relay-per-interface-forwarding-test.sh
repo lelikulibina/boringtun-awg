@@ -29,12 +29,12 @@ dump_forwarding_state() {
         for iface in all default lo uplink0 untrusted0 wg0; do
             path="/proc/sys/net/ipv4/conf/$iface/forwarding"
             if [ -r "$path" ]; then
-                printf "%s=%s\\n" "$iface" "$(cat "$path")"
+                printf "%s=%s\n" "$iface" "$(cat "$path")"
             else
-                printf "%s=<absent>\\n" "$iface"
+                printf "%s=<absent>\n" "$iface"
             fi
         done
-        printf "ip_forward=%s\\n" "$(cat /proc/sys/net/ipv4/ip_forward)"
+        printf "ip_forward=%s\n" "$(cat /proc/sys/net/ipv4/ip_forward)"
     '
 }
 
