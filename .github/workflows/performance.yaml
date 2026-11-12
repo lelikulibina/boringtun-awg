@@ -51,7 +51,7 @@ jobs:
         run: sudo python3 scripts/awg31-go-interop.py ./target/release/boringtun-cli ./amneziawg-go --performance
       - name: Upload benchmark reports and packet captures
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: awg31-iperf3-performance
           path: |
