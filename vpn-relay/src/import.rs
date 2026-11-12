@@ -567,7 +567,7 @@ MTU = 1380
 [Peer]
 PublicKey = AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
 PresharedKey = AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
-Endpoint = vpn.example.com:51820
+Endpoint = localhost:51820
 AllowedIPs = 0.0.0.0/0
 PersistentKeepalive = 25
 "#;
