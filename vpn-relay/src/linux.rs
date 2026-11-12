@@ -1278,6 +1278,24 @@ pub fn set_ipv4_interface_forwarding(
     ifindex: u32,
     enabled: bool,
 ) -> Result<(), LinuxError> {
+    set_ipv4_interface_forwarding_with(
+        name,
+        ifindex,
+        enabled,
+        verify_interface_identity,
+        netlink_request,
+        ipv4_interface_forwarding,
+    )
+}
+
+fn set_ipv4_interface_forwarding_with(
+    name: &str,
+    ifindex: u32,
+    enabled: bool,
+    mut verify: impl FnMut(&str, u32) -> Result<(), LinuxError>,
+    mut request: impl FnMut(u32, u16, u16, &[u8]) -> Result<Vec<u8>, LinuxError>,
+    mut readback: impl FnMut(u32) -> Result<bool, LinuxError>,
+) -> Result<(), LinuxError> {
     if ifindex == 0 {
         return Err(LinuxError::Conflict {
             resource: "IPv4 forwarding interface".into(),
@@ -1294,10 +1312,17 @@ pub fn set_ipv4_interface_forwarding(
     let mut attributes = Vec::new();
     append_netlink_attribute(&mut attributes, IFLA_AF_SPEC | NLA_F_NESTED, &af_spec);
 
-    verify_interface_identity(name, ifindex)?;
-    netlink_request(ifindex, RTM_NEWLINK, NLM_F_REQUEST | NLM_F_ACK, &attributes)?;
-    let actual = ipv4_interface_forwarding(ifindex)?;
-    verify_interface_identity(name, ifindex)?;
+    // RTM_NEWLINK is addressed by ifindex, so check the saved name/index pair
+    // as late as possible before the kernel resolves that index.
+    verify(name, ifindex)?;
+    request(
+        ifindex,
+        RTM_NEWLINK,
+        NLM_F_REQUEST | NLM_F_ACK,
+        &attributes,
+    )?;
+    let actual = readback(ifindex)?;
+    verify(name, ifindex)?;
     if actual != enabled {
         return Err(LinuxError::Conflict {
             resource: format!("IPv4 forwarding on ifindex {ifindex}"),
@@ -2220,6 +2245,98 @@ mod tests {
             parse_link_ipv4_forwarding(&response, 9),
             Err(LinuxError::Conflict { details, .. }) if details.contains("omitted")
         ));
+    }
+
+    #[test]
+    fn rtnetlink_forwarding_set_failure_matrix_stops_at_each_boundary() {
+        for stage in ["identity_before_send", "send_or_ack", "readback", "identity_after_readback"] {
+            let mut verify_calls = 0usize;
+            let mut request_calls = 0usize;
+            let mut readback_calls = 0usize;
+            let result = set_ipv4_interface_forwarding_with(
+                "eth0",
+                7,
+                true,
+                |_, _| {
+                    verify_calls += 1;
+                    if (stage == "identity_before_send" && verify_calls == 1)
+                        || (stage == "identity_after_readback" && verify_calls == 2)
+                    {
+                        Err(LinuxError::Conflict {
+                            resource: "injected interface identity".into(),
+                            details: format!("injected {stage} failure"),
+                        })
+                    } else {
+                        Ok(())
+                    }
+                },
+                |ifindex, message_type, flags, _| {
+                    request_calls += 1;
+                    assert_eq!(ifindex, 7);
+                    assert_eq!(message_type, RTM_NEWLINK);
+                    assert_eq!(flags, NLM_F_REQUEST | NLM_F_ACK);
+                    if stage == "send_or_ack" {
+                        Err(LinuxError::Command {
+                            program: "injected rtnetlink send/ACK".into(),
+                            status: "failed".into(),
+                            stderr: format!("injected {stage} failure"),
+                        })
+                    } else {
+                        Ok(Vec::new())
+                    }
+                },
+                |_| {
+                    readback_calls += 1;
+                    if stage == "readback" {
+                        Err(LinuxError::Command {
+                            program: "injected RTM_GETLINK readback".into(),
+                            status: "failed".into(),
+                            stderr: format!("injected {stage} failure"),
+                        })
+                    } else {
+                        Ok(true)
+                    }
+                },
+            );
+            assert!(result.is_err(), "{stage} failure was not propagated");
+            assert_eq!(
+                verify_calls,
+                if stage == "identity_after_readback" { 2 } else { 1 },
+                "unexpected identity check count for {stage}"
+            );
+            assert_eq!(
+                request_calls,
+                if stage == "identity_before_send" { 0 } else { 1 },
+                "unsafe or missing RTM_NEWLINK request for {stage}"
+            );
+            assert_eq!(
+                readback_calls,
+                if matches!(stage, "readback" | "identity_after_readback") { 1 } else { 0 },
+                "unexpected RTM_GETLINK readback count for {stage}"
+            );
+        }
+    }
+
+    #[test]
+    fn rtnetlink_forwarding_set_rejects_acknowledged_value_mismatch() {
+        let mut verify_calls = 0usize;
+        let result = set_ipv4_interface_forwarding_with(
+            "eth0",
+            7,
+            true,
+            |_, _| {
+                verify_calls += 1;
+                Ok(())
+            },
+            |_, _, _, _| Ok(Vec::new()),
+            |_| Ok(false),
+        );
+        assert!(matches!(
+            result,
+            Err(LinuxError::Conflict { details, .. })
+                if details.contains("reports forwarding=0")
+        ));
+        assert_eq!(verify_calls, 2);
     }
 
     #[test]
