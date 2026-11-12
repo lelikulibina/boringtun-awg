@@ -1256,7 +1256,23 @@ pub fn set_ipv4_interface_forwarding(ifindex: u32, enabled: bool) -> Result<(), 
     Ok(())
 }
 
+fn validate_ipv4_interface_addresses(
+    name: &str,
+    addresses: &[String],
+) -> Result<(), LinuxError> {
+    for address in addresses {
+        if address.contains(':') {
+            return Err(LinuxError::Conflict {
+                resource: format!("IPv6 address {address} on interface {name}"),
+                details: "vpn-relay supports IPv4 interface addresses only".to_owned(),
+            });
+        }
+    }
+    Ok(())
+}
+
 pub fn configure_interface(name: &str, mtu: u16, addresses: &[String]) -> Result<(), LinuxError> {
+    validate_ipv4_interface_addresses(name, addresses)?;
     run(
         "ip",
         &[
@@ -1270,11 +1286,10 @@ pub fn configure_interface(name: &str, mtu: u16, addresses: &[String]) -> Result
         ],
     )?;
     for address in addresses {
-        let family = if address.contains(':') { "-6" } else { "-4" };
         run(
             "ip",
             &[
-                family.into(),
+                "-4".into(),
                 "address".into(),
                 "replace".into(),
                 address.clone(),
@@ -1308,6 +1323,16 @@ mod tests {
             ipv6_drop_interfaces: Vec::new(),
             interface_indices: None,
         }
+    }
+
+    #[test]
+    fn interface_configuration_rejects_ipv6_before_running_ip() {
+        let addresses = vec!["10.0.0.1/24".to_owned(), "2001:db8::1/64".to_owned()];
+        assert!(matches!(
+            validate_ipv4_interface_addresses("wg0", &addresses),
+            Err(LinuxError::Conflict { details, .. })
+                if details.contains("IPv4 interface addresses only")
+        ));
     }
 
     #[test]
