@@ -472,7 +472,7 @@ impl ObfuscationRanges {
 
     /// Construct explicit UAPI tag ranges without treating (0, 0) as
     /// "use the WireGuard default". The Go UAPI stores zero as a valid tag.
-    pub(crate) fn from_explicit_ranges(ranges: [(u32, u32); 4]) -> Result<Self, String> {
+    pub fn from_explicit_ranges(ranges: [(u32, u32); 4]) -> Result<Self, String> {
         let names = ["H1", "H2", "H3", "H4"];
         let mut parsed = [TagRange { start: 0, end: 0 }; 4];
 
