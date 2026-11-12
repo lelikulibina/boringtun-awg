@@ -1434,15 +1434,15 @@ egress = "awg-uplink"
         assert!(!serialized.contains("[awg]"));
 
         let legacy = valid_config()
-            .replace("jc = 5\\n", "")
-            + "\\n[interfaces.awg-uplink.awg]\\njc = 5\\n";
+            .replace("jc = 5\n", "")
+            + "\n[interfaces.awg-uplink.awg]\njc = 5\n";
         let error = Config::parse_toml(&legacy).unwrap_err().to_string();
         assert!(error.contains("move AWG parameters directly into [interfaces.awg-uplink]"));
     }
 
     #[test]
     fn unknown_flattened_interface_keys_are_rejected() {
-        let input = valid_config().replace("mtu = 1380", "mtu = 1380\\nmtuu = 1400");
+        let input = valid_config().replace("mtu = 1380", "mtu = 1380\nmtuu = 1400");
         let error = Config::parse_toml(&input).unwrap_err().to_string();
         assert!(error.contains("interfaces.wg-server.mtuu"));
     }
