@@ -30,7 +30,7 @@ trap cleanup EXIT
 
 fail() {
     echo "vpn-relay namespace test: $*" >&2
-    for log in "$TMP/bootstrap-nft-failure.log" "$TMP/indexed-nft-failure.log" "$TMP/startup-route-rollback-failure.log" "$TMP/startup-nft-cleanup-ip-commands.log" "$TMP/startup-route-rollback-ip.log" "$TMP/startup-route-rollback-route-after.txt" "$TMP/startup-route-rollback-routes-all.txt" "$TMP/startup-nft-cleanup-failure.log" "$TMP/daemon.log" "$TMP/conflict.log" "$TMP/policy-conflict.log" "$TMP/route-conflict.log" "$TMP/policy-shadow-conflict.log" "$TMP/partial-setup-conflict.log" "$TMP/partial-interface-config.log" "$TMP/partial-policy-route.log" "$TMP/partial-forwarding.log" "$TMP/partial-ipv4-forwarding.log" "$TMP/partial-ipv4-forwarding-restore-failure.log" "$TMP/startup-forwarding-route-cleanup-failure.log" "$TMP/reload-failure.log" "$TMP/reload-route-failure.log" "$TMP/reload-immutable.log" "$TMP/shutdown-cleanup-failure.log" "$TMP/shutdown-forwarding-restore-failure.log" "$TMP/preexisting-forwarding.log" "$TMP/fail-route-commands.log" "$TMP/forwarding-management-disabled.log" "$TMP/tun-identity-loss.log"; do
+    for log in "$TMP/bootstrap-nft-failure.log" "$TMP/indexed-nft-failure.log" "$TMP/startup-route-rollback-failure.log" "$TMP/startup-nft-cleanup-ip-commands.log" "$TMP/startup-route-rollback-ip.log" "$TMP/startup-route-rollback-route-after.txt" "$TMP/startup-route-rollback-routes-all.txt" "$TMP/startup-nft-cleanup-failure.log" "$TMP/daemon.log" "$TMP/conflict.log" "$TMP/policy-conflict.log" "$TMP/route-conflict.log" "$TMP/policy-shadow-conflict.log" "$TMP/partial-setup-conflict.log" "$TMP/partial-interface-config.log" "$TMP/partial-policy-route.log" "$TMP/partial-forwarding.log" "$TMP/partial-ipv4-forwarding.log" "$TMP/partial-ipv4-forwarding-restore-failure.log" "$TMP/startup-forwarding-route-cleanup-failure.log" "$TMP/reload-failure.log" "$TMP/reload-dns-failure.log" "$TMP/reload-route-failure.log" "$TMP/reload-immutable.log" "$TMP/shutdown-cleanup-failure.log" "$TMP/shutdown-forwarding-restore-failure.log" "$TMP/preexisting-forwarding.log" "$TMP/fail-route-commands.log" "$TMP/forwarding-management-disabled.log" "$TMP/tun-identity-loss.log"; do
         if [[ -f "$log" ]]; then
             cat "$log" >&2
         fi
@@ -675,6 +675,7 @@ cat >>"$TMP/config.toml" <<'TOML'
 [[interfaces.wg-server.peers]]
 public_key = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE="
 allowed_ips = ["10.10.0.2/32"]
+endpoint = "vpn-relay-dns-failure.invalid:51820"
 
 [firewall.input]
 [[firewall.input.rules]]
@@ -683,6 +684,26 @@ source = "10.10.0.2/32"
 protocol = "udp"
 ports = [53]
 TOML
+
+# Endpoint DNS preflight must fail before any live peer, route or firewall
+# mutation. The reserved .invalid TLD makes the candidate endpoint unresolvable.
+if ip netns exec "$NS" "$BIN" --config "$TMP/config.toml" --reload >"$TMP/reload-dns-failure.log" 2>&1; then
+    fail "runtime reload unexpectedly succeeded with an unresolvable peer endpoint"
+fi
+grep -Eqi 'resolve|dns|lookup|name or service not known|failed to resolve' "$TMP/reload-dns-failure.log" || fail "endpoint DNS preflight failure was not reported"
+kill -0 "$DAEMON_PID" 2>/dev/null || fail "daemon exited after endpoint DNS preflight failure"
+chain_after_dns_failure="$(ip netns exec "$NS" nft list chain inet vpn_relay_it prerouting)"
+grep -Fq 'ip daddr 195.142.0.0/16' <<<"$chain_after_dns_failure" || fail "DNS preflight failure changed the active nftables classifier"
+if grep -Fq 'ip daddr 198.51.100.0/24' <<<"$chain_after_dns_failure"; then
+    fail "DNS preflight failure partially installed the candidate classifier"
+fi
+ip -n "$NS" -4 route show table 10000 | grep -Fq 'default dev awg-primary proto 242' || fail "DNS preflight failure changed the active egress route"
+if ip -n "$NS" -4 rule show | grep -q 'fwmark 0x90000000'; then
+    fail "DNS preflight failure installed candidate policy rules"
+fi
+# Remove the intentionally invalid endpoint; subsequent reload probes exercise
+# failures after successful endpoint preparation.
+sed -i '/endpoint = "vpn-relay-dns-failure.invalid:51820"/d' "$TMP/config.toml"
 
 # Reserve the first dynamic table slot with foreign state. Reload must skip
 # this slot rather than adopting or deleting another process's resources.
