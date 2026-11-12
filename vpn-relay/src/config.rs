@@ -1055,6 +1055,18 @@ egress = "awg-uplink"
     }
 
     #[test]
+    fn shipped_example_configuration_parses_and_uses_only_supported_fields() {
+        let config = Config::parse_toml(include_str!("../vpn-relay.example.toml")).unwrap();
+        assert_eq!(config.interfaces.len(), 3);
+        assert_eq!(config.routing.rules.len(), 3);
+        assert_eq!(config.routing.mark_base, 0x8000_0000);
+        assert_eq!(config.firewall.input.rules.len(), 1);
+        assert_eq!(config.firewall.output.rules.len(), 1);
+        assert!(config.interfaces["awg-primary"].has_awg_parameters());
+        assert!(!config.interfaces["wg-server"].has_awg_parameters());
+    }
+
+    #[test]
     fn forwarding_interface_allowlist_requires_explicit_global_management() {
         let text = valid_config().replace(
             "manage_ip_forwarding = false",
