@@ -30,7 +30,7 @@ trap cleanup EXIT
 
 fail() {
     echo "vpn-relay namespace test: $*" >&2
-    for log in "$TMP/bootstrap-nft-failure.log" "$TMP/indexed-nft-failure.log" "$TMP/startup-route-rollback-failure.log" "$TMP/startup-nft-cleanup-ip-commands.log" "$TMP/startup-route-rollback-ip.log" "$TMP/startup-route-rollback-route-after.txt" "$TMP/startup-route-rollback-routes-all.txt" "$TMP/startup-nft-cleanup-failure.log" "$TMP/daemon.log" "$TMP/conflict.log" "$TMP/policy-conflict.log" "$TMP/route-conflict.log" "$TMP/policy-shadow-conflict.log" "$TMP/partial-setup-conflict.log" "$TMP/partial-interface-config.log" "$TMP/partial-policy-route.log" "$TMP/partial-forwarding.log" "$TMP/partial-ipv4-forwarding.log" "$TMP/partial-ipv4-forwarding-restore-failure.log" "$TMP/startup-forwarding-route-cleanup-failure.log" "$TMP/reload-failure.log" "$TMP/reload-dns-failure.log" "$TMP/reload-route-failure.log" "$TMP/reload-immutable.log" "$TMP/shutdown-cleanup-failure.log" "$TMP/shutdown-forwarding-restore-failure.log" "$TMP/preexisting-forwarding.log" "$TMP/fail-route-commands.log" "$TMP/forwarding-management-disabled.log" "$TMP/tun-identity-loss.log"; do
+    for log in "$TMP/bootstrap-nft-failure.log" "$TMP/indexed-nft-failure.log" "$TMP/startup-route-rollback-failure.log" "$TMP/startup-nft-cleanup-ip-commands.log" "$TMP/startup-route-rollback-ip.log" "$TMP/startup-route-rollback-route-after.txt" "$TMP/startup-route-rollback-routes-all.txt" "$TMP/startup-nft-cleanup-failure.log" "$TMP/daemon.log" "$TMP/conflict.log" "$TMP/policy-conflict.log" "$TMP/route-conflict.log" "$TMP/policy-shadow-conflict.log" "$TMP/partial-setup-conflict.log" "${TMP}/partial-interface-config.log" "$TMP/partial-interface-mtu.log" "$TMP/partial-policy-route.log" "$TMP/partial-forwarding.log" "$TMP/partial-ipv4-forwarding.log" "$TMP/partial-ipv4-forwarding-restore-failure.log" "$TMP/startup-forwarding-route-cleanup-failure.log" "$TMP/reload-failure.log" "$TMP/reload-dns-failure.log" "$TMP/reload-route-failure.log" "$TMP/reload-immutable.log" "$TMP/shutdown-cleanup-failure.log" "$TMP/shutdown-forwarding-restore-failure.log" "$TMP/preexisting-forwarding.log" "$TMP/fail-route-commands.log" "$TMP/forwarding-management-disabled.log" "$TMP/tun-identity-loss.log"; do
         if [[ -f "$log" ]]; then
             cat "$log" >&2
         fi
@@ -275,6 +275,22 @@ EOF
 chmod +x "$TMP/fail-interface-config/ip"
 expect_startup_failure partial-interface-config.log "injected TUN address configuration failure" "$TMP/fail-interface-config"
 grep -Fq "injected TUN address configuration failure" "$TMP/partial-interface-config.log" || fail "TUN address configuration failure was not observed"
+
+# Fail the earlier MTU/link activation step independently from address setup.
+# The just-created TUN must be destroyed and the bootstrap firewall removed.
+mkdir -p "$TMP/fail-interface-mtu"
+cat >"$TMP/fail-interface-mtu/ip" <<EOF
+#!/bin/sh
+if [ "\$1" = "link" ] && [ "\$2" = "set" ] && [ "\$3" = "dev" ] \
+    && [ "\$4" = "awg-primary" ] && [ "\$5" = "mtu" ]; then
+    echo "injected TUN MTU configuration failure" >&2
+    exit 42
+fi
+exec "$REAL_IP_CONFIG" "\$@"
+EOF
+chmod +x "$TMP/fail-interface-mtu/ip"
+expect_startup_failure partial-interface-mtu.log "injected TUN MTU configuration failure" "$TMP/fail-interface-mtu"
+grep -Fq "injected TUN MTU configuration failure" "$TMP/partial-interface-mtu.log" || fail "TUN MTU configuration failure was not observed"
 
 # A failed firewall deletion after a partial interface setup must be reported
 # as fatal and must leave the owned drop policy installed. The test repairs only
