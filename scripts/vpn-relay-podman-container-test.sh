@@ -36,10 +36,10 @@ CONTAINER_NETNS_INODE="$(stat -Lc '%i' /proc/self/ns/net)"
     || fail "Podman did not configure the private namespace IPv4 forwarding prerequisite"
 
 ip link show dev eth0 >/dev/null 2>&1 || fail "expected bridge interface eth0 is missing"
-printf '0\n' > /proc/sys/net/ipv4/conf/lo/forwarding
-printf '0\n' > /proc/sys/net/ipv4/conf/eth0/forwarding
-[[ "$(cat /proc/sys/net/ipv4/conf/lo/forwarding)" == "0" ]] || fail "could not isolate loopback forwarding"
-[[ "$(cat /proc/sys/net/ipv4/conf/eth0/forwarding)" == "0" ]] || fail "could not set eth0 forwarding baseline"
+# Podman mounts /proc/sys read-only by default. Baseline values are supplied
+# through its namespace-scoped --sysctl options, not written from the container.
+[[ "$(cat /proc/sys/net/ipv4/conf/lo/forwarding)" == "0" ]] || fail "Podman did not set loopback forwarding baseline"
+[[ "$(cat /proc/sys/net/ipv4/conf/eth0/forwarding)" == "0" ]] || fail "Podman did not set eth0 forwarding baseline"
 
 # Prove nftables administration is available inside the container before
 # vpn-relay starts; the daemon itself separately proves TUN and rtnetlink access.
