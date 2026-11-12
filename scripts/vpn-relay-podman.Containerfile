@@ -9,4 +9,4 @@ RUN apt-get update \
 COPY target/debug/vpn-relay /usr/local/bin/vpn-relay
 COPY scripts/vpn-relay-podman-container-test.sh /usr/local/bin/vpn-relay-podman-container-test
 
-ENTRYPOINT ["/usr/local/bin/vpn-relay-podman-container-test"]
+ENTRYPOINT ["/usr/bin/bash", "/usr/local/bin/vpn-relay-podman-container-test"]
