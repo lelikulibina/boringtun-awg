@@ -1874,8 +1874,13 @@ mod tests {
         file.sync_all().unwrap();
 
         let error = recover_forwarding_state(&path, 4242).unwrap_err();
-        assert!(error.to_string().contains("unsupported forwarding state version 2"));
-        assert!(path.exists(), "unsupported recovery journal must be retained");
+        assert!(error
+            .to_string()
+            .contains("unsupported forwarding state version 2"));
+        assert!(
+            path.exists(),
+            "unsupported recovery journal must be retained"
+        );
         let _ = fs::remove_file(path);
     }
 
