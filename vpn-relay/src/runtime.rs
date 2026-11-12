@@ -2470,9 +2470,14 @@ mod tests {
                     },
                 );
 
-                assert!(injected.get(), "{failure_kind} failure point {failure_position} was not reached");
-                assert!(matches!(result, Err(RuntimeError::Forwarding(_))),
-                    "{failure_kind} failure point {failure_position} returned an unexpected result: {result:?}");
+                assert!(
+                    injected.get(),
+                    "{failure_kind} failure point {failure_position} was not reached"
+                );
+                assert!(
+                    matches!(result, Err(RuntimeError::Forwarding(_))),
+                    "{failure_kind} failure point {failure_position} returned an unexpected result: {result:?}"
+                );
                 let values = values.into_inner();
                 for name in ["eth0", "eth1", "eth2"] {
                     assert_eq!(
