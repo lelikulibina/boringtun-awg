@@ -995,6 +995,7 @@ egress = "awg-primary"
         assert!(script.contains("forward oif 18 oifname != \"awg-primary\" counter drop"));
         assert!(script.contains("output oifname \"awg-secondary\" oif != 19 counter drop"));
         assert!(script.contains("output oif 19 oifname != \"awg-secondary\" counter drop"));
+        assert!(!script.contains("\\n\\"));
         assert!(!script.contains("type ifname"));
     }
 
