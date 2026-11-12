@@ -236,11 +236,10 @@ IPv6 sysctl. `boringtun/` остаётся неизменённым; IPv4-only �
 Поэтому source CIDR в routing/firewall rule — это фильтр адреса, а не
 самостоятельная проверка идентичности peer.
 
-BoringTun проверяет source IP после декапсуляции: перед записью пакета в TUN
-он проверяет, что адрес принадлежит именно расшифровавшему
-пакет peer в едином `peers_by_ip` индексе. Это защищает от подмены source IP
-между peers, в том числе после переноса prefix от одного peer к другому.
-Проверка выполняется backend, а не nftables.
+Внутренняя source-IP validation BoringTun после декапсуляции остаётся
+без изменений. Она относится к tunnel backend, а не к IPv4-only модели
+конфигурации vpn-relay. Сам каталог `boringtun/` в рамках этого изменения
+не затрагивается.
 
 Peer-level source validation относится к tunnel backend и его AllowedIPs
 механизму. Нельзя строить утверждение о peer isolation только на nftables
