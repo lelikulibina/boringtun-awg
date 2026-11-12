@@ -372,6 +372,32 @@ for family in -4; do
     fi
 done
 
+# A second-egress route installation failure with successful rollback must
+# remove every candidate resource, including the already-installed first egress.
+# This complements the following double-failure case, which intentionally
+# leaves the fail-closed firewall in place.
+mkdir -p "$TMP/fail-route-install"
+cat >"$TMP/fail-route-install/ip" <<EOF
+#!/bin/sh
+if [ "\$1" = "-4" ] && [ "\$2" = "route" ] && [ "\$3" = "replace" ] \\
+    && [ "\$4" = "default" ] && [ "\$6" = "awg-secondary" ] && [ "\$8" = "10001" ]; then
+    echo "injected second-egress IPv4 policy-route installation failure" >&2
+    exit 42
+fi
+exec "$REAL_IP" "\$@"
+EOF
+chmod +x "$TMP/fail-route-install/ip"
+expect_startup_failure partial-policy-route.log "second-egress IPv4 policy-route installation failure" "$TMP/fail-route-install"
+grep -Fq "injected second-egress IPv4 policy-route installation failure" "$TMP/partial-policy-route.log" || fail "second-egress policy-route installation failure was not observed"
+if ip -n "$NS" -4 rule show | grep -q 'proto 242'; then
+    fail "policy rules leaked after successful startup policy-route rollback"
+fi
+for table in 10000 10001; do
+    if ip -n "$NS" -4 route show table "$table" | grep -q .; then
+        fail "policy routes leaked from table $table after successful startup rollback"
+    fi
+done
+
 # If policy-route installation fails on the second egress and rollback of the
 # first egress also fails, startup must retain the bootstrap/indexed drop policy.
 # The first egress route is guaranteed to have been installed before injection.
