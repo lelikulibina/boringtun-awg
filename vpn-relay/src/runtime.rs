@@ -2405,6 +2405,87 @@ mod tests {
     }
 
     #[test]
+    fn interface_forwarding_enable_failure_matrix_restores_every_interface() {
+        // Exercise every identity-check and write boundary. A failed write may
+        // have changed the kernel value before reporting an error, so rollback
+        // must inspect and restore every managed interface, not only writes
+        // which returned success.
+        for failure_kind in ["verify", "write"] {
+            for failure_position in 0..3 {
+                let state = ForwardingState {
+                    ipv4: "1".to_owned(),
+                    ipv4_changed: false,
+                    interfaces: vec![
+                        test_forwarding_entry("eth0", 7),
+                        test_forwarding_entry("eth1", 8),
+                        test_forwarding_entry("eth2", 9),
+                    ],
+                };
+                let values = std::cell::RefCell::new(std::collections::BTreeMap::from([
+                    ("net.ipv4.conf.eth0.forwarding".to_owned(), "0".to_owned()),
+                    ("net.ipv4.conf.eth1.forwarding".to_owned(), "0".to_owned()),
+                    ("net.ipv4.conf.eth2.forwarding".to_owned(), "0".to_owned()),
+                ]));
+                let mut verify_position = 0usize;
+                let mut write_position = 0usize;
+                let mut injected = false;
+
+                let result = enable_interface_forwarding_entries_with(
+                    &state,
+                    |key| Ok(values.borrow().get(key).cloned().unwrap()),
+                    |key, value| {
+                        if value == "1" {
+                            let position = write_position;
+                            write_position += 1;
+                            // Model an ambiguous sysctl result: the kernel
+                            // accepted the write, but the command failed.
+                            values.borrow_mut().insert(key.to_owned(), value.to_owned());
+                            if failure_kind == "write"
+                                && position == failure_position
+                                && !injected
+                            {
+                                injected = true;
+                                return Err(RuntimeError::Forwarding(format!(
+                                    "injected write failure at interface {position}"
+                                )));
+                            }
+                        } else {
+                            values.borrow_mut().insert(key.to_owned(), value.to_owned());
+                        }
+                        Ok(())
+                    },
+                    |name, _| {
+                        let position = verify_position;
+                        verify_position += 1;
+                        if failure_kind == "verify"
+                            && position == failure_position
+                            && !injected
+                        {
+                            injected = true;
+                            return Err(RuntimeError::Forwarding(format!(
+                                "injected identity failure at {name}"
+                            )));
+                        }
+                        Ok(())
+                    },
+                );
+
+                assert!(injected, "{failure_kind} failure point {failure_position} was not reached");
+                assert!(matches!(result, Err(RuntimeError::Forwarding(_))),
+                    "{failure_kind} failure point {failure_position} returned an unexpected result: {result:?}");
+                let values = values.into_inner();
+                for name in ["eth0", "eth1", "eth2"] {
+                    assert_eq!(
+                        values[&format!("net.ipv4.conf.{name}.forwarding")],
+                        "0",
+                        "{failure_kind} failure at position {failure_position} did not restore {name}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn interface_forwarding_enable_reports_fatal_when_rollback_fails() {
         let state = ForwardingState {
             ipv4: "1".to_owned(),
