@@ -956,13 +956,6 @@ mtu = 1380
 listen_port = 51821
 private_key = "{KEY}"
 socket_fwmark = 4098
-
-[[interfaces.awg-uplink.peers]]
-public_key = "{KEY}"
-endpoint = "198.51.100.10:51820"
-allowed_ips = ["0.0.0.0/0"]
-persistent_keepalive_secs = 25
-
 jc = 5
 jmin = 50
 jmax = 1000
@@ -974,6 +967,12 @@ h1 = "1-100"
 h2 = "101-200"
 h3 = "201-300"
 h4 = "301-400"
+
+[[interfaces.awg-uplink.peers]]
+public_key = "{KEY}"
+endpoint = "198.51.100.10:51820"
+allowed_ips = ["0.0.0.0/0"]
+persistent_keepalive_secs = 25
 
 [[routing.rules]]
 priority = 100
@@ -1422,6 +1421,30 @@ egress = "awg-uplink"
     fn configuration_uses_only_the_canonical_singular_address_key() {
         let input = valid_config().replace("address =", "addresses =");
         assert!(Config::parse_toml(&input).is_err());
+    }
+
+    #[test]
+    fn awg_parameters_are_flattened_and_legacy_nested_table_is_rejected() {
+        let config = Config::parse_toml(&valid_config()).unwrap();
+        let awg = &config.interfaces["awg-uplink"];
+        assert_eq!(awg.awg.as_ref().and_then(|value| value.jc), Some(5));
+
+        let serialized = toml::to_string(awg).unwrap();
+        assert!(serialized.contains("jc = 5"));
+        assert!(!serialized.contains("[awg]"));
+
+        let legacy = valid_config()
+            .replace("jc = 5\\n", "")
+            + "\\n[interfaces.awg-uplink.awg]\\njc = 5\\n";
+        let error = Config::parse_toml(&legacy).unwrap_err().to_string();
+        assert!(error.contains("move AWG parameters directly into [interfaces.awg-uplink]"));
+    }
+
+    #[test]
+    fn unknown_flattened_interface_keys_are_rejected() {
+        let input = valid_config().replace("mtu = 1380", "mtu = 1380\\nmtuu = 1400");
+        let error = Config::parse_toml(&input).unwrap_err().to_string();
+        assert!(error.contains("interfaces.wg-server.mtuu"));
     }
 
     #[test]
