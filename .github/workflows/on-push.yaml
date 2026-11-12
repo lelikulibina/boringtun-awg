@@ -241,7 +241,7 @@ jobs:
       - name: Verify per-interface forwarding ownership and recovery
         timeout-minutes: 5
         run: timeout --signal=TERM --kill-after=15s 4m sudo bash scripts/vpn-relay-per-interface-forwarding-test.sh
-      - name: Verify IPv4/IPv6 per-interface forwarding at packet level
+      - name: Verify IPv4 per-interface forwarding at packet level
         run: sudo bash scripts/vpn-relay-per-interface-forwarding-packet-test.sh
       - name: Verify bidirectional WireGuard peer traffic
         run: sudo bash scripts/vpn-relay-peer-traffic-test.sh wg
