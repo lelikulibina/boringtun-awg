@@ -377,11 +377,11 @@ impl RoutingPlan {
                 self.nft_family, self.nft_table, set_type, elements
             ));
             output.push_str(&format!(
-                "add rule {} {} prerouting {} @ipv6_drop_interfaces meta nfproto ipv6 drop\n",
+                "add rule {} {} prerouting {} @ipv6_drop_interfaces meta nfproto ipv6 counter drop\n",
                 self.nft_family, self.nft_table, input_selector
             ));
             output.push_str(&format!(
-                "add rule {} {} forward {} @ipv6_drop_interfaces meta nfproto ipv6 drop\n",
+                "add rule {} {} forward {} @ipv6_drop_interfaces meta nfproto ipv6 counter drop\n",
                 self.nft_family, self.nft_table, output_selector
             ));
             output.push_str(&format!(
@@ -985,8 +985,8 @@ egress = "awg-primary"
         assert!(
             script.contains("ipv6_drop_interfaces { type iface_index; elements = { 18, 19, 17 }")
         );
-        assert!(script.contains("prerouting iif @ipv6_drop_interfaces meta nfproto ipv6 drop"));
-        assert!(script.contains("forward oif @ipv6_drop_interfaces meta nfproto ipv6 drop"));
+        assert!(script.contains("prerouting iif @ipv6_drop_interfaces meta nfproto ipv6 counter drop"));
+        assert!(script.contains("forward oif @ipv6_drop_interfaces meta nfproto ipv6 counter drop"));
         assert!(script.contains("output oif @ipv6_drop_interfaces meta nfproto ipv6 counter drop"));
         assert_eq!(script.matches("meta nfproto ipv6").count(), 3);
         assert!(script.contains("prerouting iif 17 ct state new"));
