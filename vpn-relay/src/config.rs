@@ -113,7 +113,6 @@ pub enum NatAction {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
 pub struct InterfaceConfig {
     #[serde(rename = "type")]
     pub tunnel_type: TunnelType,
@@ -128,7 +127,9 @@ pub struct InterfaceConfig {
     pub socket_fwmark: Option<u32>,
     #[serde(default)]
     pub peers: Vec<PeerConfig>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// AWG protocol parameters share the interface table with the standard
+    /// tunnel fields, matching AmneziaWG's [Interface] configuration model.
+    #[serde(flatten, default, skip_serializing_if = "Option::is_none")]
     pub awg: Option<AmneziaWgConfig>,
 }
 
@@ -303,11 +304,45 @@ where
     })
 }
 
+
+/// Validate interface keys before deserializing the flattened AWG parameter
+/// set. Serde's flatten cannot be combined with deny_unknown_fields, so
+/// this explicit check preserves the daemon's fail-closed typo handling.
+fn validate_interface_table_keys(value: &toml::Value) -> Result<(), ConfigError> {
+    const ALLOWED: &[&str] = &[
+        "type", "address", "mtu", "listen_port", "private_key", "socket_fwmark", "peers",
+        "jc", "jmin", "jmax", "s1", "s2", "s3", "s4", "h1", "h2", "h3", "h4",
+        "disable_cookies", "random_trailers", "i1", "i2", "i3", "i4", "i5",
+        "header_protection_key", "content_padding_addition", "rekey_after_time",
+        "rekey_timeout", "reject_after_time", "keepalive_timeout", "max_handshake_attempts",
+    ];
+
+    let Some(interfaces) = value.get("interfaces").and_then(toml::Value::as_table) else {
+        return Ok(());
+    };
+    for (name, interface) in interfaces {
+        let Some(fields) = interface.as_table() else {
+            continue;
+        };
+        if fields.contains_key("awg") {
+            return invalid(format!(
+                "interfaces.{name}.awg is not a valid table; move AWG parameters directly into [interfaces.{name}]"
+            ));
+        }
+        if let Some(unknown) = fields.keys().find(|key| !ALLOWED.contains(&key.as_str())) {
+            return invalid(format!("unknown field 'interfaces.{name}.{unknown}'"));
+        }
+    }
+    Ok(())
+}
+
 impl Config {
     /// Parse TOML and validate the complete configuration before any system
     /// resource (TUN, UDP socket, nftables rule, or route) is created.
     pub fn parse_toml(input: &str) -> Result<Self, ConfigError> {
-        let config: Self = toml::from_str(input)?;
+        let value: toml::Value = toml::from_str(input)?;
+        validate_interface_table_keys(&value)?;
+        let config: Self = value.try_into()?;
         config.validate()?;
         Ok(config)
     }
@@ -538,7 +573,7 @@ impl Config {
 
             if interface.tunnel_type == TunnelType::WireGuard && interface.awg.is_some() {
                 return invalid(format!(
-                    "interfaces.{}.awg is not valid for tunnel type 'wg'",
+                    "AWG parameters on interface '{}' are not valid for tunnel type 'wg'",
                     interface_name
                 ));
             }
@@ -928,7 +963,6 @@ endpoint = "198.51.100.10:51820"
 allowed_ips = ["0.0.0.0/0"]
 persistent_keepalive_secs = 25
 
-[interfaces.awg-uplink.awg]
 jc = 5
 jmin = 50
 jmax = 1000

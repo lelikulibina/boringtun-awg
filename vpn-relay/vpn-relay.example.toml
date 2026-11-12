@@ -32,7 +32,6 @@ listen_port = 51821
 private_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 # socket_fwmark не задан: демон назначит его автоматически
 
-[interfaces.awg-primary.awg]
 # Необязательно: явный выбор поколения. Если опустить, BoringTun определит
 # минимальное совместимое поколение по параметрам ниже.
 jc = 4
@@ -81,7 +80,6 @@ listen_port = 51822
 private_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 # socket_fwmark не задан: демон назначит его автоматически
 
-[interfaces.awg-secondary.awg]
 jc = 4
 jmin = 40
 jmax = 80
