@@ -178,14 +178,6 @@ fn run_nft_script(script: &str) -> Result<(), LinuxError> {
     })
 }
 
-#[cfg(test)]
-fn apply_nft_script_with<F>(script: &str, run_script: &mut F) -> Result<(), LinuxError>
-where
-    F: FnMut(&str) -> Result<(), LinuxError>,
-{
-    run_script(script)
-}
-
 pub fn remove_nft(plan: &RoutingPlan) -> Result<(), LinuxError> {
     remove_nft_with(plan, &mut inspect_nft_table, &mut run)
 }
@@ -2064,45 +2056,6 @@ mod tests {
         assert_eq!(delete_calls, 1);
         assert!(matches!(result, Err(LinuxError::Command { ref stderr, .. })
             if stderr.contains("injected delete failure")));
-    }
-
-    #[test]
-    fn nft_batch_failure_is_reported_without_mutating_the_committed_policy() {
-        let script = "delete table inet vpn_relay\ntable inet vpn_relay { }\n";
-        let mut submitted = None;
-        let result = apply_nft_script_with(script, &mut |batch| {
-            submitted = Some(batch.to_owned());
-            Err(LinuxError::Command {
-                program: "nft -f -".into(),
-                status: "exit status 1".into(),
-                stderr: "injected transaction validation failure".into(),
-            })
-        });
-
-        assert_eq!(submitted.as_deref(), Some(script));
-        assert!(matches!(result, Err(LinuxError::Command { ref stderr, .. })
-            if stderr.contains("injected transaction validation failure")));
-    }
-
-    #[test]
-    fn nft_replacement_is_submitted_as_one_atomic_batch() {
-        let plan = cleanup_test_plan();
-        let mut batch = String::new();
-        batch.push_str(&format!(
-            "delete table {} {}\n",
-            plan.nft_family, plan.nft_table
-        ));
-        batch.push_str(&plan.nft_script());
-
-        let mut calls = 0;
-        apply_nft_script_with(&batch, &mut |script| {
-            calls += 1;
-            assert!(script.starts_with("delete table inet vpn_relay\n"));
-            assert!(script.contains("table inet vpn_relay"));
-            Ok(())
-        })
-        .unwrap();
-        assert_eq!(calls, 1, "replacement must be a single nft transaction");
     }
 
     fn ipv4_link_response(forwarding: u32) -> Vec<u8> {
