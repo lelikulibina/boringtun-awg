@@ -34,6 +34,7 @@ jobs:
       - tests
       - integration-tests
       - kernel-compatibility
+      - podman-deployment
       - awg31-interoperability
     steps:
       - run: exit 0
@@ -222,6 +223,41 @@ jobs:
       - name: Verify packet-level forwarding and managed-TUN IPv6 drop
         timeout-minutes: 6
         run: timeout --signal=TERM --kill-after=15s 5m sudo bash scripts/vpn-relay-per-interface-forwarding-packet-test.sh
+
+  # Validate the documented deployment boundary with a real rootful
+  # Podman container, private bridge namespace and narrowly scoped privileges.
+  podman-deployment:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+      - name: Build vpn-relay
+        run: cargo build -p vpn-relay --bin vpn-relay
+      - name: Install rootful Podman
+        run: |
+          if ! command -v podman >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y podman
+          fi
+          rootless="$(sudo podman info --format '{{.Host.Security.Rootless}}')"
+          [[ "$rootless" == "false" ]] || { echo "Podman is not running rootful" >&2; exit 1; }
+          sudo podman network exists podman || sudo podman network create podman
+      - name: Build minimal vpn-relay test image
+        run: sudo podman build --storage-driver=vfs --file scripts/vpn-relay-podman.Containerfile --tag vpn-relay-podman-test .
+      - name: Verify private namespace, NET_ADMIN, TUN, nftables and IPv4 sysctl
+        run: |
+          host_netns_inode="$(stat -Lc '%i' /proc/self/ns/net)"
+          sudo podman run --rm \
+            --name vpn-relay-podman-test \
+            --network bridge \
+            --cap-add NET_ADMIN \
+            --device /dev/net/tun:/dev/net/tun \
+            --sysctl net.ipv4.ip_forward=1 \
+            --env HOST_NETNS_INODE="$host_netns_inode" \
+            vpn-relay-podman-test
 
   integration-tests:
     timeout-minutes: 45
