@@ -589,10 +589,6 @@ where
     }
 }
 
-fn run_ip_cleanup(args: &[String]) -> Result<(), LinuxError> {
-    run_ip_cleanup_with(args, &mut run)
-}
-
 /// Remove only egress rules/routes tagged with vpn-relay's protocol marker.
 /// Missing resources are already clean; any other failure is reported.
 fn remove_egress_policy_routing_with<F>(
