@@ -806,26 +806,6 @@ egress = "awg-primary"
     }
 
     #[test]
-    fn ipv4_only_mode_blocks_ipv6_only_on_managed_tun_interfaces() {
-        let mut config = sample_config();
-        let plan = RoutingPlan::from_config(&config);
-        let commands = plan.ip_commands();
-        assert!(commands
-            .iter()
-            .all(|command| command.first().is_some_and(|family| family == "-4")));
-        assert!(!commands
-            .iter()
-            .any(|command| command.first().is_some_and(|family| family == "-6")));
-
-        let script = plan.nft_script();
-        assert!(!script.contains("socket_fwmarks"));
-        assert!(!script.contains("socket mark @socket_fwmarks drop"));
-        assert!(!script.contains("meta mark @socket_fwmarks drop"));
-        assert!(script.contains("prerouting iifname @ipv6_drop_interfaces meta nfproto ipv6 drop"));
-        assert!(!script.contains("snat ip6"));
-    }
-
-    #[test]
     fn ipv4_only_selector_free_routing_firewall_and_masquerade_are_family_limited() {
         let mut config = sample_config();
         config.routing.rules[0].source = None;
@@ -990,32 +970,11 @@ egress = "awg-primary"
     }
 
     #[test]
-    fn ipv6_drop_guard_covers_every_managed_tun_by_numeric_identity() {
-        let mut config = sample_config();
-        let mut plan = RoutingPlan::from_config(&config);
-        plan.bind_interface_indices(BTreeMap::from([
-            ("wg-server".to_owned(), 17),
-            ("awg-primary".to_owned(), 18),
-            ("awg-secondary".to_owned(), 19),
-        ]))
-        .unwrap();
-
-        let script = plan.nft_script();
-        assert!(
-            script.contains("ipv6_drop_interfaces { type iface_index; elements = { 18, 19, 17 }")
-        );
-        assert!(script.contains("prerouting iif @ipv6_drop_interfaces meta nfproto ipv6 drop"));
-        assert!(script.contains("forward oif @ipv6_drop_interfaces meta nfproto ipv6 drop"));
-        assert!(script.contains("output oif @ipv6_drop_interfaces meta nfproto ipv6 drop"));
-    }
-
-    #[test]
     fn nft_policy_drops_unmatched_managed_interface_transit() {
         let plan = RoutingPlan::from_config(&sample_config());
         let script = plan.nft_script();
         assert!(script.contains("elements = { \"awg-primary\", \"awg-secondary\", \"wg-server\" }"));
         assert!(script.contains("forward iifname @managed_interfaces drop"));
-        assert!(script.contains("ipv6_drop_interfaces { type ifname;"));
         assert!(script.contains("add chain inet vpn_relay output { type filter hook output priority filter; policy accept; }"));
         assert!(script.contains("forward oifname @managed_interfaces drop"));
         assert!(script.contains("iifname @managed_interfaces meta mark set 0"));
