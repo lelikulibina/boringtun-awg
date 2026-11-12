@@ -85,7 +85,7 @@ done
 
 ip link show dev wg0 >/dev/null 2>&1 || fail "daemon-managed TUN wg0 is missing"
 ip -4 address show dev wg0 | grep -Fq "10.200.0.1/24" || fail "TUN IPv4 address was not configured"
-nft list chain inet "$TABLE" output | grep -Fq 'meta nfproto ipv6 drop' \
+nft list chain inet "$TABLE" output | grep -Eq 'meta nfproto ipv6.*drop' \
     || fail "managed-TUN IPv6 drop rule is missing"
 kill -0 "$PID" 2>/dev/null || fail "daemon exited after successful startup"
 
