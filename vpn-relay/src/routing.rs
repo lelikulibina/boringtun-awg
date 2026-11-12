@@ -530,11 +530,9 @@ impl RoutingPlan {
                     self.nft_family, self.nft_table, selector
                 )),
                 NatAction::Snat(address) => {
-                    let family = "ip";
-                    let nfproto = "ipv4";
                     output.push_str(&format!(
-                        "add rule {} {} postrouting {} meta nfproto {} snat {} to {}\n",
-                        self.nft_family, self.nft_table, selector, nfproto, family, address
+                        "add rule {} {} postrouting {} snat ip to {}\n",
+                        self.nft_family, self.nft_table, selector, address
                     ));
                 }
             }
@@ -911,7 +909,7 @@ egress = "awg-primary"
         assert!(!script.contains("prerouting iifname \"wg-server\" ct state new ip saddr"));
         assert!(!script.contains("prerouting iifname \"wg-server\" ct state new ip daddr"));
         assert!(script.contains(
-            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark & 0xffff0000 == 0x50010000 return"
+            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark & 0xffff0000 == 0x50010000 meta nfproto ipv4 return"
         ));
     }
 
@@ -979,7 +977,7 @@ egress = "awg-primary"
 
         let script = plan.nft_script();
         assert!(
-            script.contains("ipv6_drop_interfaces { type iface_index; elements = { 17, 18, 19 }")
+            script.contains("ipv6_drop_interfaces { type iface_index; elements = { 18, 19, 17 }")
         );
         assert!(script.contains("prerouting iif @ipv6_drop_interfaces meta nfproto ipv6 drop"));
         assert!(script.contains("forward oif @ipv6_drop_interfaces meta nfproto ipv6 drop"));
@@ -1021,7 +1019,7 @@ egress = "awg-primary"
         config.routing.rules[0].nat = NatMode::Masquerade;
         let script = RoutingPlan::from_config(&config).nft_script();
         assert!(script.contains(
-            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark & 0xffff0000 == 0x50010000 masquerade"
+            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark & 0xffff0000 == 0x50010000 meta nfproto ipv4 masquerade"
         ));
         assert!(!script.contains("masquerade return"));
     }
@@ -1151,7 +1149,7 @@ egress = "awg-primary"
             "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark & 0xffff0000 == 0x50010000 return"
         ));
         assert!(script.contains(
-            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark & 0xffff0000 == 0x50020000 masquerade"
+            "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark & 0xffff0000 == 0x50020000 meta nfproto ipv4 masquerade"
         ));
         assert!(!script.contains(
             "postrouting iifname \"wg-server\" oifname \"awg-secondary\" ct mark & 0xffff0000 == 0x50010000 masquerade"
