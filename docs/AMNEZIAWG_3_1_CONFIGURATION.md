@@ -27,11 +27,12 @@
 
 ## 2. UAPI-параметры AWG 3.1
 
+`vpn-relay` принимает параметры AWG в `[interfaces.<name>.awg]`; семейство туннеля задаётся через `type = "awg"`. Поколение AWG определяется и проверяется внутри BoringTun по набору параметров. В конфигурации `vpn-relay` отдельного поля поколения нет. `I1-I5` принимают upstream-грамматику CPS-цепочек; `header_protection_key` — стандартный Base64-ключ длиной 32 байта (как ключи WireGuard); перед передачей во внутренний UAPI-совместимый слой он преобразуется в hex; `content_padding_addition` и все пять таймеров принимают uint32 или включительный диапазон `MIN-MAX`. BoringTun автоматически выбирает алгоритм Content Padding: ограничение по MTU для AWG 3.0 и по UDP window для AWG 3.1. Этот внутренний выбор не является параметром TOML. Неизвестные ключи, некорректные CPS-цепочки, диапазоны и значения таймеров отклоняются до создания интерфейсов.
+
 | Параметр | Формат | Default / смысл |
 |---|---|---|
-| `header_protection_key` | 64 hex-символа (32 байта) | Нулевой ключ отключает HP. Один ключ на обоих концах. При HP все S1-S4 должны быть ≥12 байт. |
+| `header_protection_key` | Base64 (32 байта после декодирования) | Нулевой ключ отключает HP. Один ключ на обоих концах. При HP все S1-S4 должны быть ≥12 байт. |
 | `content_padding_addition` | `N` или `MIN-MAX`, uint32 | Включительный диапазон нулевого padding внутри transport plaintext до AEAD. `0-0` выключает. |
-| `content_padding_mode` | `udp_window` или `mtu` | BoringTun-only: `udp_window` (default) — AWG 3.1; `mtu` — legacy CPA AWG 3.0. На проводе режим не согласуется. |
 | `random_trailers` | boolean | `false`. Внешний случайный trailer для handshake/cookie; нулевой padding внутри transport AEAD. |
 | `disable_cookies` | boolean | `false`. Пропускает under-load MAC2/cookie gate, но MAC1 остаётся обязательным. Входящие Cookie Reply продолжают приниматься. |
 | `rekey_after_time` | секунды, uint32 range | 120 с по умолчанию. |
@@ -80,7 +81,7 @@ Upstream issue [#189](https://github.com/amnezia-vpn/amneziawg-go/issues/189) д
 - Пустой handshake-confirmation keepalive также проходит transport padding path.
 - UDP window — high-water mark базовых исходящих transport datagrams до добавления padding/trailer. BoringTun обновляет его по исходящим пакетам, как upstream; входящий padded datagram не должен обучать локальное окно.
 
-CPA не ограничивает внешние handshake/cookie trailers — см. [upstream issue #185](https://github.com/amnezia-vpn/amneziawg-go/issues/185). В AWG 3.0 CPA выбирается и ограничивается относительно TUN MTU; в AWG 3.1 — относительно peer UDP window. BoringTun по умолчанию использует AWG 3.1; для AWG 3.0 задайте `content_padding_mode=mtu` через UAPI или `with_legacy_content_padding(true)` через библиотечный API. Режим локальный: его необходимо выбрать согласно версии/поведению удалённой реализации.
+CPA не ограничивает внешние handshake/cookie trailers — см. [upstream issue #185](https://github.com/amnezia-vpn/amneziawg-go/issues/185). В AWG 3.0 CPA выбирается и ограничивается относительно TUN MTU; в AWG 3.1 — относительно peer UDP window. BoringTun выбирает соответствующий алгоритм по поколению, определённому из конфигурации: MTU для AWG 3.0 и UDP window для AWG 3.1. В vpn-relay этот выбор не настраивается отдельно.
 
 ## 6. DisableCookies: безопасность
 
@@ -103,3 +104,24 @@ BoringTun следует исправленному upstream поведению 
 Любое изменение framing должно проверяться в обеих ролях: BoringTun server ↔ amneziawg-go client и amneziawg-go server ↔ BoringTun client. Для RandomTrailers нужны равные S на обеих сторонах; для HP — общий ключ и S≥12. Quick interop матрица в PR #13 выполняет 16 направленных сценариев: vanilla WG и AWG 2.x baseline, 1 MiB integrity transfer для AWG 3.0 и 3.1, combined AWG 3.1, accelerated rekey, packet-loss recovery и CPS I1-I5. Полная 44-сценарная матрица запускается отдельно через workflow_dispatch.
 
 Полное исследование параметров, версий, лимитов и известных upstream defects: [AMNEZIAWG_PROTOCOL_COMPATIBILITY.md](AMNEZIAWG_PROTOCOL_COMPATIBILITY.md).
+
+
+## 9. Управление IPv6 в btrouted
+
+В секции [daemon] параметр `ipv6_enabled` по умолчанию равен `true`. При `false` демон блокирует IPv6-пакеты, входящие в маршрутизацию через managed TUN-интерфейсы или направляемые в них, и не устанавливает IPv6 policy routes для uplink. Внешний UDP-транспорт BoringTun не фильтруется: VPN endpoint может оставаться IPv6-адресом. Настройка не отключает IPv6 в ОС и не меняет глобальный sysctl.
+
+## PersistentKeepalive
+
+Для совместимости фиксированное значение по-прежнему задаётся как
+`persistent_keepalive_secs = 25`. Диапазон AmneziaWG можно задать прямо в этом поле строкой:
+
+```toml
+[[interfaces.awg-uplink.peers]]
+public_key = "..."
+persistent_keepalive_secs = "25-35"
+```
+
+Границы включительные; допустимо `1 <= min <= max`. Одновременно указывать
+Поля `persistent_keepalive_secs` и `persistent_keepalive_range` нельзя указывать одновременно. Старый формат `persistent_keepalive_range = [25, 35]` также остаётся совместимым. Импорт
+WireGuard/AmneziaWG принимает `PersistentKeepalive = 25` и диапазон
+`PersistentKeepalive = 25-35`; `off`, `0` и `0-0` означают отключение.
