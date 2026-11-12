@@ -24,11 +24,12 @@ ROUTER_PID=""
 PRIMARY_PID=""
 SECONDARY_PID=""
 ROUTE_RELOAD_PING_PID=""
+PEER_REMOVAL_PING_PID=""
 IPERF_PIDS=()
 NETNS_INODES=()
 
 cleanup() {
-    for pid in "${IPERF_PIDS[@]}" "$CLIENT_PID" "$SECOND_CLIENT_PID" "$ROUTER_PID" "$PRIMARY_PID" "$SECONDARY_PID" "$ROUTE_RELOAD_PING_PID"; do
+    for pid in "${IPERF_PIDS[@]}" "$CLIENT_PID" "$SECOND_CLIENT_PID" "$ROUTER_PID" "$PRIMARY_PID" "$SECONDARY_PID" "$ROUTE_RELOAD_PING_PID" "$PEER_REMOVAL_PING_PID"; do
         if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
             kill -TERM "$pid" 2>/dev/null || true
             wait "$pid" 2>/dev/null || true
@@ -638,13 +639,13 @@ grep -Eq '100 packets transmitted, 100 received, 0% packet loss' "$TMP/runtime-r
 # bidirectional flow. This exercises the live peer-set commit independently
 # from routing/NAT policy changes: the unaffected peer must lose no packets,
 # while the removed peer must stop reaching the router.
-python3 - "$TMP/router.toml" <<'PY'
+python3 - "$TMP/router.toml" "$SECOND_CLIENT_PUBLIC" <<'PY'
 import sys
 path = sys.argv[1]
 with open(path, encoding="utf-8") as stream:
     config = stream.read()
-peer = '''[[interfaces.wg-ingress.peers]]
-public_key = "$SECOND_CLIENT_PUBLIC"
+peer = f'''[[interfaces.wg-ingress.peers]]
+public_key = "{sys.argv[2]}"
 allowed_ips = ["10.77.0.3/32"]
 
 '''
@@ -679,18 +680,18 @@ set -e
 
 # Restore the peer so the remaining multi-uplink checks can continue to cover
 # its source selectors and overlapping AllowedIPs behavior.
-python3 - "$TMP/router.toml" <<'PY'
+python3 - "$TMP/router.toml" "$SECOND_CLIENT_PUBLIC" <<'PY'
 import sys
 path = sys.argv[1]
 with open(path, encoding="utf-8") as stream:
     config = stream.read()
 anchor = "[interfaces.awg-primary]"
-peer = '''[[interfaces.wg-ingress.peers]]
-public_key = "$SECOND_CLIENT_PUBLIC"
+peer = f'''[[interfaces.wg-ingress.peers]]
+public_key = "{sys.argv[2]}"
 allowed_ips = ["10.77.0.3/32"]
 
 '''
-if config.count(anchor) != 1 or "$SECOND_CLIENT_PUBLIC" in config:
+if config.count(anchor) != 1 or sys.argv[2] in config:
     raise SystemExit("cannot safely restore the removed ingress peer")
 config = config.replace(anchor, peer + anchor, 1)
 with open(path, "w", encoding="utf-8") as stream:
