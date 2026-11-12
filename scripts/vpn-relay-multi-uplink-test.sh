@@ -974,4 +974,4 @@ overlap_v4_status=$?
 set -e
 [[ "$overlap_v4_status" -eq 124 ]] || fail "IPv4 source spoofing reached router TUN despite more-specific AllowedIPs ownership (tcpdump status $overlap_v4_status)"
 
-echo "vpn-relay multi-uplink test passed: IPv4 routing/NAT, bidirectional ICMP/TCP/UDP, continuous traffic during routing/NAT reload, outer UDP underlay isolation, independent uplink handshake recovery"
+echo "vpn-relay multi-uplink test passed: IPv4 routing/NAT, bidirectional ICMP/TCP/UDP, continuous traffic during routing/NAT reload and peer removal, AllowedIPs ownership handoff under load, outer UDP underlay isolation, independent uplink handshake recovery"
