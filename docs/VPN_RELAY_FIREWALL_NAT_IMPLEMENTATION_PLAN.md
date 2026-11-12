@@ -32,34 +32,33 @@
 Основная реализация firewall/NAT, routing, peer lifecycle, runtime reload,
 durable forwarding journal/recovery, per-interface IPv4 forwarding и Podman
 deployment уже существует. Повторная реализация этих подсистем не планируется.
-Основная CI и runtime acceptance матрица прошла на d22065d. Осталось
-подтвердить новый CI с release build и проверкой example config, выполнить
-финальный diff/dependency review и опубликовать релиз. Работа остаётся только
-в текущем репозитории; выделение в отдельный проект отложено.
+Полная CI и runtime acceptance матрица прошла на 239b619; example config
+validation и release build также прошли. Финальный diff/dependency review
+завершён. Остался только шаг публикации релиза 0.1.0; до фактической публикации
+версия и changelog остаются Unreleased. Работа остаётся в текущем репозитории.
 
 ### План до релиза
 
 | ID | Задача | Текущее состояние | Условие закрытия |
 |---|---|---|---|
-| R1 | Проверить CI на актуальном HEAD | Run 43262548826 на HEAD d22065d3205a1ce1ccfaf3451d7b131833528442 завершился success; все обязательные jobs и all-systems-go — success, Windows skipped. В процессе устранены две ошибки тестового harness: selectors для AllowedIPs fallback и readiness SIGKILL recovery. | Все обязательные jobs завершены success на одном SHA |
-| R2 | Peer restoration и AllowedIPs handoff | Fresh-handshake ожидание, удаление/повторное добавление peer, обновление AllowedIPs и передача бывшего адреса более широкому prefix прошли в multi-uplink integration job 43262548826. | Peer restoration и ownership handoff проходят packet-level CI |
-| R3 | TUN MTU startup rollback | Failure-injection probe и cleanup прошли в vpn-relay-netns-test.sh, integration job 43262548826. | Probe исполнен успешно в CI; cleanup подтверждён |
-| R4 | Startup cleanup и recovery matrix | Проверены route/policy rollback, nft bootstrap/indexed activation/cleanup, TUN address/MTU setup rollback, forwarding rollback, graceful cleanup и SIGKILL journal recovery. Netns и per-interface forwarding tests прошли в 43262548826. | Failure-injection и recovery probes проходят CI |
-| R5 | IPv4-only архитектура | Source audit не обнаружил IPv6 transport/address/routes/NAT/forwarding/sysctl management paths; kernel compatibility и packet-level managed-TUN IPv6 drop прошли на Ubuntu 22.04/24.04 и в integration job 43262548826. Каталог boringtun/ не изменялся. | Нет IPv6 management paths; managed-TUN IPv6 drop подтверждён |
-| R6 | IPv6 PREROUTING ingress coverage | Ограничение явно документировано в VPN_RELAY_NFTABLES.md: packet-level OUTPUT/FORWARD egress probes есть; PREROUTING ingress подтверждается generated-ruleset/unit assertions. Packet-level ingress probe не заявляется, поскольку IPv6 ingress через неподдерживаемый tunnel datapath не является штатным сценарием. | Ограничение явно документировано; непроверенная packet-level coverage не заявляется |
-| R7 | Финальная runtime acceptance | Multi-uplink, peer removal/restoration, AllowedIPs handoff, policy/NAT reload, DNS preflight и WG/AWG bidirectional traffic прошли в integration job 43262548826. Noise session persistence не заявляется. | Все acceptance tests проходят на актуальном CI |
+| R1 | Проверить CI на актуальном HEAD | Run 43264956528 на HEAD 239b61946d8378cd00b8b648ee22291797cce82d завершился success; все обязательные jobs и all-systems-go — success, Windows skipped. | Все обязательные jobs завершены success на одном SHA |
+| R2 | Peer restoration и AllowedIPs handoff | Fresh-handshake ожидание, удаление/повторное добавление peer, обновление AllowedIPs и передача бывшего адреса более широкому prefix прошли в multi-uplink integration job 43264956528. | Peer restoration и ownership handoff проходят packet-level CI |
+| R3 | TUN MTU startup rollback | Failure-injection probe и cleanup прошли в vpn-relay-netns-test.sh, integration job 43264956528. | Probe исполнен успешно в CI; cleanup подтверждён |
+| R4 | Startup cleanup и recovery matrix | Route/policy rollback, nft bootstrap/indexed activation/cleanup, TUN address/MTU setup rollback, forwarding rollback, graceful cleanup и SIGKILL journal recovery прошли в integration job 43264956528. | Failure-injection и recovery probes проходят CI |
+| R5 | IPv4-only архитектура | Source audit не обнаружил IPv6 transport/address/routes/NAT/forwarding/sysctl management paths; kernel compatibility и packet-level managed-TUN IPv6 drop прошли на Ubuntu 22.04/24.04 и в integration job 43264956528. Каталог boringtun/ не изменялся. | Нет IPv6 management paths; managed-TUN IPv6 drop подтверждён |
+| R6 | IPv6 PREROUTING ingress coverage | Ограничение явно документировано в VPN_RELAY_NFTABLES.md: packet-level OUTPUT/FORWARD egress probes есть; PREROUTING ingress подтверждается generated-ruleset/unit assertions. Packet-level ingress probe не заявляется. | Ограничение явно документировано; непроверенная packet-level coverage не заявляется |
+| R7 | Финальная runtime acceptance | Multi-uplink, peer removal/restoration, AllowedIPs handoff, policy/NAT reload, DNS preflight и WG/AWG bidirectional traffic прошли в integration job 43264956528. Noise session persistence не заявляется. | Все acceptance tests проходят на актуальном CI |
 | R8 | Синхронизировать документацию и failure matrix | Firewall/runtime reload docs сверены; IPv4-only архитектура и граница IPv6 PREROUTING packet coverage явно описаны; исторический dual-stack журнал помечен как архив. | Актуальные разделы соответствуют коду и фактическим CI |
-| R9 | Проверить конфигурационные примеры и deployment-инструкции | Первый --check выявил, что example hostnames требуют DNS; заменены на зарезервированные TEST-NET IPv4 адреса, чтобы проверка не зависела от внешнего DNS. Новый CI run должен подтвердить пример. Podman deployment прошёл в 43264490770. | Пример валиден, инструкции воспроизводимы |
-| R10 | Release build и финальный review | Добавлен обязательный CI шаг cargo build -p vpn-relay --bin vpn-relay --release; ожидается его исполнение. Финальный diff review после этого шага. | Release build успешен; diff и зависимости проверены |
-| R11 | Changelog и версия | Подготовлен vpn-relay/CHANGELOG.md для версии 0.1.0; Cargo manifest уже содержит 0.1.0. | Changelog и version metadata соответствуют релизному commit |
-| R12 | Выпустить vpn-relay | Не начато: после release build и финального review потребуется опубликовать релиз из проверенного commit. Доступные GitHub actions в этой сессии не предоставляют операцию создания Release. | Опубликованы исходники/артефакты из зафиксированного релизного commit |
+| R9 | Проверить конфигурационные примеры и deployment-инструкции | vpn-relay.example.toml --check и Podman deployment прошли в run 43264956528. | Пример валиден, инструкции воспроизводимы |
+| R10 | Release build и финальный review | cargo build -p vpn-relay --bin vpn-relay --release прошёл в run 43264956528. Diff review завершён: изменения ограничены двумя test scripts, workflow и docs; Cargo manifests/dependencies и boringtun/ не менялись. | Release build успешен; diff и зависимости проверены |
+| R11 | Changelog и версия | Подготовлен vpn-relay/CHANGELOG.md для версии 0.1.0; Cargo manifest содержит 0.1.0. Changelog оставлен Unreleased до фактической публикации. | Changelog и version metadata соответствуют релизному commit |
+| R12 | Выпустить vpn-relay | Ожидает публикации: проверенный commit 239b619, changelog 0.1.0 и release build готовы. Доступные GitHub actions в этой сессии не предоставляют операцию создания GitHub Release/tag. | Опубликованы исходники/артефакты из зафиксированного релизного commit |
 
 ### Следующий шаг
 
-Подтвердить новый CI с example config validation и release build; выполнить
-финальный diff/dependency review. Затем подготовить публикацию релиза 0.1.0
-из проверенного commit. Выделение в отдельный репозиторий не входит в текущий
-план и остаётся отложенным.
+Опубликовать GitHub Release 0.1.0 из проверенного commit 239b619, когда
+операция создания release/tag будет доступна. Выделение в отдельный
+репозиторий не входит в текущий план и остаётся отложенным.
 
 ---
 
