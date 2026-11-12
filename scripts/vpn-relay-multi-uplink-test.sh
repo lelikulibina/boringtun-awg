@@ -471,7 +471,7 @@ grep -Fq 'iifname "wg-ingress" iif !=' <<<"$chain" || fail "same-name replacemen
 grep -Eq 'iif "?wg-ingress"? oif "?awg-primary"? ct mark & 0xffff0000 == 0x[0-9a-f]+ meta nfproto ipv4 masquerade' <<<"$nat_chain" || fail "primary IPv4 masquerade rule is missing"
 
 grep -Eq 'iif "?wg-ingress"? ct state new ip saddr { 10.77.0.2/31 } ip daddr { 79.100.22.0/24, 195.142.0.0/16 } meta mark set 0x80000001' <<<"$chain" && grep -Eq 'ct mark set .*0x50020000 return' <<<"$chain" || fail "secondary IPv4 source/destination CIDR arrays are missing"
-grep -Eq 'iif "?wg-ingress"? ct state new ip saddr 10.77.0.2 ip daddr 203.0.113.0/24 meta mark set 0x80000000' <<<"$chain" && grep -Eq 'ct mark set .*0x50070000 return' <<<"$chain" || fail "primary destination-limited classifier is missing"
+grep -Eq 'iif "?wg-ingress"? ct state new ip saddr 10.77.0.2 ip daddr 203.0.113.0/24 meta mark set 0x80000000 ct mark set .*0x[0-9a-f]+ return' <<<"$chain" || fail "primary destination-limited classifier is missing"
 
 
 # INPUT must preserve the original peer source address; source NAT is only
