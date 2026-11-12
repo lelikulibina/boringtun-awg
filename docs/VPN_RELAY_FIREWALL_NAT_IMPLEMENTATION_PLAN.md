@@ -429,7 +429,7 @@ Backend `DeviceHandle::snapshot` не содержит PSK и поэтому н�
   после ошибки восстановления одного из них;
 - непрерывный двусторонний packet-level трафик при peer update, удалении peer,
   AllowedIPs handoff и policy reload;
-- endpoint DNS failure до commit не меняет ни один live peer;
+- [~] Добавлен network-namespace failure probe: endpoint на зарезервированном `.invalid` домене должен завершить preflight ошибкой до commit; проверяются сохранность старого nft classifier, старого egress route, отсутствие candidate policy rule и работоспособность daemon. Изменение `c72e60d`/`4d3305e`; ожидает CI.
 - проверка, что неизменённые peers сохраняют активные Noise sessions.
 
 Критерий приёмки: после успешного reload работает только новый Config; после
