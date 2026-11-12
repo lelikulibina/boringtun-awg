@@ -2932,7 +2932,7 @@ mod tests {
             );
             assert_eq!(
                 write_calls,
-                usize::from(stage == "write"),
+                if stage == "write" { 1 } else { 0 },
                 "unsafe write attempt count for {stage}"
             );
         }
@@ -2973,8 +2973,13 @@ mod tests {
                 |_, _| Ok(()),
             );
 
+            let expected_failure = if stage == "namespace_read" {
+                "injected namespace read failure"
+            } else {
+                "injected namespace write failure"
+            };
             assert!(matches!(result, Err(RuntimeError::FatalTransition(message))
-                if message.contains(&format!("injected {stage} failure"))));
+                if message.contains(expected_failure)));
             assert_eq!(
                 interface_writes,
                 vec![
