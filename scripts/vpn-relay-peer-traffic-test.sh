@@ -622,7 +622,7 @@ with open(sys.argv[1], encoding="utf-8", errors="replace") as stream:
     for line in stream:
         if "peer statistics" not in line:
             continue
-        match = re.search(r"handshake_age_secs\\s*=\\s*Some\\((\\d+)\\)", line)
+        match = re.search(r"handshake_age_secs\s*=\s*Some\((\d+)\)", line)
         if match:
             ages.append(int(match.group(1)))
 print(len(ages), ages[-1] if ages else "none")
