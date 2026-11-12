@@ -102,9 +102,16 @@ impl RoutingPlan {
         for decision in &mut self.decisions {
             let mut key = decision.clone();
             key.conntrack_mark = 0;
+            // Routing marks are implementation details of the current policy
+            // routing table allocation. Keep the conntrack decision identity
+            // stable when mark_base changes so established flows can be
+            // remapped by the new nftables prerouting rules without losing
+            // their decision during an atomic policy switch.
+            key.routing_mark = 0;
             let existing_mark = history.iter().find_map(|previous| {
                 let mut previous_key = previous.clone();
                 previous_key.conntrack_mark = 0;
+                previous_key.routing_mark = 0;
                 (previous_key == key).then_some(previous.conntrack_mark)
             });
 
@@ -153,6 +160,7 @@ impl RoutingPlan {
 
             let mut key = decision.clone();
             key.conntrack_mark = 0;
+            key.routing_mark = 0;
             if keys.contains(&key) {
                 return Err("duplicate persisted conntrack decision identity".to_owned());
             }
@@ -1223,6 +1231,50 @@ egress = "awg-primary"
         for (decision, (_, mark)) in restored_plan.decisions.iter().zip(original_marks) {
             assert_eq!(decision.conntrack_mark, mark);
         }
+    }
+
+    #[test]
+    fn conntrack_decision_marks_remain_stable_when_routing_mark_base_changes() {
+        let original_config = sample_config();
+        let original_plan = RoutingPlan::from_config(&original_config);
+        let original_marks: Vec<_> = original_plan
+            .decisions
+            .iter()
+            .map(|decision| decision.conntrack_mark)
+            .collect();
+        let original_routing_marks: Vec<_> = original_plan
+            .decisions
+            .iter()
+            .map(|decision| decision.routing_mark)
+            .collect();
+        let mut history = original_plan.decisions.clone();
+
+        let mut changed_config = sample_config();
+        changed_config.routing.mark_base = 0x9000_0000;
+        changed_config.validate().unwrap();
+        let mut changed_plan = RoutingPlan::from_config(&changed_config);
+        changed_plan
+            .assign_stable_conntrack_marks(&mut history)
+            .unwrap();
+
+        assert_eq!(
+            changed_plan
+                .decisions
+                .iter()
+                .map(|decision| decision.conntrack_mark)
+                .collect::<Vec<_>>(),
+            original_marks
+        );
+        assert_ne!(
+            changed_plan
+                .decisions
+                .iter()
+                .map(|decision| decision.routing_mark)
+                .collect::<Vec<_>>(),
+            original_routing_marks
+        );
+        assert_eq!(history.len(), original_marks.len());
+        RoutingPlan::validate_conntrack_mark_history(&history).unwrap();
     }
 
     #[test]
