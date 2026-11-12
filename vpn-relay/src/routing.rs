@@ -158,9 +158,13 @@ impl RoutingPlan {
                 ));
             }
 
+            // Older versions allocated a new conntrack ID when routing
+            // mark_base changed. Preserve compatibility with those valid
+            // historical aliases: only an exact decision duplicate (including
+            // its routing mark) is ambiguous. The active plan still reuses the
+            // first matching conntrack ID independent of routing_mark.
             let mut key = decision.clone();
             key.conntrack_mark = 0;
-            key.routing_mark = 0;
             if keys.contains(&key) {
                 return Err("duplicate persisted conntrack decision identity".to_owned());
             }
@@ -1308,6 +1312,28 @@ egress = "awg-primary"
             .unwrap()
             .conntrack_mark;
         assert_eq!(new_decision_mark, 0x5001_0000);
+    }
+
+    #[test]
+    fn conntrack_mark_history_accepts_legacy_routing_mark_aliases() {
+        let config = sample_config();
+        let mut history = RoutingPlan::from_config(&config).decisions;
+        RoutingPlan::from_config(&config)
+            .assign_stable_conntrack_marks(&mut history)
+            .unwrap();
+
+        let mut legacy_alias = history[0].clone();
+        legacy_alias.conntrack_mark = 0x500f_0000;
+        legacy_alias.routing_mark = legacy_alias.routing_mark.wrapping_add(0x1000);
+        history.push(legacy_alias);
+        assert!(RoutingPlan::validate_conntrack_mark_history(&history).is_ok());
+
+        let mut exact_duplicate = history[0].clone();
+        exact_duplicate.conntrack_mark = 0x500e_0000;
+        history.push(exact_duplicate);
+        assert!(RoutingPlan::validate_conntrack_mark_history(&history)
+            .unwrap_err()
+            .contains("duplicate persisted conntrack decision identity"));
     }
 
     #[test]
