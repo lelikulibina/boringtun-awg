@@ -145,9 +145,9 @@ version = "0.7.1"
 dependencies = [
  "aead",
  "aes",
- "chacha20",
  "base64",
  "blake2",
+ "chacha20",
  "chacha20poly1305",
  "criterion",
  "etherparse",
@@ -866,9 +866,9 @@ dependencies = [
 
 [[package]]
 name = "portable-atomic"
-version = "1.13.1"
+version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c33a9471896f1c69cecef8d20cbe2f7accd12527ce60845ff44c153bb2a21b49"
+checksum = "05c8b63e8d9609db387f0324918f81d68fe27748f084ef092fb35954d0539a85"
 
 [[package]]
 name = "powerfmt"
